@@ -3,13 +3,14 @@ import {
   Button, Menu, MenuButton, MenuDivider, MenuGroup, MenuGroupHeader, MenuItem, MenuItemRadio, MenuList, MenuPopover, MenuTrigger,
   Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
 } from '@fluentui/react-components';
-import { ArrowDownload20Regular, Briefcase20Regular } from '@fluentui/react-icons';
+import { ArrowDownload20Regular, Briefcase20Regular, CheckmarkCircle20Filled } from '@fluentui/react-icons';
 import { loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects } from '../../state/projects.ts';
 import { navigate, hrefFor, useRoute } from '../../state/router.ts';
 import { ExportDialog } from './ExportDialog.tsx';
-import { DraftDialog, StepTodoBand } from './deliverablesUi.tsx';
+import { DraftDialog, StepTodoBand, useCheckContext } from './deliverablesUi.tsx';
+import { evaluateStep, progressOf } from './deliverables.ts';
 import { useProjTransient, useProjUi } from './stores.ts';
 import './project.css';
 
@@ -69,6 +70,7 @@ function Stepper() {
   const { t } = useI18n();
   const { step } = useActiveProject();
   const setStep = useProjects((s) => s.setStep);
+  const ctx = useCheckContext();
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const current = IMPROVEMENT_STEPS.indexOf(step);
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -82,19 +84,23 @@ function Stepper() {
       <ol>
         {IMPROVEMENT_STEPS.map((s, i) => {
           const isCurrent = i === current;
+          const complete = progressOf(evaluateStep(s, ctx)).complete;
           return (
-            <li key={s} className={i < current ? 'done' : undefined}>
+            <li key={s} className={complete ? 'done' : undefined}>
               <button
                 ref={(el) => { refs.current[i] = el; }}
                 type="button"
                 className="proj-step"
                 aria-current={isCurrent ? 'step' : undefined}
                 data-step={s}
+                data-complete={complete}
+                title={`${i + 1} ${t(`proj.step.${s}`)}${complete ? ` — ${t('dlv.status.done')}` : ''}`}
                 onClick={() => setStep(s)}
                 onKeyDown={(e) => onKey(e, i)}
               >
                 <span className="proj-step-num">{i + 1}</span>{' '}
                 <span className={isCurrent ? 'proj-step-label' : 'visually-hidden'}>{t(`proj.step.${s}`)}</span>
+                {complete && <><CheckmarkCircle20Filled aria-hidden className="proj-step-check" /><span className="visually-hidden">{t('dlv.status.done')}</span></>}
               </button>
             </li>
           );

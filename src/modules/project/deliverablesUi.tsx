@@ -10,7 +10,7 @@ import { PARAMS } from '../../config/params.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
-import { hrefFor } from '../../state/router.ts';
+import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
@@ -53,6 +53,34 @@ function signOffNow(todoId: string, checked: boolean) {
 
 const MAX_REFS = 5;
 
+/** Prefer the first failing field; otherwise open the exact tab/component where the work is done. */
+export function todoHref(r: TodoResult): string {
+  const [path = '/', query = ''] = r.todo.href.split('?');
+  const q = new URLSearchParams(query);
+  const field = r.outcome?.refs?.find((ref) => ref.type === 'field');
+  if (field?.type === 'field') {
+    return hrefFor('/deliverables', { step: field.step, target: `dlv-field-${field.id}` });
+  }
+  if (r.todo.kind === 'manual') {
+    q.set('target', `dlv-sign-${r.todo.id}`);
+  } else if (path === '/deliverables') {
+    q.set('target', 'dlv-fields');
+  } else if (path === '/analysis') {
+    if (q.get('tab') === 'kpi') q.set('target', r.todo.id === 'kpi-okr' ? 'proj-okr-panel' : 'proj-kpi-panel');
+    else q.set('target', 'proj-method-panel');
+  } else if (path === '/relations') {
+    q.set('view', 'table');
+    q.set('target', 'relation-table');
+  } else if (path === '/discussion') {
+    q.set('target', r.outcome?.code === 'noThemes' ? 'proj-tree' : 'proj-canvas');
+  } else if (path === '/usecases') {
+    q.set('target', 'uc-list');
+  } else if (path === '/plan') {
+    q.set('target', r.todo.id === 'plan-schedule' ? 'gantt-panel' : 'plan-table');
+  }
+  return hrefFor(path, q);
+}
+
 function Refs({ refs }: { refs: CheckRef[] }) {
   const { t, lang } = useI18n();
   if (refs.length === 0) return null;
@@ -64,9 +92,9 @@ function Refs({ refs }: { refs: CheckRef[] }) {
           {r.type === 'entity' && <EntityRef id={r.id} />}
           {r.type === 'text' && <span>{loc(r.text, lang)}</span>}
           {r.type === 'field' && (
-            <button type="button" className="dlv-field-ref" onClick={() => document.getElementById(`dlv-field-${r.id}`)?.focus()}>
+            <a className="dlv-field-ref" href={hrefFor('/deliverables', { step: r.step, target: `dlv-field-${r.id}` })} onClick={revisitRouteTarget}>
               {t(fieldKey(r.step, r.id))}
-            </button>
+            </a>
           )}
         </li>
       ))}
@@ -78,6 +106,7 @@ function Refs({ refs }: { refs: CheckRef[] }) {
 /** One exit criterion: auto-checked (verdict + evidence + where to fix it) or a person's sign-off (checkbox). */
 export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: boolean }) {
   const { t, fmt } = useI18n();
+  const checkboxId = useId();
   const label = todoLabel(t, r.todo.id, usePaybackLimit());
   const status = <span className="visually-hidden">{t(r.done ? 'dlv.status.done' : 'dlv.status.todo')}</span>;
   const kind = <Badge size="small" appearance="outline" color={r.todo.kind === 'auto' ? 'informative' : 'brand'} className="dlv-kind">{t(r.todo.kind === 'auto' ? 'dlv.kind.auto' : 'dlv.kind.manual')}</Badge>;
@@ -90,7 +119,7 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
     <li className={`dlv-todo ${r.done ? 'done' : ''}`} data-testid={`dlv-todo-${r.todo.id}`} data-done={r.done} data-kind={r.todo.kind}>
       <div className="dlv-todo-main">
         {r.todo.kind === 'manual' ? (
-          <Checkbox checked={r.done} onChange={(_, d) => signOffNow(r.todo.id, d.checked === true)} label={label} data-testid={`dlv-sign-${r.todo.id}`} />
+          <Checkbox checked={r.done} onChange={(_, d) => signOffNow(r.todo.id, d.checked === true)} label={label} id={detailed ? `dlv-sign-${r.todo.id}` : checkboxId} data-testid={`dlv-sign-${r.todo.id}`} />
         ) : (
           <span className="dlv-todo-auto">
             {r.done ? <CheckmarkCircle20Filled className="dlv-ok" aria-hidden /> : <ErrorCircle20Regular className="dlv-ng" aria-hidden />}
@@ -106,7 +135,7 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
       {detailed && <p className="dlv-todo-why">{t(todoWhyKey(r.todo.id))}</p>}
       {detailed && r.outcome && !r.outcome.ok && <Refs refs={r.outcome.refs ?? []} />}
       {!r.done && r.todo.kind === 'auto' && (
-        <a className="dlv-fix" href={hrefFor(r.todo.href.split('?')[0]!, new URLSearchParams(r.todo.href.split('?')[1] ?? ''))} aria-label={t('dlv.fixLabel', { todo: label })}>
+        <a className="dlv-fix" href={todoHref(r)} onClick={revisitRouteTarget} aria-label={t('dlv.fixLabel', { todo: label })}>
           {t('dlv.fix')}
         </a>
       )}
@@ -181,7 +210,8 @@ export function StepTodoBand() {
         {next && (
           <a
             className="dlv-band-next"
-            href={hrefFor(next.todo.href.split('?')[0]!, new URLSearchParams(next.todo.href.split('?')[1] ?? ''))}
+            href={todoHref(next)}
+            onClick={revisitRouteTarget}
             data-testid="dlv-next"
             data-todo={next.todo.id}
           >

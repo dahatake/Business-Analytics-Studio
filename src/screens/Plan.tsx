@@ -67,7 +67,7 @@ export function Plan() {
           </div>
         )}
       />
-      <Panel title={t('plan.panel')} rationale="visual.gantt" testId="gantt-panel">
+      <Panel title={t('plan.panel')} rationale="visual.gantt" testId="gantt-panel" id="gantt-panel">
         <div className="chart-scroll">
           <svg viewBox={`0 0 ${width} ${rows.height}`} width={width} className="gantt" role="group" aria-label={t('plan.aria')}>
             <g ref={axisRef} transform={`translate(0,${TOP - 8})`} className="axis" />
@@ -104,7 +104,7 @@ export function Plan() {
           </svg>
         </div>
       </Panel>
-      <Panel title={t('plan.tableTitle')} rationale="visual.planTable">
+      <Panel title={t('plan.tableTitle')} rationale="visual.planTable" id="plan-table">
         <div className="table-scroll">
           <table className="data-table">
             <thead><tr>
@@ -129,5 +129,4 @@ export function Plan() {
     </div>
   );
 }
-
 

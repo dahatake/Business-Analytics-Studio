@@ -70,7 +70,7 @@ function AnalysisTab({ layout }: { layout: 'split' | 'results' | 'stacked' }) {
 
   return (
     <>
-      <Panel title={t('proj.an.choose')} rationale="proj.an.chooseWhy" className="span-full" testId="proj-method-panel">
+      <Panel title={t('proj.an.choose')} rationale="proj.an.chooseWhy" className="span-full" testId="proj-method-panel" id="proj-method-panel">
         <div className="proj-method-row">
           <RadioGroup value={method} onChange={(_, d) => setMethod(d.value as MethodId)} aria-label={t('proj.an.method')} className="proj-methods">
             {METHODS.map((m) => (

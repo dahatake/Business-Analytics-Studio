@@ -32,17 +32,18 @@ export function Rationale({ text }: { text: MessageKey }) {
   );
 }
 
-export function Panel({ title, rationale, actions, children, className, testId }: {
+export function Panel({ title, rationale, actions, children, className, testId, id: targetId }: {
   title: string;
   rationale?: MessageKey;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
   testId?: string;
+  id?: string;
 }) {
   const id = useId();
   return (
-    <section className={`panel ${className ?? ''}`} aria-labelledby={id} data-testid={testId}>
+    <section id={targetId} tabIndex={targetId ? -1 : undefined} className={`panel ${className ?? ''}`} aria-labelledby={id} data-testid={testId}>
       <div className="panel-header">
         <h2 id={id} className="panel-title">{title}</h2>
         <div className="panel-actions">

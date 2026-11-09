@@ -9,7 +9,7 @@ import { MotionBehaviourProvider } from '@fluentui/react-motion';
 import { useI18n, type Lang } from './i18n/index.ts';
 import { useSettings } from './state/settings.ts';
 import { useEffectiveDark, useReducedMotion } from './state/motion.ts';
-import { hrefFor, useRoute } from './state/router.ts';
+import { hrefFor, useRoute, useRouteTarget } from './state/router.ts';
 import { sound } from './audio/sound.ts';
 import { loaded } from './data/pack.ts';
 import { LiveFeedBar } from './ui/LiveFeedBar.tsx';
@@ -152,6 +152,11 @@ function NavRail({ current }: { current: string }) {
   );
 }
 
+function RouteTarget() {
+  useRouteTarget();
+  return null;
+}
+
 function Screen() {
   const { t } = useI18n();
   const route = useRoute();
@@ -163,6 +168,7 @@ function Screen() {
   return (
     <Suspense fallback={<Spinner className="screen-loading" label={t('app.loading')} />}>
       <Component />
+      <RouteTarget />
     </Suspense>
   );
 }
@@ -234,6 +240,5 @@ export function App() {
     </FluentProvider>
   );
 }
-
 
 

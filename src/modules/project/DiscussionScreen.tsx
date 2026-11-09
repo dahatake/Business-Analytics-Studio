@@ -211,7 +211,7 @@ function TreePanel({ ordered, selected, onSelect, L }: { ordered: { theme: Theme
   };
 
   return (
-    <Panel title={t('proj.tree.title')} rationale="proj.tree.why" testId="proj-tree">
+    <Panel title={t('proj.tree.title')} rationale="proj.tree.why" testId="proj-tree" id="proj-tree">
       {ordered.length === 0 && <p className="muted">{t('proj.tree.empty')}</p>}
       <ul className="proj-tree">
         {ordered.map(({ theme, depth }) => {
@@ -267,7 +267,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
   useEffect(() => setEditingTitle(false), [theme?.id]);
 
   if (!theme) {
-    return <Panel title={t('proj.canvas.title')} testId="proj-canvas"><p className="muted">{t('proj.canvas.empty')}</p></Panel>;
+    return <Panel title={t('proj.canvas.title')} testId="proj-canvas" id="proj-canvas"><p className="muted">{t('proj.canvas.empty')}</p></Panel>;
   }
   const records = data.records.filter((r) => r.themeId === theme.id);
   const go = (d: number) => {
@@ -296,7 +296,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
   const relatable = loaded.pack.entities.filter((e) => ['issue', 'solution', 'kpi', 'person'].includes(e.kind) && !theme.relatedIds.includes(e.id));
 
   return (
-    <Panel title={t('proj.canvas.title')} rationale="proj.canvas.why" testId="proj-canvas">
+    <Panel title={t('proj.canvas.title')} rationale="proj.canvas.why" testId="proj-canvas" id="proj-canvas">
       <div
         className="proj-canvas"
         tabIndex={0}

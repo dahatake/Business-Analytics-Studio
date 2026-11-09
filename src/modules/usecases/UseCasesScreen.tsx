@@ -238,7 +238,7 @@ export function UseCasesScreen() {
       />
       <p role="status" className="uc-status" data-testid="uc-status">{status}</p>
       <div className="uc-layout">
-        <Panel title={t('uc.list.title')} rationale="uc.list.rationale" testId="uc-list">
+        <Panel title={t('uc.list.title')} rationale="uc.list.rationale" testId="uc-list" id="uc-list">
           <div className="uc-filter">
             <label htmlFor="uc-persona-filter">{t('uc.list.filter')}</label>
             <Select id="uc-persona-filter" value={personaFilter} onChange={(_, d) => setPersonaFilter(d.value as 'all' | Persona)}>

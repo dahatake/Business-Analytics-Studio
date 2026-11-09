@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore, type MouseEvent } from 'react';
 
 export interface Route {
   path: string;
@@ -47,6 +47,40 @@ export function useRoute(): Route {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
+/** Target ids belong to the main screen, never to the persistent header or an overlay. */
+export function focusRouteTarget(id: string) {
+  const el = document.getElementById(id);
+  if (!el || !document.getElementById('main')?.contains(el)) {
+    console.warn(`Navigation target not found in the current screen: ${id}`);
+    return;
+  }
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'start', behavior: 'instant' });
+}
+
+/** Mount inside the screen's Suspense boundary, so lazy-loaded targets exist before focusing. */
+export function useRouteTarget() {
+  const route = useRoute();
+  useEffect(() => {
+    const target = route.query.get('target');
+    if (!target) return;
+    const raf = requestAnimationFrame(() => focusRouteTarget(target));
+    return () => cancelAnimationFrame(raf);
+  }, [route]);
+}
+
+/** A second click on the same URL must still return to the component; keep modified clicks native. */
+export function revisitRouteTarget(e: MouseEvent<HTMLAnchorElement>) {
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  const href = e.currentTarget.getAttribute('href');
+  if (href !== window.location.hash) return;
+  const target = parseHash(href).query.get('target');
+  if (target) {
+    e.preventDefault();
+    focusRouteTarget(target);
+  }
+}
+
 /** Push a new history entry (drill-through). */
 export function navigate(href: string) {
   window.location.hash = href.replace(/^#/, '');
@@ -56,6 +90,8 @@ export function navigate(href: string) {
 export function replaceQuery(updates: Record<string, string | undefined>) {
   const current = parseHash(window.location.hash);
   const q = new URLSearchParams(current.query);
+  // A tab/filter change starts a new interaction; don't refocus a previous deep-link target.
+  if (!Object.hasOwn(updates, 'target')) q.delete('target');
   for (const [k, v] of Object.entries(updates)) {
     if (v === undefined || v === '') q.delete(k);
     else q.set(k, v);

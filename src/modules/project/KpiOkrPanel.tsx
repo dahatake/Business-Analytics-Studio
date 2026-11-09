@@ -71,7 +71,7 @@ export function KpiOkrPanel() {
 
   return (
     <>
-      <Panel title={t('proj.kpi.title')} rationale="proj.kpi.why" className="span-full" testId="proj-kpi-panel">
+      <Panel title={t('proj.kpi.title')} rationale="proj.kpi.why" className="span-full" testId="proj-kpi-panel" id="proj-kpi-panel">
         <ScrollRegion label={t('proj.kpi.title')}>
           <table className="data-table compact">
             <caption className="visually-hidden">{t('proj.kpi.title')}</caption>
@@ -135,7 +135,7 @@ export function KpiOkrPanel() {
           </div>
         </form>
       </Panel>
-      <Panel title={t('proj.okr.title')} rationale="proj.okr.why" className="span-full" testId="proj-okr-panel">
+      <Panel title={t('proj.okr.title')} rationale="proj.okr.why" className="span-full" testId="proj-okr-panel" id="proj-okr-panel">
         {data.okrs.length === 0 && <p className="muted">{t('proj.okr.none')}</p>}
         <ul className="proj-okrs">
           {data.okrs.map((o) => {

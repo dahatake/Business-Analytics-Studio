@@ -107,7 +107,7 @@ export function Relations() {
       )}
 
       {view === 'table' && (
-        <Panel title={t('relations.tableTitle')} rationale="visual.relationTable" testId="relation-table">
+        <Panel title={t('relations.tableTitle')} rationale="visual.relationTable" testId="relation-table" id="relation-table">
           <div className="table-scroll">
             <table className="data-table">
               <thead>
@@ -129,4 +129,3 @@ export function Relations() {
     </div>
   );
 }
-

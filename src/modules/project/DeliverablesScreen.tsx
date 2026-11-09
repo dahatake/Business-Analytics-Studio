@@ -169,7 +169,7 @@ export function DeliverablesScreen() {
         </ul>
       </Panel>
 
-      <Panel title={t('dlv.screen.adds')} testId="dlv-fields" className="span-full">
+      <Panel title={t('dlv.screen.adds')} testId="dlv-fields" id="dlv-fields" className="span-full">
         <div className="dlv-fields">
           {def.fields.map((f) => {
             const v = doc[f.id];

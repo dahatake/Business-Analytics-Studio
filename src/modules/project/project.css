@@ -9,16 +9,21 @@
 .proj-stepper ol { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 2px; }
 .proj-stepper li { display: flex; align-items: center; }
 .proj-stepper li + li::before { content: ''; width: 8px; height: 2px; background: var(--colorNeutralStroke1); margin: 0 2px; }
-.proj-stepper li.done + li::before { background: var(--colorBrandStroke1); }
+.proj-stepper li.done + li::before { background: var(--colorPaletteGreenBorder2); }
 /* PARAM-086: step controls are at least 44 × 44 px. */
 .proj-step {
   min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 22px; border: 1px solid var(--colorNeutralStroke1);
   background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); font: inherit; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
 }
-.proj-stepper li.done .proj-step { border-color: var(--colorBrandStroke1); }
 .proj-step:hover { background: var(--colorSubtleBackgroundHover); }
 .proj-step[aria-current='step'] { background: var(--colorBrandBackground); color: var(--colorNeutralForegroundOnBrand); border-color: var(--colorBrandBackground); font-weight: var(--fontWeightSemibold); }
+.proj-step[data-complete='true'] {
+  background: var(--colorPaletteGreenBackground2); color: var(--colorPaletteGreenForeground2); border-color: var(--colorPaletteGreenBorder2);
+}
+.proj-step[data-complete='true']:hover { background: var(--colorPaletteGreenBackground1); }
+.proj-step[data-complete='true'][aria-current='step'] { box-shadow: inset 0 0 0 2px var(--colorPaletteGreenBorder2); }
+.proj-step-check { flex: none; }
 .proj-step:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 .proj-step-num { font-weight: var(--fontWeightSemibold); }
 .proj-step-label { white-space: nowrap; }

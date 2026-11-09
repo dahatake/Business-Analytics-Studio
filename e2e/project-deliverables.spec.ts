@@ -21,6 +21,119 @@ async function go(page: Page, route: string, lang: Lang = 'ja') {
 }
 
 test.describe('step deliverables and to-do band', () => {
+  test('all five step signals follow task completion, survive reload, and clear when work is undone', async ({ page }) => {
+    await go(page, '/home');
+    const steps = [
+      ['define', 'define-agree'],
+      ['asis', 'asis-field'],
+      ['kpi', 'kpi-measure'],
+      ['usecase', 'uc-review'],
+      ['plan', 'plan-approve'],
+    ] as const;
+    const stepper = page.getByTestId('proj-stepper');
+    for (const [step] of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
+    for (const [step, sign] of steps) {
+      const button = stepper.locator(`[data-step="${step}"]`);
+      await button.click();
+      await expect(button).toHaveAttribute('data-complete', 'false');
+      await page.getByTestId('dlv-draft').click();
+      await page.getByTestId('dlv-draft-apply').click();
+      await expect(button).toHaveAttribute('data-complete', 'false'); // Draft alone is not sign-off.
+      await page.getByTestId(`dlv-sign-${sign}`).check();
+      await expect(button).toHaveAttribute('data-complete', 'true');
+      await expect(button).toHaveAccessibleName(/完了/);
+      await expect(button.locator('.proj-step-check')).toBeVisible();
+      const rgb = await button.evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g)!.map(Number));
+      expect(rgb[1]).toBeGreaterThan(rgb[0]!);
+      expect(rgb[1]).toBeGreaterThan(rgb[2]!);
+      await page.getByTestId(`dlv-sign-${sign}`).uncheck();
+      await expect(button).toHaveAttribute('data-complete', 'false');
+      await page.getByTestId(`dlv-sign-${sign}`).check();
+    }
+    await page.reload();
+    for (const [step] of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'true');
+    expect(await scan(page)).toEqual([]);
+
+    await page.goto('/#/deliverables?step=define');
+    await page.getByTestId('dlv-field-success').fill('数値と期限がない');
+    await expect(stepper.locator('[data-step="define"]')).toHaveAttribute('data-complete', 'false');
+    for (const [step] of steps.slice(1)) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'true');
+
+    // Completion belongs to the project, not the device or the previously selected step.
+    await page.goto('/#/projects');
+    await page.getByTestId('proj-company-name').fill('完了検証社');
+    await page.getByRole('button', { name: '登録', exact: true }).click();
+    await page.getByTestId('proj-project-name-完了検証社').fill('未完了Project');
+    await page.getByRole('button', { name: 'Project を作成' }).click();
+    await page.getByTestId('proj-target-menu').click();
+    await page.getByRole('menuitemradio', { name: '未完了Project' }).click();
+    for (const [step] of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
+  });
+
+  test('the fix link in every step opens and focuses the first incomplete deliverable field', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 750 });
+    await go(page, '/home');
+    const steps = [
+      ['define', 'define-doc', 'problem'],
+      ['asis', 'asis-doc', 'currentProcess'],
+      ['kpi', 'kpi-doc', 'kpiTree'],
+      ['usecase', 'uc-doc', 'actors'],
+      ['plan', 'plan-doc', 'roadmap'],
+    ] as const;
+    for (const [step, todo, field] of steps) {
+      await page.locator(`.proj-step[data-step="${step}"]`).click();
+      const fix = page.getByTestId('dlv-band').getByTestId(`dlv-todo-${todo}`).getByRole('link', { name: /対応する/ });
+      await fix.click();
+      const input = page.getByTestId(`dlv-field-${field}`);
+      await expect(input).toBeFocused();
+      await expect(page.getByTestId(`dlv-tab-${step}`)).toHaveAttribute('aria-selected', 'true');
+      const top = await input.boundingBox();
+      const chrome = await page.locator('.chrome').boundingBox();
+      expect(top!.y).toBeGreaterThanOrEqual(chrome!.y + chrome!.height);
+      expect(top!.y + top!.height).toBeLessThanOrEqual(750);
+
+      // Reusing the same link must focus it again even though the hash does not change.
+      await page.locator('#main').focus();
+      await fix.click();
+      await expect(input).toBeFocused();
+    }
+    // A warning in a previously drafted document targets the specific invalid field, not the first field.
+    await page.locator('.proj-step[data-step="define"]').click();
+    await page.getByTestId('dlv-draft').click();
+    await page.getByTestId('dlv-draft-apply').click();
+    await page.getByTestId('dlv-next').click();
+    await expect(page.locator('#dlv-sign-define-agree')).toBeFocused();
+    await page.goto('/#/deliverables?step=define');
+    await page.getByTestId('dlv-field-success').fill('要改善');
+    await page.getByTestId('dlv-band').getByTestId('dlv-todo-define-doc').getByRole('link', { name: /対応する/ }).click();
+    await expect(page.getByTestId('dlv-field-success')).toBeFocused();
+    expect(await scan(page)).toEqual([]);
+  });
+
+  test('component targets work across lazy screens and same-screen tab changes', async ({ page }) => {
+    await go(page, '/home');
+    const targets = [
+      ['/analysis?target=proj-method-panel', 'proj-method-panel'],
+      ['/analysis?tab=kpi&target=proj-kpi-panel', 'proj-kpi-panel'],
+      ['/analysis?tab=kpi&target=proj-okr-panel', 'proj-okr-panel'],
+      ['/discussion?target=proj-canvas', 'proj-canvas'],
+      ['/discussion?target=proj-tree', 'proj-tree'],
+      ['/relations?view=table&target=relation-table', 'relation-table'],
+      ['/usecases?target=uc-list', 'uc-list'],
+      ['/plan?target=gantt-panel', 'gantt-panel'],
+      ['/plan?target=plan-table', 'plan-table'],
+    ] as const;
+    for (const [route, target] of targets) {
+      await page.evaluate((hash) => { window.location.hash = hash; }, route);
+      await expect(page.locator(`#${target}`)).toBeFocused();
+    }
+    await page.evaluate(() => { window.location.hash = '/analysis?tab=kpi&target=proj-okr-panel'; });
+    await expect(page.locator('#proj-okr-panel')).toBeFocused();
+    await page.getByRole('tab', { name: '分析', exact: true }).click();
+    await expect(page).not.toHaveURL(/target=/);
+    await expect(page.getByTestId('proj-method-panel')).toBeVisible();
+  });
+
   test('the band sits right under the live bar and lists the current step\'s exit criteria', async ({ page }) => {
     await go(page, '/home');
     const band = page.getByTestId('dlv-band');
@@ -104,6 +217,7 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-result-define-decision')).toHaveText('論点がまだありません');
     await decision.getByRole('link', { name: /対応する/ }).click();
     await expect(page).toHaveURL(/#\/discussion/);
+    await expect(page.locator('#proj-tree')).toBeFocused();
     await expect(page.getByTestId('dlv-progress')).toHaveText('3/6 完了');
   });
 

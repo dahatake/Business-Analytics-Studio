@@ -15,7 +15,8 @@ import {
 import type { EntityOf } from '../src/data/schema.ts';
 import { isUseApproved } from '../src/ai/client.ts';
 import { C03_TABLE, isApproved } from '../src/ai/policy.ts';
-import { BAND_LIST_HEIGHT_GUESS, shouldAutoExpand } from '../src/modules/project/deliverablesUi.tsx';
+import { BAND_LIST_HEIGHT_GUESS, shouldAutoExpand, todoHref } from '../src/modules/project/deliverablesUi.tsx';
+import { parseHash } from '../src/state/router.ts';
 import { buildDraft, draftPrompt, draftToText, parseDraftText, requestDeliverableDraft } from '../src/modules/project/deliverableDraft.ts';
 import { requestAnalysisDraft } from '../src/modules/project/mocks.ts';
 
@@ -56,6 +57,28 @@ function drafted(c: CheckContext, lang: 'ja' | 'en' = 'ja', audience: 'internal'
 }
 
 describe('step deliverables: definitions', () => {
+  it('every task links to a component, and document failures link to the first field needing work', () => {
+    for (const step of IMPROVEMENT_STEPS) {
+      for (const r of evaluateStep(step, demoCtx())) {
+        const route = parseHash(todoHref(r));
+        expect(route.query.get('target'), r.todo.id).toBeTruthy();
+        if (r.todo.id.endsWith('-doc')) {
+          expect(route.path).toBe('/deliverables');
+          expect(route.query.get('step')).toBe(step);
+          expect(route.query.get('target')).toBe(`dlv-field-${STEP_DEFS[step].fields[0]!.id}`);
+        }
+        if (r.todo.kind === 'manual') expect(route.query.get('target')).toBe(`dlv-sign-${r.todo.id}`);
+        if (route.path === '/analysis' && r.todo.id !== 'asis-framework') expect(route.query.get('tab')).toBe('kpi');
+        if (route.path === '/relations') expect(route.query.get('view')).toBe('table');
+      }
+    }
+    const c = demoCtx();
+    const data = setField(drafted(c), 'define', 'success', { text: 'Improve', author: 'human', updatedAt: '2026-11-09T10:00:00Z' });
+    expect(parseHash(todoHref(byId('define', { ...c, deliverables: data })['define-doc']!)).query.get('target')).toBe('dlv-field-success');
+    expect(parseHash(todoHref(byId('kpi', c)['kpi-okr']!)).query.get('target')).toBe('proj-okr-panel');
+    expect(parseHash(todoHref(byId('define', emptyProjectCtx())['define-decision']!)).query.get('target')).toBe('proj-tree');
+  });
+
   it('defines a deliverable for each of the five steps with fields, exit criteria and at least one human sign-off', () => {
     expect(Object.keys(STEP_DEFS).sort()).toEqual([...IMPROVEMENT_STEPS].sort());
     for (const s of IMPROVEMENT_STEPS) {

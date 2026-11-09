@@ -48,7 +48,7 @@ export const cardSpecs: Specs = {
     route: entityRoute,
     fields: [
       { label: 'field.role', value: (e, c) => c.tx(e.role) },
-      { label: 'field.ageBand', value: (e, c) => c.t(`ageBand.${e.ageBand}`) },
+      { label: 'field.ageBand', value: (e, c) => (e.ageBand ? c.t(`ageBand.${e.ageBand}`) : '—') },
       { label: 'field.site', value: (e, c) => nameOf(e.siteId, c) },
     ],
   },

@@ -417,10 +417,7 @@
               "sourceIds",
               "kind",
               "role",
-              "ageBand",
-              "gender",
-              "siteId",
-              "portrait"
+              "siteId"
             ],
             "additionalProperties": false
           },
@@ -2213,8 +2210,7 @@
     "isSample",
     "regions",
     "entities",
-    "flows",
-    "optimization"
+    "flows"
   ],
   "additionalProperties": false,
   "$id": "https://business-analytics-studio.local/pack.schema.json",

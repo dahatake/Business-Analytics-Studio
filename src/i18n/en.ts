@@ -15,6 +15,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'retention.pack': 'Customer pack (public/data)',
   'retention.cache': 'Research cache (research-cache)',
   'retention.project': 'Projects with their analyses, discussions, layouts and boards',
+  'retention.importedPack': 'Customer packs imported on the Data management screen (per project, in this browser on this device)',
   'retention.connection': 'Saved connection settings and API keys',
   'retention.ledger': 'Usage record (time, use, tokens, estimated cost)',
   'retention.exports': 'Exported files',
@@ -28,6 +29,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'retention.del.packFile': 'Replace or delete the file',
   'retention.del.cacheFolder': 'Delete the folder',
   'retention.del.project': 'Delete on the Companies and projects screen',
+  'retention.del.importedPack': 'Delete on the Data management screen (also deleted with its project)',
   'retention.del.connection': 'Delete on the AI connection settings screen',
   'retention.del.ledger': 'On the AI connection settings screen, delete records past the period',
   'retention.del.exports': 'The user deletes the files',
@@ -318,6 +320,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
 
   'optimize.title': 'Supply plan optimization',
   'optimize.subtitle': 'Allocates supply from 3 plants to 5 regions to minimize production, transport and carbon cost.',
+  'optimize.unavailable': 'This customer pack has no optimization input (plant capacity, regional demand, production and transport costs). Nothing is invented, so the screen stays empty. If the source material has these numbers, add them to optimization in the customer pack and import it again.',
   'optimize.guide': 'How to use',
   'optimize.guide.1': 'Set the demand change and the internal carbon price.',
   'optimize.guide.2': 'Press "Run optimization".',
@@ -451,6 +454,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
 
   'api.health': 'The local API is running.',
   'api.error.notFound': 'There is no API at {path}.',
+  'api.error.noOptimization': 'This customer pack has no optimization input (plant capacity, demand, costs).',
   'api.error.badParam': '{name} must be a number from {min} to {max}.',
 
   'notFound.title': 'Page not found',

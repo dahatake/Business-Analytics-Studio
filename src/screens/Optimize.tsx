@@ -3,6 +3,7 @@ import { Badge, Button, Caption1, Label, MessageBar, MessageBarBody, Slider, Spi
 import { Flash24Regular } from '@fluentui/react-icons';
 import { apiGet } from '../api/client.ts';
 import { getEntity, loaded } from '../data/pack.ts';
+import type { OptimizationInput } from '../data/schema.ts';
 import type { OptimizationResult } from '../domain/optimize.ts';
 import { useI18n } from '../i18n/index.ts';
 import { useSettings } from '../state/settings.ts';
@@ -23,7 +24,22 @@ interface OptimizeResponse {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** A pack without optimization input (FR-241) shows why the screen is empty instead of invented numbers. */
 export function Optimize() {
+  const { t } = useI18n();
+  const input = loaded.pack.optimization;
+  if (!input) {
+    return (
+      <div className="screen screen-optimize">
+        <PageHeader title={t('optimize.title')} subtitle={t('optimize.subtitle')} />
+        <MessageBar intent="info" data-testid="optimize-unavailable"><MessageBarBody>{t('optimize.unavailable')}</MessageBarBody></MessageBar>
+      </div>
+    );
+  }
+  return <OptimizeBody input={input} />;
+}
+
+function OptimizeBody({ input }: { input: OptimizationInput }) {
   const { t, tx, fmt, lang } = useI18n();
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
@@ -32,7 +48,6 @@ export function Optimize() {
   const [draft, setDraft] = useState({ growthPct, carbon });
   const [resp, setResp] = useState<{ body: OptimizeResponse; via: 'http' | 'inline'; ms: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  const input = loaded.pack.optimization;
 
   useEffect(() => setDraft({ growthPct, carbon }), [growthPct, carbon]);
 

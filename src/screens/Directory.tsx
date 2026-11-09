@@ -33,7 +33,7 @@ function useTabConfig(tab: TabKey) {
         columns: [
           { header: 'field.name', cell: (e) => ref(e.id, true) },
           { header: 'field.role', cell: (e) => (e.kind === 'person' ? tx(e.role) : '') },
-          { header: 'field.ageBand', cell: (e) => (e.kind === 'person' ? t(`ageBand.${e.ageBand}`) : '') },
+          { header: 'field.ageBand', cell: (e) => (e.kind === 'person' && e.ageBand ? t(`ageBand.${e.ageBand}`) : '') },
           { header: 'field.site', cell: (e) => (e.kind === 'person' ? ref(e.siteId) : '') },
         ] as Column[],
       };

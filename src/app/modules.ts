@@ -5,6 +5,7 @@ import {
   DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Cube24Regular,
   Organization24Regular, Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
   Bot24Regular, PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, KeyMultiple24Regular, TaskListSquareLtr24Regular,
+  DocumentDatabase24Regular,
 } from '@fluentui/react-icons';
 import type { MessageKey } from '../i18n/index.ts';
 import { Overview } from '../screens/Overview.tsx';
@@ -52,6 +53,7 @@ export const SCREENS: ScreenDef[] = [
   { path: '/assistant', label: 'ai.title', Icon: Bot24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ai/AssistantScreen.tsx'), 'AssistantScreen') },
   { path: '/show', label: 'show.title', Icon: SlideText24Regular, group: 'present', component: lazyNamed(() => import('../modules/show/ShowScreen.tsx'), 'ShowScreen') },
   { path: '/projects', label: 'proj.title', Icon: Briefcase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/ProjectsScreen.tsx'), 'ProjectsScreen') },
+  { path: '/data', label: 'proj.nav.data', Icon: DocumentDatabase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/PackDataScreen.tsx'), 'PackDataScreen') },
   { path: '/integrations', label: 'ops.nav.integrations', Icon: PlugConnected24Regular, group: 'manage', component: lazyNamed(() => import('../modules/ops/IntegrationsScreen.tsx'), 'IntegrationsScreen') },
   { path: '/brand', label: 'ops.title', Icon: Color24Regular, group: 'manage', component: lazyNamed(() => import('../modules/ops/BrandScreen.tsx'), 'BrandScreen') },
   { path: '/ai-settings', label: 'ai.nav.settings', Icon: KeyMultiple24Regular, group: 'manage', component: lazyNamed(() => import('../modules/ai/AiSettingsScreen.tsx'), 'AiSettingsScreen') },

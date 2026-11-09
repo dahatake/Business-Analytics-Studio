@@ -18,6 +18,7 @@ const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageK
   { target: 'retention.pack', retention: 'retention.keep.untilReplaced', deletion: 'retention.del.packFile', budget: 'retention.budget.na' },
   { target: 'retention.cache', retention: 'retention.keep.cache', deletion: 'retention.del.cacheFolder', budget: 'retention.budget.na' },
   { target: 'retention.project', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.project', budget: 'retention.budget.kept', where: '/projects' },
+  { target: 'retention.importedPack', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.importedPack', budget: 'retention.budget.na', where: '/data' },
   { target: 'retention.connection', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.connection', budget: 'retention.budget.na', where: '/ai-settings' },
   { target: 'retention.ledger', retention: 'retention.keep.ledger', deletion: 'retention.del.ledger', budget: 'retention.budget.self', where: '/ai-settings' },
   { target: 'retention.exports', retention: 'retention.keep.outside', deletion: 'retention.del.exports', budget: 'retention.budget.na' },

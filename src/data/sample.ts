@@ -1,4 +1,4 @@
-import type { CustomerPack, Entity, LText } from './schema.ts';
+import type { CustomerPack, Entity, LText, OptimizationInput } from './schema.ts';
 
 const l = (ja: string, en: string): LText => ({ ja, en });
 const sample = { world: 'real' as const, classification: 'shareable' as const, author: 'sample' as const, sourceIds: [] as string[] };
@@ -134,7 +134,7 @@ const transport = [
   [8_000, 14_000, 17_000, 26_000, 2_500],
 ];
 
-export const samplePack: CustomerPack = {
+export const samplePack: CustomerPack & { optimization: OptimizationInput } = {
   packId: 'sample-aozora-precision',
   company: { name: l('青空精機（架空）', 'Aozora Precision (fictional)'), industry: l('精密機械', 'Precision machinery') },
   isSample: true,

@@ -1,23 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Button } from '@fluentui/react-components';
 import { PARAMS } from '../config/params.ts';
 import { useI18n } from '../i18n/index.ts';
 import { useReducedMotion } from '../state/motion.ts';
-import { loaded } from '../data/pack.ts';
+import { useLaunch } from '../state/launch.ts';
 import { sound } from '../audio/sound.ts';
 
-export const OPENING_SEEN_KEY = 'bas.openingSeen';
+export { OPENING_SEEN_KEY } from '../state/launch.ts';
 
-/** F-3.1.5 cinematic opening: letterbox, title reveal, light sweep. Skippable; never shown under reduced motion. */
+/**
+ * F-3.1.5 / FR-076 cinematic opening: letterbox, title reveal, light sweep. Shows the application name only
+ * (no customer or project name). Skippable; never shown under reduced motion. Step 1 of the start-up sequence.
+ */
 export function Opening() {
-  const { t, tx } = useI18n();
+  const { t } = useI18n();
   const reduced = useReducedMotion();
-  const [visible, setVisible] = useState(() => sessionStorage.getItem(OPENING_SEEN_KEY) !== '1');
-
-  const close = () => {
-    sessionStorage.setItem(OPENING_SEEN_KEY, '1');
-    setVisible(false);
-  };
+  const visible = useLaunch((s) => s.stage === 'opening');
+  const close = useLaunch((s) => s.finishOpening);
 
   useEffect(() => {
     if (!visible) return;
@@ -33,7 +32,7 @@ export function Opening() {
       window.clearTimeout(id);
       window.removeEventListener('keydown', onKey);
     };
-  }, [visible, reduced]);
+  }, [visible, reduced, close]);
 
   if (!visible || reduced) return null;
   return (
@@ -41,7 +40,6 @@ export function Opening() {
       <div className="opening-bar top" />
       <div className="opening-stage">
         <span className="opening-mark" aria-hidden />
-        <p className="opening-kicker">{tx(loaded.pack.company.name)}</p>
         <h1 className="opening-title">{t('app.title')}</h1>
         <p className="opening-tagline">{t('opening.tagline')}</p>
         <span className="opening-sweep" aria-hidden />

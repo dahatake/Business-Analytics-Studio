@@ -6,7 +6,7 @@ import {
   Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular,
 } from '@fluentui/react-icons';
 import { MotionBehaviourProvider } from '@fluentui/react-motion';
-import { useI18n, type Lang } from './i18n/index.ts';
+import { useI18n } from './i18n/index.ts';
 import { useSettings } from './state/settings.ts';
 import { useEffectiveDark, useReducedMotion } from './state/motion.ts';
 import { hrefFor, useRoute, useRouteTarget } from './state/router.ts';
@@ -15,6 +15,9 @@ import { loaded } from './data/pack.ts';
 import { LiveFeedBar } from './ui/LiveFeedBar.tsx';
 import { DetailCardHost } from './ui/DetailCardHost.tsx';
 import { Opening } from './ui/Opening.tsx';
+import { LanguageToggle } from './ui/LanguageToggle.tsx';
+import { LaunchScreen } from './modules/project/LaunchScreen.tsx';
+import { useLaunch } from './state/launch.ts';
 import { NotFound } from './screens/NotFound.tsx';
 import { EntityPage } from './screens/EntityPage.tsx';
 import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
@@ -30,36 +33,8 @@ function useThemes(): { dark: Theme; light: Theme } {
   }), [brand]);
 }
 
-function LanguageToggle() {
-  const { t, lang } = useI18n();
-  const setLang = useSettings((s) => s.setLang);
-  const options: { value: Lang; label: string }[] = [
-    { value: 'ja', label: '日本語' },
-    { value: 'en', label: 'English' },
-  ];
-  return (
-    <div role="group" aria-label={t('lang.label')} className="lang-toggle" data-testid="lang-toggle">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          lang={o.value}
-          className="lang-option"
-          aria-pressed={lang === o.value}
-          onClick={() => {
-            setLang(o.value);
-            sound.play('toggle');
-          }}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function TopBar() {
-  const { t, tx } = useI18n();
+  const { t } = useI18n();
   const { muted, setMuted, setMotion, audience, setAudience } = useSettings();
   const reduced = useReducedMotion();
   return (
@@ -69,10 +44,11 @@ function TopBar() {
           <span className="brand-mark" aria-hidden />
           <Text weight="semibold" size={400} className="brand-name">{t('app.title')}</Text>
         </div>
-        <div className="topbar-context">
-          <Text className="topbar-company">{tx(loaded.pack.company.name)}</Text>
-          {loaded.pack.isSample && <Badge appearance="tint" color="informative">{t('badge.samplePack')}</Badge>}
-        </div>
+        {loaded.pack.isSample && (
+          <div className="topbar-context">
+            <Badge appearance="tint" color="informative" data-testid="sample-pack-badge">{t('badge.samplePack')}</Badge>
+          </div>
+        )}
         <div className="topbar-work">
           <ContextSlot />
         </div>
@@ -107,7 +83,7 @@ function TopBar() {
 }
 
 /** Keeps --chrome-h equal to the sticky header + live feed height, so the nav rail sits right below it at any wrap. */
-function useChromeHeight(ref: React.RefObject<HTMLDivElement | null>) {
+function useChromeHeight(ref: React.RefObject<HTMLDivElement | null>, mounted: boolean) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -121,7 +97,7 @@ function useChromeHeight(ref: React.RefObject<HTMLDivElement | null>) {
     const ro = new ResizeObserver(apply);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref]);
+  }, [ref, mounted]);
 }
 
 function isActive(path: string, current: string) {
@@ -207,11 +183,14 @@ export function App() {
 
   const themes = useThemes();
   const chromeRef = useRef<HTMLDivElement>(null);
-  useChromeHeight(chromeRef);
+  const stage = useLaunch((s) => s.stage);
+  useChromeHeight(chromeRef, stage === 'app');
   const navItem = useMemo(() => (route.segments[0] === 'entity' ? undefined : screenFor(route.path)), [route.path, route.segments]);
   useEffect(() => {
-    document.title = `${navItem ? t(navItem.label) : t('app.title')} · ${t('app.title')}`;
-  }, [navItem, t]);
+    document.title = stage !== 'app'
+      ? `${t('proj.launch.title')} · ${t('app.title')}`
+      : `${navItem ? t(navItem.label) : t('app.title')} · ${t('app.title')}`;
+  }, [navItem, t, stage]);
 
   return (
     <FluentProvider theme={dark ? themes.dark : themes.light}>
@@ -220,20 +199,27 @@ export function App() {
       {/* Layout styles live on an inner wrapper: Fluent copies the provider className onto portal mount nodes. */}
       <div className={`app ${dark ? 'theme-dark' : 'theme-light'}`} data-motion={reduced ? 'reduced' : 'full'}>
       <div className="aurora" aria-hidden />
-      <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>{t('a11y.skip')}</button>
-      <div className="chrome" ref={chromeRef}>
-        <TopBar />
-        <LiveFeedBar />
-        <StepBandSlot />
-      </div>
-      <div className="layout">
-        <NavRail current={route.path} />
-        <main id="main" tabIndex={-1} className="main" key={route.path}>
-          <Screen />
-        </main>
-      </div>
-      <DetailCardHost />
-      <Overlays />
+      {stage !== 'app' ? (
+        // Start-up step 2: choose a company and project before any project screen (step 3) is shown.
+        <LaunchScreen />
+      ) : (
+        <>
+          <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>{t('a11y.skip')}</button>
+          <div className="chrome" ref={chromeRef}>
+            <TopBar />
+            <LiveFeedBar />
+            <StepBandSlot />
+          </div>
+          <div className="layout">
+            <NavRail current={route.path} />
+            <main id="main" tabIndex={-1} className="main" key={route.path}>
+              <Screen />
+            </main>
+          </div>
+          <DetailCardHost />
+          <Overlays />
+        </>
+      )}
       <Opening />
       </div>
       </MotionBehaviourProvider>

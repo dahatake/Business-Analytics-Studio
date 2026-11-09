@@ -50,16 +50,33 @@ async function chooseTarget(page: Page, name: string | RegExp) {
 }
 
 test.describe('project module', () => {
-  test('first launch on the main screen asks for demo or a real project (FR-144, FR-267)', async ({ page }) => {
-    await open(page, '/home');
-    const dialog = page.getByTestId('proj-first-run');
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: '実際の Project を始める' }).click();
-    await expect(dialog).toBeHidden();
-    await expect(page).toHaveURL(/#\/projects/);
-    await nav(page, '/home');
-    await expect(page.getByTestId('proj-first-run')).toBeHidden();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('メイン画面');
+  test('start-up: selection screen with the sample company and registered projects, then the project screen (FR-144, FR-267)', async ({ page }) => {
+    await open(page, '/home', { skipLaunch: false });
+    await expect(page.getByTestId('launch-screen')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('企業と Project を選ぶ');
+    await expect(page.getByTestId('launch-sample')).toContainText('サンプル企業');
+    await expect(page.getByTestId('launch-sample')).toContainText('デモ Project');
+    await expect(page.locator('body')).not.toContainText(/青空精機|架空/);
+    expect(await scan(page)).toEqual([]);
+
+    await page.getByTestId('launch-company-name').fill('Contoso');
+    await page.getByTestId('launch-project-name').fill('Alpha');
+    await page.getByTestId('launch-create').click();
+    await expect(page).toHaveURL(/#\/home/);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+    await expect(page.locator('header.topbar')).not.toContainText(/青空精機|架空/);
+    await expect(page.getByTestId('proj-target-menu')).toContainText('Contoso-Alpha');
+
+    // The choice holds for the session: a reload goes straight to the project screen.
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+
+    await page.getByTestId('proj-target-menu').click();
+    await page.getByTestId('proj-target-launch').click();
+    await expect(page.getByTestId('launch-company-Contoso')).toContainText('Alpha');
+    await page.getByTestId('launch-open-demo').click();
+    await expect(page.getByTestId('proj-target-menu')).toContainText('デモ');
+    await expect(page.locator('header.topbar')).not.toContainText(/青空精機|架空/);
   });
 
   test('companies and projects; the top menu switches target and data never mixes (FR-137, FR-138, FR-148, G-007)', async ({ page }) => {

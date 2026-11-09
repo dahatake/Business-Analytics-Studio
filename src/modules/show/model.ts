@@ -96,8 +96,8 @@ export function buildChapters(audience: Audience, data: LoadedPack = loaded): Ch
 
   let metrics: BeforeAfterMetric[] = [];
   try {
-    const r = optimize(data.pack.optimization, { demandGrowth: 0, carbonPriceJpyPerT: 10_000 });
-    if (r.feasible) {
+    const r = data.pack.optimization ? optimize(data.pack.optimization, { demandGrowth: 0, carbonPriceJpyPerT: 10_000 }) : null;
+    if (r?.feasible) {
       metrics = [
         { id: 'totalCost', before: r.beforeMetrics.totalCostJpy, after: r.afterMetrics.totalCostJpy },
         { id: 'co2', before: r.beforeMetrics.co2T, after: r.afterMetrics.co2T },

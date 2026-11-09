@@ -86,12 +86,33 @@ function buildEdges(entities: Entity[], flows: CustomerPack['flows'], byId: Map<
   return edges;
 }
 
-/** The active pack. A live binding: ctivatePack swaps it before the first render (FR-101). */
-export let loaded: LoadedPack = loadPack(samplePack);
+/** Where the active pack came from. Only the built-in sample is also known to the local API server. */
+export type PackOrigin =
+  | { kind: 'sample' }
+  | { kind: 'file' }
+  | { kind: 'imported'; projectId: string };
 
-export function activatePack(raw: unknown): LoadedPack {
+/** The pack shipped with this app (sample or public/data/pack.json); shown for the demo target on the launch screen. */
+export interface BasePackInfo {
+  company: CustomerPack['company'];
+  isSample: boolean;
+}
+
+/** The active pack. A live binding: activatePack swaps it before the first render (FR-101). */
+export let loaded: LoadedPack = loadPack(samplePack);
+export let packOrigin: PackOrigin = { kind: 'sample' };
+export let basePack: BasePackInfo = { company: samplePack.company, isSample: samplePack.isSample };
+
+export function activatePack(raw: unknown, origin: PackOrigin = { kind: 'file' }): LoadedPack {
   loaded = loadPack(raw);
+  packOrigin = origin;
+  if (origin.kind !== 'imported') basePack = { company: loaded.pack.company, isSample: loaded.pack.isSample };
   return loaded;
+}
+
+/** Key of the pack a work target needs: its own imported pack, or the base pack. */
+export function packKey(origin: PackOrigin): string {
+  return origin.kind === 'imported' ? `imported:${origin.projectId}` : 'base';
 }
 
 export function entitiesOf<K extends EntityKind>(kind: K, data: LoadedPack = loaded): EntityOf<K>[] {

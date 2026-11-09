@@ -58,10 +58,11 @@ export const Site = z.object({
 export const Person = z.object({
   ...base, kind: z.literal('person'),
   role: LText,
-  ageBand: z.enum(['20s', '30s', '40s', '50s', '60s']),
-  gender: z.enum(['female', 'male']),
+  /** Optional (FR-241): real people imported from customer files keep these personal attributes out unless the source states them. */
+  ageBand: z.enum(['20s', '30s', '40s', '50s', '60s']).optional(),
+  gender: z.enum(['female', 'male']).optional(),
   siteId: z.string(),
-  portrait: PortraitSpec,
+  portrait: PortraitSpec.optional(),
 });
 export const Customer = z.object({
   ...base, kind: z.literal('customer'),
@@ -187,7 +188,8 @@ export const CustomerPack = z.object({
   regions: z.array(Region),
   entities: z.array(Entity),
   flows: z.array(Flow),
-  optimization: OptimizationInput,
+  /** Optional (FR-241): packs built from customer files often have no capacity/cost data; the optimize screen then says so. */
+  optimization: OptimizationInput.optional(),
   /**
    * Optional module data (FR-241: optional items stay backward compatible). Each feature module validates
    * its own key with its own schema, e.g. extensions.brand, extensions.glossary, extensions.dataCatalog.

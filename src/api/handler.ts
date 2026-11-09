@@ -36,7 +36,7 @@ export function handleApiRequest(pathname: string, params: URLSearchParams, acce
   const lang = resolveLang(params.get('lang'), acceptLanguage);
   const audience = params.get('audience') === 'external' ? 'external' : 'internal';
   const ok = (body: unknown): ApiResult => ({ status: 200, lang, body: { lang, ...(body as object) } });
-  const fail = (status: number, key: 'api.error.notFound' | 'api.error.badParam', vars?: Record<string, string | number>): ApiResult => ({
+  const fail = (status: number, key: 'api.error.notFound' | 'api.error.badParam' | 'api.error.noOptimization', vars?: Record<string, string | number>): ApiResult => ({
     status, lang, body: { lang, error: { code: status === 404 ? 'not_found' : 'bad_request', message: translate(lang, key, vars) } },
   });
 
@@ -69,6 +69,7 @@ export function handleApiRequest(pathname: string, params: URLSearchParams, acce
       const carbon = num(params, 'carbon', 0, OPTIMIZE_LIMITS.carbon.min, OPTIMIZE_LIMITS.carbon.max);
       if (carbon === null) return fail(400, 'api.error.badParam', { name: 'carbon', min: OPTIMIZE_LIMITS.carbon.min, max: OPTIMIZE_LIMITS.carbon.max });
       const input = loaded.pack.optimization;
+      if (!input) return fail(404, 'api.error.noOptimization');
       const result = optimize(input, { demandGrowth: growth, carbonPriceJpyPerT: carbon });
       const fmt = makeFormatters(lang);
       let message: string;

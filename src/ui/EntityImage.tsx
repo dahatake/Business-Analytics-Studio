@@ -11,18 +11,25 @@ export function hasIllustration(e: Entity): boolean {
 export function EntityImage({ entity, size = 32, label }: { entity: Entity; size?: number; label?: string }) {
   switch (entity.kind) {
     case 'person':
-      return <Portrait spec={entity.portrait} ageBand={entity.ageBand} gender={entity.gender} size={size} {...(label ? { label } : {})} />;
+      // Without the drawn attributes (real people imported from customer files) the kind badge is used, never a guessed face.
+      if (entity.portrait && entity.ageBand && entity.gender) {
+        return <Portrait spec={entity.portrait} ageBand={entity.ageBand} gender={entity.gender} size={size} {...(label ? { label } : {})} />;
+      }
+      return <KindBadge entity={entity} size={size} {...(label ? { label } : {})} />;
     case 'customer':
       return <CustomerArt spec={entity.illustration} size={size} {...(label ? { label } : {})} />;
     case 'product':
       return <ProductArt spec={entity.illustration} size={size} {...(label ? { label } : {})} />;
-    default: {
-      const Icon = kindIcon[entity.kind];
-      return (
-        <span className="kind-badge" style={{ width: size, height: size, ['--kind' as string]: kindColor[entity.kind] }} {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}>
-          <Icon fontSize={Math.round(size * 0.55)} />
-        </span>
-      );
-    }
+    default:
+      return <KindBadge entity={entity} size={size} {...(label ? { label } : {})} />;
   }
+}
+
+function KindBadge({ entity, size, label }: { entity: Entity; size: number; label?: string }) {
+  const Icon = kindIcon[entity.kind];
+  return (
+    <span className="kind-badge" style={{ width: size, height: size, ['--kind' as string]: kindColor[entity.kind] }} {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}>
+      <Icon fontSize={Math.round(size * 0.55)} />
+    </span>
+  );
 }

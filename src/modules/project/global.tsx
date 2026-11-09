@@ -1,28 +1,28 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import {
   Button, Menu, MenuButton, MenuDivider, MenuGroup, MenuGroupHeader, MenuItem, MenuItemRadio, MenuList, MenuPopover, MenuTrigger,
-  Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
 } from '@fluentui/react-components';
 import { ArrowDownload20Regular, Briefcase20Regular, CheckmarkCircle20Filled } from '@fluentui/react-icons';
-import { loaded } from '../../data/pack.ts';
+import { useLaunch } from '../../state/launch.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects } from '../../state/projects.ts';
-import { navigate, hrefFor, useRoute } from '../../state/router.ts';
+import { navigate, hrefFor } from '../../state/router.ts';
 import { ExportDialog } from './ExportDialog.tsx';
 import { DraftDialog, StepTodoBand, useCheckContext } from './deliverablesUi.tsx';
 import { evaluateStep, progressOf } from './deliverables.ts';
-import { useProjTransient, useProjUi } from './stores.ts';
+import { useProjTransient } from './stores.ts';
 import './project.css';
 
 export { StepTodoBand as StepBand };
 
 /** FR-148 / FR-176: the work-target menu (demo or company → project) at the top of every screen. */
 function WorkTargetMenu() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const companies = useProjects((s) => s.companies);
   const projects = useProjects((s) => s.projects);
   const target = useProjects((s) => s.target);
   const setTarget = useProjects((s) => s.setTarget);
+  const reopenLaunch = useLaunch((s) => s.reopen);
   const { project, company } = useActiveProject();
   const value = target.kind === 'demo' ? 'demo' : target.projectId;
   const label = target.kind === 'demo' || !project ? t('proj.target.demo') : `${company?.name ?? ''}-${project.name}`;
@@ -43,7 +43,7 @@ function WorkTargetMenu() {
       </MenuTrigger>
       <MenuPopover>
         <MenuList>
-          <MenuItemRadio name="target" value="demo">{t('proj.target.demoItem', { company: loaded.pack.company.name[lang] })}</MenuItemRadio>
+          <MenuItemRadio name="target" value="demo">{t('proj.target.demoItem')}</MenuItemRadio>
           {companies.map((c) => {
             const list = projects.filter((p) => p.companyId === c.id);
             return (
@@ -59,6 +59,7 @@ function WorkTargetMenu() {
           })}
           <MenuDivider />
           <MenuItem onClick={() => navigate(hrefFor('/projects'))}>{t('proj.target.manage')}</MenuItem>
+          <MenuItem onClick={() => reopenLaunch()} data-testid="proj-target-launch">{t('proj.target.launch')}</MenuItem>
         </MenuList>
       </MenuPopover>
     </Menu>
@@ -130,37 +131,6 @@ export function TopBarSlot() {
   );
 }
 
-/** FR-267 / FR-144: on the main screen, the first launch asks whether to try the demo or start a real project. */
-function FirstRunDialog() {
-  const { t } = useI18n();
-  const route = useRoute();
-  const done = useProjUi((s) => s.firstRunDone);
-  const setDone = useProjUi((s) => s.setFirstRunDone);
-  const setTarget = useProjects((s) => s.setTarget);
-  const open = route.path === '/home' && !done;
-  return (
-    <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) setDone(true); }}>
-      <DialogSurface data-testid="proj-first-run">
-        <DialogBody>
-          <DialogTitle>{t('proj.firstRun.title')}</DialogTitle>
-          <DialogContent>
-            <p>{t('proj.firstRun.body')}</p>
-            <ol className="proj-first-run-steps">
-              <li>{t('proj.quick.company')}</li>
-              <li>{t('proj.quick.project')}</li>
-              <li>{t('proj.quick.analysis')}</li>
-            </ol>
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="primary" onClick={() => { setTarget({ kind: 'demo' }); setDone(true); }}>{t('proj.firstRun.demo')}</Button>
-            <Button appearance="secondary" onClick={() => { setDone(true); navigate(hrefFor('/projects')); }}>{t('proj.firstRun.real')}</Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-}
-
 export function Overlay() {
   const openExport = useProjTransient((s) => s.openExport);
   useEffect(() => {
@@ -177,7 +147,6 @@ export function Overlay() {
   return (
     <>
       <ExportDialog />
-      <FirstRunDialog />
       <DraftDialog />
     </>
   );

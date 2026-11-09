@@ -5,7 +5,7 @@ import { open, setup } from './helpers.ts';
 test.describe('F-3.1.5 motion and sound', () => {
   test('OS reduced-motion: no opening, data-motion=reduced, animations disabled', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await setup(page, { motion: 'system', skipOpening: false });
+    await setup(page, { motion: 'system', skipOpening: false, skipLaunch: true });
     await page.goto('/#/');
     await expect(page.locator('html')).toHaveAttribute('data-motion', 'reduced');
     await expect(page.getByTestId('opening')).toHaveCount(0);
@@ -18,9 +18,14 @@ test.describe('F-3.1.5 motion and sound', () => {
     await setup(page, { motion: 'system', skipOpening: false });
     await page.goto('/#/');
     await expect(page.getByTestId('opening')).toBeVisible();
+    // FR-076: the splash shows the application name only, never the sample customer's name.
+    await expect(page.getByTestId('opening')).toContainText('Business Analytics Studio');
+    await expect(page.getByTestId('opening')).not.toContainText(/青空精機|Aozora|架空|fictional/);
     await expect(page.locator('html')).toHaveAttribute('data-motion', 'full');
     await page.getByRole('button', { name: /スキップ|Skip/ }).click();
     await expect(page.getByTestId('opening')).toHaveCount(0);
+    // Start-up step 2 follows the splash.
+    await expect(page.getByTestId('launch-screen')).toBeVisible();
     await page.reload();
     await expect(page.getByTestId('opening')).toHaveCount(0);
   });

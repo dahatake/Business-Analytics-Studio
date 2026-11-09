@@ -14,6 +14,7 @@ export const coreJa = {
   'retention.pack': '顧客パック（public/data）',
   'retention.cache': '調査キャッシュ（research-cache）',
   'retention.project': 'Project とその分析・議論・配置・ボード',
+  'retention.importedPack': 'データ管理の画面で取り込んだ顧客パック（Project ごと、この端末のブラウザー内）',
   'retention.connection': '保存済みの接続設定と API キー',
   'retention.ledger': '利用量の記録（日時・用途・トークン数・概算費用）',
   'retention.exports': 'エクスポートした成果物',
@@ -27,6 +28,7 @@ export const coreJa = {
   'retention.del.packFile': 'ファイルを差し替える・削除する',
   'retention.del.cacheFolder': 'フォルダーを削除する',
   'retention.del.project': '企業と Project の画面で削除',
+  'retention.del.importedPack': 'データ管理の画面で削除（Project を削除したときも一緒に削除）',
   'retention.del.connection': 'AI の接続設定の画面で削除',
   'retention.del.ledger': 'AI の接続設定の画面で、期間を過ぎた記録を削除',
   'retention.del.exports': '利用者がファイルを削除',
@@ -317,6 +319,7 @@ export const coreJa = {
 
   'optimize.title': '供給計画の最適化',
   'optimize.subtitle': '3 工場から 5 地域への供給量を、生産費・輸送費・炭素コストの合計が最小になるように配分します。',
+  'optimize.unavailable': 'この顧客パックには最適化の入力（工場の能力・地域の需要・生産費と輸送費）がありません。値を作らずに空のままにしています。元資料にこれらの数値があれば、顧客パックの optimization に追加して取り込み直してください。',
   'optimize.guide': '使い方',
   'optimize.guide.1': '需要の増減と社内炭素価格を設定します。',
   'optimize.guide.2': '「最適化を実行」を押します。',
@@ -450,6 +453,7 @@ export const coreJa = {
 
   'api.health': 'ローカル API は動作しています。',
   'api.error.notFound': '{path} という API はありません。',
+  'api.error.noOptimization': 'この顧客パックには最適化の入力（工場の能力・需要・費用）がありません。',
   'api.error.badParam': '{name} は {min} 〜 {max} の数値で指定してください。',
 
   'notFound.title': 'ページが見つかりません',

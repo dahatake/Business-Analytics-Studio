@@ -7,20 +7,24 @@ export interface SetupOptions {
   audience?: 'internal' | 'external';
   motion?: 'system' | 'reduce' | 'full';
   skipOpening?: boolean;
+  /** Skip start-up step 2 (company and project selection). Defaults to skipOpening. */
+  skipLaunch?: boolean;
 }
 
 /** Seed persisted settings before the app boots (same shape zustand/persist writes). */
 export async function setup(page: Page, opts: SetupOptions = {}) {
   const { lang = 'ja', audience = 'internal', motion = 'reduce', skipOpening = true } = opts;
-  await page.addInitScript(({ lang, audience, motion, skipOpening }) => {
+  const skipLaunch = opts.skipLaunch ?? skipOpening;
+  await page.addInitScript(({ lang, audience, motion, skipOpening, skipLaunch }) => {
     if (sessionStorage.getItem('bas.e2e.seeded')) return;
     sessionStorage.setItem('bas.e2e.seeded', '1');
     if (skipOpening) sessionStorage.setItem('bas.openingSeen', '1');
+    if (skipLaunch) sessionStorage.setItem('bas.launchChosen', '1');
     localStorage.setItem('bas.settings', JSON.stringify({
       state: { lang, theme: 'dark', motion, muted: true, bgm: true, sfx: true, volume: 0.5, audience },
       version: 1,
     }));
-  }, { lang, audience, motion, skipOpening });
+  }, { lang, audience, motion, skipOpening, skipLaunch });
 }
 
 export async function open(page: Page, route: string, opts: SetupOptions = {}) {

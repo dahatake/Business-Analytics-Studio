@@ -28,6 +28,11 @@ if ($Customer) {
     Write-Host 'The app is not built yet. Run setup.ps1 first.' -ForegroundColor Red
     exit 1
   }
+  node scripts/check-build.mjs $PSScriptRoot
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host 'The app was not rebuilt after the last change, so it would show an older version. Run npm run build, then start.ps1 again.' -ForegroundColor Red
+    exit 1
+  }
   node scripts/bas.ts serve --dir dist --port $Port
 }
 exit $LASTEXITCODE

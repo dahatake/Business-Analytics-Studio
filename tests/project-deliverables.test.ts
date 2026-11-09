@@ -8,7 +8,7 @@ import { demoDiscussion } from '../src/modules/project/discussion.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import {
-  applyDraft, cyclicInitiatives, emptyDeliverables, evaluateStep, fieldHintKey, fieldKey, inputKey, normalizeDeliverables, PAYBACK_MAX_YEARS, paybackLimit,
+  applyDraft, cyclicInitiatives, emptyDeliverables, evaluateStep, fieldHintKey, fieldKey, inputKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit,
   paybackYears, progressOf, resultKey, setField, setPaybackLimit, setSignOff, statedValues, STEP_DEFS, todoKey, todoWhyKey, valueMismatches,
   type CheckContext, type DeliverableData,
 } from '../src/modules/project/deliverables.ts';
@@ -111,6 +111,20 @@ describe('step deliverables: validity checks', () => {
       const open = evaluateStep(s, c).filter((r) => !r.done).map((r) => r.todo.id);
       expect(open.sort(), s).toEqual(STEP_DEFS[s].todos.filter((x) => x.kind === 'manual' || x.id.endsWith('-doc')).map((x) => x.id).sort());
     }
+  });
+
+  it('the band names the next thing to do and lists open criteria first; nothing is next once the step is complete', () => {
+    const c = demoCtx();
+    const results = evaluateStep('define', c);
+    expect(nextTodo(results)?.todo.id).toBe('define-doc');
+    const ordered = openFirst(results).map((r) => r.todo.id);
+    expect(ordered.slice(0, 2)).toEqual(['define-doc', 'define-agree']);
+    expect([...ordered].sort()).toEqual(results.map((r) => r.todo.id).sort());
+    // After the draft the field check passes, so the sign-off becomes next; after it, nothing is left.
+    let data = drafted(c);
+    expect(nextTodo(evaluateStep('define', { ...c, deliverables: data }))?.todo.id).toBe('define-agree');
+    data = setSignOff(data, 'define-agree', { at: '2026-11-09T10:00:00Z', by: 'Tester' });
+    expect(nextTodo(evaluateStep('define', { ...c, deliverables: data }))).toBeUndefined();
   });
 
   it('after "Draft with Copilot" and the sign-offs every step is complete (ja and en)', () => {

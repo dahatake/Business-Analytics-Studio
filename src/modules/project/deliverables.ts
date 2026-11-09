@@ -639,6 +639,12 @@ export function evaluateStep(step: ImprovementStep, c: CheckContext): TodoResult
   });
 }
 
+/** The first open exit criterion in the step's working order: what the user should do next. */
+export const nextTodo = (results: TodoResult[]): TodoResult | undefined => results.find((r) => !r.done);
+
+/** Open criteria first (stable within each group), so a narrow band shows what still needs doing. */
+export const openFirst = (results: TodoResult[]): TodoResult[] => [...results.filter((r) => !r.done), ...results.filter((r) => r.done)];
+
 export function progressOf(results: TodoResult[]): { done: number; total: number; complete: boolean } {
   const done = results.filter((r) => r.done).length;
   return { done, total: results.length, complete: results.length > 0 && done === results.length };

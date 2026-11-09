@@ -36,6 +36,10 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-todo-define-sources')).toHaveAttribute('data-done', 'true');
     await expect(page.getByTestId('dlv-todo-define-doc')).toHaveAttribute('data-done', 'false');
     await expect(page.getByTestId('dlv-result-define-doc')).toHaveText('未記入 7 項目、数値・期限が足りない 0 項目');
+    // The head line says what to do next, and the open criteria come first in the list.
+    await expect(page.getByTestId('dlv-next')).toHaveAttribute('data-todo', 'define-doc');
+    await expect(page.getByTestId('dlv-next')).toContainText('次にやること:');
+    await expect(band.locator('.dlv-band-list > li').first()).toHaveAttribute('data-done', 'false');
     expect(await scan(page)).toEqual([]);
   });
 
@@ -55,6 +59,7 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-progress')).toHaveText('完了条件をすべて満たしました');
     await expect(page.getByTestId('dlv-result-define-agree')).toContainText('E2E が確認');
     await expect(page.getByTestId('dlv-band')).toHaveAttribute('data-complete', 'true');
+    await expect(page.getByTestId('dlv-next')).toHaveCount(0);
 
     // The deliverable screen shows the drafted fields as AI (mock) and re-judges edits immediately.
     await page.getByTestId('dlv-open').click();

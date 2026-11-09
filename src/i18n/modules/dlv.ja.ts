@@ -12,6 +12,7 @@ export const dlvJa = {
   'dlv.band.collapse': 'ToDo をたたむ',
   'dlv.band.expand': 'ToDo を広げる',
   'dlv.band.open': '成果物を開く',
+  'dlv.band.next': '次にやること:',
   'dlv.band.list': '{step} の ToDo',
 
   'dlv.draft.button': 'Copilotでドラフト作成',

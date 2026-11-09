@@ -26,6 +26,11 @@ if not exist "dist\index.html" (
   echo The app is not built. Run npm.cmd run build first.
   goto :failed
 )
+node "scripts\check-build.mjs" "%CD%"
+if errorlevel 1 (
+  echo The app was not rebuilt after the last change, so it would show an older version. Run npm.cmd run build, then run.cmd again.
+  goto :failed
+)
 
 echo Starting Business Analytics Studio. Open the URL printed below.
 echo Press Ctrl+C to stop.

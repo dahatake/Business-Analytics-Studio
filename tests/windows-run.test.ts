@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 
@@ -15,6 +15,8 @@ describe.skipIf(process.platform !== 'win32')('Windows run.cmd', () => {
     mkdirSync(caller, { recursive: true });
     mkdirSync(bin, { recursive: true });
     copyFileSync(resolve('run.cmd'), join(app, 'run.cmd'));
+    mkdirSync(join(app, 'scripts'), { recursive: true });
+    copyFileSync(resolve('scripts', 'check-build.mjs'), join(app, 'scripts', 'check-build.mjs'));
     writeFileSync(join(app, 'dist', 'index.html'), '<!doctype html>');
     writeFileSync(join(app, 'node_modules', 'vite', 'bin', 'vite.js'), '');
   });
@@ -54,6 +56,29 @@ describe.skipIf(process.platform !== 'win32')('Windows run.cmd', () => {
       expect(result.stdout).not.toContain('args=');
     } finally {
       writeFileSync(join(app, 'dist', 'index.html'), '<!doctype html>');
+    }
+  });
+
+  it('refuses a build older than the source instead of silently showing an old version', () => {
+    const src = join(app, 'src');
+    mkdirSync(src, { recursive: true });
+    const built = join(app, 'dist', 'index.html');
+    utimesSync(built, new Date('2026-01-01T00:00:00Z'), new Date('2026-01-01T00:00:00Z'));
+    writeFileSync(join(src, 'App.tsx'), 'export {};');
+    try {
+      const stale = launch(0);
+      expect(stale.status, stale.stdout + stale.stderr).toBe(1);
+      expect(stale.stdout).toContain('older than the source');
+      expect(stale.stdout).toContain(join('src', 'App.tsx'));
+      expect(stale.stdout).toContain('Run npm.cmd run build');
+      expect(stale.stdout).not.toContain('args=');
+
+      writeFileSync(built, '<!doctype html>');
+      const fresh = launch(0);
+      expect(fresh.status, fresh.stdout + fresh.stderr).toBe(0);
+      expect(fresh.stdout).toContain('args=run preview');
+    } finally {
+      rmSync(src, { recursive: true, force: true });
     }
   });
 

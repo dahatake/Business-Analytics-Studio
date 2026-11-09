@@ -192,9 +192,16 @@
 .dlv-band-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
 .dlv-band-title { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
 .dlv-band-deliverable { color: var(--colorNeutralForeground2); }
-.dlv-band-progress { display: flex; align-items: center; gap: 8px; flex: 1 1 200px; min-width: 180px; max-width: 480px; font-size: var(--fontSizeBase200); }
+.dlv-band-progress { display: flex; align-items: center; gap: 8px; flex: 0 1 200px; min-width: 150px; font-size: var(--fontSizeBase200); }
 .dlv-band-progress > span { white-space: nowrap; }
 .dlv-progressbar { flex: 1 1 auto; }
+/* The next open criterion stays on the head line (full text in the accessible name, trimmed only visually). */
+.dlv-band-next {
+  flex: 1 1 320px; min-width: 0; display: flex; gap: 6px; align-items: baseline;
+  color: var(--colorBrandForegroundLink); font-size: var(--fontSizeBase300); white-space: nowrap;
+}
+.dlv-band-next-lead { flex: none; font-weight: var(--fontWeightSemibold); }
+.dlv-band-next-text { overflow: hidden; text-overflow: ellipsis; text-decoration: underline; }
 .dlv-band-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .dlv-band-scroll { overflow-x: auto; padding-bottom: 2px; }
 .dlv-band-scroll:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }

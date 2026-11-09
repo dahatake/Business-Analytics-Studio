@@ -13,6 +13,7 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
   'dlv.band.collapse': 'Collapse the to-do',
   'dlv.band.expand': 'Expand the to-do',
   'dlv.band.open': 'Open the deliverable',
+  'dlv.band.next': 'Next:',
   'dlv.band.list': 'To-do for {step}',
 
   'dlv.draft.button': 'Draft with Copilot',

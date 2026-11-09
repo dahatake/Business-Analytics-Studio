@@ -18,7 +18,7 @@ import { useUseCases } from '../usecases/store.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, requestDeliverableDraft } from './deliverableDraft.ts';
 import {
-  applyDraft, evaluateStep, fieldKey, normalizeDeliverables, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
+  applyDraft, evaluateStep, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
   type CheckContext, type CheckRef, type TodoResult,
 } from './deliverables.ts';
 import { useAnalyses, useDeliverables, useDiscussion, useKpis, useProjTransient, useProjUi } from './stores.ts';
@@ -154,6 +154,8 @@ export function StepTodoBand() {
   const ctx = useCheckContext();
   const results = useMemo(() => evaluateStep(step, ctx), [step, ctx]);
   const p = progressOf(results);
+  const next = nextTodo(results);
+  const maxYears = usePaybackLimit();
   const preference = useProjUi((s) => s.todoCollapsed);
   const [head, setHead] = useState<HTMLDivElement | null>(null);
   const [list, setList] = useState<HTMLDivElement | null>(null);
@@ -176,6 +178,17 @@ export function StepTodoBand() {
           <ProgressBar value={p.total ? p.done / p.total : 0} thickness="large" color={p.complete ? 'success' : 'brand'} aria-hidden className="dlv-progressbar" />
           <span data-testid="dlv-progress">{p.complete ? t('dlv.band.complete') : t('dlv.band.progress', { done: p.done, total: p.total })}</span>
         </div>
+        {next && (
+          <a
+            className="dlv-band-next"
+            href={hrefFor(next.todo.href.split('?')[0]!, new URLSearchParams(next.todo.href.split('?')[1] ?? ''))}
+            data-testid="dlv-next"
+            data-todo={next.todo.id}
+          >
+            <span className="dlv-band-next-lead">{t('dlv.band.next')}</span>
+            <span className="dlv-band-next-text">{todoLabel(t, next.todo.id, maxYears)}</span>
+          </a>
+        )}
         <span className="visually-hidden" role="status">{applied ? t('dlv.draft.applied', { n: applied.count }) : ''}</span>
         <div className="dlv-band-actions">
           <Button appearance="primary" icon={<Sparkle20Regular />} onClick={() => openDraft(step)} data-testid="dlv-draft">{t('dlv.draft.button')}</Button>
@@ -194,7 +207,7 @@ export function StepTodoBand() {
       </div>
       <div id={listId} ref={setList} className="dlv-band-scroll" hidden={collapsed} tabIndex={collapsed ? undefined : 0} role="region" aria-label={t('dlv.band.list', { step: stepName })}>
         <ul className="dlv-band-list">
-          {results.map((r) => <TodoItem key={r.todo.id} r={r} />)}
+          {openFirst(results).map((r) => <TodoItem key={r.todo.id} r={r} />)}
         </ul>
       </div>
     </section>

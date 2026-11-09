@@ -27,4 +27,8 @@ if [ ! -f dist/index.html ]; then
   echo "The app is not built yet. Run setup.sh first." >&2
   exit 1
 fi
+if ! node scripts/check-build.mjs "$PWD"; then
+  echo "The app was not rebuilt after the last change, so it would show an older version. Run npm run build, then start.sh again." >&2
+  exit 1
+fi
 exec node scripts/bas.ts serve --dir dist --port "$PORT"

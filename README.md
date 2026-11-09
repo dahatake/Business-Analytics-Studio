@@ -1,8 +1,12 @@
 # Business Analytics Studio
 
-法人顧客との商談で、課題・関係・KPI・最適化の結果を見せるローカル Web アプリです。要求は [docs/requirements-definition.md](docs/requirements-definition.md) と、追加 UI 要求 F-3.1〜F-3.5 です。対応と見送りは [docs/traceability.md](docs/traceability.md) にあります。
+経営企画・業務改善チームと経営層が、KPI、課題、施策、データの関係を整理し、意思決定のための議論や説明に使うローカル Web アプリです。初めての方向けの全手順は **[ユーザーガイド](users-guide/README.md)** をご覧ください。
 
-データはすべて架空のサンプル（青空精機）で、画面にも「サンプルデータ」と表示します。外部サーバーへの送信はありません。
+> **実データを使う前に:** 初期画面と `npm run bas -- build "<顧客名>"` が用意するパックは架空のサンプルです。顧客名を指定しても実データの取得・変換はされません。実データで使う方法、入力・取込機能の範囲、確認事項は[ユーザーガイド](users-guide/README.md#実データで使う)を参照してください。
+
+このアプリは PC 上で動作します。サンプルのほか、Project ごとの KPI・分析・議論の入力、または検証済みの顧客パックを使えます。どちらのデータ経路を使うか、初めに[実データ利用の選択](users-guide/README.md#利用方法を選ぶ)を確認してください。
+
+要求は [docs/requirements-definition.md](docs/requirements-definition.md) と追加 UI 要求 F-3.1〜F-3.5、対応と見送りは [docs/traceability.md](docs/traceability.md) にあります。
 
 ## 起動
 

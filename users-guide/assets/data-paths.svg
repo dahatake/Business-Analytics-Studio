@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 370" role="img" aria-labelledby="title desc">
+  <title id="title">BASで扱うデータの経路</title>
+  <desc id="desc">承認された情報はProjectへの手入力か、JSON顧客パックに整形してローカルアプリへ読み込む。データカタログCSVは項目定義の照合だけに使う。すべての作業はPC上に保存し、会議後は人が確認してファイルへ出力する。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#4263eb"/>
+    </marker>
+    <style>
+      .source { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; rx: 12; }
+      .local { fill: #f5f7ff; stroke: #4263eb; stroke-width: 2; rx: 12; }
+      .limited { fill: #fff8e6; stroke: #d97706; stroke-width: 2; rx: 12; }
+      .output { fill: #e8f7ef; stroke: #16834a; stroke-width: 2; rx: 12; }
+      .line { fill: none; stroke: #4263eb; stroke-width: 2.5; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #d97706; stroke-width: 2.5; stroke-dasharray: 7 6; marker-end: url(#arrow); }
+      text { font-family: "Yu Gothic UI", "Meiryo", sans-serif; fill: #172554; text-anchor: middle; }
+      .head { font-size: 16px; font-weight: 700; }
+      .sub { font-size: 12px; fill: #334155; }
+      .note { font-size: 12px; fill: #92400e; }
+    </style>
+  </defs>
+  <rect x="24" y="132" width="174" height="88" class="source"/>
+  <text x="111" y="164" class="head">承認済みの情報</text>
+  <text x="111" y="188" class="sub">社内資料・集計値・出典</text>
+  <path d="M198 176 H228 V75 H258" class="line"/>
+  <path d="M198 176 H258" class="line"/>
+  <path d="M198 176 H228 V299 H258" class="dash"/>
+  <rect x="264" y="28" width="230" height="94" class="local"/>
+  <text x="379" y="62" class="head">Projectへ手入力</text>
+  <text x="379" y="86" class="sub">KPI・分析・議論</text>
+  <text x="379" y="105" class="sub">ブラウザー内に保存</text>
+  <rect x="264" y="143" width="230" height="94" class="local"/>
+  <text x="379" y="177" class="head">顧客パックを作成</text>
+  <text x="379" y="201" class="sub">JSONへ整形・出典を記録</text>
+  <text x="379" y="220" class="sub">verifyで構造・参照を確認</text>
+  <rect x="264" y="258" width="230" height="82" class="limited"/>
+  <text x="379" y="291" class="head">カタログCSV / JSON</text>
+  <text x="379" y="315" class="sub">項目一覧の突合だけ</text>
+  <path d="M494 75 H548 V166 H602" class="line"/>
+  <path d="M494 190 H602" class="line"/>
+  <path d="M494 300 H548 V247 H602" class="dash"/>
+  <rect x="608" y="132" width="170" height="116" class="local"/>
+  <text x="693" y="169" class="head">ローカルアプリ</text>
+  <text x="693" y="194" class="sub">画面で確認・検討</text>
+  <text x="693" y="219" class="sub">127.0.0.1 のみで起動</text>
+  <path d="M778 190 H828" class="line"/>
+  <rect x="834" y="132" width="104" height="116" class="output"/>
+  <text x="886" y="169" class="head">人が確認</text>
+  <text x="886" y="194" class="sub">出典・共有範囲</text>
+  <text x="886" y="219" class="sub">必要時に出力</text>
+  <text x="480" y="359" class="note">カタログ取込は実績データの取込ではない。顧客名付きbuildもサンプルから始まる。</text>
+</svg>

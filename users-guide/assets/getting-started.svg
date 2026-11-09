@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" role="img" aria-labelledby="title desc">
+  <title id="title">利用開始から会議での活用まで</title>
+  <desc id="desc">Node.js確認、セットアップ、起動、利用方法の選択、Projectでの記録または実データパックの検証と起動、会議での確認の流れ。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#4263eb"/>
+    </marker>
+    <style>
+      .box { fill: #f5f7ff; stroke: #4263eb; stroke-width: 2; rx: 12; }
+      .choice { fill: #fff8e6; stroke: #d97706; stroke-width: 2; rx: 12; }
+      .done { fill: #e8f7ef; stroke: #16834a; stroke-width: 2; rx: 12; }
+      .line { fill: none; stroke: #4263eb; stroke-width: 2.5; marker-end: url(#arrow); }
+      text { font-family: "Yu Gothic UI", "Meiryo", sans-serif; fill: #172554; text-anchor: middle; }
+      .head { font-size: 17px; font-weight: 700; }
+      .sub { font-size: 13px; fill: #334155; }
+      .label { font-size: 12px; fill: #475569; }
+    </style>
+  </defs>
+  <rect x="24" y="72" width="150" height="76" class="box"/>
+  <text x="99" y="102" class="head">PCを準備</text>
+  <text x="99" y="126" class="sub">Node.js 22.18+</text>
+  <path d="M174 110 H210" class="line"/>
+  <rect x="215" y="72" width="170" height="76" class="box"/>
+  <text x="300" y="102" class="head">自動セットアップ</text>
+  <text x="300" y="126" class="sub">setup.ps1</text>
+  <path d="M385 110 H420" class="line"/>
+  <rect x="425" y="72" width="135" height="76" class="box"/>
+  <text x="492" y="102" class="head">起動</text>
+  <text x="492" y="126" class="sub">run.cmd</text>
+  <path d="M560 110 H595" class="line"/>
+  <rect x="600" y="72" width="220" height="76" class="choice"/>
+  <text x="710" y="102" class="head">使い方を選ぶ</text>
+  <text x="710" y="126" class="sub">目的に応じたデータ経路</text>
+  <path d="M710 148 V180 H270 V214" class="line"/>
+  <path d="M710 148 V180 H705 V214" class="line"/>
+  <text x="365" y="202" class="label">会議のKPI・分析</text>
+  <text x="810" y="202" class="label">概要・関係・最適化に反映</text>
+  <rect x="125" y="220" width="290" height="72" class="done"/>
+  <text x="270" y="250" class="head">Projectに入力・保存</text>
+  <text x="270" y="273" class="sub">KPI・分析・議論</text>
+  <rect x="565" y="220" width="280" height="72" class="box"/>
+  <text x="705" y="250" class="head">顧客パックを検証・起動</text>
+  <text x="705" y="273" class="sub">JSONの内容・出典を確認</text>
+  <path d="M270 292 V322 H480 V340" class="line"/>
+  <path d="M705 292 V322 H480 V340" class="line"/>
+  <rect x="355" y="345" width="250" height="48" class="done"/>
+  <text x="480" y="375" class="head">前提・出典・判断を人が確認</text>
+</svg>

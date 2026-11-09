@@ -22,13 +22,15 @@ if not exist "node_modules\vite\bin\vite.js" (
   echo Dependencies are missing. Run powershell -ExecutionPolicy Bypass -File setup.ps1 first.
   goto :failed
 )
-if not exist "dist\index.html" (
-  echo The app is not built. Run npm.cmd run build first.
-  goto :failed
+echo Building Business Analytics Studio from the current source.
+call npm.cmd run build
+set "result=%errorlevel%"
+if not "%result%"=="0" (
+  echo Build failed. The application was not started. Fix the error above and run run.cmd again.
+  goto :finish
 )
-node "scripts\check-build.mjs" "%CD%"
-if errorlevel 1 (
-  echo The app was not rebuilt after the last change, so it would show an older version. Run npm.cmd run build, then run.cmd again.
+if not exist "dist\index.html" (
+  echo Build output dist\index.html is missing. The application was not started.
   goto :failed
 )
 

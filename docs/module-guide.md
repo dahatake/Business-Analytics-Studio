@@ -13,7 +13,7 @@ Each feature module owns only its own files:
 | ink | `src/modules/ink/` | `ink.` | `/board` → `BoardScreen.tsx` |
 | threed | `src/modules/threed/` | `td.` | `/twin3d` → `ThreeDScreen.tsx` |
 | graph | `src/modules/graph/` | `graph.` | `/graph` → `GraphScreen.tsx` |
-| project | `src/modules/project/` | `proj.` | `/home`, `/projects`, `/analysis`, `/discussion` |
+| project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
 | usecases | `src/modules/usecases/` | `uc.` | `/usecases`, `/catalog` |
 | ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant`, `/ai-settings` |
 | ops | `src/modules/ops/`, `scripts/`, `docs/integration-catalog.md` | `ops.` | `/integrations`, `/brand` |
@@ -24,7 +24,7 @@ Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/
 
 ## Global mounts
 
-`src/modules/<module>/global.tsx` exports `TopBarSlot` (rendered inside the top bar) and `Overlay` (rendered once at the app root). Keep both cheap; return `null` when unused.
+`src/modules/<module>/global.tsx` exports `TopBarSlot` (rendered inside the top bar) and `Overlay` (rendered once at the app root). Keep both cheap; return `null` when unused. The project module also exports `StepBand`, the full-width step to-do band rendered under the live bar (`StepBandSlot` in `src/app/globals.tsx`).
 
 ## Conventions that tests enforce
 

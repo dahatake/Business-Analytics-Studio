@@ -18,7 +18,7 @@ import { Opening } from './ui/Opening.tsx';
 import { NotFound } from './screens/NotFound.tsx';
 import { EntityPage } from './screens/EntityPage.tsx';
 import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
-import { ActionSlots, ContextSlot, Overlays } from './app/globals.tsx';
+import { ActionSlots, ContextSlot, Overlays, StepBandSlot } from './app/globals.tsx';
 import { useBrandVariants } from './modules/ops/theme.ts';
 
 /** Fluent themes from the 16-step brand ramp (PARAM-017). Dark mode lifts brand foregrounds for contrast. */
@@ -111,7 +111,12 @@ function useChromeHeight(ref: React.RefObject<HTMLDivElement | null>) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const apply = () => el.parentElement?.style.setProperty('--chrome-h', `${Math.round(el.getBoundingClientRect().height)}px`);
+    const apply = () => {
+      const h = `${Math.round(el.getBoundingClientRect().height)}px`;
+      el.parentElement?.style.setProperty('--chrome-h', h);
+      // WCAG 2.4.11: focus and scroll targets stop below the sticky header instead of under it (CSS turns it off when static).
+      document.documentElement.style.setProperty('--chrome-h', h);
+    };
     apply();
     const ro = new ResizeObserver(apply);
     ro.observe(el);
@@ -213,6 +218,7 @@ export function App() {
       <div className="chrome" ref={chromeRef}>
         <TopBar />
         <LiveFeedBar />
+        <StepBandSlot />
       </div>
       <div className="layout">
         <NavRail current={route.path} />

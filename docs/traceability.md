@@ -47,6 +47,7 @@
 |---|---|---|---|
 | 共通基盤 | FR-137〜139（データの分離）、FR-046（元に戻す）、C-03、FR-101、FR-241 | `src/state/projects.ts`（Project ごとの保存領域）、`src/state/history.ts`、`src/ai/*`（C-03 ゲート・予算・社外秘の除外）、`src/main.tsx`（`public/data/pack.json` の読み込み）、`extensions`（任意項目） | `tests/projects.test.ts`、`tests/ai-core.test.ts` |
 | 企業・Project・分析・議論 | FR-012、FR-019、FR-042、FR-044〜057、FR-133〜140、FR-144、FR-148〜149、FR-153〜154、FR-176、FR-186〜187、FR-219、FR-266〜268 | `src/modules/project/`（/home、/projects、/analysis、/discussion、作業先メニュー、ステッパー、全量エクスポート） | `tests/project.test.ts`（Markdown の往復など）、`e2e/project.spec.ts` |
+| ステップの成果物・ToDo | FR-136（5 ステップ）、FR-050（人の決定と AI の提案の区別）、FR-011（モックの表示）、C-03 | `src/modules/project/deliverables.ts`（成果物の定義・完了条件・決定的な妥当性チェック）、`deliverableDraft.ts`（「Copilotでドラフト作成」。専用の用途 `deliverableDraft` で `aiComplete` を通り、未承認の間は顧客パックから作るモック。D-9）、`deliverablesUi.tsx`（ライブの下の ToDo 帯。自動で開くのは固定の領域が画面の高さの 35% 以内のとき）、`DeliverablesScreen.tsx`（/deliverables。施策計画の投資回収の上限を Project ごとに設定）。数値の照合（`asis-reconcile`）は KPI を正とする | `tests/project-deliverables.test.ts`（空の Project は失敗・デモ＋ドラフト＋確認で全ステップ完了・壊したデータの反例・数値の不一致の反例・構築期間を含む回収と上限の変更・自動で開く規則・専用の用途が未承認）、`e2e/project-deliverables.spec.ts`（axe・日英） |
 | ワークスペース | FR-013〜015、FR-109〜113、FR-142〜143、FR-150〜152、FR-173〜175、FR-183〜185、FR-215〜216、FR-295〜300、FR-305、NFR-UX-001・006〜008 | `src/modules/workspace/`（純粋なレイアウトエンジン、ペルソナ別レイアウト、コマンドパレット） | `tests/workspace-*.test.ts`、`e2e/workspace.spec.ts` |
 | ショー・プレゼンテーション | FR-016、FR-057、FR-063、FR-076〜085、FR-177〜179、FR-290、NFR-A11Y-008 | `src/modules/show/` | `tests/show.test.ts`、`e2e/show.spec.ts`（最初のシーン 2 秒以内など） |
 | インク・ホワイトボード | FR-086〜099、NFR-PERF-004 | `src/modules/ink/`（依存なしの PDF 1.4 出力、IndexedDB、自動保存） | `tests/ink.test.ts`（PDF の xref を検証）、`e2e/ink.spec.ts`（20 000 本での描画時間） |
@@ -64,7 +65,7 @@
 
 | 項目 | 状態 | 実装と検証 |
 |---|---|---|
-| C-03 の基準表（D-1） | 第 1 行「現状の説明 × Foundry」を許可。他の 14 行は第 1 行の実測後に見直し | `src/ai/policy.ts`、中継の転送。スタブの「Foundry」相手の E2E で、送信の本文・API キーのヘッダー・費用の記録・予算超過後の送信 0 件を確認 |
+| C-03 の基準表（D-1） | 第 1 行「現状の説明 × Foundry」を許可。他の 15 行（D-9 の `deliverableDraft` を含む）は第 1 行の実測後に見直し | `src/ai/policy.ts`、中継の転送。スタブの「Foundry」相手の E2E で、送信の本文・API キーのヘッダー・費用の記録・予算超過後の送信 0 件を確認 |
 | internal の外部送信（D-2） | 許可（Q-055 を改める） | 送信前の確認に internal と人物の件数を表示。社外向け表示の非表示と FR-219 は維持 |
 | 予算（D-3） | 月 100,000 円の 1 つの枠。設定画面で変更可 | `tests/ai-core.test.ts`、AI の接続設定の画面 |
 | 権利処理（D-4） | 起動前に済んでいる前提。警告を表示 | AI の接続設定・送信前の確認・実接続中のバナー |

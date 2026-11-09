@@ -201,6 +201,7 @@ export const aiJa = {
   'ai.use.connectionTest': '接続テスト',
   'ai.use.research': '調査',
   'ai.use.brandResearch': 'ブランドの調査',
+  'ai.use.deliverableDraft': '成果物のドラフト作成',
   'ai.use.packBuild': '顧客パックの作成',
   'ai.usage.title': '利用量と予算',
   'ai.usage.daily': '本日の「現状の説明」とチャットの生成 {used} / {limit} 回',

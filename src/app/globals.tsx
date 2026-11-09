@@ -17,6 +17,11 @@ export function ContextSlot() {
   return <project.TopBarSlot />;
 }
 
+/** Full-width band under the live bar: the current step's to-do (exit criteria of its deliverable). */
+export function StepBandSlot() {
+  return <project.StepBand />;
+}
+
 /** Second row: module commands (command palette, presentation, AI, ink). */
 export function ActionSlots() {
   return (

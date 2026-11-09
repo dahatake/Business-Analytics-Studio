@@ -182,3 +182,64 @@
 .proj-uc-import-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .proj-uc-import-name { font-weight: 600; color: var(--colorNeutralForeground1); overflow-wrap: anywhere; }
 .proj-uc-import-meta { margin: 4px 0; color: var(--colorNeutralForeground2); }
+/* Step deliverables (dlv.): the to-do band under the live bar and the deliverables screen. */
+.dlv-band {
+  padding: 6px 20px; display: grid; gap: 8px;
+  background: color-mix(in srgb, var(--colorNeutralBackground1) 88%, transparent);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+.dlv-band-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.dlv-band-title { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
+.dlv-band-deliverable { color: var(--colorNeutralForeground2); }
+.dlv-band-progress { display: flex; align-items: center; gap: 8px; flex: 1 1 200px; min-width: 180px; max-width: 480px; font-size: var(--fontSizeBase200); }
+.dlv-band-progress > span { white-space: nowrap; }
+.dlv-progressbar { flex: 1 1 auto; }
+.dlv-band-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.dlv-band-scroll { overflow-x: auto; padding-bottom: 2px; }
+.dlv-band-scroll:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.dlv-band-list { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; }
+.dlv-band-list .dlv-todo { flex: 0 0 248px; }
+
+.dlv-todo {
+  display: grid; gap: 4px; align-content: start; padding: 8px 10px;
+  border: 1px solid var(--colorNeutralStroke2); border-left: 4px solid var(--colorPaletteRedBorder2);
+  border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground2);
+}
+.dlv-todo.done { border-left-color: var(--colorPaletteGreenBorder2); }
+.dlv-todo[data-kind='manual']:not(.done) { border-left-color: var(--colorBrandStroke1); }
+.dlv-todo-main .fui-Checkbox__label { padding-top: 2px; padding-bottom: 2px; }
+.dlv-todo-auto { display: flex; gap: 6px; align-items: flex-start; }
+.dlv-todo-auto svg { flex: none; margin-top: 1px; }
+.dlv-ok { color: var(--colorPaletteGreenForeground1); }
+.dlv-ng { color: var(--colorPaletteRedForeground1); }
+.dlv-todo-label { font-size: var(--fontSizeBase300); }
+.dlv-todo-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.dlv-todo-caption { color: var(--colorNeutralForeground2); }
+.dlv-todo-why { margin: 0; color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+.dlv-fix { justify-self: start; font-size: var(--fontSizeBase200); color: var(--colorBrandForegroundLink); }
+.dlv-refs { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; font-size: var(--fontSizeBase200); }
+.dlv-field-ref { background: none; border: 0; padding: 0; color: var(--colorBrandForegroundLink); text-decoration: underline; cursor: pointer; font: inherit; }
+
+.dlv-screen .dlv-tabs { flex-wrap: wrap; }
+.dlv-head p { margin: 0; }
+.dlv-todo-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dlv-input-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dlv-input-list li { display: flex; justify-content: space-between; gap: 8px; }
+.dlv-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+.dlv-field-label { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.dlv-draft-surface { max-width: min(960px, 96vw); }
+.dlv-draft-note { display: flex; gap: 8px; align-items: flex-start; }
+.dlv-draft-note > .fui-Badge { flex: none; }
+.dlv-draft-fields { display: grid; gap: 10px; margin: 12px 0; }
+.dlv-draft-field dt { font-weight: var(--fontWeightSemibold); }
+.dlv-draft-field dd { margin: 4px 0 0; }
+.dlv-pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: var(--fontSizeBase200); }
+.dlv-kept { display: block; color: var(--colorPaletteMarigoldForeground2); }
+
+@media (max-width: 860px) {
+  .dlv-band { padding: 8px 12px; }
+  .dlv-fields { grid-template-columns: minmax(0, 1fr); }
+}
+@media print { .dlv-band { display: none; } }

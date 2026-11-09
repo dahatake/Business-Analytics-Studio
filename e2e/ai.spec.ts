@@ -105,8 +105,8 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(15);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(14);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(16);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(15);
     await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveAttribute('data-use', 'explain');
 
     await page.goto('/#/assistant');

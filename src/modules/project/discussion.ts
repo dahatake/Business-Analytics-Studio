@@ -275,7 +275,7 @@ export function demoDiscussion(): DiscussionData {
     ...(kind === 'action' ? { done: false } : {}), ...extra,
   });
   const records: DiscussionRecord[] = [
-    r('rec-demo-1', 'th-demo-leadtime', 'note', '現状は受注から出荷まで平均 14 日。繁忙期に遅れが集中する。', 'Today order to shipment takes 14 days on average; delays cluster in peak season.'),
+    r('rec-demo-1', 'th-demo-leadtime', 'note', '現状は受注から出荷まで平均 16 日（2026 年度の月次平均）。繁忙期に遅れが集中する。', 'Today order to shipment takes 16 days on average (FY2026 monthly average); delays cluster in peak season.'),
     r('rec-demo-2', 'th-demo-leadtime', 'decision', 'リードタイムを 2027 年 3 月までに 10 日以下にする。', 'Cut lead time to 10 days or less by March 2027.'),
     r('rec-demo-3', 'th-demo-leadtime', 'suggestion', '繁忙期の 2 か月前から需要予測で生産計画を見直す。', 'Revisit production planning with demand forecasting two months before peak season.', { mock: true }),
     r('rec-demo-4', 'th-demo-leadtime', 'action', '過去 3 年分の受注データを分析用に用意する。', 'Prepare three years of order data for analysis.', { owner: 'Sato', due: '2026-11-30' }),

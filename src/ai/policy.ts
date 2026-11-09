@@ -7,11 +7,13 @@
  * - D-2: internal information MAY be sent externally (this amends Q-055). Person data still needs FR-219 confirmation.
  * - D-3: one monthly budget of 100,000 JPY for the whole app (user-changeable in settings).
  * - D-4: contracts/rights are settled before the app is started; the UI shows that assumption as a warning.
+ * - D-9 (proposal, not approved): deliverable drafts get their own row instead of borrowing "structure"; it stays
+ *   blocked until "explain" is measured (D-8), §3.1 has the row and the user approves it.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
   | 'explain' | 'presentation' | 'aiUsageAnalysis' | 'review' | 'import' | 'storyVideo' | 'connectionTest'
-  | 'research' | 'brandResearch' | 'packBuild';
+  | 'research' | 'brandResearch' | 'packBuild' | 'deliverableDraft';
 
 export type Provider = 'foundry' | 'copilotSdk';
 
@@ -58,6 +60,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   research: TBD_ROW(),
   brandResearch: TBD_ROW(),
   packBuild: TBD_ROW(),
+  deliverableDraft: TBD_ROW(['§3.1 has no row for deliverable drafts yet (FR-136; rd-author adds it)', 'D-9 proposal awaiting user approval (docs/decision-guide.md)']),
 };
 
 export function isApproved(row: UseApproval): boolean {

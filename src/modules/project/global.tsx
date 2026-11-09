@@ -9,8 +9,11 @@ import { useI18n } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects } from '../../state/projects.ts';
 import { navigate, hrefFor, useRoute } from '../../state/router.ts';
 import { ExportDialog } from './ExportDialog.tsx';
+import { DraftDialog, StepTodoBand } from './deliverablesUi.tsx';
 import { useProjTransient, useProjUi } from './stores.ts';
 import './project.css';
+
+export { StepTodoBand as StepBand };
 
 /** FR-148 / FR-176: the work-target menu (demo or company → project) at the top of every screen. */
 function WorkTargetMenu() {
@@ -169,6 +172,7 @@ export function Overlay() {
     <>
       <ExportDialog />
       <FirstRunDialog />
+      <DraftDialog />
     </>
   );
 }

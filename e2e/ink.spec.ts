@@ -30,6 +30,8 @@ async function freshBoard(page: Page, lang: Lang = 'en') {
 }
 
 async function box(page: Page) {
+  // Drawing uses viewport coordinates, so keep the whole stage on screen whatever the header height is.
+  await stage(page).scrollIntoViewIfNeeded();
   const b = await stage(page).boundingBox();
   if (!b) throw new Error('no stage');
   return b;

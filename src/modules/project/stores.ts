@@ -6,6 +6,8 @@ import { demoAnalyses } from './analysis.ts';
 import { demoDiscussion, DiscussionEditor, type ChangeEntry, type Lens } from './discussion.ts';
 import { demoKpis } from './kpiOkr.ts';
 import type { AnalysisData, DiscussionData, KpiData } from './model.ts';
+import { emptyDeliverables, type DeliverableData } from './deliverables.ts';
+import type { ImprovementStep } from '../../state/projects.ts';
 import { useUseCases, type UseCase } from '../usecases/store.ts';
 import { UseCaseImportUndo } from './useCaseImport.ts';
 
@@ -14,6 +16,8 @@ export const useDiscussion = createScopedStore<DiscussionData>('proj.discussion'
 export const useChangeHistory = createScopedStore<ChangeEntry[]>('proj.history', () => []);
 export const useKpis = createScopedStore<KpiData>('proj.kpi', (scope) => (scope === 'demo' ? demoKpis(loaded.pack) : { kpis: [], okrs: [] }));
 export const useAnalyses = createScopedStore<AnalysisData>('proj.analysis', (scope) => (scope === 'demo' ? demoAnalyses(loaded.pack) : { analyses: [], activeId: null }));
+/** Step deliverables (fields added on top of the pack and project data) and sign-offs. Every scope starts empty. */
+export const useDeliverables = createScopedStore<DeliverableData>('proj.deliverables', () => emptyDeliverables());
 
 /** Device-level preferences of this module (not project data). */
 interface ProjUiState {
@@ -22,11 +26,14 @@ interface ProjUiState {
   lens: Lens;
   analysisLayout: 'split' | 'results' | 'stacked';
   firstRunDone: boolean;
+  /** The step to-do band shows only its summary line. null = automatic (expanded on tall screens). */
+  todoCollapsed: boolean | null;
   setEditor: (v: string) => void;
   setEditMode: (v: boolean) => void;
   setLens: (v: Lens) => void;
   setAnalysisLayout: (v: ProjUiState['analysisLayout']) => void;
   setFirstRunDone: (v: boolean) => void;
+  setTodoCollapsed: (v: boolean) => void;
 }
 
 export const useProjUi = create<ProjUiState>()(
@@ -37,11 +44,13 @@ export const useProjUi = create<ProjUiState>()(
       lens: 'business',
       analysisLayout: 'split',
       firstRunDone: false,
+      todoCollapsed: null,
       setEditor: (editor) => set({ editor }),
       setEditMode: (editMode) => set({ editMode }),
       setLens: (lens) => set({ lens }),
       setAnalysisLayout: (analysisLayout) => set({ analysisLayout }),
       setFirstRunDone: (firstRunDone) => set({ firstRunDone }),
+      setTodoCollapsed: (todoCollapsed) => set({ todoCollapsed }),
     }),
     { name: 'bas.proj.ui', version: 1, storage: createJSONStorage(() => localStorage) },
   ),
@@ -54,9 +63,15 @@ interface ProjTransient {
   selectedThemeId: string | null;
   /** Bumped on every undo-stack change so buttons re-render. */
   undoVersion: number;
+  /** The step whose deliverable draft dialog is open. */
+  draftStep: ImprovementStep | null;
+  /** Last applied draft, announced by the to-do band. */
+  draftApplied: { step: ImprovementStep; count: number } | null;
   openExport: (themeId?: string | null) => void;
   closeExport: () => void;
   selectTheme: (id: string | null) => void;
+  openDraft: (step: ImprovementStep) => void;
+  closeDraft: (applied?: { step: ImprovementStep; count: number }) => void;
 }
 
 export const useProjTransient = create<ProjTransient>()((set) => ({
@@ -64,9 +79,13 @@ export const useProjTransient = create<ProjTransient>()((set) => ({
   exportThemeId: null,
   selectedThemeId: null,
   undoVersion: 0,
+  draftStep: null,
+  draftApplied: null,
   openExport: (themeId = null) => set({ exportOpen: true, exportThemeId: themeId }),
   closeExport: () => set({ exportOpen: false }),
   selectTheme: (selectedThemeId) => set({ selectedThemeId }),
+  openDraft: (draftStep) => set({ draftStep, draftApplied: null }),
+  closeDraft: (applied) => set({ draftStep: null, draftApplied: applied ?? null }),
 }));
 
 /** One editor (undo stack + history) per scope; rebuilt when the work target changes so projects never share undo. */

@@ -2,6 +2,7 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; }
+html { scroll-padding-top: var(--chrome-h, 0px); }
 body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino Sans', 'Meiryo', system-ui, sans-serif; }
 
 .app {
@@ -431,6 +432,7 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   .screen, .grid-2 { grid-template-columns: minmax(0, 1fr); }
   .main { padding: 16px 14px 48px; }
   .chrome { position: static; }
+  html { scroll-padding-top: 0; }
   .topbar-row { flex-wrap: wrap; }
   .topbar-row > .lang-toggle { margin-left: 0; }
   .weights { grid-template-columns: 1fr; }

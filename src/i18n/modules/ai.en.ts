@@ -202,6 +202,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.use.connectionTest': 'Connection test',
   'ai.use.research': 'Research',
   'ai.use.brandResearch': 'Brand research',
+  'ai.use.deliverableDraft': 'Deliverable drafts',
   'ai.use.packBuild': 'Customer pack creation',
   'ai.usage.title': 'Usage and budget',
   'ai.usage.daily': 'Explanations and chat generated today: {used} / {limit}',

@@ -6,7 +6,20 @@
 
 ## 起動
 
-Node.js（LTS 以上）が必要です。
+Node.js 22.18 以上と npm が必要です。
+
+Windows では、初回にセットアップした後、ルート直下の [run.cmd](run.cmd) をダブルクリックするか、コマンドプロンプトから実行してください。
+
+```bat
+powershell -ExecutionPolicy Bypass -File setup.ps1
+run.cmd
+```
+
+ビルド済みのアプリをローカル API・中継機能付きで起動します。表示された URL（既定: `http://127.0.0.1:4173`）をブラウザーで開いてください。停止は Ctrl+C です。別のフォルダーからの実行にも対応し、起動時のダウンロードや自動ビルドは行いません。コード更新後は `npm.cmd run build` を実行してください。前提ツール・依存関係・ビルドの不足や起動失敗はメッセージと非ゼロの終了コードで通知します。
+
+ポートを変える場合は `run.cmd --port 4180` と指定できます。ポートが使用中なら、別のポートへ自動変更せず失敗します。
+
+開発時:
 
 ```powershell
 npm install
@@ -121,4 +134,3 @@ e2e/          Playwright
 - 決定の記録と判断資料は [docs/decision-guide.md](docs/decision-guide.md)、人や実機による測定の手順は [docs/measurement-plan.md](docs/measurement-plan.md)、機能モジュールの規約は [docs/module-guide.md](docs/module-guide.md)、要求との対応と BLOCKED の一覧は [docs/traceability.md](docs/traceability.md) にあります。
 - 利用テスト（F-3.4.2）は [計画](docs/usability-test.md) のみで、まだ実施していません。
 - ライセンスは [LICENSE](LICENSE)、依存と素材は [CREDITS.md](CREDITS.md) を参照してください。
-

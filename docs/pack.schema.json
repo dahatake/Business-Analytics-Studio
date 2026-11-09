@@ -1,0 +1,2223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "packId": {
+      "type": "string"
+    },
+    "company": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "object",
+          "properties": {
+            "ja": {
+              "type": "string",
+              "minLength": 1
+            },
+            "en": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "ja",
+            "en"
+          ],
+          "additionalProperties": false
+        },
+        "industry": {
+          "type": "object",
+          "properties": {
+            "ja": {
+              "type": "string",
+              "minLength": 1
+            },
+            "en": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "ja",
+            "en"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name",
+        "industry"
+      ],
+      "additionalProperties": false
+    },
+    "isSample": {
+      "type": "boolean"
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "object",
+            "properties": {
+              "ja": {
+                "type": "string",
+                "minLength": 1
+              },
+              "en": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "ja",
+              "en"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "site"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "hq",
+                  "plant",
+                  "dc"
+                ]
+              },
+              "lat": {
+                "type": "number"
+              },
+              "lon": {
+                "type": "number"
+              },
+              "capacityTPerMonth": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "role",
+              "lat",
+              "lon",
+              "capacityTPerMonth"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "person"
+              },
+              "role": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "ageBand": {
+                "type": "string",
+                "enum": [
+                  "20s",
+                  "30s",
+                  "40s",
+                  "50s",
+                  "60s"
+                ]
+              },
+              "gender": {
+                "type": "string",
+                "enum": [
+                  "female",
+                  "male"
+                ]
+              },
+              "siteId": {
+                "type": "string"
+              },
+              "portrait": {
+                "type": "object",
+                "properties": {
+                  "skin": {
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      "medium",
+                      "tan",
+                      "deep"
+                    ]
+                  },
+                  "hair": {
+                    "type": "string",
+                    "enum": [
+                      "short",
+                      "crop",
+                      "bob",
+                      "long",
+                      "bun",
+                      "receding"
+                    ]
+                  },
+                  "hairColor": {
+                    "type": "string",
+                    "enum": [
+                      "black",
+                      "brown",
+                      "gray",
+                      "white",
+                      "auburn"
+                    ]
+                  },
+                  "glasses": {
+                    "type": "boolean"
+                  },
+                  "beard": {
+                    "type": "boolean"
+                  },
+                  "outfitHue": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360
+                  }
+                },
+                "required": [
+                  "skin",
+                  "hair",
+                  "hairColor",
+                  "glasses",
+                  "beard",
+                  "outfitHue"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "role",
+              "ageBand",
+              "gender",
+              "siteId",
+              "portrait"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "customer"
+              },
+              "industry": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "regionId": {
+                "type": "string"
+              },
+              "illustration": {
+                "type": "object",
+                "properties": {
+                  "motif": {
+                    "type": "string"
+                  },
+                  "hue": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360
+                  }
+                },
+                "required": [
+                  "motif",
+                  "hue"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "industry",
+              "regionId",
+              "illustration"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "product"
+              },
+              "category": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "siteId": {
+                "type": "string"
+              },
+              "unitPriceJpy": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "illustration": {
+                "type": "object",
+                "properties": {
+                  "motif": {
+                    "type": "string"
+                  },
+                  "hue": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360
+                  }
+                },
+                "required": [
+                  "motif",
+                  "hue"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "category",
+              "siteId",
+              "unitPriceJpy",
+              "illustration"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "deal"
+              },
+              "customerId": {
+                "type": "string"
+              },
+              "productIds": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ownerId": {
+                "type": "string"
+              },
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "lead",
+                  "proposal",
+                  "negotiation",
+                  "won",
+                  "delivered"
+                ]
+              },
+              "valueJpy": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "closeDate": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "customerId",
+              "productIds",
+              "ownerId",
+              "stage",
+              "valueJpy",
+              "closeDate"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "deliverable"
+              },
+              "dealId": {
+                "type": "string"
+              },
+              "dueDate": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "planned",
+                  "inProgress",
+                  "done"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "dealId",
+              "dueDate",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "invoice"
+              },
+              "deliverableId": {
+                "type": "string"
+              },
+              "amountJpy": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "issuedDate": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "sent",
+                  "paid",
+                  "overdue"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "deliverableId",
+              "amountJpy",
+              "issuedDate",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "issue"
+              },
+              "impact": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "feasibility": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "causeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kpiIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "impact",
+              "feasibility",
+              "causeIds",
+              "kpiIds"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "cause"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "solution"
+              },
+              "issueIds": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kpiIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "msProducts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "costJpy": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "annualBenefitJpy": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "issueIds",
+              "kpiIds",
+              "msProducts",
+              "costJpy",
+              "annualBenefitJpy"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "kpi"
+              },
+              "unit": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "baseline": {
+                "type": "number"
+              },
+              "current": {
+                "type": "number"
+              },
+              "target": {
+                "type": "number"
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "increase",
+                  "decrease"
+                ]
+              },
+              "scale": {
+                "type": "string",
+                "enum": [
+                  "ratio",
+                  "interval"
+                ]
+              },
+              "period": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "ownerId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "unit",
+              "baseline",
+              "current",
+              "target",
+              "direction",
+              "scale",
+              "period",
+              "ownerId"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "initiative"
+              },
+              "solutionId": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "end": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "progress": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "dependsOn": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ownerId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "solutionId",
+              "start",
+              "end",
+              "progress",
+              "dependsOn",
+              "ownerId"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "supplier"
+              },
+              "regionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "regionId"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z]+-[a-z0-9-]+$"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "description": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "world": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "digital"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "site",
+                  "equipment",
+                  "person",
+                  "organization",
+                  "operation",
+                  "thing",
+                  "event",
+                  "data",
+                  "model",
+                  "system",
+                  "ui-component",
+                  "metric"
+                ]
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "internal",
+                  "shareable"
+                ]
+              },
+              "author": {
+                "type": "string",
+                "enum": [
+                  "ai",
+                  "human",
+                  "sample"
+                ]
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "source"
+              },
+              "publisher": {
+                "type": "object",
+                "properties": {
+                  "ja": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "ja",
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "publishedDate": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "world",
+              "type",
+              "classification",
+              "author",
+              "sourceIds",
+              "kind",
+              "publisher",
+              "publishedDate"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "flows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "valueT": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "valueT"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "optimization": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "object",
+          "properties": {
+            "ja": {
+              "type": "string",
+              "minLength": 1
+            },
+            "en": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "ja",
+            "en"
+          ],
+          "additionalProperties": false
+        },
+        "plants": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "siteId": {
+                "type": "string"
+              },
+              "capacityT": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "productionCostPerT": {
+                "type": "number",
+                "minimum": 0
+              },
+              "co2PerT": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "siteId",
+              "capacityT",
+              "productionCostPerT",
+              "co2PerT"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "regionDemandT": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "transportCostPerT": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "leadTimeDays": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "co2TransportPerT": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "currentAllocation": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      },
+      "required": [
+        "period",
+        "plants",
+        "regionDemandT",
+        "transportCostPerT",
+        "leadTimeDays",
+        "co2TransportPerT",
+        "currentAllocation"
+      ],
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "packId",
+    "company",
+    "isSample",
+    "regions",
+    "entities",
+    "flows",
+    "optimization"
+  ],
+  "additionalProperties": false,
+  "$id": "https://business-analytics-studio.local/pack.schema.json",
+  "title": "Business Analytics Studio customer pack",
+  "description": "Generated from src/data/schema.ts by `node scripts/bas.ts schema` (template 0.1.0). Do not edit by hand. Layout: public/data/pack.json (this file), public/brand/ (logo and brand files referenced by extensions.brand), assets/ (other media)."
+}

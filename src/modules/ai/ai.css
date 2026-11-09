@@ -1,0 +1,43 @@
+.ai-stack { display: flex; flex-direction: column; gap: 12px; }
+.ai-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.ai-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
+.ai-label { font-weight: 600; color: var(--colorNeutralForeground2); margin-right: 4px; }
+.ai-h3 { font-size: 1rem; margin: 0; }
+.ai-mock { border: 1px dashed var(--colorPaletteYellowBorder2, var(--colorNeutralStroke1)); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ai-mock-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--colorNeutralForeground2); }
+.ai-reasons { margin: 0; padding-left: 20px; color: var(--colorNeutralForeground2); }
+.ai-answer { white-space: pre-line; margin: 0; color: var(--colorNeutralForeground1); }
+.ai-explain-list, .ai-applied-list, .ai-chat-log, .ai-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ai-explain-list li { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--colorNeutralStroke2); }
+.ai-explain-list li > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-proposal { border: 1px solid var(--colorNeutralStroke2); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ai-proposal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-turn { display: flex; flex-direction: column; gap: 6px; }
+.ai-q { margin: 0; }
+.ai-cites { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-key { display: flex; flex-direction: column; gap: 8px; }
+.ai-table-wrap { overflow-x: auto; }
+.ai-story-scenes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ai-scene { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 10px; background: var(--colorNeutralBackground3); }
+.ai-story-scenes.is-playing .ai-scene { animation: ai-scene-in 600ms ease-out both; }
+.ai-scene-art { width: 56px; height: 56px; flex: none; }
+.ai-scene-ring { fill: none; stroke: var(--colorBrandStroke1); stroke-width: 3; }
+.ai-scene-dot { fill: var(--colorBrandBackground); }
+.ai-story-scenes.is-playing .ai-scene-dot { animation: ai-pulse 1.6s ease-in-out infinite; transform-origin: 32px 32px; }
+.ai-scene-title { margin: 0; font-weight: 600; color: var(--colorNeutralForeground1); }
+.ai-scene-text { margin: 0; color: var(--colorNeutralForeground2); }
+@keyframes ai-scene-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes ai-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+
+.ai-live { border: 1px solid var(--colorPaletteGreenBorder2, var(--colorNeutralStroke1)); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ai-float { position: fixed; left: 16px; bottom: 16px; max-width: min(460px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; }
+.ai-float:empty { display: none; }
+.ai-applied-notice { background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); border: 1px solid var(--colorBrandStroke1); border-radius: 8px; padding: 8px 12px; box-shadow: var(--shadow8); display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.ai-applied-notice summary { cursor: pointer; min-height: 24px; display: flex; align-items: center; color: var(--colorBrandForegroundLink); }
+.ai-applied-notice li { display: flex; flex-direction: column; gap: 2px; }
+.ai-diff { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.ai-diff-before { color: var(--colorNeutralForeground2); }
+.ai-diff-after { color: var(--colorNeutralForeground1); text-decoration: none; font-weight: 600; }
+.ai-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.ai-dl dt { font-weight: 600; color: var(--colorNeutralForeground2); }
+.ai-dl dd { margin: 0; overflow-wrap: anywhere; }

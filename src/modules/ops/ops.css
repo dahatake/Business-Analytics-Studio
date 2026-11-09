@@ -1,0 +1,26 @@
+/* Module 'ops': brand (/brand) and integrations (/integrations). Colours of text come from Fluent tokens. */
+.screen-ops > .panel.span-full { grid-column: 1 / -1; }
+.ops-form { display: grid; gap: 14px; }
+.ops-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ops-error { color: var(--colorPaletteRedForeground1); }
+.ops-color-picker { inline-size: 40px; block-size: 32px; padding: 0; border: 1px solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium); background: transparent; cursor: pointer; }
+.ops-subtitle { margin: 14px 0 6px; font-size: var(--fontSizeBase300); font-weight: var(--fontWeightSemibold); }
+.ops-chip { display: inline-block; inline-size: 14px; block-size: 14px; border-radius: 3px; margin-inline-end: 6px; vertical-align: -2px; border: 1px solid var(--colorNeutralStroke1); }
+.ops-applied { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ops-brand-sample { color: var(--colorBrandForeground1); font-weight: var(--fontWeightSemibold); }
+.ops-ramp { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+.ops-ramp li { display: grid; gap: 4px; font-size: var(--fontSizeBase200); }
+.ops-swatch { display: block; block-size: 44px; border-radius: var(--borderRadiusMedium); border: 1px solid var(--colorNeutralStroke2); }
+.ops-step { font-weight: var(--fontWeightSemibold); }
+.ops-logo-frame { display: inline-flex; border: 1px dashed var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium); }
+.ops-logo-placeholder { display: grid; place-items: center; inline-size: 96px; block-size: 96px; border-radius: var(--borderRadiusXLarge); background: var(--colorBrandBackground); color: var(--colorNeutralForegroundOnBrand); font-size: var(--fontSizeHero700); font-weight: var(--fontWeightSemibold); }
+.ops-list { margin: 10px 0 0; padding-inline-start: 20px; display: grid; gap: 4px; }
+.ops-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.ops-dl dt { color: var(--colorNeutralForeground2); }
+.ops-dl dd { margin: 0; }
+.ops-break { word-break: break-word; }
+.ops-tabular td.num, .ops-tabular { font-variant-numeric: tabular-nums; text-align: end; }
+.ops-int-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.ops-int-card { border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusLarge); padding: 12px 14px; display: grid; gap: 10px; }
+.ops-switches { display: grid; gap: 2px; }
+.ops-send { margin: 0; }

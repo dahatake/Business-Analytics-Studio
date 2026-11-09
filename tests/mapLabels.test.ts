@@ -1,0 +1,35 @@
+import { describe, expect, it } from 'vitest';
+import { visibleLabels, labelWidthPx, type LabelCandidate } from '../src/screens/mapLabels.ts';
+
+const c = (id: string, x: number, y: number, priority: number, width = 100): LabelCandidate => ({ id, x, y, width, height: 16, priority });
+
+describe('FR-035 map label LOD', () => {
+  // Tokyo HQ and Yokohama DC sit about 10 map units apart.
+  const tokyo = c('hq', 500, 300, 3);
+  const yokohama = c('dc', 497, 310, 1);
+  const far = c('plant', 100, 100, 2);
+
+  it('hides the lower-priority label when two overlap at the fitted zoom, and shows both when zoomed in', () => {
+    expect([...visibleLabels([tokyo, yokohama, far], 1)].sort()).toEqual(['hq', 'plant']);
+    expect([...visibleLabels([tokyo, yokohama, far], 3)].sort()).toEqual(['dc', 'hq', 'plant']);
+  });
+
+  it('always shows the selected site', () => {
+    expect(visibleLabels([tokyo, yokohama], 1, new Set(), 'dc').has('dc')).toBe(true);
+  });
+
+  it('uses hysteresis so a label does not flicker at the threshold (PARAM-023)', () => {
+    // Find the first zoom where the DC label appears when zooming in.
+    let kIn = 1;
+    while (!visibleLabels([tokyo, yokohama], kIn).has('dc')) kIn += 0.01;
+    // Slightly below that zoom, a label that is already visible stays visible...
+    expect(visibleLabels([tokyo, yokohama], kIn - 0.02, new Set(['hq', 'dc'])).has('dc')).toBe(true);
+    // ...while a label that was hidden does not appear yet.
+    expect(visibleLabels([tokyo, yokohama], kIn - 0.02, new Set(['hq'])).has('dc')).toBe(false);
+  });
+
+  it('estimates label widths for Japanese and English', () => {
+    expect(labelWidthPx('東京本社')).toBe(48);
+    expect(labelWidthPx('Tokyo HQ')).toBe(58);
+  });
+});

@@ -1,0 +1,43 @@
+# 外部連携カタログ（Integration catalog）
+
+このアプリ（雛形）と生成パイプラインが、外部のアプリ・サービス・データとやり取りする連携を、連携先・方式ごとに 1 行で記録する管理データです（FR-188〜FR-199）。設計書ではありません。要求定義書 §8 の表は、このカタログの要約です（FR-198）。
+
+- 秘密情報（API キー・トークン・接続文字列・パスワード）と個人情報の実データは書きません（NFR-SEC-006）。資格情報は **保管場所の名前** だけを書きます。伏字は `xxx`（`x` を {PARAM-067}=3 文字以上）にします。
+- 「稼働（active）」の連携は、`lastChecked` から {PARAM-066}=180 日を過ぎると検査が警告します（NFR-OPS-001）。
+- 検査: `node scripts/bas.ts integrations check`（列の網羅・値の形式・秘密情報と個人情報・鮮度・影響する要求 ID）。一覧は `integrations list`、影響確認は `integrations impact <id>`。
+- Project ごとの選択と設定は、アプリの「外部連携」画面（/integrations）で行います（FR-201・FR-202。資格情報の値は持たない。NFR-SEC-008）。選択しても外部送信は許可されません。送信の可否は `gate` 列と C-03 の基準表で決まります（FR-203）。
+
+## 列の意味
+
+| 列 | 意味 | 値の例 |
+|---|---|---|
+| id | 連携の ID（英小文字のケバブケース） | `copilot-sdk` |
+| name / partner | 連携の名前・相手先 | GitHub Copilot SDK / GitHub |
+| direction | 方向 | `outbound`（送る）・`inbound`（受け取る）・`bidirectional` |
+| type | 種別 | `sdk`・`api`・`cli`・`search`・`registry`・`file` |
+| sourceOfTruth / identifiers | 正本と、受け渡す識別子 | |
+| status | 状態 | `active`（稼働）・`mock`（スタブのみ。実接続は BLOCKED）・`planned`・`retired` |
+| auth | 認証・認可と、資格情報の保管場所の名前（FR-190） | |
+| dataItems / piiClass | やり取りするデータ項目と、個人情報・機密区分（FR-191） | `none`・`public`・`internal`・`personal` |
+| frequency / volume / sla / timeout | 頻度・量・SLA・タイムアウト（FR-192） | |
+| retry / idempotency / degrade | 失敗時の再試行・冪等性・縮退（FR-193） | |
+| versioning | 版の互換と、変更・廃止の通知の受け取り方（FR-194） | |
+| monitoring | 監視と監査ログ（FR-195） | |
+| terms / cost | 利用規約・ライセンスと費用（FR-196） | |
+| stub | テスト用のスタブ・モック（FR-197） | |
+| gate | 外部送信の条件（FR-203）。`c03:<用途>` は C-03 の基準表の行、`dev-only` は開発・セットアップ時だけ、`blocked:Q-xxx` は未決の質問で停止 | |
+| requirements | 関係する要求 ID（FR-198・FR-199 の影響確認に使う） | |
+| lastChecked | 最終確認日（YYYY-MM-DD） | |
+
+## カタログ
+
+| id | name | partner | direction | type | sourceOfTruth | identifiers | status | auth | dataItems | piiClass | frequency | volume | sla | timeout | retry | idempotency | degrade | versioning | monitoring | terms | cost | stub | gate | requirements | lastChecked |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| copilot-sdk | GitHub Copilot SDK | GitHub | outbound | sdk | 送信内容の正本は端末内（顧客パック・議論データ） | なし（識別子の受け渡しなし） | mock | Copilot CLI の保存済み資格情報、またはトークン（保管場所: ローカル中継プロセスの暗号化保管庫 `bas-relay-vault`。値は書かない） | 議論の内容・顧客パックの一部（C-03 で承認された範囲だけ）。`internal` は送らない | internal | 利用者の操作のたび | 1 回の入力・出力は PARAM-114・PARAM-115 以内 | TBD（Q-118） | 中継で 60 秒 | 再試行しない（利用者が再実行） | 読み取りのみのため冪等 | 未接続・未承認はモック回答（モックと表示） | SDK の版を package-lock で固定。変更は GitHub の changelog で確認 | 利用量を端末内に記録（予算 PARAM-117〜119）。内容はログに残さない | GitHub Copilot の利用規約。契約条件の確認は Q-027 | Copilot のライセンス内。月額は PARAM-117 | src/ai/client.ts の登録済みモック | c03:chat | FR-010・FR-011・FR-121・FR-125・FR-132・C-03・Q-001 | 2026-11-09 |
+| foundry | Microsoft Foundry (Responses API) | Microsoft | outbound | api | 送信内容の正本は端末内 | デプロイ名（設定画面で入力） | mock | API キー（保管場所: ローカル中継プロセスの暗号化保管庫 `bas-relay-vault`。再表示なし） | 現在の画面のコンポーネントのデータ（実接続を有効にした案件だけ）。`internal` は送らない | internal | 利用者の操作のたび | PARAM-113〜PARAM-116 の範囲 | Azure の SLA（契約により異なる。TBD Q-054） | 中継で 60 秒 | 429・5xx は送らずに失敗を表示（自動再試行なし） | 生成のため非冪等。再実行は利用者の明示操作だけ | 未設定・無効・未承認はモック | OpenAI 互換 v1。モデルの廃止は Foundry のモデル廃止情報で確認 | 利用量と費用を端末内で集計。内容は記録しない | Microsoft 製品条項。契約条件の担当者確認は Q-054 | 従量課金（月額は PARAM-117。停止 PARAM-119） | src/ai/client.ts のモック | c03:review | FR-274・FR-278・FR-282・FR-284・FR-285・FR-286・FR-290・NFR-SEC-012・C-03 | 2026-11-09 |
+| azure-speech | Azure AI Speech (speech synthesis) | Microsoft | outbound | api | 台本の正本は端末内 | なし | mock | API キー（保管場所: `.env` の変数名 `AZURE_SPEECH_KEY` を中継が読む。値は書かない） | 台本の文章 | internal | 利用者の操作のたび | 1 台本あたり数千文字 | Azure の SLA（契約による） | 30 秒 | 再試行しない | 同じ台本は同じ音声（キャッシュ可） | キー未設定・無効はモック音声（FR-182） | REST API の版を固定 | 利用回数を端末内に記録 | Microsoft 製品条項 | 有料（文字数課金） | 無音のモック音声 | blocked:Q-002 | FR-080・FR-182・C-07 | 2026-11-09 |
+| azure-vision | Azure AI Vision (handwriting recognition) | Microsoft | outbound | api | 手書きの線の正本は端末内 | なし | mock | API キー（保管場所: `.env` の変数名 `AZURE_VISION_KEY` を中継が読む。値は書かない） | 選んだ手書きの線（画像） | internal | 利用者の操作のたび | 1 回 1 枚 | Azure の SLA（契約による） | 30 秒 | 再試行しない | 読み取りのため冪等 | キー未設定・無効はモック認識（FR-182） | REST API の版を固定 | 利用回数を端末内に記録 | Microsoft 製品条項 | 有料（画像数課金） | 固定文字列を返すモック | blocked:Q-002 | FR-090・FR-182・C-07 | 2026-11-09 |
+| workiq | WorkIQ (internal information search) | Microsoft | inbound | search | 社内情報の正本は Microsoft 365 | 顧客名（検索語） | mock | Copilot Skill の実行者の Microsoft 365 サインイン（アプリは資格情報を持たない） | 顧客名で検索した要旨。機密区分 `internal` を付ける（FR-117） | internal | `research` のたび | 1 顧客あたり数十件 | TBD | PARAM-003 の範囲 | 使えない場合は Web → サンプルの順に切り替えて記録 | 同じ顧客名の再検索は同じ結果を期待（キャッシュ PARAM-004） | サンプルに切り替え「サンプル使用」と理由を記録 | WorkIQ の提供条件に従う | research-cache の sources に取得日時を記録 | Microsoft 365 の利用条件 | Microsoft 365 Copilot のライセンス内 | scripts/lib/research.ts が BLOCKED を記録 | c03:research | FR-117・FR-121・FR-123・C-02・C-07 | 2026-11-09 |
+| web-research | Web research (official site, brand guide, press kit, IR) | Customer public websites | inbound | search | 公開情報の正本は各サイト | 顧客名・ブランド名（検索語） | mock | なし（公開情報） | 会社概要・ブランド（色・ロゴ・書体）の公開情報 | public | `research` のたび | 1 顧客あたり数ページ | なし | PARAM-003 の範囲 | 次の優先順位の出典へ（公式サイト → ブランドガイド → プレスキット → IR → 既定テーマ） | 取得日時を記録 | 既定テーマとサンプルに切り替えて記録（FR-122） | 取得日時と URL を出典に記録 | sources に URL と取得日時 | 各サイトの利用条件。非公式サイトは使わない | 無料 | scripts/lib/research.ts が BLOCKED を記録 | c03:brandResearch | FR-121・FR-122・FR-123・C-07 | 2026-11-09 |
+| npm-registry | npm registry (dependencies) | npm (GitHub) | inbound | registry | package-lock.json | パッケージ名と版 | active | なし（公開レジストリ。トークン不要） | 公開パッケージ（顧客情報は送らない） | none | セットアップのたび（`npm ci`） | 依存一式 | npm の公開ステータスに従う | npm の既定 | npm の再試行に任せる。失敗時はセットアップを止めて原因を表示 | `npm ci` は lock に従うため冪等 | 失敗時は既存の node_modules を使い続ける | package-lock で固定。更新は依存の更新時だけ | セットアップの出力 | 各パッケージのライセンス（CREDITS.md） | 無料 | なし（オフライン時は既存の node_modules） | dev-only | FR-107・FR-108・C-06 | 2026-11-09 |
+| github-cli | GitHub CLI (gh) | GitHub | bidirectional | cli | リポジトリの正本は GitHub | リポジトリ名・PR 番号 | active | gh の保存済み資格情報（保管場所: OS の資格情報マネージャー。アプリは使わない） | ソースコードと Issue・PR（顧客パック・調査キャッシュはコミットしない。C-02） | none | 開発者の操作のたび | 小 | GitHub の SLA | gh の既定 | 失敗時は手動で再実行 | 操作ごと | アプリの動作には影響しない | gh の版に従う | GitHub の監査ログ | GitHub の利用規約 | 無料（プランによる） | なし（開発用の道具） | dev-only | FR-011・FR-120・C-02 | 2026-11-09 |

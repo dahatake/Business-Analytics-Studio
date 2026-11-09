@@ -1,0 +1,10 @@
+node_modules
+dist
+test-results
+playwright-report
+dist-*
+.bas-local
+research-cache
+work
+logs
+test-results-*

@@ -1,0 +1,233 @@
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import {
+  Badge, Button, FluentProvider, Spinner, Text, Tooltip, createDarkTheme, createLightTheme, type Theme,
+} from '@fluentui/react-components';
+import {
+  Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular,
+} from '@fluentui/react-icons';
+import { MotionBehaviourProvider } from '@fluentui/react-motion';
+import { useI18n, type Lang } from './i18n/index.ts';
+import { useSettings } from './state/settings.ts';
+import { useEffectiveDark, useReducedMotion } from './state/motion.ts';
+import { hrefFor, useRoute } from './state/router.ts';
+import { sound } from './audio/sound.ts';
+import { loaded } from './data/pack.ts';
+import { LiveFeedBar } from './ui/LiveFeedBar.tsx';
+import { DetailCardHost } from './ui/DetailCardHost.tsx';
+import { Opening } from './ui/Opening.tsx';
+import { NotFound } from './screens/NotFound.tsx';
+import { EntityPage } from './screens/EntityPage.tsx';
+import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
+import { ActionSlots, ContextSlot, Overlays } from './app/globals.tsx';
+import { useBrandVariants } from './modules/ops/theme.ts';
+
+/** Fluent themes from the 16-step brand ramp (PARAM-017). Dark mode lifts brand foregrounds for contrast. */
+function useThemes(): { dark: Theme; light: Theme } {
+  const brand = useBrandVariants();
+  return useMemo(() => ({
+    dark: { ...createDarkTheme(brand), colorBrandForeground1: brand[120], colorBrandForeground2: brand[130], colorBrandForegroundLink: brand[130], colorBrandForegroundLinkHover: brand[140] },
+    light: createLightTheme(brand),
+  }), [brand]);
+}
+
+function LanguageToggle() {
+  const { t, lang } = useI18n();
+  const setLang = useSettings((s) => s.setLang);
+  const options: { value: Lang; label: string }[] = [
+    { value: 'ja', label: '日本語' },
+    { value: 'en', label: 'English' },
+  ];
+  return (
+    <div role="group" aria-label={t('lang.label')} className="lang-toggle" data-testid="lang-toggle">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          lang={o.value}
+          className="lang-option"
+          aria-pressed={lang === o.value}
+          onClick={() => {
+            setLang(o.value);
+            sound.play('toggle');
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TopBar() {
+  const { t, tx } = useI18n();
+  const { muted, setMuted, setMotion, audience, setAudience } = useSettings();
+  const reduced = useReducedMotion();
+  return (
+    <header className="topbar">
+      <div className="topbar-row">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden />
+          <Text weight="semibold" size={400} className="brand-name">{t('app.title')}</Text>
+        </div>
+        <div className="topbar-context">
+          <Text className="topbar-company">{tx(loaded.pack.company.name)}</Text>
+          {loaded.pack.isSample && <Badge appearance="tint" color="informative">{t('badge.samplePack')}</Badge>}
+        </div>
+        <div className="topbar-work">
+          <ContextSlot />
+        </div>
+        <LanguageToggle />
+      </div>
+      <div className="topbar-row commandbar" role="toolbar" aria-label={t('topbar.commands')}>
+        <div className="commandbar-actions">
+          <ActionSlots />
+        </div>
+        <div className="commandbar-view">
+          <Tooltip content={t('audience.help')} relationship="description">
+            <Button
+              size="small"
+              appearance={audience === 'external' ? 'primary' : 'subtle'}
+              icon={audience === 'external' ? <LockClosed16Regular /> : <Eye16Regular />}
+              onClick={() => setAudience(audience === 'external' ? 'internal' : 'external')}
+              data-testid="audience-toggle"
+            >
+              {t(`audience.${audience}`)}
+            </Button>
+          </Tooltip>
+          <Button size="small" appearance="subtle" icon={<Accessibility24Regular />} aria-pressed={reduced} onClick={() => setMotion(reduced ? 'full' : 'reduce')} data-testid="motion-toggle">
+            {t('motion.reduceShort')}
+          </Button>
+          <Button size="small" appearance="subtle" icon={muted ? <SpeakerMute24Regular /> : <Speaker224Regular />} aria-pressed={!muted} onClick={() => setMuted(!muted)} data-testid="sound-toggle">
+            {t('sound.short')}
+          </Button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/** Keeps --chrome-h equal to the sticky header + live feed height, so the nav rail sits right below it at any wrap. */
+function useChromeHeight(ref: React.RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const apply = () => el.parentElement?.style.setProperty('--chrome-h', `${Math.round(el.getBoundingClientRect().height)}px`);
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+}
+
+function isActive(path: string, current: string) {
+  if (path === '/') return current === '/';
+  return current === path || current.startsWith(`${path}/`) || (path === '/directory' && current.startsWith('/entity'));
+}
+
+function NavRail({ current }: { current: string }) {
+  const { t } = useI18n();
+  return (
+    <nav className="rail" aria-label={t('nav.label')}>
+      {NAV_GROUPS.map(({ group, label }) => (
+        <div key={group} className="rail-group">
+          <h2 className="rail-group-title" id={`nav-${group}`}>{t(label)}</h2>
+          <ul aria-labelledby={`nav-${group}`}>
+            {SCREENS.filter((s) => s.group === group).map(({ path, label: itemLabel, Icon }) => (
+              <li key={path}>
+                <a href={hrefFor(path)} className="rail-link" aria-current={isActive(path, current) ? 'page' : undefined} onClick={() => sound.play('tap')}>
+                  <Icon aria-hidden />
+                  <span>{t(itemLabel)}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function Screen() {
+  const { t } = useI18n();
+  const route = useRoute();
+  const [first, second] = route.segments;
+  if (first === 'entity') return second ? <EntityPage id={second} /> : <NotFound />;
+  const def = screenFor(route.path);
+  if (!def) return <NotFound />;
+  const Component = def.component;
+  return (
+    <Suspense fallback={<Spinner className="screen-loading" label={t('app.loading')} />}>
+      <Component />
+    </Suspense>
+  );
+}
+
+export function App() {
+  const { t, lang } = useI18n();
+  const dark = useEffectiveDark();
+  const reduced = useReducedMotion();
+  const route = useRoute();
+  const { muted, bgm, sfx, volume } = useSettings();
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dataset.motion = reduced ? 'reduced' : 'full';
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  }, [lang, reduced, dark]);
+
+  useEffect(() => {
+    sound.configure({ muted, bgm, sfx, volume });
+  }, [muted, bgm, sfx, volume]);
+
+  // F-3.2.3: going back restores the scroll position of that exact URL (query state is in the URL itself).
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => sessionStorage.setItem(`scroll:${window.location.hash}`, String(window.scrollY)));
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  useLayoutEffect(() => {
+    const saved = sessionStorage.getItem(`scroll:${window.location.hash}`);
+    window.scrollTo(0, saved ? Number(saved) : 0);
+  }, [route.path]);
+
+  const themes = useThemes();
+  const chromeRef = useRef<HTMLDivElement>(null);
+  useChromeHeight(chromeRef);
+  const navItem = useMemo(() => (route.segments[0] === 'entity' ? undefined : screenFor(route.path)), [route.path, route.segments]);
+  useEffect(() => {
+    document.title = `${navItem ? t(navItem.label) : t('app.title')} · ${t('app.title')}`;
+  }, [navItem, t]);
+
+  return (
+    <FluentProvider theme={dark ? themes.dark : themes.light}>
+      {/* Fluent's motion components use the Web Animations API, which the CSS rule for reduced motion cannot stop. */}
+      <MotionBehaviourProvider value={reduced ? 'skip' : 'default'}>
+      {/* Layout styles live on an inner wrapper: Fluent copies the provider className onto portal mount nodes. */}
+      <div className={`app ${dark ? 'theme-dark' : 'theme-light'}`} data-motion={reduced ? 'reduced' : 'full'}>
+      <div className="aurora" aria-hidden />
+      <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>{t('a11y.skip')}</button>
+      <div className="chrome" ref={chromeRef}>
+        <TopBar />
+        <LiveFeedBar />
+      </div>
+      <div className="layout">
+        <NavRail current={route.path} />
+        <main id="main" tabIndex={-1} className="main" key={route.path}>
+          <Screen />
+        </main>
+      </div>
+      <DetailCardHost />
+      <Overlays />
+      <Opening />
+      </div>
+      </MotionBehaviourProvider>
+    </FluentProvider>
+  );
+}
+
+
+

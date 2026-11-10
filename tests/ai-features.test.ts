@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { DEFAULT_MONTHLY_BUDGET_JPY } from '../src/ai/policy.ts';
 import { loaded } from '../src/data/pack.ts';
-import { useAiSettings, isConfigured, liveReady, parseBudget, runtimeSettings } from '../src/modules/ai/settingsStore.ts';
+import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, liveReady, parseBudget, runtimeSettings } from '../src/modules/ai/settingsStore.ts';
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
 import {
@@ -198,9 +198,9 @@ describe('explain fallback (FR-274/277)', () => {
 
 
 const CONNECTION = { endpoint: 'https://res.openai.azure.com', deployment: 'gpt', apiVersion: '2024-10-21' };
-const READY = { liveEnabled: true, relayConnection: CONNECTION, foundryKeySaved: true, priceInputPerM: '1000', priceOutputPerM: '4000' };
+const READY = { liveEnabled: true, relayConnection: CONNECTION, connectionVerifiedAt: '2026-11-10T00:00:00Z', foundryKeySaved: true, priceInputPerM: '1000', priceOutputPerM: '4000' };
 const OFF = {
-  liveEnabled: false, endpoint: '', deployment: '', foundryKeySaved: false, relayConnection: null, provider: 'foundry' as const, authMethod: 'apiKey' as const,
+  liveEnabled: false, endpoint: '', deployment: '', foundryKeySaved: false, relayConnection: null, connectionVerifiedAt: null, provider: 'foundry' as const, authMethod: 'apiKey' as const,
   priceInputPerM: '', priceOutputPerM: '', monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
 };
 
@@ -216,6 +216,61 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     });
   });
   afterEach(() => setLiveTransport(null));
+
+  it('explains project URLs and v1 formats, and guards diagnostic costs before sending', () => {
+    expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/api/projects/project' })).toBe('projectEndpoint');
+    expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/openai/v1/' })).toBeNull();
+    const state = useAiSettings.getState();
+    expect(connectionTestPreflight(state).prices).toBeNull();
+    const ready = { ...state, ...READY };
+    expect(connectionTestPreflight(ready).estimatedCostJpy).toBeCloseTo((200 * 1000 + 256 * 4000) / 1_000_000 * 1.2);
+    expect(connectionTestPreflight({ ...ready, monthlyBudgetJpy: 0 }).budget.allowed).toBe(false);
+  });
+
+  it('refuses an unpriced or over-budget diagnostic without network access', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    try {
+      expect(await useAiSettings.getState().saveConnection()).toEqual({ ok: false, error: 'noUnitPrice' });
+      useAiSettings.setState({ ...READY, monthlyBudgetJpy: 0 });
+      expect(await useAiSettings.getState().saveConnection()).toEqual({ ok: false, error: 'budget' });
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+  });
+
+  it.each([
+    ['dnsFailure', 0], ['unauthorized', 0], ['timeout', 1], ['badProviderResponse', 1],
+  ] as const)('records diagnostic %s honestly without marking it verified', async (error, records) => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (url === '/relay/session') return new Response('{"token":"test-session"}');
+      if (url === '/relay/status') return new Response(JSON.stringify({ connection: CONNECTION, secrets: { foundryKey: true }, connectionVerifiedAt: null }));
+      return new Response(JSON.stringify({ error }), { status: 502 });
+    });
+    try {
+      useAiSettings.setState({ ...READY, ...CONNECTION });
+      expect(await useAiSettings.getState().saveConnection()).toMatchObject({ ok: false, error });
+      expect(readLedger()).toHaveLength(records);
+      if (records) expect(readLedger()[0]!.costJpy).toBeGreaterThan(0);
+      expect(isConfigured(useAiSettings.getState())).toBe(false);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('records actual diagnostic usage and refreshes persisted verification', async () => {
+    const at = new Date().toISOString();
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (url === '/relay/session') return new Response('{"token":"test-session"}');
+      const status = { connection: CONNECTION, connectionVerifiedAt: at };
+      return new Response(JSON.stringify(url === '/relay/status'
+        ? { ...status, secrets: { foundryKey: true } }
+        : { ...status, usage: { inputTokens: 30, outputTokens: 1 } }));
+    });
+    try {
+      useAiSettings.setState({ ...READY, ...CONNECTION });
+      expect(await useAiSettings.getState().saveConnection()).toMatchObject({ ok: true });
+      expect(isConfigured(useAiSettings.getState())).toBe(true);
+      expect(readLedger()).toHaveLength(1);
+      expect(readLedger()[0]).toMatchObject({ use: 'connectionTest', inputTokens: 30, outputTokens: 1, costJpy: 0.034 });
+    } finally { spy.mockRestore(); }
+  });
 
   it('is off and unconfigured by default, with the 100,000 JPY budget and no prices, so nothing is sent', async () => {
     expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
@@ -327,12 +382,13 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
   });
 
   it('"configured" means the relay holds what it needs: Foundry endpoint, deployment and key, or (D-12) a Copilot model; Entra ID never counts (C-07)', () => {
-    const s = { relayConnection: CONNECTION, foundryKeySaved: true };
+    const s = { relayConnection: CONNECTION, foundryKeySaved: true, connectionVerifiedAt: '2026-11-10T00:00:00Z' };
     expect(isConfigured({ ...s, provider: 'copilotSdk', authMethod: 'apiKey' })).toBe(false);
     expect(isConfigured({ ...s, provider: 'copilotSdk', authMethod: 'apiKey', copilotModel: 'gpt-5' })).toBe(true);
     expect(isConfigured({ relayConnection: null, foundryKeySaved: false, provider: 'copilotSdk', authMethod: 'entraId', copilotModel: 'gpt-5' })).toBe(true);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'entraId' })).toBe(false);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'apiKey' })).toBe(true);
+    expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'apiKey', connectionVerifiedAt: null })).toBe(false);
     expect(isConfigured({ ...s, relayConnection: null, provider: 'foundry', authMethod: 'apiKey' })).toBe(false);
     expect(isConfigured({ ...s, foundryKeySaved: false, provider: 'foundry', authMethod: 'apiKey' })).toBe(false);
   });

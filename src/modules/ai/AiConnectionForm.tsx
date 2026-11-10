@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import {
-  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
+  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
   Radio, RadioGroup, Select, Spinner, Switch,
 } from '@fluentui/react-components';
 import { ArrowSync20Regular, Delete20Regular, Key20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { D4Warning } from './AiCommon.tsx';
+import { D4Warning, yenFine } from './AiCommon.tsx';
 import { type ConnectionSaveError, type SecretName } from './relayClient.ts';
-import { isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { connectionDraftProblem, connectionTestPreflight, isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { isFoundryV1 } from '../../ai/foundry.ts';
 import './ai.css';
 
 /** API key entry: write-only. The value goes to the relay and is cleared; only "saved" is ever shown (NFR-SEC-001/005/012). */
@@ -63,14 +64,42 @@ export function KeyField({ name, label, testId }: { name: SecretName; label: str
 
 /** FR-275 common connection, saved in the relay (endpoint, deployment, API version). The browser keeps a copy for display. */
 export function ConnectionActions() {
-  const { t } = useI18n();
+  const { t, fmt } = useI18n();
   const s = useAiSettings();
   const [message, setMessage] = useState<'saved' | 'deleted' | ConnectionSaveError | null>(null);
+  const [providerStatus, setProviderStatus] = useState<number | undefined>();
+  const [testing, setTesting] = useState(false);
+  const [consent, setConsent] = useState(false);
   const relay = s.relayConnection;
+  const problem = connectionDraftProblem(s);
+  const precheck = connectionTestPreflight(s);
+  const [, refreshBudget] = useState(0);
+  const coolingDown = precheck.budget.reasons.includes('tooSoon');
+  useEffect(() => {
+    if (!coolingDown) return;
+    const timer = setTimeout(() => refreshBudget((v) => v + 1), 5_000);
+    return () => clearTimeout(timer);
+  }, [coolingDown]);
   const differs = relay !== null && (relay.endpoint !== s.endpoint.trim() || relay.deployment !== s.deployment.trim() || relay.apiVersion !== s.apiVersion.trim());
+  useEffect(() => {
+    setMessage(null);
+    setProviderStatus(undefined);
+    setConsent(false);
+  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.priceInputPerM, s.priceOutputPerM, s.monthlyBudgetJpy]);
   const save = async () => {
-    const r = await s.saveConnection();
-    setMessage(r.ok ? 'saved' : r.error);
+    setTesting(true);
+    setMessage(null);
+    setProviderStatus(undefined);
+    try {
+      const r = await s.saveConnection();
+      setMessage(r.ok ? 'saved' : r.error);
+      setProviderStatus(r.ok ? undefined : r.providerStatus);
+    } catch {
+      setMessage('failed');
+    } finally {
+      setTesting(false);
+      setConsent(false);
+    }
   };
   const remove = async () => {
     setMessage((await s.deleteConnection()) ? 'deleted' : 'failed');
@@ -79,14 +108,21 @@ export function ConnectionActions() {
     <div className="ai-stack">
       <p className="ai-status" data-testid="ai-relay-connection">
         <span>{t('ai.conn.relayLabel')}</span>
-        <Badge appearance="tint" color={relay ? 'success' : 'informative'}>{relay ? t('ai.conn.saved') : t('ai.conn.notSaved')}</Badge>
+        <Badge appearance="tint" color={s.connectionVerifiedAt ? 'success' : 'informative'}>{s.connectionVerifiedAt ? t('ai.conn.verified') : relay ? t('ai.conn.unverified') : t('ai.conn.notSaved')}</Badge>
       </p>
+      {s.connectionVerifiedAt && <p className="muted" data-testid="ai-connection-verified-at">{t('ai.conn.verifiedAt', { at: s.connectionVerifiedAt })}</p>}
       {differs && <p className="muted" data-testid="ai-relay-connection-differs">{t('ai.conn.differs', { endpoint: relay.endpoint, deployment: relay.deployment })}</p>}
+      {problem && <p role="alert" data-testid="ai-connection-validation">{t(`ai.conn.msg.${problem}`)}</p>}
+      <p className="muted" data-testid="ai-connection-test-info">{t('ai.conn.testInfo')}</p>
+      <p className="muted" data-testid="ai-connection-test-cost">{precheck.estimatedCostJpy === null ? t('ai.conn.msg.noUnitPrice') : t('ai.conn.testCost', { cost: yenFine(fmt.locale, precheck.estimatedCostJpy) })}</p>
+      {!s.foundryKeySaved && <p className="muted">{t('ai.conn.msg.keyMissing')}</p>}
+      {!precheck.budget.allowed && <p role="alert">{t('ai.conn.msg.budget')}</p>}
+      <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={testing} label={t('ai.conn.consent')} data-testid="ai-connection-consent" />
       <div className="ai-row">
-        <Button appearance="primary" icon={<PlugConnected20Regular />} onClick={() => void save()} disabled={!s.relayReachable} data-testid="ai-connection-save">{t('ai.conn.save')}</Button>
-        <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!s.relayReachable || (relay === null && s.endpoint === '' && s.deployment === '')} data-testid="ai-connection-delete">{t('ai.conn.delete')}</Button>
+        <Button appearance="primary" icon={testing ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void save()} disabled={testing || !s.relayReachable || !s.foundryKeySaved || s.authMethod !== 'apiKey' || !!problem || !consent || !precheck.prices || !precheck.budget.allowed} data-testid="ai-connection-save">{t(testing ? 'ai.conn.testing' : 'ai.conn.save')}</Button>
+        <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={testing || !s.relayReachable || (relay === null && s.endpoint === '' && s.deployment === '')} data-testid="ai-connection-delete">{t('ai.conn.delete')}</Button>
       </div>
-      {message && <p role="status" className="muted" data-testid="ai-connection-msg">{t(`ai.conn.msg.${message}`)}</p>}
+      {message && <MessageBar intent={message === 'saved' || message === 'deleted' ? 'success' : 'error'} data-testid="ai-connection-msg"><MessageBarBody>{t(`ai.conn.msg.${message}`)}{providerStatus !== undefined && ` (HTTP ${providerStatus})`}</MessageBarBody></MessageBar>}
     </div>
   );
 }
@@ -140,11 +176,11 @@ export function FoundryFields() {
       <Field label={t('ai.settings.endpoint')} hint={t('ai.settings.endpointHint')}>
         <Input value={s.endpoint} onChange={(_, d) => s.update({ endpoint: d.value })} data-testid="ai-endpoint" />
       </Field>
-      <Field label={t('ai.settings.deployment')}>
+      <Field label={t('ai.settings.deployment')} hint={t('ai.settings.deploymentHint')}>
         <Input value={s.deployment} onChange={(_, d) => s.update({ deployment: d.value })} data-testid="ai-deployment" />
       </Field>
-      <Field label={t('ai.settings.apiVersion')}>
-        <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} data-testid="ai-api-version" />
+      <Field label={t('ai.settings.apiVersion')} hint={isFoundryV1(s.endpoint.replace(/\/$/, '')) ? t('ai.settings.v1Hint') : undefined}>
+        <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={isFoundryV1(s.endpoint.replace(/\/$/, ''))} data-testid="ai-api-version" />
       </Field>
       <RadioGroup value={s.authMethod} onChange={(_, d) => s.update({ authMethod: d.value as AuthMethod })} aria-labelledby="ai-lbl-auth">
         <span id="ai-lbl-auth" className="ai-label">{t('ai.settings.auth')}</span>
@@ -152,8 +188,8 @@ export function FoundryFields() {
         <Radio value="entraId" label={t('ai.auth.entraId')} />
       </RadioGroup>
       {s.authMethod === 'entraId' && <p className="muted">{t('ai.auth.entraIdNote')}</p>}
-      <ConnectionActions />
       <KeyField name="foundryKey" label={t('ai.key.foundry')} testId="ai-foundry-key" />
+      <ConnectionActions />
       <p className="ai-status" data-testid="ai-key-protection">
         <span>{t('ai.keyProtection.label')}</span>
         <Badge appearance="tint" color={s.keyProtection === 'dpapi' ? 'success' : 'informative'} data-protection={s.keyProtection ?? 'unknown'}>
@@ -284,7 +320,7 @@ export function AiReadiness() {
       {items.map(([key, ok]) => (
         <li key={key} data-ok={ok}>
           <Badge appearance="tint" color={ok ? 'success' : 'warning'}>{ok ? t('ai.ready.ok') : t('ai.ready.missing')}</Badge>
-          <span>{t(`ai.ready.${key}`)}</span>
+          <span>{t(key === 'configured' && s.provider === 'foundry' ? 'ai.ready.verified' : `ai.ready.${key}`)}</span>
         </li>
       ))}
     </ul>

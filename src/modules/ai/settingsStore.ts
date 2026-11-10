@@ -1,18 +1,19 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { parseRequestPrice, parseUnitPrices, type UnitPrices } from '../../ai/budget.ts';
-import { setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
-import { DEFAULT_MONTHLY_BUDGET_JPY } from '../../ai/policy.ts';
+import { actualCostJpy, checkBudget, estimateCostJpy, parseRequestPrice, parseUnitPrices, type UnitPrices } from '../../ai/budget.ts';
+import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
+import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
+import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY } from '../../ai/policy.ts';
 import {
   deleteCopilotSettings, deleteRelayConnection, deleteSecret, fetchCopilotStatus, fetchRelayStatus, saveCopilotModel, saveRelayConnection, saveSecret,
-  type ConnectionSaveError, type CopilotStatusInfo, type KeyProtection, type RelayConnectionInfo, type SecretName,
+  type ConnectionSaveResult, type CopilotStatusInfo, type KeyProtection, type RelayConnectionInfo, type SecretName,
 } from './relayClient.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
 
 /** Azure OpenAI chat-completions API version used when none is entered (also the relay's default). */
-export const DEFAULT_API_VERSION = '2024-10-21';
+export const DEFAULT_API_VERSION = DEFAULT_FOUNDRY_API_VERSION;
 
 /** D-3: the single monthly budget is an integer number of JPY ≥ 0. Returns null for anything else. */
 export function parseBudget(raw: string): number | null {
@@ -50,6 +51,7 @@ export interface AiSettingsState {
   foundryKeySaved: boolean;
   speechKeySaved: boolean;
   relayConnection: RelayConnectionInfo | null;
+  connectionVerifiedAt: string | null;
   keyProtection: KeyProtection | null;
   /** The Copilot model saved in the relay (the copy that sends). */
   copilotModel: string | null;
@@ -64,7 +66,7 @@ export interface AiSettingsState {
   saveKey: (name: SecretName, value: string) => Promise<boolean>;
   deleteKey: (name: SecretName) => Promise<boolean>;
   /** Saves endpoint, deployment and API version in the relay (connection.json). */
-  saveConnection: () => Promise<{ ok: true } | { ok: false; error: ConnectionSaveError }>;
+  saveConnection: () => Promise<ConnectionSaveResult>;
   /** Deletes the common connection (relay and browser copy) and turns live off. A legacy record is left as it is (P-01 ⑤). */
   deleteConnection: () => Promise<boolean>;
 }
@@ -90,6 +92,7 @@ export const useAiSettings = create<AiSettingsState>()(
       foundryKeySaved: false,
       speechKeySaved: false,
       relayConnection: null,
+      connectionVerifiedAt: null,
       keyProtection: null,
       copilotModel: null,
       copilotStatus: null,
@@ -98,7 +101,7 @@ export const useAiSettings = create<AiSettingsState>()(
         const s = await fetchRelayStatus();
         set({
           relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, speechKeySaved: s.secrets.speechKey,
-          relayConnection: s.connection, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
+          relayConnection: s.connection, connectionVerifiedAt: s.connectionVerifiedAt, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
         });
       },
       checkCopilot: async () => {
@@ -128,10 +131,23 @@ export const useAiSettings = create<AiSettingsState>()(
       },
       saveConnection: async () => {
         const s = get();
+        const precheck = connectionTestPreflight(s);
+        if (!precheck.prices) return { ok: false, error: 'noUnitPrice' };
+        if (!precheck.budget.allowed) return { ok: false, error: 'budget' };
         const r = await saveRelayConnection({ endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION });
-        if (r.ok) set({ endpoint: r.connection.endpoint, deployment: r.connection.deployment, apiVersion: r.connection.apiVersion });
+        if (r.usage || (!r.ok && ['timeout', 'aborted', 'networkError', 'providerError', 'badProviderResponse', 'failed'].includes(r.error))) {
+          appendLedger({
+            at: new Date().toISOString(), use: 'connectionTest', inputTokens: r.usage?.inputTokens ?? 200,
+            outputTokens: r.usage?.outputTokens ?? 0,
+            costJpy: r.usage ? actualCostJpy(r.usage.inputTokens, r.usage.outputTokens, precheck.prices) : precheck.estimatedCostJpy!,
+          });
+        }
+        const current = get();
+        if (r.ok && current.endpoint === s.endpoint && current.deployment === s.deployment && current.apiVersion === s.apiVersion) {
+          set({ endpoint: r.connection.endpoint, deployment: r.connection.deployment, apiVersion: r.connection.apiVersion });
+        }
         await get().refreshRelay();
-        return r.ok ? { ok: true } : r;
+        return r;
       },
       deleteConnection: async () => {
         const ok = await deleteRelayConnection();
@@ -160,14 +176,29 @@ export const useAiSettings = create<AiSettingsState>()(
 );
 
 /**
- * "Configured" = the relay can send for the chosen provider: Foundry endpoint, deployment and API key saved in the relay,
+ * "Configured" = Foundry endpoint, deployment and current API key have passed a live test in the relay,
  * or a GitHub Copilot model saved in the relay (D-12; the CLI sign-in is re-checked by the relay on every call).
  * Entra ID sign-in for Foundry is a manual step outside this app (C-07: BLOCKED), so it never counts as configured.
  */
-export function isConfigured(s: Pick<AiSettingsState, 'provider' | 'authMethod' | 'foundryKeySaved' | 'relayConnection'> & Partial<Pick<AiSettingsState, 'copilotModel'>>): boolean {
+export function isConfigured(s: Pick<AiSettingsState, 'provider' | 'authMethod' | 'foundryKeySaved' | 'relayConnection'> & Partial<Pick<AiSettingsState, 'copilotModel' | 'connectionVerifiedAt'>>): boolean {
   if (s.provider === 'copilotSdk') return (s.copilotModel ?? null) !== null;
   if (s.authMethod === 'entraId') return false;
-  return s.relayConnection !== null && s.foundryKeySaved;
+  return s.relayConnection !== null && s.foundryKeySaved && !!s.connectionVerifiedAt;
+}
+
+export function connectionDraftProblem(s: Pick<AiSettingsState, 'endpoint' | 'deployment' | 'apiVersion'>) {
+  // Loopback HTTP is still refused by the relay unless its explicit test-only switch is set.
+  const parsed = parseFoundryConnection({ endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION }, true);
+  return parsed.ok ? null : parsed.error;
+}
+
+export function connectionTestPreflight(s: Pick<AiSettingsState, 'priceInputPerM' | 'priceOutputPerM' | 'monthlyBudgetJpy'>) {
+  const prices = parseUnitPrices(s.priceInputPerM, s.priceOutputPerM);
+  const estimatedCostJpy = prices ? estimateCostJpy(200, CONNECTION_TEST_MAX_TOKENS, prices) : null;
+  const budget = checkBudget(readLedger(), new Date(), {
+    use: 'connectionTest', estimatedInputTokens: 200, maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, estimatedCostJpy: estimatedCostJpy ?? 0,
+  }, { ...AI_LIMITS, monthlyBudgetJpy: s.monthlyBudgetJpy });
+  return { prices, estimatedCostJpy, budget };
 }
 
 /** Prices for the chosen provider: token prices for Foundry, JPY per premium request × model multiplier for Copilot. */

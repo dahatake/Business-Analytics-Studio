@@ -1,4 +1,5 @@
 import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
+import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
 export type SecretName = 'foundryKey' | 'speechKey';
@@ -15,12 +16,13 @@ export interface RelayStatus {
   reachable: boolean;
   secrets: Record<SecretName, boolean>;
   connection: RelayConnectionInfo | null;
+  connectionVerifiedAt: string | null;
   keyProtection: KeyProtection | null;
   /** GitHub Copilot model saved in the relay (D-12). */
   copilot: { model: string } | null;
 }
 
-const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, keyProtection: null, copilot: null };
+const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null };
 
 /**
  * The relay's per-launch token, kept in memory only (never in browser storage). It is handed out on POST so that the
@@ -75,11 +77,12 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null };
     return {
       reachable: true,
       secrets: { foundryKey: body.secrets?.foundryKey === true, speechKey: body.secrets?.speechKey === true },
       connection: asConnection(body.connection),
+      connectionVerifiedAt: typeof body.connectionVerifiedAt === 'string' ? body.connectionVerifiedAt : null,
       keyProtection: body.keyProtection === 'dpapi' || body.keyProtection === 'file' ? body.keyProtection : null,
       copilot: typeof body.copilot?.model === 'string' ? { model: body.copilot.model } : null,
     };
@@ -110,23 +113,32 @@ export async function deleteSecret(name: SecretName): Promise<boolean> {
   }
 }
 
-export type ConnectionSaveError = 'invalidEndpoint' | 'hostNotAllowed' | 'invalidDeployment' | 'invalidApiVersion' | 'failed';
+export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'c03NotApproved' | 'noUnitPrice' | 'budget' | 'failed';
+export interface ConnectionUsage { inputTokens: number; outputTokens: number }
+export type ConnectionSaveResult =
+  | { ok: true; connection: RelayConnectionInfo; connectionVerifiedAt: string; usage: ConnectionUsage }
+  | { ok: false; error: ConnectionSaveError; providerStatus?: number; usage?: ConnectionUsage };
 
 /** Saves the non-secret connection in the relay (validated there: https, no credentials, deployment pattern). */
-export async function saveRelayConnection(c: RelayConnectionInfo): Promise<{ ok: true; connection: RelayConnectionInfo } | { ok: false; error: ConnectionSaveError }> {
+export async function saveRelayConnection(c: RelayConnectionInfo): Promise<ConnectionSaveResult> {
   try {
     const res = await relayFetch('/relay/connection', {
       method: 'PUT',
       extraHeaders: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
+      signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS + 5_000),
     });
-    const body = (await res.json()) as { connection?: unknown; error?: string };
+    const body = (await res.json()) as { connection?: unknown; connectionVerifiedAt?: unknown; usage?: ConnectionUsage; error?: string; providerStatus?: number };
     const saved = asConnection(body.connection);
-    if (res.ok && saved) return { ok: true, connection: saved };
-    const known: ConnectionSaveError[] = ['invalidEndpoint', 'hostNotAllowed', 'invalidDeployment', 'invalidApiVersion'];
-    return { ok: false, error: known.find((k) => k === body.error) ?? 'failed' };
-  } catch {
-    return { ok: false, error: 'failed' };
+    const usage = body.usage && Number.isFinite(body.usage.inputTokens) && body.usage.inputTokens >= 0 &&
+      Number.isFinite(body.usage.outputTokens) && body.usage.outputTokens >= 0 ? body.usage : undefined;
+    if (res.ok && saved && usage && typeof body.connectionVerifiedAt === 'string') {
+      return { ok: true, connection: saved, connectionVerifiedAt: body.connectionVerifiedAt, usage };
+    }
+    const known: ConnectionSaveError[] = [...CONNECTION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon', 'c03NotApproved'];
+    return { ok: false, error: known.find((k) => k === body.error) ?? 'failed', providerStatus: body.providerStatus, usage };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };
   }
 }
 

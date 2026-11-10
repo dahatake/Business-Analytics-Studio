@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
@@ -9,6 +9,10 @@ import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
 import { COPILOT_MODEL_PATTERN, CopilotError, CopilotService } from './copilot.ts';
 import { SiteError, fetchSitePages } from './site.ts';
+import {
+  CONNECTION_TEST_MAX_TOKENS, CONNECTION_TEST_PROMPT, CONNECTION_TEST_TIMEOUT_MS, DEFAULT_FOUNDRY_API_VERSION,
+  foundryChatUrl, isFoundryV1, parseFoundryConnection, type ConnectionInputError, type FoundryConnection, type FoundryError,
+} from '../src/ai/foundry.ts';
 
 /** Largest request body the relay reads: a pack-generation prompt with attached material (MAX_AI_CHARS_BY_USE), UTF-8 and JSON-escaped. */
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -26,7 +30,7 @@ export const MAX_TIMEOUT_MS = 120_000;
 /** Uses with their own caps (D-12: pack generation reads attached material and writes long JSON). */
 export const MAX_AI_CHARS_BY_USE: Partial<Record<AiUse, number>> = { packBuild: 200_000 };
 export const MAX_TIMEOUT_MS_BY_USE: Partial<Record<AiUse, number>> = { packBuild: PACK_BUILD_TIMEOUT_MS };
-export const DEFAULT_API_VERSION = '2024-10-21';
+export const DEFAULT_API_VERSION = DEFAULT_FOUNDRY_API_VERSION;
 const CONNECTION_FILE = 'connection.json';
 const COPILOT_FILE = 'copilot.json';
 
@@ -166,54 +170,55 @@ export function originAllowed(origin: string, localPort: number | undefined, con
 /* Connection (non-secret) and outbound allowlist                                                                     */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-export interface RelayConnection {
-  /** Origin of the Azure OpenAI / Foundry resource, e.g. `https://x.openai.azure.com`. */
-  endpoint: string;
-  deployment: string;
-  apiVersion: string;
-}
+export type RelayConnection = FoundryConnection;
 
-export type ConnectionError = 'invalidBody' | 'invalidEndpoint' | 'hostNotAllowed' | 'invalidDeployment' | 'invalidApiVersion';
+export type ConnectionError = ConnectionInputError | 'hostNotAllowed';
 
 function endpointHostAllowed(u: URL, config: RelayConfig): boolean {
   return config.outboundHosts === null || config.outboundHosts.includes(u.hostname.toLowerCase());
 }
 
-/** Validates a connection: https URL without credentials, query or path; deployment `[A-Za-z0-9._-]{1,64}`. */
+/** Accept a resource origin or an OpenAI v1 base URL, never silently strip a project path. */
 export function validateConnection(input: unknown, config: RelayConfig = STRICT_RELAY_CONFIG): { ok: true; value: RelayConnection } | { ok: false; error: ConnectionError } {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: 'invalidBody' };
-  const o = input as Record<string, unknown>;
-  if (Object.keys(o).some((k) => !['endpoint', 'deployment', 'apiVersion'].includes(k))) return { ok: false, error: 'invalidBody' };
-  const { endpoint, deployment, apiVersion = DEFAULT_API_VERSION } = o;
-  if (typeof endpoint !== 'string' || endpoint.length > 512) return { ok: false, error: 'invalidEndpoint' };
-  let u: URL;
-  try {
-    u = new URL(endpoint.trim());
-  } catch {
-    return { ok: false, error: 'invalidEndpoint' };
-  }
-  const testHttp = config.testOutbound && u.protocol === 'http:' && u.hostname === '127.0.0.1';
-  if ((u.protocol !== 'https:' && !testHttp) || u.username || u.password || u.search || u.hash || (u.pathname !== '/' && u.pathname !== '')) {
-    return { ok: false, error: 'invalidEndpoint' };
-  }
-  if (!testHttp && !endpointHostAllowed(u, config)) return { ok: false, error: 'hostNotAllowed' };
-  if (typeof deployment !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(deployment)) return { ok: false, error: 'invalidDeployment' };
-  if (typeof apiVersion !== 'string' || !/^\d{4}-\d{2}-\d{2}(-preview)?$/.test(apiVersion)) return { ok: false, error: 'invalidApiVersion' };
-  return { ok: true, value: { endpoint: u.origin, deployment, apiVersion } };
+  const result = parseFoundryConnection(input, config.testOutbound);
+  if (!result.ok) return result;
+  const u = new URL(result.value.endpoint);
+  if (u.protocol !== 'http:' && !endpointHostAllowed(u, config)) return { ok: false, error: 'hostNotAllowed' };
+  return result;
 }
 
-export function loadConnection(dir: string, config: RelayConfig = STRICT_RELAY_CONFIG): RelayConnection | null {
+interface SavedConnection extends RelayConnection {
+  verifiedAt?: string;
+  verification?: string;
+}
+
+export function loadConnection(dir: string, config: RelayConfig = STRICT_RELAY_CONFIG): SavedConnection | null {
   const path = join(dir, CONNECTION_FILE);
   if (!existsSync(path)) return null;
   try {
-    const r = validateConnection(JSON.parse(readFileSync(path, 'utf8')) as unknown, config);
-    return r.ok ? r.value : null;
+    const saved = JSON.parse(readFileSync(path, 'utf8')) as SavedConnection;
+    const r = validateConnection({ endpoint: saved.endpoint, deployment: saved.deployment, apiVersion: saved.apiVersion }, config);
+    return r.ok ? { ...r.value, verifiedAt: saved.verifiedAt, verification: saved.verification } : null;
   } catch {
     return null;
   }
 }
 
-function saveConnection(dir: string, c: RelayConnection) {
+function connectionSignature(c: RelayConnection, at: string, key: string): string {
+  return createHmac('sha256', key).update(JSON.stringify([c.endpoint, c.deployment, c.apiVersion, at])).digest('hex');
+}
+
+function verifiedAt(c: SavedConnection | null, vault: SecretVault): string | null {
+  if (!c || typeof c.verifiedAt !== 'string' || !Number.isFinite(Date.parse(c.verifiedAt)) || typeof c.verification !== 'string') return null;
+  const key = vault.get('foundryKey');
+  return key && tokenMatches(c.verification, connectionSignature(c, c.verifiedAt, key)) ? c.verifiedAt : null;
+}
+
+function publicConnection(c: RelayConnection | null): RelayConnection | null {
+  return c ? { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion } : null;
+}
+
+function saveConnection(dir: string, c: SavedConnection) {
   writeJsonAtomic(dir, CONNECTION_FILE, c);
 }
 
@@ -353,55 +358,71 @@ function validateAiCall(o: Record<string, unknown>, use: AiUse, provider: Provid
 
 /**
  * Azure OpenAI chat completions (Foundry). Provider bodies are never echoed and nothing is logged.
- * Pack generation asks for JSON mode and uses `max_completion_tokens` (required by reasoning deployments); a deployment
- * that rejects either (HTTP 400, not billed) is retried once with the classic body.
+ * All calls try `max_completion_tokens`, as does the connection test. Pack generation also asks for JSON mode.
+ * A deployment that rejects the modern body (HTTP 400, not billed) is retried once with the classic body.
  */
-async function forward(call: AiCall, conn: RelayConnection, apiKey: string, config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal): Promise<RelayResponse> {
-  const url = `${conn.endpoint}/openai/deployments/${encodeURIComponent(conn.deployment)}/chat/completions?api-version=${encodeURIComponent(conn.apiVersion)}`;
-  if (!outboundAllowed(url, conn.endpoint, config)) return json(403, { error: 'outboundNotAllowed' });
+interface FoundryResult { text: string; inputTokens: number; outputTokens: number }
+type FoundryResponse = { status: 200; body: FoundryResult } | { status: number; body: { error: FoundryError | 'outboundNotAllowed'; providerStatus?: number } };
+
+function networkError(error: unknown): FoundryError {
+  const e = error as { code?: string; cause?: { code?: string } } | null;
+  const code = e?.cause?.code ?? e?.code;
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dnsFailure';
+  if (code && /CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_VERIFY_LEAF_SIGNATURE/.test(code)) return 'tlsError';
+  return 'networkError';
+}
+
+async function forward(call: AiCall, conn: RelayConnection, apiKey: string, config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal): Promise<FoundryResponse> {
+  if (signal?.aborted) return { status: 499, body: { error: 'aborted' } };
+  const url = foundryChatUrl(conn);
+  if (!outboundAllowed(url, conn.endpoint, config)) return { status: 403, body: { error: 'outboundNotAllowed' } };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), call.timeoutMs);
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
   const messages = [
-    { role: 'system', content: systemPromptFor(call.use, call.lang) },
+    { role: 'system', content: call.use === 'connectionTest' ? 'Reply briefly to the connection test.' : systemPromptFor(call.use, call.lang) },
     { role: 'user', content: `${call.prompt}\n\n${call.context}` },
   ];
-  const modern = call.use === 'packBuild';
   const body = (asModern: boolean) => JSON.stringify(asModern
-    ? { messages, max_completion_tokens: call.maxOutputTokens, response_format: { type: 'json_object' } }
-    : { messages, max_tokens: call.maxOutputTokens });
+    ? { messages, ...(isFoundryV1(conn.endpoint) ? { model: conn.deployment } : {}), max_completion_tokens: call.maxOutputTokens, ...(call.use === 'packBuild' ? { response_format: { type: 'json_object' } } : {}) }
+    : { messages, ...(isFoundryV1(conn.endpoint) ? { model: conn.deployment } : {}), max_tokens: call.maxOutputTokens });
   try {
     const send = (asModern: boolean) => doFetch(url, {
       method: 'POST',
-      headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+      headers: { ...(isFoundryV1(conn.endpoint) ? { Authorization: `Bearer ${apiKey}` } : { 'api-key': apiKey }), 'Content-Type': 'application/json' },
       body: body(asModern),
       redirect: 'error',
       signal: controller.signal,
     });
-    let res = await send(modern);
-    if (modern && res.status === 400) {
+    let res = await send(true);
+    if (res.status === 400) {
       await res.body?.cancel().catch(() => undefined);
       res = await send(false);
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
-      return json(502, { error: res.status === 429 ? 'providerBusy' : 'providerError' });
+      const error: FoundryError = res.status === 401 ? 'unauthorized' : res.status === 403 ? 'forbidden' :
+        res.status === 404 ? 'deploymentNotFound' : res.status === 400 ? 'invalidApiRequest' : res.status === 429 ? 'providerBusy' : 'providerError';
+      return { status: 502, body: { error, providerStatus: res.status } };
     }
-    const data = (await res.json()) as {
+    const raw: unknown = await res.json();
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { status: 502, body: { error: 'badProviderResponse' } };
+    const data = raw as {
       choices?: { message?: { content?: unknown } }[];
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
     };
     const text = data.choices?.[0]?.message?.content;
     const inputTokens = data.usage?.prompt_tokens;
     const outputTokens = data.usage?.completion_tokens;
-    if (typeof text !== 'string' || typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
-      return json(502, { error: 'badProviderResponse' });
+    if (typeof text !== 'string' || !text.trim() || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) || typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
+      return { status: 502, body: { error: 'badProviderResponse' } };
     }
-    return json(200, { text, inputTokens, outputTokens });
-  } catch {
-    if (signal?.aborted) return json(499, { error: 'aborted' });
-    return controller.signal.aborted ? json(504, { error: 'timeout' }) : json(502, { error: 'providerError' });
+    return { status: 200, body: { text, inputTokens, outputTokens } };
+  } catch (error) {
+    if (signal?.aborted) return { status: 499, body: { error: 'aborted' } };
+    return controller.signal.aborted ? { status: 504, body: { error: 'timeout' } } :
+      { status: 502, body: { error: error instanceof SyntaxError ? 'badProviderResponse' : networkError(error) } };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
@@ -452,13 +473,13 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
 
   const connection = () => loadConnection(vault.dir, config);
   const copilotSettings = () => loadCopilotSettings(vault.dir);
-  const configuredFor = (provider: Provider) => (provider === 'copilotSdk' ? copilotSettings() !== null : connection() !== null && vault.status().foundryKey);
+  const configuredFor = (provider: Provider) => (provider === 'copilotSdk' ? copilotSettings() !== null : verifiedAt(connection(), vault) !== null);
   const configured = () => configuredFor('foundry');
 
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
     return json(200, {
-      relay: 'ok', secrets: vault.status(), connection: connection(), configured: configured(), keyProtection: vault.keyProtection(),
+      relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault), configured: configured(), keyProtection: vault.keyProtection(),
       copilot: copilotSettings(),
     });
   }
@@ -537,8 +558,29 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (method === 'PUT') {
       const r = validateConnection(parseBody(req.body), config);
       if (!r.ok) return json(400, { error: r.error });
-      saveConnection(vault.dir, r.value);
-      return json(200, { connection: r.value });
+      if (!isApprovedFor(table.connectionTest, 'foundry')) return json(403, { error: 'c03NotApproved' });
+      const key = vault.get('foundryKey');
+      if (!key) return json(400, { error: 'keyMissing' });
+      const now = (ctx.now ?? Date.now)();
+      const last = ctx.lastCall?.get('connectionTest');
+      if (last !== undefined && now - last < 5_000) return json(429, { error: 'tooSoon' });
+      ctx.lastCall?.set('connectionTest', Infinity);
+      let result: FoundryResponse;
+      try {
+        result = await forward({
+          use: 'connectionTest', provider: 'foundry', lang: 'en', prompt: CONNECTION_TEST_PROMPT, context: '',
+          maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
+        }, r.value, key, config, ctx.fetch ?? fetch, ctx.signal);
+      } finally {
+        ctx.lastCall?.set('connectionTest', (ctx.now ?? Date.now)());
+      }
+      if ('error' in result.body) return result;
+      const usage = { inputTokens: result.body.inputTokens, outputTokens: result.body.outputTokens };
+      if (ctx.signal?.aborted) return json(499, { error: 'aborted', usage });
+      if (vault.get('foundryKey') !== key) return json(409, { error: 'keyChanged', usage });
+      const at = new Date((ctx.now ?? Date.now)()).toISOString();
+      saveConnection(vault.dir, { ...r.value, verifiedAt: at, verification: connectionSignature(r.value, at, key) });
+      return json(200, { connection: r.value, connectionVerifiedAt: at, usage });
     }
     if (method === 'DELETE') {
       rmSync(join(vault.dir, CONNECTION_FILE), { force: true });
@@ -554,6 +596,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (Object.keys(body).some((k) => !AI_FIELDS.has(k))) return json(400, { error: 'unknownField' });
     const use = body.use;
     if (typeof use !== 'string' || !Object.hasOwn(table, use)) return json(400, { error: 'unknownUse' });
+    if (use === 'connectionTest') return json(400, { error: 'useConnectionSettings' });
     const provider = body.provider ?? 'foundry';
     if (provider !== 'foundry' && provider !== 'copilotSdk') return json(400, { error: 'unknownProvider' });
     const reasons = relayAiDecision(use as AiUse, configuredFor(provider), table, provider);

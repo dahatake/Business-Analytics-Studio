@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import * as fs from 'node:fs';
@@ -17,6 +17,9 @@ import {
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
 const TOKEN = newRelayToken();
+const verifiedReply: typeof fetch = async () => new Response(JSON.stringify({
+  choices: [{ message: { content: 'OK' } }], usage: { prompt_tokens: 30, completion_tokens: 1 },
+}));
 const baseHeaders = { host: `127.0.0.1:${PORT}`, origin: `http://127.0.0.1:${PORT}`, 'sec-fetch-site': 'same-origin' };
 const req = (method: string, url: string, body?: unknown, extra: Partial<Omit<RelayRequest, 'headers'>> & { headers?: Record<string, string | undefined> } = {}): RelayRequest => ({
   method,
@@ -260,11 +263,145 @@ describe('relay inbound protection (D-5)', () => {
 });
 
 describe('relay secrets and connection', () => {
+  const c = { endpoint: 'https://res.services.ai.azure.com', deployment: 'gpt-test', apiVersion: '2024-10-21' };
+
+  it('accepts OpenAI v1 URLs, but identifies project endpoints without changing their meaning', () => {
+    expect(validateConnection({ ...c, endpoint: `${c.endpoint}/openai/v1/`, apiVersion: '' })).toEqual({
+      ok: true, value: { ...c, endpoint: `${c.endpoint}/openai/v1` },
+    });
+    expect(validateConnection({ ...c, endpoint: `${c.endpoint}/api/projects/project` })).toEqual({ ok: false, error: 'projectEndpoint' });
+    expect(validateConnection({ ...c, endpoint: `${c.endpoint}:8443` }).ok).toBe(true);
+    expect(validateConnection({ ...c, endpoint: `${c.endpoint}/openai/v1?key=secret` })).toEqual({ ok: false, error: 'invalidEndpoint' });
+  });
+
+  it('does not send without a key; old saved settings are unverified, never configured', async () => {
+    expect(await call(req('PUT', '/relay/connection', c))).toEqual({ status: 400, body: { error: 'keyMissing' } });
+    vault.set('foundryKey', FAKE_KEY);
+    writeFileSync(join(vault.dir, 'connection.json'), JSON.stringify(c));
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ connection: c, connectionVerifiedAt: null, configured: false });
+    expect((await call(req('POST', '/relay/ai', { use: 'packBuild' }))).body).toEqual({ allowed: false, reasons: ['notConfigured'] });
+  });
+
+  it('uses the same legacy-token fallback for verification and application calls', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    const sent: Record<string, unknown>[] = [];
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      sent.push(body);
+      return 'max_completion_tokens' in body ? new Response('{}', { status: 400 }) : verifiedReply(url, init);
+    };
+    expect((await call(req('PUT', '/relay/connection', c), { fetch })).status).toBe(200);
+    expect((await call(req('POST', '/relay/ai', { use: 'explain', lang: 'en', prompt: 'Synthetic test.', maxOutputTokens: 100, timeoutMs: 1000 }), { fetch })).status).toBe(200);
+    expect(sent).toHaveLength(4);
+    expect(sent[1]).toHaveProperty('max_tokens', 256);
+    expect(sent[3]).toHaveProperty('max_tokens', 100);
+  });
+
+  it('tests the exact v1 route/model, persists proof across restarts, invalidates it on edits and key changes', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    const fetches: { url: string; body: Record<string, unknown> }[] = [];
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      fetches.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+      expect(init?.headers).toMatchObject({ Authorization: `Bearer ${FAKE_KEY}` });
+      expect(init?.redirect).toBe('error');
+      return verifiedReply(url, init);
+    };
+    const v1 = { ...c, endpoint: `${c.endpoint}/openai/v1` };
+    const result = await call(req('PUT', '/relay/connection', v1), { fetch });
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ connection: v1, usage: { inputTokens: 30, outputTokens: 1 } });
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0]!.url).toBe(`${v1.endpoint}/chat/completions`);
+    expect(fetches[0]!.body).toMatchObject({ model: c.deployment, max_completion_tokens: 256 });
+    expect(JSON.stringify(fetches[0]!.body)).not.toContain('customer pack');
+    expect((await call(req('GET', '/relay/status'), { vault: new SecretVault(vault.dir, { protector: null }) })).body).toMatchObject({ configured: true });
+    expect((await call(req('POST', '/relay/ai', { use: 'packBuild', lang: 'en', prompt: 'Build from synthetic data.', maxOutputTokens: 100, timeoutMs: 1000 }), { fetch })).status).toBe(200);
+    expect(fetches[1]!.url).toBe(`${v1.endpoint}/chat/completions`);
+    expect(fetches[1]!.body).toMatchObject({ model: c.deployment, response_format: { type: 'json_object' } });
+    const disk = readFileSync(join(vault.dir, 'connection.json'), 'utf8');
+    writeFileSync(join(vault.dir, 'connection.json'), disk.replace('gpt-test', 'other-model'));
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ configured: false, connectionVerifiedAt: null });
+    writeFileSync(join(vault.dir, 'connection.json'), disk);
+    vault.set('foundryKey', 'different-key');
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ configured: false, connectionVerifiedAt: null });
+    expect(JSON.stringify(result.body)).not.toContain('verification');
+  });
+
+  it.each([
+    [401, 'unauthorized'], [403, 'forbidden'], [404, 'deploymentNotFound'],
+    [400, 'invalidApiRequest'], [429, 'providerBusy'], [500, 'providerError'],
+  ] as const)('reports HTTP %s without provider content and keeps the previous verified connection', async (status, error) => {
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', c), { fetch: verifiedReply });
+    const before = readFileSync(join(vault.dir, 'connection.json'), 'utf8');
+    const result = await call(req('PUT', '/relay/connection', { ...c, deployment: 'bad' }), {
+      fetch: async () => new Response(`secret provider response ${FAKE_KEY}`, { status }),
+    });
+    expect(result).toEqual({ status: 502, body: { error, providerStatus: status } });
+    expect(readFileSync(join(vault.dir, 'connection.json'), 'utf8')).toBe(before);
+  });
+
+  it.each([
+    ['ENOTFOUND', 'dnsFailure'], ['EAI_AGAIN', 'dnsFailure'], ['ECONNREFUSED', 'networkError'],
+    ['CERT_HAS_EXPIRED', 'tlsError'], ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'tlsError'],
+  ] as const)('reports transport error %s without saving', async (code, error) => {
+    vault.set('foundryKey', FAKE_KEY);
+    const result = await call(req('PUT', '/relay/connection', c), {
+      fetch: async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error(FAKE_KEY), { code }) }); },
+    });
+    expect(result).toEqual({ status: 502, body: { error } });
+    expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
+  });
+
+  it('rejects unusable successful responses and a key changed during the test', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    for (const body of ['not json', 'null', '[]', '{}', '{"choices":[{"message":{"content":""}}],"usage":{"prompt_tokens":0,"completion_tokens":1}}']) {
+      const result = await call(req('PUT', '/relay/connection', c), { fetch: async () => new Response(body) });
+      expect(result).toEqual({ status: 502, body: { error: 'badProviderResponse' } });
+      expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
+    }
+    const result = await call(req('PUT', '/relay/connection', c), {
+      fetch: async (...args) => { vault.set('foundryKey', 'changed'); return verifiedReply(...args); },
+    });
+    expect(result).toEqual({ status: 409, body: { error: 'keyChanged', usage: { inputTokens: 30, outputTokens: 1 } } });
+    expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
+  });
+
+  it('honors outbound/C-03 gates, cancellation and repeated-send limits for diagnostics', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    let sent = 0;
+    const fetch: typeof globalThis.fetch = async (...args) => { sent++; return verifiedReply(...args); };
+    const lastCall = new Map<string, number>();
+    expect((await call(req('PUT', '/relay/connection', c), { fetch, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['other.example'] } })).body).toEqual({ error: 'hostNotAllowed' });
+    expect((await call(req('PUT', '/relay/connection', c), { fetch, table: { ...C03_TABLE, connectionTest: C03_TABLE.chat } })).status).toBe(403);
+    expect((await call(req('PUT', '/relay/connection', c), { fetch, signal: AbortSignal.abort() })).status).toBe(499);
+    expect(sent).toBe(0);
+    expect((await call(req('PUT', '/relay/connection', c), { fetch, lastCall })).status).toBe(200);
+    expect((await call(req('PUT', '/relay/connection', c), { fetch, lastCall })).body).toEqual({ error: 'tooSoon' });
+    expect(sent).toBe(1);
+    expect((await call(req('POST', '/relay/ai', { use: 'connectionTest', prompt: 'arbitrary material' }), { fetch })).body).toEqual({ error: 'useConnectionSettings' });
+  });
+
+  it('times out a diagnostic after 30 seconds without saving or exposing an upstream error', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const result = call(req('PUT', '/relay/connection', c), {
+        fetch: async (_url, init) => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error(FAKE_KEY)), { once: true });
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(await result).toEqual({ status: 504, body: { error: 'timeout' } });
+      expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('PUT stores the key and no response ever contains it', async () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, configured: false, keyProtection: 'file', copilot: null } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -300,10 +437,10 @@ describe('relay secrets and connection', () => {
     expect(validateConnection({ endpoint: 'https://res.openai.azure.com', deployment: 'd' }, { ...STRICT_RELAY_CONFIG, outboundHosts: ['other.openai.azure.com'] })).toEqual({ ok: false, error: 'hostNotAllowed' });
     expect(validateConnection({ endpoint: 'http://127.0.0.1:9999', deployment: 'd' }, { ...STRICT_RELAY_CONFIG, testOutbound: true }).ok).toBe(true);
 
-    const put = await call(req('PUT', '/relay/connection', { endpoint: 'https://res.openai.azure.com', deployment: 'gpt', apiVersion: '2024-10-21' }));
+    vault.set('foundryKey', FAKE_KEY);
+    const put = await call(req('PUT', '/relay/connection', { endpoint: 'https://res.openai.azure.com', deployment: 'gpt', apiVersion: '2024-10-21' }), { fetch: verifiedReply });
     expect(put.status).toBe(200);
     expect(existsSync(join(vault.dir, 'connection.json'))).toBe(true);
-    vault.set('foundryKey', FAKE_KEY);
     const status = await call(req('GET', '/relay/status'));
     expect(status.body).toMatchObject({ connection: { endpoint: 'https://res.openai.azure.com', deployment: 'gpt', apiVersion: '2024-10-21' }, configured: true });
     expect(readFileSync(join(vault.dir, 'connection.json'), 'utf8')).not.toContain(FAKE_KEY);
@@ -393,6 +530,7 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     lastCalls = new Map();
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), ctx())).status).toBe(200);
+    seen = [];
   });
 
   it('forwards to Azure OpenAI chat completions with the api-key header and returns text + token usage', async () => {
@@ -405,12 +543,12 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect(s.url).toBe('/openai/deployments/gpt-test/chat/completions?api-version=2024-10-21');
     expect(s.headers['api-key']).toBe(FAKE_KEY);
     expect(s.headers.authorization).toBeUndefined();
-    const sent = JSON.parse(s.body) as { messages: { role: string; content: string }[]; max_tokens: number };
+    const sent = JSON.parse(s.body) as { messages: { role: string; content: string }[]; max_completion_tokens: number };
     expect(sent.messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(sent.messages[1]!.content).toContain('Transferring expert skills'); // D-2: internal items may be sent
     expect(sent.messages[1]!.content.startsWith('Explain this screen.\n\n')).toBe(true);
-    expect(sent.max_tokens).toBeLessThanOrEqual(1500);
-    expect(Object.keys(sent).sort()).toEqual(['max_tokens', 'messages']);
+    expect(sent.max_completion_tokens).toBeLessThanOrEqual(1500);
+    expect(Object.keys(sent).sort()).toEqual(['max_completion_tokens', 'messages']);
   });
 
   it('refuses every unapproved use without contacting the provider', async () => {
@@ -474,7 +612,7 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     clock += 10_000;
     mode = 'error';
     const err = await call(req('POST', '/relay/ai', aiBody()), ctx());
-    expect(err).toEqual({ status: 502, body: { error: 'providerError' } });
+    expect(err).toEqual({ status: 502, body: { error: 'providerError', providerStatus: 500 } });
     expect(JSON.stringify(err.body)).not.toContain(PROVIDER_SECRET_BODY);
     clock += 10_000;
     mode = 'garbage';
@@ -517,6 +655,7 @@ describe('D-12 packBuild through the relay', () => {
   it('Foundry: JSON mode with max_completion_tokens and the pack system prompt; a deployment rejecting it is retried once classically', async () => {
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig })).status).toBe(200);
+    seen = [];
     const r = await call(req('POST', '/relay/ai', packBody()), { config: testConfig });
     expect(r.status).toBe(200);
     const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[]; max_completion_tokens?: number; response_format?: { type: string } };
@@ -534,6 +673,7 @@ describe('D-12 packBuild through the relay', () => {
   it('per-use caps: packBuild may send long material and wait longer; explain keeps its own caps', async () => {
     vault.set('foundryKey', FAKE_KEY);
     await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig });
+    seen = [];
     expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(150_000) })), { config: testConfig })).status).toBe(200);
     expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(200_001) })), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', packBody({ timeoutMs: 300_001 })), { config: testConfig })).status).toBe(400);

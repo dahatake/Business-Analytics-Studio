@@ -11,6 +11,7 @@
  *   blocked until "explain" is measured (D-8), §3.1 has the row and the user approves it.
  * - D-12 (user, 2026-11-10): "packBuild" (FR-311, customer pack generated in the app) is approved for the configured
  *   provider, Microsoft Foundry or GitHub Copilot SDK, within the single monthly budget of 100,000 JPY.
+ * - D-13 (2026-11-11): fixed synthetic Foundry connection tests are approved through the settings route only.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
@@ -59,7 +60,14 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   review: TBD_ROW(),
   import: TBD_ROW(),
   storyVideo: TBD_ROW(),
-  connectionTest: TBD_ROW(),
+  connectionTest: {
+    provider: 'foundry',
+    data: 'Fixed synthetic connection-test prompt only; no customer, project, material or person data',
+    enableCondition: 'Explicit test-and-save action, saved API key, entered unit prices and available monthly budget; only /relay/connection may run the fixed test',
+    costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+    openQuestions: [],
+    decidedBy: 'docs/decision-guide.md D-13 (2026-11-11)',
+  },
   research: TBD_ROW(),
   brandResearch: TBD_ROW(),
   packBuild: {
@@ -117,6 +125,7 @@ export interface PerCallLimits {
  * the monthly budget still applies to every use (Q-051, D-3).
  */
 export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
+  connectionTest: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 200, maxOutputTokens: 256 },
   explain: {
     dailyCalls: AI_LIMITS.dailyCalls,
     maxInputTokens: AI_LIMITS.maxInputTokens,

@@ -15,7 +15,7 @@ const allTrue = { liveEnabled: true, userConfirmed: true, configured: true, hasU
 describe('C-03 table (D-1: staged approval)', () => {
   it('approves "explain" via Foundry and, since D-12, "packBuild" via Foundry or Copilot; every other use stays blocked even with every switch on', () => {
     const approved = (Object.keys(C03_TABLE) as AiUse[]).filter((u) => isApproved(C03_TABLE[u]));
-    expect(approved).toEqual(['explain', 'packBuild']);
+    expect(approved).toEqual(['explain', 'connectionTest', 'packBuild']);
     expect(C03_TABLE.explain.provider).toBe('foundry');
     expect(C03_TABLE.packBuild.provider).toEqual(['foundry', 'copilotSdk']);
     expect(C03_TABLE.packBuild.costCapJpy).toBe(100_000);

@@ -15,15 +15,39 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | Fetch Metadata | `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`. |
 | Per-launch token | 32 random bytes per server start, handed out by `POST /relay/session` (browsers always send `Origin` on POST) and required in `X-BAS-Relay` on every other route. Compared in constant time; kept in browser memory only. |
 | Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`), prompt + context ≤ 32 000 characters (200 000 for "packBuild"), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild"). |
-| C-03 | `/relay/ai` re-checks the C-03 table: only approved rows and providers are forwarded — "explain" to Foundry (D-1), "packBuild" to Foundry or GitHub Copilot (D-12). Anything else gets `403 c03NotApproved`. |
+| C-03 | `/relay/ai` re-checks the C-03 table: "explain" to Foundry (D-1), "packBuild" to Foundry or GitHub Copilot (D-12). D-13 approves only a fixed synthetic "connectionTest" through `PUT /relay/connection`; `/relay/ai` refuses that use. Other uses get `403 c03NotApproved`. |
 | Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. |
 | Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Redirects are not followed. |
-| Errors | Provider bodies are never returned or logged; the browser gets `502 providerError`, `502 providerBusy` (429), `502 badProviderResponse`, `504 timeout`, or, for Copilot, `503 notSignedIn` / `503 sdkUnavailable`. When the browser cancels (closes the request), the upstream call is aborted too. |
+| Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status is returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
 
-The non-secret connection (endpoint origin, deployment, API version; default `2024-10-21`) is saved with
-`PUT /relay/connection` in `connection.json` next to the encrypted key vault. The endpoint must be an `https` URL without
-credentials, path, query or fragment; the deployment name must match `[A-Za-z0-9._-]{1,64}`. "Configured" means that the
-relay holds the endpoint, the deployment and the API key.
+### Foundry: test before saving (D-13)
+
+`PUT /relay/connection` accepts `{ endpoint, deployment, apiVersion }` and uses the **already saved API key** to send a
+fixed synthetic "Reply with OK only" prompt. No caller-supplied prompt, customer pack or project data is sent.
+The UI requires entered Foundry unit prices and explicit confirmation of the displayed destination/cost; it checks
+the daily quota, interval and shared monthly budget and records token usage/cost under `connectionTest`.
+Timeouts and uncertain failures are conservatively recorded at the estimated cap. DNS/authentication rejections incur
+no recorded inference cost. The relay enforces the outbound allowlist, a 30-second timeout, no redirects and a
+5-second interval (including concurrent tests). Output is capped at 256 tokens; a rejected modern request may be
+retried once with the legacy token parameter.
+
+Supported endpoint formats (HTTPS only, no credentials, query or fragment):
+
+- Resource origin: `https://<resource>.openai.azure.com` or `https://<resource>.services.ai.azure.com`.
+  Calls `/openai/deployments/<deployment>/chat/completions?api-version=<version>` with `api-key`.
+- OpenAI v1 base: either resource host followed by `/openai/v1` (optional final slash).
+  Calls `/openai/v1/chat/completions` with `model: <deployment>` and bearer API-key authentication; no dated API version.
+  See [the official v1 API guide](https://learn.microsoft.com/azure/foundry/openai/api-version-lifecycle).
+- `/api/projects/<project>` is explicitly identified as a **project** URL and rejected with instructions to copy the
+  model's resource/v1 URL from its code sample. It is not silently stripped or treated as an API-key inference route.
+  Entra/project authentication remains outside this release.
+
+Only a nonempty model response with valid token usage permits saving. Failure leaves the previous connection intact.
+`connection.json` contains the normalized endpoint, deployment (1–64 letters, digits, dots, underscores or hyphens),
+API version (legacy default `2024-10-21`), verification time and a verification signature bound to those values and the
+current key. The signature is never returned to the browser. `GET /relay/status` reports `connectionVerifiedAt`; old
+settings without valid verification remain visible but **unconfigured**, and changing the key invalidates verification.
+Verification survives relay restarts but is a historical check, not a guarantee of future reachability.
 
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
 when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown on `/ai-settings`.

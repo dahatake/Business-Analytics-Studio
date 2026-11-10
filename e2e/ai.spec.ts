@@ -91,8 +91,8 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(r.status).toBe(200);
     expect(r.ai).toBe(403);
     expect(r.body).toEqual({ allowed: false, reasons: ['c03NotApproved', 'notConfigured'] });
-    await page.getByTestId('ai-relay-check').click();
-    await expect(page.locator('[data-reason="c03NotApproved"]').first()).toBeVisible();
+    await expect(page.getByTestId('ai-connection-save')).toBeDisabled();
+    await expect(page.getByTestId('ai-connection-test-info')).toContainText('No customer');
   });
 });
 
@@ -106,9 +106,9 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
     await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(16);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(14);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(13);
     // D-1 "explain" and, since D-12, "packBuild" (customer pack generation).
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(2);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(3);
     await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'explain');
     await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'packBuild');
 
@@ -126,6 +126,102 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(answer.locator('[data-entity-ref]').first()).toBeVisible();
     await expect(page.getByTestId('ai-chat-foundry')).toContainText('blocked');
   });
+});
+
+test.describe('verified Foundry connection settings (D-13)', () => {
+  test.skip(process.env.BAS_RELAY_TEST_OUTBOUND !== '1', 'needs the local test provider switch');
+  let stub: Server;
+  let stubUrl = '';
+  let responseStatus = 200;
+  let sent: { url: string; body: Record<string, unknown> }[] = [];
+
+  test.beforeAll(async () => {
+    stub = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        sent.push({ url: req.url ?? '', body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown> });
+        res.writeHead(responseStatus, { 'Content-Type': 'application/json' });
+        res.end(responseStatus === 200
+          ? JSON.stringify({ choices: [{ message: { content: 'OK' } }], usage: { prompt_tokens: 30, completion_tokens: 1 } })
+          : JSON.stringify({ error: { message: `Never expose ${FAKE_KEY}` } }));
+      });
+    });
+    await new Promise<void>((done) => stub.listen(0, '127.0.0.1', done));
+    stubUrl = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
+  });
+
+  test.afterEach(async ({ page }) => {
+    await page.evaluate(async () => {
+      const { token } = await (await fetch('/relay/session', { method: 'POST' })).json() as { token: string };
+      for (const path of ['/relay/connection', '/relay/secrets/foundryKey']) {
+        await fetch(path, { method: 'DELETE', headers: { 'X-BAS-Relay': token } });
+      }
+    });
+  });
+  test.afterAll(async () => {
+    stub.closeAllConnections();
+    await new Promise<void>((done) => stub.close(() => done()));
+  });
+
+  for (const lang of ['en', 'ja'] as const) {
+    test(`${lang}: project guidance, DNS/auth failures, v1 verification, cost and key invalidation`, async ({ page }) => {
+      sent = [];
+      responseStatus = 401;
+      const bodies = recordResponses(page);
+      await open(page, '/ai-settings', { lang });
+      await page.getByTestId('ai-endpoint').fill('https://resource.services.ai.azure.com/api/projects/project');
+      await page.getByTestId('ai-deployment').fill('gpt-deployed');
+      await expect(page.getByTestId('ai-connection-validation')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
+      await expect(page.getByTestId('ai-connection-save')).toBeDisabled();
+      expect(sent).toHaveLength(0);
+      await page.getByTestId('ai-foundry-key-input').fill(FAKE_KEY);
+      await page.getByTestId('ai-foundry-key-save').click();
+      await expect(page.getByTestId('ai-foundry-key-state')).toHaveText(lang === 'en' ? 'Saved' : '保存済み');
+      await page.getByTestId('ai-price-input').fill('1000');
+      await page.getByTestId('ai-price-output').fill('4000');
+      await page.getByTestId('ai-endpoint').fill('https://missing-foundry-resource.invalid');
+      await page.getByTestId('ai-connection-consent').check();
+      await page.getByTestId('ai-connection-save').click();
+      await expect(page.getByTestId('ai-connection-msg')).toContainText(lang === 'en' ? 'cannot be resolved' : '名前解決できません');
+      await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Not saved' : '未保存');
+      await page.waitForTimeout(5100);
+      await page.getByTestId('ai-endpoint').fill(`${stubUrl}/openai/v1/`);
+      await expect(page.getByTestId('ai-api-version')).toBeDisabled();
+      await expect(page.getByTestId('ai-connection-save')).toBeDisabled();
+      await page.getByTestId('ai-connection-consent').check();
+      await page.getByTestId('ai-connection-save').click();
+      await expect(page.getByTestId('ai-connection-msg')).toContainText('HTTP 401');
+      await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Not saved' : '未保存');
+      expect(sent).toHaveLength(1);
+      responseStatus = 200;
+      await page.waitForTimeout(5100);
+      await page.getByTestId('ai-connection-consent').check();
+      await page.getByTestId('ai-connection-save').click();
+      await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
+      await expect(page.getByTestId('ai-connection-verified-at')).toBeVisible();
+      expect(sent).toHaveLength(2);
+      expect(sent[1]!.url).toBe('/openai/v1/chat/completions');
+      expect(sent[1]!.body).toMatchObject({ model: 'gpt-deployed', max_completion_tokens: 256 });
+      expect(JSON.stringify(sent[1]!.body)).not.toContain('Contoso');
+      const ledger = await page.evaluate(() => JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string }[]);
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]!.use).toBe('connectionTest');
+      await expect(page.getByTestId('ai-usage-month').getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^(?:0|1|0\.\d+)$/);
+      await page.getByTestId('ai-connection-consent').check();
+      await expect(page.getByTestId('ai-connection-save')).toBeEnabled({ timeout: 7000 });
+      await page.reload();
+      await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
+      if (lang === 'en') await noJapanese(page);
+      expect(await scan(page)).toEqual([]);
+      expect(bodies.join('\n')).not.toContain(FAKE_KEY);
+      await page.getByTestId('ai-foundry-key-change').click();
+      await page.getByTestId('ai-foundry-key-input').fill(`${FAKE_KEY}-changed`);
+      await page.getByTestId('ai-foundry-key-save').click();
+      await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'unverified' : '接続未確認');
+      await expect(page.getByTestId('ai-state')).toHaveText(lang === 'en' ? 'Mock' : 'モック');
+    });
+  }
 });
 
 test.describe('explain current state (FR-274, FR-277)', () => {
@@ -372,9 +468,6 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await open(page, '/ai-settings', { lang });
     await page.getByTestId('ai-endpoint').fill(stubUrl);
     await page.getByTestId('ai-deployment').fill('gpt-e2e');
-    await page.getByTestId('ai-connection-save').click();
-    await expect(page.getByTestId('ai-connection-msg')).toBeVisible();
-    await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Saved' : '保存済み');
     const saved = lang === 'en' ? 'Saved' : '保存済み';
     // The key-protection badge leaves "unknown" once GET /relay/status has answered, so the key state is settled.
     await expect(page.getByTestId('ai-key-protection')).not.toContainText(lang === 'en' ? 'Unknown' : '不明');
@@ -385,6 +478,10 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText(saved);
     await page.getByTestId('ai-price-input').fill('1000');
     await page.getByTestId('ai-price-output').fill('4000');
+    await page.getByTestId('ai-connection-consent').check();
+    await page.getByTestId('ai-connection-save').click();
+    await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
+    received.length = 0;
     await page.getByTestId('ai-live-switch').check();
   }
 
@@ -419,11 +516,12 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(received[0]!.url).toBe('/openai/deployments/gpt-e2e/chat/completions?api-version=2024-10-21');
     expect(received[0]!.apiKey).toBe(FAKE_KEY);
     expect(received[0]!.body).toContain('Transferring expert skills'); // internal entity (D-2)
-    expect((JSON.parse(received[0]!.body) as { max_tokens: number }).max_tokens).toBeLessThanOrEqual(1500);
+    expect((JSON.parse(received[0]!.body) as { max_completion_tokens: number }).max_completion_tokens).toBeLessThanOrEqual(1500);
     const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { costJpy: number; use: string }[];
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0]!.use).toBe('explain');
-    expect(ledger[0]!.costJpy).toBeCloseTo((2000 * 1000 + 300 * 4000) / 1_000_000);
+    expect(ledger).toHaveLength(2);
+    expect(ledger[0]!.use).toBe('connectionTest');
+    expect(ledger[1]!.use).toBe('explain');
+    expect(ledger[1]!.costJpy).toBeCloseTo((2000 * 1000 + 300 * 4000) / 1_000_000);
     expect(JSON.stringify(ledger)).not.toContain('Stub live');
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
@@ -541,8 +639,6 @@ async function seedLaunch(page: Page, lang: Lang) {
     const settings = page.getByTestId('ai-settings-dialog');
     await settings.getByTestId('ai-endpoint').fill(stubUrl);
     await settings.getByTestId('ai-deployment').fill('gpt-e2e');
-    await settings.getByTestId('ai-connection-save').click();
-    await expect(settings.getByTestId('ai-relay-connection')).toContainText('Saved');
     await expect(settings.getByTestId('ai-key-protection')).not.toContainText('Unknown');
     if ((await settings.getByTestId('ai-foundry-key-state').textContent()) !== 'Saved') {
       await settings.getByTestId('ai-foundry-key-input').fill(FAKE_KEY);
@@ -551,6 +647,10 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(settings.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
     await settings.getByTestId('ai-price-input').fill('400');
     await settings.getByTestId('ai-price-output').fill('1600');
+    await settings.getByTestId('ai-connection-consent').check();
+    await settings.getByTestId('ai-connection-save').click();
+    await expect(settings.getByTestId('ai-relay-connection')).toContainText('Verified and saved');
+    received.length = 0;
     await settings.getByTestId('ai-live-switch').check();
     await expect(settings.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
     await settings.getByTestId('ai-settings-dialog-close').click();

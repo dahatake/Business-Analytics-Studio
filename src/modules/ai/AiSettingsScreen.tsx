@@ -8,11 +8,10 @@ import { isUseApproved, readLedger } from '../../ai/client.ts';
 import { C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
-import { D4Warning, MockNotice } from './AiCommon.tsx';
+import { D4Warning } from './AiCommon.tsx';
 import { BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
-import { relayAiCheck } from './relayClient.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
 import { STORY_CAP_JPY, STORY_SAFETY_FACTOR } from './story.ts';
 import './mocks.ts';
@@ -20,6 +19,8 @@ import './ai.css';
 
 function Meter({ label, ratio, level, testId }: { label: string; ratio: number; level: BudgetLevel; testId: string }) {
   const { t } = useI18n();
+  // Tiny diagnostic costs must not serialize aria-valuenow in exponential notation.
+  const value = Math.round(Math.min(1, Math.max(0, ratio)) * 1_000_000) / 1_000_000;
   return (
     <Field
       label={label}
@@ -27,7 +28,7 @@ function Meter({ label, ratio, level, testId }: { label: string; ratio: number; 
       validationMessage={level === 'ok' ? undefined : t(`ai.level.${level}`)}
       data-testid={testId}
     >
-      <ProgressBar value={Math.min(1, Math.max(0, ratio))} thickness="large" />
+      <ProgressBar value={value} thickness="large" />
     </Field>
   );
 }
@@ -113,7 +114,6 @@ export function AiSettingsScreen() {
   const configured = isConfigured(s);
   const [ledgerVersion, setLedgerVersion] = useState(0);
   const usage = usageSummary(readLedger(), new Date(), s.monthlyBudgetJpy);
-  const [check, setCheck] = useState<string[] | null>(null);
   const uses = Object.keys(C03_TABLE) as AiUse[];
   const live = liveReady(s) && uses.some((u) => isUseApproved(u));
 
@@ -150,10 +150,6 @@ export function AiSettingsScreen() {
               <span>{t('ai.settings.state')}</span>
               <Badge appearance="filled" color={live ? 'success' : 'warning'} data-testid="ai-state">{live ? t('ai.settings.stateLive') : t('ai.mock.badge')}</Badge>
             </p>
-            <div>
-              <Button onClick={() => void relayAiCheck('connectionTest').then((r) => setCheck(r.reasons))} data-testid="ai-relay-check">{t('ai.settings.check')}</Button>
-            </div>
-            {check && <MockNotice reasons={check} />}
           </div>
         </Panel>
       </div>

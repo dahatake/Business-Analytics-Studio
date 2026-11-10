@@ -153,6 +153,7 @@ export const opsJa = {
 
   'ops.gate.candidate': '送信しない（カタログ未登録）',
   'ops.gate.devOnly': 'アプリからは送信しない（開発・セットアップのときだけ）',
+  'ops.gate.companyNews': 'ニュース検索のため公開企業名と言語のみ自動送信。ライブの一時停止で停止します。この画面の選択は取得の有効・無効を切り替えません。',
   'ops.gate.blocked': '送信しない（{question} が未決）',
   'ops.gate.unknown': '送信しない（条件が不明）',
   'ops.gate.c03NotApproved': '送信しない（C-03 の基準表の「{use}」が未承認: {questions}）',

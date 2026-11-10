@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { aiComplete, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
+import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { DEFAULT_MONTHLY_BUDGET_JPY } from '../src/ai/policy.ts';
 import { loaded } from '../src/data/pack.ts';
 import { useAiSettings, isConfigured, liveReady, parseBudget, runtimeSettings } from '../src/modules/ai/settingsStore.ts';
@@ -218,7 +218,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
   afterEach(() => setLiveTransport(null));
 
   it('is off and unconfigured by default, with the 100,000 JPY budget and no prices, so nothing is sent', async () => {
-    expect(runtimeSettings()).toEqual({ liveEnabled: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: 'x' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed', 'noUnitPrice']));
@@ -228,10 +228,55 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
 
   it('feeds the unit prices (PARAM-130) and the single budget to the core', () => {
     useAiSettings.setState({ ...READY, monthlyBudgetJpy: 5000 });
-    expect(runtimeSettings()).toEqual({ liveEnabled: true, configured: true, monthlyBudgetJpy: 5000, prices: { inputPerM: 1000, outputPerM: 4000 } });
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, configured: true, monthlyBudgetJpy: 5000, prices: { inputPerM: 1000, outputPerM: 4000 } });
     useAiSettings.setState({ priceOutputPerM: '0' });
     expect(runtimeSettings().prices).toBeNull();
     expect(liveReady(useAiSettings.getState())).toBe(false);
+  });
+
+  it('D-12: Copilot is priced per premium request × the model multiplier; token prices do not count for it', () => {
+    useAiSettings.setState({
+      ...READY, provider: 'copilotSdk', copilotModel: 'claude-opus', copilotPricePerRequest: '',
+      copilotStatus: { reachable: true, available: true, authenticated: true, login: 'u', error: null, model: 'claude-opus', models: [{ id: 'claude-opus', name: 'Opus', multiplier: 10 }] },
+    });
+    expect(runtimeSettings()).toMatchObject({ provider: 'copilotSdk', configured: true, prices: null });
+    expect(liveReady(useAiSettings.getState())).toBe(false);
+    useAiSettings.setState({ copilotPricePerRequest: '6' });
+    expect(runtimeSettings().prices).toEqual({ inputPerM: 0, outputPerM: 0, perRequestJpy: 6, requestMultiplier: 10 });
+    expect(liveReady(useAiSettings.getState())).toBe(true);
+    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotPricePerRequest: '', copilotStatus: null });
+  });
+
+  it('FR-311 aiLive never answers with a mock: refusals throw, a Copilot answer records premium requests × price', async () => {
+    writeLedger([]);
+    await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true })).rejects.toBeInstanceOf(AiLiveError);
+    useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotPricePerRequest: '6', copilotStatus: null });
+    const seenCalls: LiveCall[] = [];
+    setLiveTransport(async (c) => { seenCalls.push(c); return { text: '{}', inputTokens: 10, outputTokens: 20, premiumRequests: 2 }; });
+    const r = await aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true, maxOutputTokens: 16000 });
+    expect(r.costJpy).toBe(12);
+    expect(seenCalls[0]).toMatchObject({ use: 'packBuild', provider: 'copilotSdk', maxOutputTokens: 16000 });
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', costJpy: 12 })]);
+    await expect(aiLive({ use: 'explain', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true })).rejects.toMatchObject({ reasons: ['c03NotApproved'] });
+    setLiveTransport(async () => { throw new Error('relay 503 notSignedIn'); });
+    await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true })).rejects.toMatchObject({ reasons: ['liveFailed'], message: 'relay 503 notSignedIn' });
+    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotPricePerRequest: '' });
+    writeLedger([]);
+  });
+
+  it('a cancelled live call that may already be billed is recorded at the worst-case estimate, never as free', async () => {
+    writeLedger([]);
+    useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotPricePerRequest: '6', copilotStatus: null });
+    const ac = new AbortController();
+    setLiveTransport(async (_c, signal) => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))));
+    const pending = aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true }, ac.signal);
+    ac.abort();
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AiLiveError);
+    expect((err as AiLiveError).recordedCostJpy).toBeCloseTo(6 * 1.2);
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', outputTokens: 0, costJpy: expect.closeTo(7.2, 5) })]);
+    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotPricePerRequest: '' });
+    writeLedger([]);
   });
 
   it('unapproved uses stay mock even when everything is configured (C-03)', async () => {
@@ -281,9 +326,11 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(readLedger()).toEqual([]);
   });
 
-  it('"configured" means endpoint, deployment and key are saved in the relay; Copilot SDK and Entra ID never count (C-07)', () => {
+  it('"configured" means the relay holds what it needs: Foundry endpoint, deployment and key, or (D-12) a Copilot model; Entra ID never counts (C-07)', () => {
     const s = { relayConnection: CONNECTION, foundryKeySaved: true };
     expect(isConfigured({ ...s, provider: 'copilotSdk', authMethod: 'apiKey' })).toBe(false);
+    expect(isConfigured({ ...s, provider: 'copilotSdk', authMethod: 'apiKey', copilotModel: 'gpt-5' })).toBe(true);
+    expect(isConfigured({ relayConnection: null, foundryKeySaved: false, provider: 'copilotSdk', authMethod: 'entraId', copilotModel: 'gpt-5' })).toBe(true);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'entraId' })).toBe(false);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'apiKey' })).toBe(true);
     expect(isConfigured({ ...s, relayConnection: null, provider: 'foundry', authMethod: 'apiKey' })).toBe(false);

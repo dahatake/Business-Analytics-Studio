@@ -15,6 +15,7 @@ type T = ReturnType<typeof useI18n>['t'];
 function sendCondition(t: T, gate: string | null): { text: string; allowed: boolean } {
   if (gate === null) return { text: t('ops.gate.candidate'), allowed: false };
   if (gate === 'dev-only') return { text: t('ops.gate.devOnly'), allowed: false };
+  if (gate === 'public-company-news') return { text: t('ops.gate.companyNews'), allowed: false };
   const blocked = /^blocked:(Q-\d+)$/.exec(gate);
   if (blocked) return { text: t('ops.gate.blocked', { question: blocked[1]! }), allowed: false };
   const use = /^c03:(\w+)$/.exec(gate)?.[1] as AiUse | undefined;

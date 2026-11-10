@@ -381,11 +381,15 @@ describe('the Microsoft 365 Copilot prompt stays in step with the schema', () =>
         if (key !== 'logo') expect(text, `${lang}: extension field ${key}`).toContain(key);
       }
     }
+    // Two stages keep internal terms out of Bing queries before anything is sent (FR-308):
+    // the web research prompt takes only public inputs; the pack prompt never searches the web.
     const research = promptSection(doc, lang, 'research');
     expect(research.length).toBeGreaterThan(500);
     expect(research.length).toBeLessThan(8000);
-    expect(research).toContain('blocked');
-    expect(research).toContain('URL');
+    expect(research.match(/\{\{[^}]*\}\}/g), `${lang}: research inputs are public only`).toHaveLength(3);
+    expect(research).not.toMatch(/Project|\/ (で|to) /);
+    for (const word of ['blocked', 'URL', 'Bing', 'W1']) expect(research, `${lang} research: ${word}`).toContain(word);
+    for (const word of ['zip', 'pack.json', 'README.md', 'blocked', 'Bing', 'W1', 'json.loads', 'PART', 'notRequested']) expect(text, `${lang}: ${word}`).toContain(word);
     expect(text).toContain('notApplicable');
     expect(text).toContain('missingFields');
   });

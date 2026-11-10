@@ -35,6 +35,8 @@ export function Flows() {
 
   useEffect(() => {
     const svg = d3.select(svgRef.current!);
+    // A pack without flows (e.g. imported or generated from customer material) has nothing to lay out.
+    if (graph.nodes.length === 0) return;
     const layout = sankey<N, L>().nodeId((d) => d.id).nodeAlign(sankeyJustify).nodeWidth(16).nodePadding(18).extent([[8, 28], [W - 8, H - 8]]);
     const { nodes, links } = layout({ nodes: graph.nodes.map((n) => ({ ...n })), links: graph.links.map((l) => ({ ...l })) });
 
@@ -96,7 +98,8 @@ export function Flows() {
     <div className="screen screen-flows">
       <PageHeader title={t('flows.title')} subtitle={t('flows.subtitle', { total: fmt.integer(total) })} />
       <Panel title={t('flows.panel')} rationale="visual.sankey" testId="sankey-panel">
-        <div className="chart-scroll">
+        {graph.nodes.length === 0 && <p className="muted" data-testid="flows-empty">{t('flows.empty')}</p>}
+        <div className="chart-scroll" hidden={graph.nodes.length === 0}>
           <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="sankey" role="group" aria-label={t('flows.aria')} style={{ minWidth: 760 }}>
             <g className="stages axis-label" />
             <g className="links" />

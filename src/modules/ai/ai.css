@@ -41,3 +41,9 @@
 .ai-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
 .ai-dl dt { font-weight: 600; color: var(--colorNeutralForeground2); }
 .ai-dl dd { margin: 0; overflow-wrap: anywhere; }
+
+/* D-12: AI settings as a dialog (launch screen, project management) and the readiness list */
+.ai-settings-dialog { max-width: min(720px, calc(100vw - 32px)); }
+.ai-quick { max-height: min(70vh, 760px); overflow-y: auto; padding-right: 4px; }
+.ai-readiness { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.ai-readiness li { display: flex; align-items: center; gap: 6px; }

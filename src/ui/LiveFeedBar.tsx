@@ -5,6 +5,7 @@ import { PARAMS } from '../config/params.ts';
 import { useI18n, type MessageKey } from '../i18n/index.ts';
 import { freshness, percentile, runFeed, useFeed, type FeedEvent } from '../state/feed.ts';
 import { EntityRef } from './EntityRef.tsx';
+import { NewsFeedBar } from './NewsFeedBar.tsx';
 
 /** Substitute {placeholders} in a translated template with React nodes. */
 export function renderTemplate(template: string, nodes: Record<string, ReactNode>): ReactNode[] {
@@ -74,6 +75,7 @@ export function LiveFeedBar() {
   };
 
   return (
+    <>
     <div
       ref={barRef}
       className="live-feed"
@@ -113,6 +115,7 @@ export function LiveFeedBar() {
         </Button>
       </span>
     </div>
+    <NewsFeedBar />
+    </>
   );
 }
-

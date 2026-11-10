@@ -1,15 +1,17 @@
 import { useRef, useState } from 'react';
 import { Badge, Button, Field, Input, MessageBar, MessageBarBody } from '@fluentui/react-components';
-import { Add20Regular, ArrowDownload20Regular, ArrowUpload20Regular, Delete20Regular, Edit20Regular, Open20Regular } from '@fluentui/react-icons';
+import { Add20Regular, ArrowDownload20Regular, ArrowUpload20Regular, BotSparkle20Regular, Delete20Regular, Edit20Regular, Open20Regular, Settings20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { MAX_PROJECTS_PER_COMPANY, useProjects, type AddProjectResult, type Company, type Project } from '../../state/projects.ts';
-import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.tsx';
+import { hrefFor, navigate } from '../../state/router.ts';
+import { AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
+import { BackToHome, downloadText, ScrollRegion } from './common.tsx';
+import { PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
 import { exportProject, importProject, type ProjectFile } from './projectFile.ts';
 import { yyyymmdd } from './exportFormat.ts';
+import { useProjectManagement } from './useProjectManagement.tsx';
 import './project.css';
-
-type Pending = { kind: 'company'; item: Company } | { kind: 'project'; item: Project } | null;
 
 /** FR-137〜FR-139: register companies, manage up to PARAM-031 projects each, export/import a project with its ids. */
 export function ProjectsScreen() {
@@ -17,10 +19,12 @@ export function ProjectsScreen() {
   const companies = useProjects((s) => s.companies);
   const projects = useProjects((s) => s.projects);
   const target = useProjects((s) => s.target);
-  const { addCompany, addProject, renameCompany, renameProject, deleteCompany, deleteProject, setTarget } = useProjects.getState();
+  const { addCompany, addProject, setTarget } = useProjects.getState();
   const [companyName, setCompanyName] = useState('');
   const [companyError, setCompanyError] = useState<string | null>(null);
-  const [pending, setPending] = useState<Pending>(null);
+  const management = useProjectManagement();
+  const [genTarget, setGenTarget] = useState<PackGenTarget | null>(null);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [message, setMessage] = useState<{ intent: 'success' | 'error'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -53,6 +57,7 @@ export function ProjectsScreen() {
         actions={(
           <>
             <BackToHome />
+            <Button icon={<Settings20Regular />} onClick={() => setAiSettingsOpen(true)} data-testid="proj-ai-settings">{t('proj.gen.aiSettings')}</Button>
             <Button icon={<ArrowUpload20Regular />} onClick={() => fileRef.current?.click()}>{t('proj.projects.import')}</Button>
             <input
               ref={fileRef}
@@ -90,50 +95,52 @@ export function ProjectsScreen() {
           projects={projects.filter((p) => p.companyId === c.id)}
           activeId={target.kind === 'project' ? target.projectId : null}
           onAddProject={(name) => addProject(c.id, name)}
-          onRenameCompany={(name) => renameCompany(c.id, name)}
-          onDeleteCompany={() => setPending({ kind: 'company', item: c })}
-          onRenameProject={renameProject}
-          onDeleteProject={(p) => setPending({ kind: 'project', item: p })}
+          onRenameCompany={() => management.renameCompany(c)}
+          onDeleteCompany={() => management.deleteCompany(c)}
+          onRenameProject={management.renameProject}
+          onDeleteProject={management.deleteProject}
           onOpen={(p) => setTarget({ kind: 'project', projectId: p.id })}
+          onGenerate={(p) => setGenTarget({ kind: 'project', projectId: p.id })}
           onExport={onExport}
           date={fmt.date}
         />
       ))}
-      <ConfirmDialog
-        open={pending !== null}
-        title={t(pending?.kind === 'company' ? 'proj.projects.deleteCompanyTitle' : 'proj.projects.deleteProjectTitle')}
-        body={pending ? t(pending.kind === 'company' ? 'proj.projects.deleteCompanyBody' : 'proj.projects.deleteProjectBody', { name: pending.item.name }) : ''}
-        confirmLabel={t('proj.delete')}
-        onConfirm={() => {
-          if (pending?.kind === 'company') deleteCompany(pending.item.id);
-          else if (pending?.kind === 'project') deleteProject(pending.item.id);
-          setPending(null);
-        }}
-        onCancel={() => setPending(null)}
-        testId="proj-delete-confirm"
-      />
+      {management.dialogs}
+      <AiSettingsDialog open={aiSettingsOpen} onClose={() => setAiSettingsOpen(false)} />
+      {genTarget && (
+        <PackGenerateDialog
+          open
+          target={genTarget}
+          onClose={() => setGenTarget(null)}
+          onOpenProject={(projectId) => {
+            navigate(hrefFor('/home'));
+            setTarget({ kind: 'project', projectId });
+            // A pack saved for the project that is already active needs an explicit restart to be loaded (main.tsx).
+            window.location.reload();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function CompanyPanel({ company, projects, activeId, onAddProject, onRenameCompany, onDeleteCompany, onRenameProject, onDeleteProject, onOpen, onExport, date }: {
+function CompanyPanel({ company, projects, activeId, onAddProject, onRenameCompany, onDeleteCompany, onRenameProject, onDeleteProject, onOpen, onGenerate, onExport, date }: {
   company: Company;
   projects: Project[];
   activeId: string | null;
   onAddProject: (name: string) => AddProjectResult;
-  onRenameCompany: (name: string) => void;
+  onRenameCompany: () => void;
   onDeleteCompany: () => void;
-  onRenameProject: (id: string, name: string) => void;
+  onRenameProject: (p: Project) => void;
   onDeleteProject: (p: Project) => void;
   onOpen: (p: Project) => void;
+  onGenerate: (p: Project) => void;
   onExport: (p: Project) => void;
   date: (iso: string) => string;
 }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
   const full = projects.length >= MAX_PROJECTS_PER_COMPANY;
 
   const add = () => {
@@ -145,17 +152,6 @@ function CompanyPanel({ company, projects, activeId, onAddProject, onRenameCompa
       setError(t(r.reason === 'limit' ? 'proj.err.limit' : r.reason === 'duplicate' ? 'proj.err.duplicateProject' : r.reason === 'emptyName' ? 'proj.err.required' : 'proj.err.noCompany', { max: MAX_PROJECTS_PER_COMPANY }));
     }
   };
-  const startRename = (id: string, current: string) => {
-    setRenaming(id);
-    setRenameValue(current);
-  };
-  const commitRename = () => {
-    if (!renaming || !renameValue.trim()) return setRenaming(null);
-    if (renaming === company.id) onRenameCompany(renameValue);
-    else onRenameProject(renaming, renameValue);
-    setRenaming(null);
-  };
-
   return (
     <Panel
       title={company.name}
@@ -164,18 +160,11 @@ function CompanyPanel({ company, projects, activeId, onAddProject, onRenameCompa
       actions={(
         <>
           <Badge appearance="tint">{t('proj.projects.count', { count: projects.length, max: MAX_PROJECTS_PER_COMPANY })}</Badge>
-          <Button size="small" icon={<Edit20Regular />} onClick={() => startRename(company.id, company.name)}>{t('proj.rename')}</Button>
-          <Button size="small" icon={<Delete20Regular />} onClick={onDeleteCompany}>{t('proj.delete')}</Button>
+          <Button size="small" icon={<Edit20Regular />} onClick={onRenameCompany} aria-label={t('proj.projects.renameNamed', { name: company.name })}>{t('proj.rename')}</Button>
+          <Button size="small" icon={<Delete20Regular />} onClick={onDeleteCompany} aria-label={t('proj.projects.deleteNamed', { name: company.name })}>{t('proj.delete')}</Button>
         </>
       )}
     >
-      {renaming === company.id && (
-        <form className="proj-form-row" onSubmit={(e) => { e.preventDefault(); commitRename(); }}>
-          <Field label={t('proj.projects.companyName')}><Input value={renameValue} onChange={(_, d) => setRenameValue(d.value)} /></Field>
-          <Button type="submit" appearance="primary">{t('proj.save')}</Button>
-          <Button onClick={() => setRenaming(null)}>{t('proj.cancel')}</Button>
-        </form>
-      )}
       <ScrollRegion label={t('proj.projects.tableCaption', { company: company.name })}>
         <table className="data-table">
           <caption>{t('proj.projects.tableCaption', { company: company.name })}</caption>
@@ -194,12 +183,7 @@ function CompanyPanel({ company, projects, activeId, onAddProject, onRenameCompa
             {projects.map((p) => (
               <tr key={p.id} className={activeId === p.id ? 'selected' : undefined}>
                 <th scope="row">
-                  {renaming === p.id ? (
-                    <form className="proj-form-row" onSubmit={(e) => { e.preventDefault(); commitRename(); }}>
-                      <Input aria-label={t('proj.projects.projectName')} value={renameValue} onChange={(_, d) => setRenameValue(d.value)} />
-                      <Button type="submit" size="small" appearance="primary">{t('proj.save')}</Button>
-                    </form>
-                  ) : p.name}
+                  {p.name}
                   {activeId === p.id && <Badge appearance="filled" color="brand" className="proj-inline-badge">{t('proj.projects.open')}</Badge>}
                 </th>
                 <td>{t(`proj.step.${p.step}`)}</td>
@@ -207,7 +191,8 @@ function CompanyPanel({ company, projects, activeId, onAddProject, onRenameCompa
                 <td>
                   <div className="proj-row">
                     <Button size="small" appearance="primary" icon={<Open20Regular />} onClick={() => onOpen(p)} aria-label={t('proj.projects.openNamed', { name: p.name })}>{t('proj.projects.openShort')}</Button>
-                    <Button size="small" icon={<Edit20Regular />} onClick={() => startRename(p.id, p.name)} aria-label={t('proj.projects.renameNamed', { name: p.name })}>{t('proj.rename')}</Button>
+                    <Button size="small" icon={<BotSparkle20Regular />} onClick={() => onGenerate(p)} aria-label={t('proj.gen.buttonNamed', { name: `${company.name}-${p.name}` })} data-testid={`proj-generate-${p.id}`}>{t('proj.gen.buttonShort')}</Button>
+                    <Button size="small" icon={<Edit20Regular />} onClick={() => onRenameProject(p)} aria-label={t('proj.projects.renameNamed', { name: p.name })}>{t('proj.rename')}</Button>
                     <Button size="small" icon={<ArrowDownload20Regular />} onClick={() => onExport(p)} aria-label={t('proj.projects.exportNamed', { name: p.name })}>{t('proj.projects.exportShort')}</Button>
                     <Button size="small" icon={<Delete20Regular />} onClick={() => onDeleteProject(p)} aria-label={t('proj.projects.deleteNamed', { name: p.name })}>{t('proj.delete')}</Button>
                   </div>

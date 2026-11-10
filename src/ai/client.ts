@@ -1,6 +1,6 @@
 import type { Entity } from '../data/schema.ts';
 import { loaded } from '../data/pack.ts';
-import { AI_LIMITS, C03_TABLE, PER_USE_LIMITS, type AiUse, type Limits } from './policy.ts';
+import { AI_LIMITS, C03_TABLE, PER_USE_LIMITS, type AiUse, type Limits, type Provider } from './policy.ts';
 import { actualCostJpy, checkBudget, estimateCostJpy, estimateTokens, type BudgetDecision, type UnitPrices, type UsageRecord } from './budget.ts';
 import { evaluateGate, type GateReason } from './gate.ts';
 import { selectOutbound, toPromptContext } from './redact.ts';
@@ -33,6 +33,8 @@ export interface AiResponse {
 }
 
 export interface AiRuntimeSettings {
+  /** The provider the relay sends to (D-12). Omitted = Foundry, the only provider before D-12. */
+  provider?: Provider;
   liveEnabled: boolean;
   configured: boolean;
   /** D-3: the user's monthly budget (default 100,000 JPY). */
@@ -44,6 +46,7 @@ export interface AiRuntimeSettings {
 /** What the browser hands to the transport (the localhost relay). */
 export interface LiveCall {
   use: AiUse;
+  provider: Provider;
   lang: 'ja' | 'en';
   prompt: string;
   context: string;
@@ -55,9 +58,11 @@ export interface LiveResult {
   text: string;
   inputTokens: number;
   outputTokens: number;
+  /** GitHub Copilot: premium requests the call consumed (model multiplier included). */
+  premiumRequests?: number;
 }
 
-export type LiveTransport = (call: LiveCall) => Promise<LiveResult>;
+export type LiveTransport = (call: LiveCall, signal?: AbortSignal) => Promise<LiveResult>;
 
 export const LEDGER_KEY = 'bas.ai.ledger';
 
@@ -135,6 +140,7 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
   const budget = checkBudget(readLedger(), now, { use: req.use, estimatedInputTokens, maxOutputTokens, estimatedCostJpy: estimatedCostJpy ?? 0 }, limits);
   const gate = evaluateGate({
     use: req.use,
+    provider: settings.provider ?? 'foundry',
     liveEnabled: settings.liveEnabled,
     userConfirmed: req.userConfirmed ?? false,
     configured: settings.configured,
@@ -178,20 +184,75 @@ export async function aiComplete(req: AiRequest): Promise<AiResponse> {
   };
   if (!pf.allowed) return mockAnswer(pf.reasons);
   if (!transport) return mockAnswer(['liveFailed']);
-  const prices = runtime().prices!;
   try {
-    const result = await transport({
+    const live = await sendLive(req, pf);
+    return { mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: pf.context, costJpy: live.costJpy };
+  } catch {
+    return mockAnswer(['liveFailed']);
+  }
+}
+
+async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Promise<LiveResult & { costJpy: number }> {
+  const settings = runtime();
+  let result: LiveResult;
+  try {
+    result = await transport!({
       use: req.use,
+      provider: settings.provider ?? 'foundry',
       lang: req.lang,
       prompt: req.prompt,
       context: pf.context,
       maxOutputTokens: pf.maxOutputTokens,
       timeoutMs: req.timeoutMs ?? 60_000,
-    });
-    const costJpy = actualCostJpy(result.inputTokens, result.outputTokens, prices);
-    appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costJpy });
-    return { mode: 'live', text: result.text, blockedReasons: [], withheldIds: [], context: pf.context, costJpy };
-  } catch {
-    return mockAnswer(['liveFailed']);
+    }, signal);
+  } catch (err) {
+    // A cancelled or timed-out call may already be billed by the provider: record the worst-case estimate, never 0.
+    if (mayHaveBeenBilled(err, signal) && pf.estimatedCostJpy !== null) {
+      appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: pf.estimatedInputTokens, outputTokens: 0, costJpy: pf.estimatedCostJpy });
+      throw Object.assign(err instanceof Error ? err : new Error(String(err)), { recordedCostJpy: pf.estimatedCostJpy });
+    }
+    throw err;
+  }
+  const costJpy = actualCostJpy(result.inputTokens, result.outputTokens, settings.prices!, result.premiumRequests);
+  appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costJpy });
+  return { ...result, costJpy };
+}
+
+/** Cancelled by the user, timed out in the browser, or the relay reported a provider timeout/abort (504/499). */
+function mayHaveBeenBilled(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  const e = err as { name?: unknown; status?: unknown };
+  return e?.name === 'AbortError' || e?.name === 'TimeoutError' || e?.status === 504 || e?.status === 499;
+}
+
+/** Why a strict live call did not produce an answer. */
+export class AiLiveError extends Error {
+  readonly reasons: GateReason[];
+  readonly budget?: BudgetDecision;
+  /** Cost written to the ledger for a call that may have been billed although it produced no answer. */
+  readonly recordedCostJpy: number;
+
+  constructor(reasons: GateReason[], message: string, budget?: BudgetDecision, recordedCostJpy = 0) {
+    super(message);
+    this.reasons = reasons;
+    this.budget = budget;
+    this.recordedCostJpy = recordedCostJpy;
+  }
+}
+
+/**
+ * Live only, never a mock: for features whose result is stored as real data (FR-311 customer pack generation), a mock
+ * answer would be wrong data. Same gate, budget and ledger as aiComplete; a refusal or failure throws AiLiveError.
+ */
+export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ text: string; costJpy: number; inputTokens: number; outputTokens: number }> {
+  const pf = preflight(req);
+  if (!pf.allowed) throw new AiLiveError(pf.reasons, `blocked: ${pf.reasons.join(', ')}`, pf.budget);
+  if (!transport) throw new AiLiveError(['liveFailed'], 'no transport');
+  try {
+    const r = await sendLive(req, pf, signal);
+    return { text: r.text, costJpy: r.costJpy, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
+  } catch (err) {
+    const recorded = (err as { recordedCostJpy?: number }).recordedCostJpy ?? 0;
+    throw new AiLiveError(['liveFailed'], signal?.aborted ? 'aborted' : (err as Error).message, undefined, recorded);
   }
 }

@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { parseUnitPrices } from '../../ai/budget.ts';
+import { parseRequestPrice, parseUnitPrices, type UnitPrices } from '../../ai/budget.ts';
 import { setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
 import { DEFAULT_MONTHLY_BUDGET_JPY } from '../../ai/policy.ts';
 import {
-  deleteRelayConnection, deleteSecret, fetchRelayStatus, saveRelayConnection, saveSecret,
-  type ConnectionSaveError, type KeyProtection, type RelayConnectionInfo, type SecretName,
+  deleteCopilotSettings, deleteRelayConnection, deleteSecret, fetchCopilotStatus, fetchRelayStatus, saveCopilotModel, saveRelayConnection, saveSecret,
+  type ConnectionSaveError, type CopilotStatusInfo, type KeyProtection, type RelayConnectionInfo, type SecretName,
 } from './relayClient.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
@@ -22,7 +22,7 @@ export function parseBudget(raw: string): number | null {
 }
 
 type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'liveEnabled' | 'speechEndpoint' | 'speechRegion'
-  | 'priceInputPerM' | 'priceOutputPerM' | 'monthlyBudgetJpy';
+  | 'priceInputPerM' | 'priceOutputPerM' | 'monthlyBudgetJpy' | 'copilotPricePerRequest';
 
 /**
  * Non-secret AI settings (FR-275/FR-282/FR-167). App-wide, not per project: the connection belongs to the PC.
@@ -44,13 +44,23 @@ export interface AiSettingsState {
   priceOutputPerM: string;
   /** D-3: one monthly budget for the whole app (PARAM-117), default 100,000 JPY. */
   monthlyBudgetJpy: number;
+  /** D-12: JPY per GitHub Copilot premium request (user-entered; invalid blocks every Copilot send). */
+  copilotPricePerRequest: string;
   relayReachable: boolean;
   foundryKeySaved: boolean;
   speechKeySaved: boolean;
   relayConnection: RelayConnectionInfo | null;
   keyProtection: KeyProtection | null;
+  /** The Copilot model saved in the relay (the copy that sends). */
+  copilotModel: string | null;
+  /** Last answer of POST /relay/copilot/status (sign-in and models); null until checked. */
+  copilotStatus: CopilotStatusInfo | null;
   update: (patch: Partial<Pick<AiSettingsState, Editable>>) => void;
   refreshRelay: () => Promise<void>;
+  /** Asks the relay to start the Copilot runtime and report the CLI sign-in and its models (can take seconds). */
+  checkCopilot: () => Promise<CopilotStatusInfo>;
+  saveCopilotModel: (model: string) => Promise<boolean>;
+  deleteCopilot: () => Promise<boolean>;
   saveKey: (name: SecretName, value: string) => Promise<boolean>;
   deleteKey: (name: SecretName) => Promise<boolean>;
   /** Saves endpoint, deployment and API version in the relay (connection.json). */
@@ -75,18 +85,36 @@ export const useAiSettings = create<AiSettingsState>()(
       priceInputPerM: '',
       priceOutputPerM: '',
       monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+      copilotPricePerRequest: '',
       relayReachable: false,
       foundryKeySaved: false,
       speechKeySaved: false,
       relayConnection: null,
       keyProtection: null,
+      copilotModel: null,
+      copilotStatus: null,
       update: (patch) => set(patch),
       refreshRelay: async () => {
         const s = await fetchRelayStatus();
         set({
           relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, speechKeySaved: s.secrets.speechKey,
-          relayConnection: s.connection, keyProtection: s.keyProtection,
+          relayConnection: s.connection, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
         });
+      },
+      checkCopilot: async () => {
+        const status = await fetchCopilotStatus();
+        set({ copilotStatus: status, ...(status.reachable ? { copilotModel: status.model } : {}) });
+        return status;
+      },
+      saveCopilotModel: async (model) => {
+        const ok = await saveCopilotModel(model);
+        await get().refreshRelay();
+        return ok;
+      },
+      deleteCopilot: async () => {
+        const ok = await deleteCopilotSettings();
+        await get().refreshRelay();
+        return ok;
       },
       saveKey: async (name, value) => {
         const ok = await saveSecret(name, value);
@@ -119,7 +147,7 @@ export const useAiSettings = create<AiSettingsState>()(
       partialize: (s) => ({
         provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, liveEnabled: s.liveEnabled,
         speechEndpoint: s.speechEndpoint, speechRegion: s.speechRegion, priceInputPerM: s.priceInputPerM, priceOutputPerM: s.priceOutputPerM,
-        monthlyBudgetJpy: s.monthlyBudgetJpy,
+        monthlyBudgetJpy: s.monthlyBudgetJpy, copilotPricePerRequest: s.copilotPricePerRequest,
       }),
       // v1 had a separate review budget (PARAM-120); D-3 merged it into the single monthly budget.
       migrate: (persisted, version) => {
@@ -132,27 +160,39 @@ export const useAiSettings = create<AiSettingsState>()(
 );
 
 /**
- * "Configured" = endpoint, deployment and API key are all saved in the relay (the relay is what sends).
- * Copilot SDK and Entra ID sign-in are manual steps outside this app (C-07: BLOCKED), so they never count as configured.
+ * "Configured" = the relay can send for the chosen provider: Foundry endpoint, deployment and API key saved in the relay,
+ * or a GitHub Copilot model saved in the relay (D-12; the CLI sign-in is re-checked by the relay on every call).
+ * Entra ID sign-in for Foundry is a manual step outside this app (C-07: BLOCKED), so it never counts as configured.
  */
-export function isConfigured(s: Pick<AiSettingsState, 'provider' | 'authMethod' | 'foundryKeySaved' | 'relayConnection'>): boolean {
-  if (s.provider === 'copilotSdk' || s.authMethod === 'entraId') return false;
+export function isConfigured(s: Pick<AiSettingsState, 'provider' | 'authMethod' | 'foundryKeySaved' | 'relayConnection'> & Partial<Pick<AiSettingsState, 'copilotModel'>>): boolean {
+  if (s.provider === 'copilotSdk') return (s.copilotModel ?? null) !== null;
+  if (s.authMethod === 'entraId') return false;
   return s.relayConnection !== null && s.foundryKeySaved;
+}
+
+/** Prices for the chosen provider: token prices for Foundry, JPY per premium request × model multiplier for Copilot. */
+export function providerPrices(s: Pick<AiSettingsState, 'provider' | 'priceInputPerM' | 'priceOutputPerM' | 'copilotPricePerRequest' | 'copilotModel' | 'copilotStatus'>): UnitPrices | null {
+  if (s.provider === 'copilotSdk') {
+    const multiplier = s.copilotStatus?.models.find((m) => m.id === s.copilotModel)?.multiplier ?? 1;
+    return parseRequestPrice(s.copilotPricePerRequest, multiplier);
+  }
+  return parseUnitPrices(s.priceInputPerM, s.priceOutputPerM);
 }
 
 export function runtimeSettings(): AiRuntimeSettings {
   const s = useAiSettings.getState();
   return {
+    provider: s.provider,
     liveEnabled: s.liveEnabled,
     configured: isConfigured(s),
     monthlyBudgetJpy: s.monthlyBudgetJpy,
-    prices: parseUnitPrices(s.priceInputPerM, s.priceOutputPerM),
+    prices: providerPrices(s),
   };
 }
 
 /** Whether a send for an approved use could go live now (switch on, relay configured, prices entered). */
 export function liveReady(s: AiSettingsState): boolean {
-  return s.liveEnabled && isConfigured(s) && parseUnitPrices(s.priceInputPerM, s.priceOutputPerM) !== null;
+  return s.liveEnabled && isConfigured(s) && providerPrices(s) !== null;
 }
 
 setRuntimeSettingsProvider(runtimeSettings);

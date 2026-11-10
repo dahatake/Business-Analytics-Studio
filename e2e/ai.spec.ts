@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { JAPANESE, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, open, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 // The relay (keys, connection, per-use interval) is shared by every test of this preview server, so this file runs in
 // order in one worker. The live tests need the preview server started with BAS_RELAY_TEST_OUTBOUND=1 (see below).
@@ -106,8 +106,11 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
     await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(16);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(15);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveAttribute('data-use', 'explain');
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(14);
+    // D-1 "explain" and, since D-12, "packBuild" (customer pack generation).
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(2);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'explain');
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'packBuild');
 
     await page.goto('/#/assistant');
     await page.getByTestId('ai-chat-input').fill('lead time');
@@ -387,7 +390,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
 
   test('confirm → one request with internal data, "Live" answer, cost recorded; a 1 JPY budget then stops sending', async ({ page }) => {
     await configure(page, 'en');
-    await expect(page.getByTestId('ai-state')).toHaveText('Live ("Explain current state" only)');
+    await expect(page.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
     await expect(page.getByTestId('ai-configured')).toContainText('Saved');
     await expect(page.getByTestId('ai-key-protection')).toContainText(process.platform === 'win32' ? 'DPAPI' : 'Key file');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
@@ -452,4 +455,157 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
   });
 });
 
+/** Launch screen with one registered company and project (FR-311 live test). */
+async function seedLaunch(page: Page, lang: Lang) {
+  await setup(page, { skipLaunch: false, lang });
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('bas.e2e.gen')) return;
+    sessionStorage.setItem('bas.e2e.gen', '1');
+    const createdAt = '2026-11-10T00:00:00.000Z';
+    localStorage.setItem('bas.projects', JSON.stringify({
+      version: 1,
+      state: {
+        companies: [{ id: 'co-c', name: 'Contoso', createdAt }],
+        projects: [{ id: 'pj-c', companyId: 'co-c', name: 'Delivery', createdAt, step: 'define' }],
+        target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define',
+      },
+    }));
+  });
+  await page.goto('/');
+  await expect(page.getByTestId('launch-screen')).toBeVisible();
+}
 
+/* FR-311 (D-12): customer pack generation on the launch screen against a local stub provider (same server flag as above). */test.describe('live generation through the relay (D-12)', () => {
+  test.skip(process.env.BAS_RELAY_TEST_OUTBOUND !== '1', 'needs BAS_RELAY_TEST_OUTBOUND=1 for the preview server');
+
+  let stub: Server;
+  let stubUrl = '';
+  const received: { body: Record<string, unknown>; user: string }[] = [];
+  const lt = (s: string) => ({ ja: s, en: s });
+  const ent = (id: string, kind: string, world: string, type: string, extra: Record<string, unknown>) => ({
+    id, kind, name: lt(id), description: lt(`${id} description`), world, type, classification: 'internal', author: 'ai', sourceIds: ['source-doc-1'], ...extra,
+  });
+  const stageA = {
+    packId: 'contoso-delivery', company: { name: { ja: 'コントソ', en: 'Contoso Manufacturing' }, industry: lt('Manufacturing') }, isSample: false,
+    regions: [{ id: 'region-kanto', name: lt('Kanto') }],
+    entities: [
+      ent('site-tokyo', 'site', 'real', 'site', { role: 'hq', lat: 35.68, lon: 139.76, capacityTPerMonth: 0 }),
+      ent('product-gear', 'product', 'real', 'thing', { category: lt('Parts'), siteId: 'site-tokyo', unitPriceJpy: 12000 }),
+      ent('person-lead', 'person', 'real', 'person', { role: lt('Logistics lead'), siteId: 'site-tokyo' }),
+    ],
+  };
+  const stageB = {
+    entities: [
+      ent('kpi-otd', 'kpi', 'digital', 'metric', { unit: lt('%'), baseline: 92, current: 94, target: 98, direction: 'increase', scale: 'ratio', period: lt('FY2026'), ownerId: 'person-lead' }),
+      ent('cause-plan', 'cause', 'real', 'event', {}),
+      ent('issue-late', 'issue', 'real', 'event', { impact: 4, feasibility: 3, causeIds: ['cause-plan'], kpiIds: ['kpi-otd'] }),
+      // Points to a solution that does not exist: the check must catch it and the fix round removes it.
+      ent('initiative-x', 'initiative', 'real', 'operation', { solutionId: 'solution-none', start: '2026-12-01', end: '2027-03-31', progress: 0, dependsOn: [], ownerId: 'person-lead' }),
+    ],
+    gaps: [{ section: 'deal', missing: ['order ledger'], nextAction: 'Attach the order ledger' }],
+  };
+
+  test.beforeAll(async () => {
+    stub = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages: { content: string }[] };
+        const user = body.messages[1]!.content;
+        received.push({ body, user });
+        const answer = user.startsWith('Build the foundation') ? stageA : user.startsWith('Build the business part') ? stageB : { remove: ['initiative-x'] };
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) } }], usage: { prompt_tokens: 6000, completion_tokens: 2500 } }));
+      });
+    });
+    await new Promise<void>((done) => stub.listen(0, '127.0.0.1', done));
+    stubUrl = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
+  });
+
+  test.afterAll(async ({ browser }) => {
+    const page = await browser.newPage();
+    await page.goto('/');
+    await page.evaluate(async () => {
+      const { token } = (await (await fetch('/relay/session', { method: 'POST' })).json()) as { token: string };
+      await fetch('/relay/secrets/foundryKey', { method: 'DELETE', headers: { 'X-BAS-Relay': token } });
+      await fetch('/relay/connection', { method: 'DELETE', headers: { 'X-BAS-Relay': token } });
+    });
+    await page.close();
+    stub.closeAllConnections();
+    await new Promise<void>((done) => stub.close(() => done()));
+  });
+
+  test('configure on the launch screen → generate → progress → verified pack saved with its record → open it', async ({ page }) => {
+    await seedLaunch(page, 'en');
+    await page.getByTestId('launch-ai-settings').click();
+    const settings = page.getByTestId('ai-settings-dialog');
+    await settings.getByTestId('ai-endpoint').fill(stubUrl);
+    await settings.getByTestId('ai-deployment').fill('gpt-e2e');
+    await settings.getByTestId('ai-connection-save').click();
+    await expect(settings.getByTestId('ai-relay-connection')).toContainText('Saved');
+    await expect(settings.getByTestId('ai-key-protection')).not.toContainText('Unknown');
+    if ((await settings.getByTestId('ai-foundry-key-state').textContent()) !== 'Saved') {
+      await settings.getByTestId('ai-foundry-key-input').fill(FAKE_KEY);
+      await settings.getByTestId('ai-foundry-key-save').click();
+    }
+    await expect(settings.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
+    await settings.getByTestId('ai-price-input').fill('400');
+    await settings.getByTestId('ai-price-output').fill('1600');
+    await settings.getByTestId('ai-live-switch').check();
+    await expect(settings.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
+    await settings.getByTestId('ai-settings-dialog-close').click();
+
+    await page.getByTestId('launch-generate-pj-c').click();
+    const dialog = page.getByTestId('gen-dialog');
+    await dialog.getByTestId('gen-purpose').fill('Reduce late deliveries');
+    await dialog.getByTestId('gen-news').uncheck(); // no internet in the test
+    await dialog.getByTestId('gen-files').setInputFiles({ name: 'delivery-kpi.csv', mimeType: 'text/csv', buffer: Buffer.from('kpi,baseline,current,target\non-time delivery %,92,94,98\ngear unit price JPY,12000,,\n') });
+    await expect(dialog.getByTestId('gen-file-list')).toContainText('delivery-kpi.csv');
+    await expect(dialog.getByTestId('gen-estimate')).toContainText('¥');
+    await expect(dialog.getByTestId('gen-start')).toBeDisabled();
+    await dialog.getByTestId('gen-check-approved').check();
+    await dialog.getByTestId('gen-check-cost').check();
+    expect(await scan(page)).toEqual([]);
+    await dialog.getByTestId('gen-start').click();
+
+    await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.getByTestId('gen-progress')).toHaveCount(0);
+    await expect(dialog.getByTestId('gen-checks')).toHaveText('1 fix rounds, 0 items removed, 0 invented sources discarded');
+    await expect(dialog.getByTestId('gen-cost')).toContainText('(3 sends)');
+    await expect(dialog.getByTestId('gen-ungrounded')).toHaveCount(0);
+    expect(await scan(page)).toEqual([]);
+
+    // What went out: JSON mode, the attached file's text, the app-made source id; stage B saw the foundation ids.
+    expect(received).toHaveLength(3);
+    expect(received[0]!.body.response_format).toEqual({ type: 'json_object' });
+    expect(received[0]!.user).toContain('on-time delivery %,92,94,98');
+    expect(received[0]!.user).toContain('source-doc-1');
+    expect(received[1]!.user).toContain('site-tokyo');
+    expect(received[2]!.user).toContain('initiative-x');
+    expect(received.map((r) => JSON.stringify(r.body)).join('')).not.toContain(FAKE_KEY);
+
+    const stored = await page.evaluate(() => ({
+      index: JSON.parse(localStorage.getItem('bas.packs.index') ?? '{}') as Record<string, { files: string[]; entities: number }>,
+      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number }[],
+    }));
+    expect(stored.index['pj-c']).toMatchObject({ files: ['generated:foundry', 'delivery-kpi.csv'] });
+    expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(3);
+    expect(stored.ledger.every((r) => r.costJpy > 0)).toBe(true);
+
+    await dialog.getByTestId('gen-open').click();
+    await expect(page.locator('main#main')).toBeVisible();
+    await page.goto('/#/data');
+    await expect(page.locator('main#main')).toContainText('Contoso Manufacturing');
+
+    // A generated pack is sparser than the sample (no customers, deals or invoices here): every screen must still render.
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(`${page.url()}: ${e.message}`));
+    for (const route of ['/', '/home', '/analysis', '/assistant', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
+      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings']) {
+      await page.goto(`/#${route}`);
+      await expect(page.locator('main#main'), route).toBeVisible();
+      await page.waitForTimeout(300);
+    }
+    expect(errors).toEqual([]);
+  });
+});

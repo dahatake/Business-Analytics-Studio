@@ -135,7 +135,7 @@ export function checkCatalog(markdown: string, now: Date): { rows: CatalogRow[];
     enumCheck('type', INTEGRATION_TYPES);
     enumCheck('status', STATUSES);
     enumCheck('piiClass', PII_CLASSES);
-    if (row.gate && !/^(c03:[a-zA-Z]+|dev-only|blocked:Q-\d{3})$/.test(row.gate)) err('badValue', 'gate', `"gate" is "${row.gate}"; expected c03:<use>, dev-only or blocked:Q-xxx.`);
+    if (row.gate && !/^(c03:[a-zA-Z]+|dev-only|public-company-news|blocked:Q-\d{3})$/.test(row.gate)) err('badValue', 'gate', `"gate" is "${row.gate}"; expected c03:<use>, dev-only, public-company-news or blocked:Q-xxx.`);
     if (row.requirements && impact.length === 0) err('badValue', 'requirements', 'No requirement ID (FR-xxx, NFR-xxx, C-xx) is linked (FR-198).');
     const checked = row.lastChecked ? Date.parse(`${row.lastChecked}T00:00:00Z`) : NaN;
     if (row.lastChecked && (!/^\d{4}-\d{2}-\d{2}$/.test(row.lastChecked) || Number.isNaN(checked))) err('badValue', 'lastChecked', `"lastChecked" must be a date (YYYY-MM-DD), got "${row.lastChecked}".`);

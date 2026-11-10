@@ -26,6 +26,7 @@ export interface Project {
 export type WorkTarget = { kind: 'demo' } | { kind: 'project'; projectId: string };
 
 export type AddProjectResult = { ok: true; id: string } | { ok: false; reason: 'limit' | 'noCompany' | 'emptyName' | 'duplicate' };
+export type RenameResult = { ok: true } | { ok: false; reason: 'emptyName' | 'duplicate' | 'notFound' };
 
 interface ProjectsState {
   companies: Company[];
@@ -35,10 +36,10 @@ interface ProjectsState {
   lastProjectId: string | null;
   demoStep: ImprovementStep;
   addCompany: (name: string) => { ok: true; id: string } | { ok: false; reason: 'emptyName' | 'duplicate' };
-  renameCompany: (id: string, name: string) => void;
+  renameCompany: (id: string, name: string) => RenameResult;
   deleteCompany: (id: string) => void;
   addProject: (companyId: string, name: string) => AddProjectResult;
-  renameProject: (id: string, name: string) => void;
+  renameProject: (id: string, name: string) => RenameResult;
   deleteProject: (id: string) => void;
   setTarget: (target: WorkTarget) => void;
   setStep: (step: ImprovementStep) => void;
@@ -84,7 +85,14 @@ export const useProjects = create<ProjectsState>()(
         set((s) => ({ companies: [...s.companies, { id, name, createdAt: now() }] }));
         return { ok: true, id };
       },
-      renameCompany: (id, name) => set((s) => ({ companies: s.companies.map((c) => (c.id === id && name.trim() ? { ...c, name: name.trim() } : c)) })),
+      renameCompany: (id, raw) => {
+        const name = raw.trim();
+        if (!name) return { ok: false, reason: 'emptyName' };
+        if (!get().companies.some((c) => c.id === id)) return { ok: false, reason: 'notFound' };
+        if (get().companies.some((c) => c.id !== id && c.name === name)) return { ok: false, reason: 'duplicate' };
+        set((s) => ({ companies: s.companies.map((c) => c.id === id ? { ...c, name } : c) }));
+        return { ok: true };
+      },
       deleteCompany: (id) => {
         get().projects.filter((p) => p.companyId === id).forEach((p) => get().deleteProject(p.id));
         set((s) => ({ companies: s.companies.filter((c) => c.id !== id) }));
@@ -100,7 +108,15 @@ export const useProjects = create<ProjectsState>()(
         set((s) => ({ projects: [...s.projects, { id, companyId, name, createdAt: now(), step: 'define' }] }));
         return { ok: true, id };
       },
-      renameProject: (id, name) => set((s) => ({ projects: s.projects.map((p) => (p.id === id && name.trim() ? { ...p, name: name.trim() } : p)) })),
+      renameProject: (id, raw) => {
+        const name = raw.trim();
+        if (!name) return { ok: false, reason: 'emptyName' };
+        const project = get().projects.find((p) => p.id === id);
+        if (!project) return { ok: false, reason: 'notFound' };
+        if (get().projects.some((p) => p.id !== id && p.companyId === project.companyId && p.name === name)) return { ok: false, reason: 'duplicate' };
+        set((s) => ({ projects: s.projects.map((p) => p.id === id ? { ...p, name } : p) }));
+        return { ok: true };
+      },
       deleteProject: (id) => {
         purgeScope(id);
         deletionListeners.forEach((fn) => fn(id));
@@ -194,4 +210,3 @@ export function createScopedStore<T>(name: string, initial: (scope: string) => T
   });
   return store;
 }
-

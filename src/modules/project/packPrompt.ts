@@ -1,9 +1,10 @@
 import doc from '../../../docs/copilot-customer-pack-prompt.md?raw';
 import type { Lang } from '../../i18n/index.ts';
 
-/** The Microsoft 365 Copilot prompt (docs/copilot-customer-pack-prompt.md is the single source). */
+/** The Microsoft 365 Copilot prompts (docs/copilot-customer-pack-prompt.md is the single source). */
 export const PROMPT_DOC: string = doc;
 
+/** 'research' = public web research (no work data); 'prompt' = pack assembly with web search off. */
 export function promptSection(source: string, lang: Lang, stage: 'prompt' | 'research' = 'prompt'): string {
   const m = new RegExp(`<!-- ${stage}:${lang}:start -->([\\s\\S]*?)<!-- ${stage}:${lang}:end -->`).exec(source);
   return (m?.[1] ?? '').replace(/\r\n/g, '\n').trim();

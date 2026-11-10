@@ -1,4 +1,4 @@
-import { C03_TABLE, isApproved, type AiUse } from './policy.ts';
+import { C03_TABLE, isApprovedFor, type AiUse, type Provider } from './policy.ts';
 import type { BudgetDecision } from './budget.ts';
 
 export type GateReason =
@@ -13,6 +13,8 @@ export type GateReason =
 
 export interface GateInput {
   use: AiUse;
+  /** The provider that would receive the call; the row must approve it (D-12). Omitted = any approved provider. */
+  provider?: Provider;
   liveEnabled: boolean;
   userConfirmed: boolean;
   configured: boolean;
@@ -34,7 +36,7 @@ export interface GateDecision {
  */
 export function evaluateGate(i: GateInput, table = C03_TABLE): GateDecision {
   const reasons: GateReason[] = [];
-  if (!isApproved(table[i.use])) reasons.push('c03NotApproved');
+  if (!isApprovedFor(table[i.use], i.provider)) reasons.push('c03NotApproved');
   if (!i.liveEnabled) reasons.push('liveDisabled');
   if (!i.userConfirmed) reasons.push('notConfirmed');
   if (!i.configured) reasons.push('notConfigured');

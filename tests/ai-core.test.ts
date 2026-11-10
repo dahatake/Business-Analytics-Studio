@@ -13,15 +13,20 @@ const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'expla
 const allTrue = { liveEnabled: true, userConfirmed: true, configured: true, hasUnitPrices: true, budget: okBudget, personCount: 0, personConfirmed: true };
 
 describe('C-03 table (D-1: staged approval)', () => {
-  it('approves only "explain" via Foundry; every other use stays blocked even with every switch on', () => {
+  it('approves "explain" via Foundry and, since D-12, "packBuild" via Foundry or Copilot; every other use stays blocked even with every switch on', () => {
     const approved = (Object.keys(C03_TABLE) as AiUse[]).filter((u) => isApproved(C03_TABLE[u]));
-    expect(approved).toEqual(['explain']);
+    expect(approved).toEqual(['explain', 'packBuild']);
     expect(C03_TABLE.explain.provider).toBe('foundry');
+    expect(C03_TABLE.packBuild.provider).toEqual(['foundry', 'copilotSdk']);
+    expect(C03_TABLE.packBuild.costCapJpy).toBe(100_000);
     for (const use of Object.keys(C03_TABLE) as AiUse[]) {
       const d = evaluateGate({ use, ...allTrue });
-      expect(d.allowed, use).toBe(use === 'explain');
-      if (use !== 'explain') expect(d.reasons).toEqual(['c03NotApproved']);
+      expect(d.allowed, use).toBe(approved.includes(use));
+      if (!approved.includes(use)) expect(d.reasons).toEqual(['c03NotApproved']);
     }
+    // The row also decides the provider: "explain" is never sent to Copilot.
+    expect(evaluateGate({ use: 'explain', provider: 'copilotSdk', ...allTrue }).reasons).toEqual(['c03NotApproved']);
+    expect(evaluateGate({ use: 'packBuild', provider: 'copilotSdk', ...allTrue }).allowed).toBe(true);
     expect(isUseApproved('explain')).toBe(true);
     expect(isUseApproved('chat')).toBe(false);
   });

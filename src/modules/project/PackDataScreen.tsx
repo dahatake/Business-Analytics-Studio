@@ -17,6 +17,7 @@ import { MAX_PROJECTS_PER_COMPANY, useActiveProject, useProjects } from '../../s
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.tsx';
 import { copilotPrompt, copilotResearchPrompt, PROMPT_DOC } from './packPrompt.ts';
+import { isZipFile, readZipJson } from '../../data/zipRead.ts';
 import { yyyymmdd } from './exportFormat.ts';
 import './project.css';
 
@@ -253,7 +254,11 @@ function ImportPanel() {
     const rejected: FileReport[] = [];
     for (const { file } of picked) {
       if (file.size > MAX_PACK_FILE_BYTES) rejected.push({ name: file.name, status: 'tooLarge', fragments: 0 });
-      else if (!isReadableFile(file.name, file.type)) rejected.push({ name: file.name, status: 'unsupported', fragments: 0 });
+      else if (isZipFile(file.name, file.type)) {
+        const zip = await readZipJson(file.name, await file.arrayBuffer());
+        docs.push(...zip.docs);
+        rejected.push(...zip.rejected);
+      } else if (!isReadableFile(file.name, file.type)) rejected.push({ name: file.name, status: 'unsupported', fragments: 0 });
       else docs.push({ name: file.name, text: await file.text() });
     }
     if (paste.trim()) docs.push({ name: t('proj.pack.pastedName'), text: paste });
@@ -285,7 +290,7 @@ function ImportPanel() {
           ref={fileRef}
           type="file"
           multiple
-          accept=".json,.txt,.md,application/json,text/plain,text/markdown"
+          accept=".zip,.json,.txt,.md,application/zip,application/json,text/plain,text/markdown"
           className="visually-hidden"
           tabIndex={-1}
           aria-label={t('proj.pack.chooseFiles')}

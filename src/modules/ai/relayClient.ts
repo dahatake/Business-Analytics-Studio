@@ -16,9 +16,11 @@ export interface RelayStatus {
   secrets: Record<SecretName, boolean>;
   connection: RelayConnectionInfo | null;
   keyProtection: KeyProtection | null;
+  /** GitHub Copilot model saved in the relay (D-12). */
+  copilot: { model: string } | null;
 }
 
-const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, keyProtection: null };
+const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, keyProtection: null, copilot: null };
 
 /**
  * The relay's per-launch token, kept in memory only (never in browser storage). It is handed out on POST so that the
@@ -26,7 +28,7 @@ const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: fals
  */
 let token: Promise<string | null> | null = null;
 function relayToken(): Promise<string | null> {
-  token ??= fetch('/relay/session', { method: 'POST', cache: 'no-store' })
+  token ??= fetch('/relay/session', { method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(10_000) })
     .then(async (r) => (r.ok ? ((await r.json()) as { token?: string }).token ?? null : null))
     .catch(() => null)
     .then((t) => {
@@ -51,7 +53,7 @@ async function isBadToken(res: Response): Promise<boolean> {
 }
 
 /** A relay restart issues a new token: on 403 badToken (only), refresh the token once and retry. */
-async function relayFetch(url: string, init: RequestInit & { extraHeaders?: Record<string, string> } = {}): Promise<Response> {
+export async function relayFetch(url: string, init: RequestInit & { extraHeaders?: Record<string, string> } = {}): Promise<Response> {
   const { extraHeaders, ...rest } = init;
   let res = await fetch(url, { ...rest, headers: await headers(extraHeaders), cache: 'no-store' });
   if (await isBadToken(res)) {
@@ -73,12 +75,13 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; keyProtection?: unknown };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null };
     return {
       reachable: true,
       secrets: { foundryKey: body.secrets?.foundryKey === true, speechKey: body.secrets?.speechKey === true },
       connection: asConnection(body.connection),
       keyProtection: body.keyProtection === 'dpapi' || body.keyProtection === 'file' ? body.keyProtection : null,
+      copilot: typeof body.copilot?.model === 'string' ? { model: body.copilot.model } : null,
     };
   } catch {
     return UNREACHABLE;
@@ -153,27 +156,147 @@ export async function relayAiCheck(use: string): Promise<{ allowed: boolean; rea
 /** Extra time the browser waits beyond the relay's own provider timeout. */
 const TRANSPORT_GRACE_MS = 5_000;
 
+/** A relay refusal or provider failure, with the relay's error code (never provider content). */
+export class RelayError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string) {
+    super(`relay ${status} ${code}`);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function errorCode(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown; reasons?: unknown };
+    if (typeof body.error === 'string') return body.error;
+    if (Array.isArray(body.reasons) && typeof body.reasons[0] === 'string') return body.reasons[0];
+  } catch {
+    // not JSON
+  }
+  return 'unknown';
+}
+
 /**
  * LiveTransport for src/ai/client.ts: POST /relay/ai with the LiveCall JSON and the per-launch token. Any non-200 answer,
- * malformed result or timeout throws, so aiComplete falls back to the mock with 'liveFailed'.
+ * malformed result or timeout throws (RelayError carries the relay's code), so aiComplete falls back to the mock with
+ * 'liveFailed'. Cancelling closes the request, which also stops the relay's upstream call.
  */
-export const relayTransport: LiveTransport = async (call: LiveCall): Promise<LiveResult> => {
+export const relayTransport: LiveTransport = async (call: LiveCall, signal?: AbortSignal): Promise<LiveResult> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), call.timeoutMs + TRANSPORT_GRACE_MS);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
     const res = await relayFetch('/relay/ai', {
       method: 'POST',
       extraHeaders: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        use: call.use, lang: call.lang, prompt: call.prompt, context: call.context, maxOutputTokens: call.maxOutputTokens, timeoutMs: call.timeoutMs,
+        use: call.use, provider: call.provider, lang: call.lang, prompt: call.prompt, context: call.context, maxOutputTokens: call.maxOutputTokens, timeoutMs: call.timeoutMs,
       }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`relay ${res.status}`);
+    if (!res.ok) throw new RelayError(res.status, await errorCode(res));
     const body = (await res.json()) as Partial<LiveResult>;
-    if (typeof body.text !== 'string' || typeof body.inputTokens !== 'number' || typeof body.outputTokens !== 'number') throw new Error('bad relay answer');
-    return { text: body.text, inputTokens: body.inputTokens, outputTokens: body.outputTokens };
+    if (typeof body.text !== 'string' || typeof body.inputTokens !== 'number' || typeof body.outputTokens !== 'number') throw new RelayError(502, 'badRelayAnswer');
+    return {
+      text: body.text, inputTokens: body.inputTokens, outputTokens: body.outputTokens,
+      ...(typeof body.premiumRequests === 'number' && body.premiumRequests >= 0 ? { premiumRequests: body.premiumRequests } : {}),
+    };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
   }
 };
+
+/* ---------- GitHub Copilot (D-12) ---------- */
+
+export interface CopilotModelInfo {
+  id: string;
+  name: string;
+  multiplier: number | null;
+}
+
+export interface CopilotStatusInfo {
+  reachable: boolean;
+  available: boolean;
+  authenticated: boolean;
+  login: string | null;
+  models: CopilotModelInfo[];
+  error: string | null;
+  model: string | null;
+}
+
+/** Starts the Copilot runtime in the relay if needed and reports the CLI sign-in and the models it offers. */
+export async function fetchCopilotStatus(): Promise<CopilotStatusInfo> {
+  try {
+    const res = await relayFetch('/relay/copilot/status', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (!res.ok) return { reachable: false, available: false, authenticated: false, login: null, models: [], error: await errorCode(res), model: null };
+    const b = (await res.json()) as Partial<CopilotStatusInfo> & { settings?: { model?: unknown } | null };
+    const models = Array.isArray(b.models)
+      ? b.models.filter((m): m is CopilotModelInfo => typeof m?.id === 'string').map((m) => ({ id: m.id, name: typeof m.name === 'string' ? m.name : m.id, multiplier: typeof m.multiplier === 'number' ? m.multiplier : null }))
+      : [];
+    return {
+      reachable: true,
+      available: b.available === true,
+      authenticated: b.authenticated === true,
+      login: typeof b.login === 'string' ? b.login : null,
+      models,
+      error: typeof b.error === 'string' ? b.error : null,
+      model: typeof b.settings?.model === 'string' ? b.settings.model : null,
+    };
+  } catch {
+    return { reachable: false, available: false, authenticated: false, login: null, models: [], error: 'relayUnreachable', model: null };
+  }
+}
+
+export async function saveCopilotModel(model: string): Promise<boolean> {
+  try {
+    const res = await relayFetch('/relay/copilot', { method: 'PUT', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteCopilotSettings(): Promise<boolean> {
+  try {
+    return (await relayFetch('/relay/copilot', { method: 'DELETE' })).ok;
+  } catch {
+    return false;
+  }
+}
+
+/* ---------- Public material for pack generation (FR-311) ---------- */
+
+export interface SitePageInfo {
+  url: string;
+  title: string;
+  description: string;
+  themeColor: string | null;
+  text: string;
+  fetchedAt: string;
+}
+
+/** The relay reads the official site (SSRF-guarded, server/site.ts). Throws RelayError with the relay's code. */
+export async function fetchSitePages(url: string, signal?: AbortSignal): Promise<{ pages: SitePageInfo[]; failed: { url: string; error: string }[] }> {
+  const res = await relayFetch('/relay/site', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as { pages: SitePageInfo[]; failed: { url: string; error: string }[] };
+}
+
+export interface NewsHeadline {
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+}
+
+/** Company news headlines (metadata only) through the relay's news route. */
+export async function fetchNewsHeadlines(company: string, lang: 'ja' | 'en', signal?: AbortSignal): Promise<{ provider: string; fetchedAt: string; articles: NewsHeadline[] }> {
+  const res = await relayFetch('/relay/news', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company, lang }), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as { provider: string; fetchedAt: string; articles: NewsHeadline[] };
+}

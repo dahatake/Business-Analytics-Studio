@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { createScopedStore, MAX_PROJECTS_PER_COMPANY, scopedKey, useProjects } from '../src/state/projects.ts';
+import { createScopedStore, MAX_PROJECTS_PER_COMPANY, onProjectDeleted, scopedKey, useProjects } from '../src/state/projects.ts';
 import { UndoStack } from '../src/state/history.ts';
 
 describe('companies and projects (FR-137〜139)', () => {
@@ -53,6 +53,97 @@ describe('companies and projects (FR-137〜139)', () => {
     useProjects.getState().setStep('kpi');
     expect(useProjects.getState().projects[0]!.step).toBe('kpi');
     expect(useProjects.getState().demoStep).toBe('define');
+  });
+
+  it('validates renames without changing identity, scope data or selection, and persists them', async () => {
+    const s = useProjects.getState();
+    const a = s.addCompany('A');
+    const b = s.addCompany('B');
+    if (!a.ok || !b.ok) throw new Error();
+    const one = s.addProject(a.id, 'One');
+    const two = s.addProject(a.id, 'Two');
+    const other = s.addProject(b.id, 'Elsewhere');
+    if (!one.ok || !two.ok || !other.ok) throw new Error();
+    s.setTarget({ kind: 'project', projectId: one.id });
+    s.setStep('kpi');
+    const companyBefore = useProjects.getState().companies[0]!;
+    const projectBefore = useProjects.getState().projects[0]!;
+    localStorage.setItem(scopedKey(one.id, 'notes'), 'keep me');
+
+    expect(s.renameCompany(a.id, '  ')).toEqual({ ok: false, reason: 'emptyName' });
+    expect(s.renameCompany(a.id, ' B ')).toEqual({ ok: false, reason: 'duplicate' });
+    expect(s.renameCompany('missing', 'C')).toEqual({ ok: false, reason: 'notFound' });
+    expect(s.renameProject(one.id, '  ')).toEqual({ ok: false, reason: 'emptyName' });
+    expect(s.renameProject(one.id, ' Two ')).toEqual({ ok: false, reason: 'duplicate' });
+    expect(s.renameProject('missing', 'X')).toEqual({ ok: false, reason: 'notFound' });
+    expect(useProjects.getState().companies[0]).toEqual(companyBefore);
+    expect(useProjects.getState().projects[0]).toEqual(projectBefore);
+
+    expect(s.renameCompany(a.id, ' A ')).toEqual({ ok: true });
+    expect(s.renameProject(one.id, ' One ')).toEqual({ ok: true });
+    expect(s.renameCompany(a.id, ' Renamed ')).toEqual({ ok: true });
+    // Project names are unique within a company, not across companies.
+    expect(s.renameProject(one.id, ' Elsewhere ')).toEqual({ ok: true });
+    const renamedCompanies = useProjects.getState().companies;
+    const renamedProjects = useProjects.getState().projects;
+    expect(renamedCompanies[0]).toEqual({ ...companyBefore, name: 'Renamed' });
+    expect(renamedProjects[0]).toEqual({ ...projectBefore, name: 'Elsewhere' });
+    expect(localStorage.getItem(scopedKey(one.id, 'notes'))).toBe('keep me');
+
+    const persisted = localStorage.getItem('bas.projects');
+    expect(persisted).not.toBeNull();
+    useProjects.setState({ companies: [], projects: [] }, false);
+    localStorage.setItem('bas.projects', persisted!);
+    await useProjects.persist.rehydrate();
+    expect(useProjects.getState().companies).toEqual(renamedCompanies);
+    expect(useProjects.getState().projects).toEqual(renamedProjects);
+    expect(useProjects.getState().target).toEqual({ kind: 'project', projectId: one.id });
+    expect(useProjects.getState().lastProjectId).toBe(one.id);
+  });
+
+  it('cascades company deletion, clears active and last selection, and preserves unrelated data', () => {
+    const s = useProjects.getState();
+    const a = s.addCompany('A');
+    const b = s.addCompany('B');
+    if (!a.ok || !b.ok) throw new Error();
+    const one = s.addProject(a.id, 'One');
+    const two = s.addProject(a.id, 'Two');
+    const other = s.addProject(b.id, 'Other');
+    if (!one.ok || !two.ok || !other.ok) throw new Error();
+    for (const id of [one.id, two.id, other.id, 'demo']) localStorage.setItem(scopedKey(id, 'notes'), id);
+    s.setTarget({ kind: 'project', projectId: one.id });
+    const deleted: string[] = [];
+    const unsubscribe = onProjectDeleted((id) => deleted.push(id));
+    try {
+      s.deleteCompany(a.id);
+    } finally {
+      unsubscribe();
+    }
+    expect(deleted).toEqual([one.id, two.id]);
+    expect(useProjects.getState().companies.map((c) => c.id)).toEqual([b.id]);
+    expect(useProjects.getState().projects.map((p) => p.id)).toEqual([other.id]);
+    expect(useProjects.getState().target).toEqual({ kind: 'demo' });
+    expect(useProjects.getState().lastProjectId).toBeNull();
+    expect(localStorage.getItem(scopedKey(one.id, 'notes'))).toBeNull();
+    expect(localStorage.getItem(scopedKey(two.id, 'notes'))).toBeNull();
+    expect(localStorage.getItem(scopedKey(other.id, 'notes'))).toBe(other.id);
+    expect(localStorage.getItem(scopedKey('demo', 'notes'))).toBe('demo');
+  });
+
+  it('keeps an empty company and an unrelated active target when deleting its last project', () => {
+    const s = useProjects.getState();
+    const c = s.addCompany('A');
+    if (!c.ok) throw new Error();
+    const p = s.addProject(c.id, 'One');
+    if (!p.ok) throw new Error();
+    s.setTarget({ kind: 'project', projectId: p.id });
+    s.setTarget({ kind: 'demo' });
+    s.deleteProject(p.id);
+    expect(useProjects.getState().companies.map((company) => company.id)).toEqual([c.id]);
+    expect(useProjects.getState().projects).toEqual([]);
+    expect(useProjects.getState().target).toEqual({ kind: 'demo' });
+    expect(useProjects.getState().lastProjectId).toBeNull();
+    expect(s.addProject(c.id, 'New').ok).toBe(true);
   });
 });
 

@@ -71,6 +71,13 @@ export interface UnitPrices {
   inputPerM: number;
   /** JPY per 1,000,000 output tokens. */
   outputPerM: number;
+  /**
+   * GitHub Copilot bills premium requests, not tokens (D-12): JPY per premium request (user-entered). When set, cost is
+   * requests × the model's multiplier × this price and the token prices are not used.
+   */
+  perRequestJpy?: number;
+  /** The selected Copilot model's premium-request multiplier (1 when unknown). */
+  requestMultiplier?: number;
 }
 
 /** Valid only when both prices are finite and > 0 (D-3: no price → no send). */
@@ -80,13 +87,22 @@ export function parseUnitPrices(input: string | number | undefined, output: stri
   return Number.isFinite(i) && i > 0 && Number.isFinite(o) && o > 0 ? { inputPerM: i, outputPerM: o } : null;
 }
 
+/** Copilot price: JPY per premium request, finite and > 0; the multiplier defaults to 1 and may be 0 (included models). */
+export function parseRequestPrice(perRequest: string | number | undefined, multiplier = 1): UnitPrices | null {
+  const p = Number(perRequest);
+  const m = Number.isFinite(multiplier) && multiplier >= 0 ? multiplier : 1;
+  return Number.isFinite(p) && p > 0 ? { inputPerM: 0, outputPerM: 0, perRequestJpy: p, requestMultiplier: m } : null;
+}
+
 /** Worst-case cost before sending: all input + the full output cap, times the safety factor (PARAM-129). */
 export function estimateCostJpy(inputTokens: number, maxOutputTokens: number, prices: UnitPrices, safety = AI_LIMITS.estimateSafetyFactor): number {
+  if (prices.perRequestJpy !== undefined) return prices.perRequestJpy * (prices.requestMultiplier ?? 1) * safety;
   return ((inputTokens * prices.inputPerM + maxOutputTokens * prices.outputPerM) / 1_000_000) * safety;
 }
 
-/** Actual cost after the call, from the provider's reported token usage. */
-export function actualCostJpy(inputTokens: number, outputTokens: number, prices: UnitPrices): number {
+/** Actual cost after the call, from the provider's reported token usage (or premium requests for Copilot). */
+export function actualCostJpy(inputTokens: number, outputTokens: number, prices: UnitPrices, premiumRequests?: number): number {
+  if (prices.perRequestJpy !== undefined) return prices.perRequestJpy * (premiumRequests ?? prices.requestMultiplier ?? 1);
   return (inputTokens * prices.inputPerM + outputTokens * prices.outputPerM) / 1_000_000;
 }
 

@@ -19,7 +19,7 @@ describe('FR-188〜FR-199 integration catalog', () => {
     const { rows, problems } = checkCatalog(CATALOG, NOW);
     expect(problems).toEqual([]);
     const ids = rows.map((r) => r.id);
-    for (const id of ['copilot-sdk', 'foundry', 'azure-speech', 'azure-vision', 'workiq', 'npm-registry', 'github-cli']) expect(ids).toContain(id);
+    for (const id of ['copilot-sdk', 'foundry', 'azure-speech', 'azure-vision', 'workiq', 'npm-registry', 'github-cli', 'company-news']) expect(ids).toContain(id);
     for (const r of rows) {
       for (const c of CATALOG_COLUMNS) expect(r[c], `${r.id}.${c}`).toBeTruthy();
       expect(requirementIds(r).length, r.id).toBeGreaterThan(0);
@@ -38,6 +38,8 @@ describe('FR-188〜FR-199 integration catalog', () => {
   it('validates enumerations, dates and requirement links', () => {
     const probs = checkCatalog(withRow({ direction: 'sideways', lastChecked: '9 Nov', requirements: 'none', gate: 'always' }), NOW).problems;
     expect(probs.filter((p) => p.code === 'badValue').map((p) => p.column).sort()).toEqual(['direction', 'gate', 'lastChecked', 'requirements']);
+    expect(checkCatalog(withRow({ gate: 'public-company-news' }), NOW).problems).toEqual([]);
+    expect(checkCatalog(withRow({ gate: 'public-anything' }), NOW).problems.some((p) => p.column === 'gate')).toBe(true);
   });
 
   it('warns (not fails) when an active integration was last checked over 180 days ago (PARAM-066)', () => {

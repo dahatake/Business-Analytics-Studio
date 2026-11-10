@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody } from '@fluentui/react-components';
-import { Add20Regular, Open20Regular, Sparkle20Regular } from '@fluentui/react-icons';
+import { Add20Regular, BotSparkle20Regular, Delete20Regular, Edit20Regular, Open20Regular, Settings20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { basePack } from '../../data/pack.ts';
 import { importedPacks } from '../../data/packStore.ts';
 import { useI18n } from '../../i18n/index.ts';
@@ -8,6 +8,9 @@ import { useLaunch } from '../../state/launch.ts';
 import { useProjects, MAX_PROJECTS_PER_COMPANY, type WorkTarget } from '../../state/projects.ts';
 import { hrefFor, navigate } from '../../state/router.ts';
 import { LanguageToggle } from '../../ui/LanguageToggle.tsx';
+import { AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
+import { PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
+import { useProjectManagement } from './useProjectManagement.tsx';
 import './project.css';
 
 /**
@@ -25,8 +28,11 @@ export function LaunchScreen() {
   const [projectName, setProjectName] = useState('');
   const [importAfter, setImportAfter] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const management = useProjectManagement();
+  const [genTarget, setGenTarget] = useState<PackGenTarget | null>(null);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
 
-  const open = (target: WorkTarget, path = '/home') => {
+  const open =  (target: WorkTarget, path = '/home') => {
     choose();
     // Set the route before the target: a target with another customer pack reloads the page (main.tsx) at this URL.
     navigate(hrefFor(path));
@@ -60,7 +66,10 @@ export function LaunchScreen() {
           <span className="brand-mark" aria-hidden />
           <span className="brand-name">{t('app.title')}</span>
         </div>
-        <LanguageToggle />
+        <div className="proj-row launch-header-actions">
+          <Button appearance="subtle" icon={<Settings20Regular />} onClick={() => setAiSettingsOpen(true)} data-testid="launch-ai-settings">{t('proj.gen.aiSettings')}</Button>
+          <LanguageToggle />
+        </div>
       </header>
       <main id="main" tabIndex={-1} className="launch-main" data-testid="launch-screen">
         <h1 className="page-title">{t('proj.launch.title')}</h1>
@@ -96,25 +105,36 @@ export function LaunchScreen() {
                 const list = projects.filter((p) => p.companyId === c.id);
                 return (
                   <li key={c.id} className="launch-company" data-testid={`launch-company-${c.name}`}>
-                    <div className="launch-company-head"><span className="launch-company-name">{c.name}</span></div>
+                    <div className="launch-company-head">
+                      <span className="launch-company-name">{c.name}</span>
+                      <div className="proj-row launch-company-actions">
+                        <Button icon={<Edit20Regular />} onClick={() => management.renameCompany(c)} aria-label={t('proj.projects.renameNamed', { name: c.name })}>{t('proj.rename')}</Button>
+                        <Button icon={<Delete20Regular />} onClick={() => management.deleteCompany(c)} aria-label={t('proj.projects.deleteNamed', { name: c.name })}>{t('proj.delete')}</Button>
+                      </div>
+                    </div>
                     {list.length === 0 ? <p className="muted">{t('proj.target.noProjects')}</p> : (
                       <ul className="launch-projects">
                         {list.map((p) => (
-                          <li key={p.id}>
+                          <li key={p.id} data-testid={`launch-project-${p.id}`}>
                             <span className="launch-project-name">{p.name}</span>
                             <span className="muted">{t('proj.launch.step', { step: t(`proj.step.${p.step}`) })}</span>
                             <span className="proj-badges">
                               {packs[p.id] && <Badge appearance="tint" color="success">{t('proj.launch.packImported')}</Badge>}
                               {p.id === lastProjectId && <Badge appearance="outline">{t('proj.launch.last')}</Badge>}
                             </span>
-                            <Button
-                              appearance={p.id === lastProjectId ? 'primary' : 'secondary'}
-                              icon={<Open20Regular />}
-                              onClick={() => open({ kind: 'project', projectId: p.id })}
-                              aria-label={t('proj.launch.openNamed', { name: `${c.name}-${p.name}` })}
-                            >
-                              {t('proj.launch.open')}
-                            </Button>
+                            <div className="proj-row">
+                              <Button
+                                appearance={p.id === lastProjectId ? 'primary' : 'secondary'}
+                                icon={<Open20Regular />}
+                                onClick={() => open({ kind: 'project', projectId: p.id })}
+                                aria-label={t('proj.launch.openNamed', { name: `${c.name}-${p.name}` })}
+                              >
+                                {t('proj.launch.open')}
+                              </Button>
+                              <Button icon={<BotSparkle20Regular />} onClick={() => setGenTarget({ kind: 'project', projectId: p.id })} aria-label={t('proj.gen.buttonNamed', { name: `${c.name}-${p.name}` })} data-testid={`launch-generate-${p.id}`}>{t('proj.gen.buttonShort')}</Button>
+                              <Button icon={<Edit20Regular />} onClick={() => management.renameProject(p)} aria-label={t('proj.projects.renameNamed', { name: `${c.name}-${p.name}` })}>{t('proj.rename')}</Button>
+                              <Button icon={<Delete20Regular />} onClick={() => management.deleteProject(p)} aria-label={t('proj.projects.deleteNamed', { name: `${c.name}-${p.name}` })}>{t('proj.delete')}</Button>
+                            </div>
                           </li>
                         ))}
                       </ul>
@@ -126,6 +146,20 @@ export function LaunchScreen() {
           )}
         </section>
 
+        {management.dialogs}
+        <AiSettingsDialog open={aiSettingsOpen} onClose={() => setAiSettingsOpen(false)} />
+        {genTarget && (
+          <PackGenerateDialog
+            open
+            target={genTarget}
+            onClose={() => setGenTarget(null)}
+            onOpenProject={(projectId) => {
+              open({ kind: 'project', projectId });
+              // A pack saved for the project that is already active needs an explicit restart to be loaded (main.tsx).
+              window.location.reload();
+            }}
+          />
+        )}
         <section className="launch-section" aria-labelledby="launch-new">
           <h2 id="launch-new" className="proj-h2">{t('proj.launch.newTitle')}</h2>
           <form className="launch-form" onSubmit={(e) => { e.preventDefault(); create(); }}>
@@ -142,6 +176,7 @@ export function LaunchScreen() {
             {error && <MessageBar intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <div className="proj-row">
               <Button type="submit" appearance="primary" icon={<Add20Regular />} data-testid="launch-create">{t('proj.launch.create')}</Button>
+              <Button icon={<BotSparkle20Regular />} onClick={() => setGenTarget({ kind: 'new', companyName, projectName })} data-testid="launch-generate">{t('proj.gen.button')}</Button>
               <Button appearance="subtle" icon={<Sparkle20Regular />} onClick={() => open({ kind: 'demo' }, '/data')}>{t('proj.launch.howToPack')}</Button>
             </div>
           </form>

@@ -12,6 +12,7 @@
 | @fluentui/react-motion | 9.16.5 | MIT | Fluent のモーションを「動きを減らす」設定に従わせる（`MotionBehaviourProvider`） |
 | d3 | 7.9.0 | ISC | 可視化（F-3.3.1） |
 | d3-sankey | 0.12.3 | BSD-3-Clause | サンキー図 |
+| fast-xml-parser | 5.12.0 | MIT | ローカルリレーで企業ニュースのRSSを検証・解析 |
 | three | 0.187.0 | MIT | 3D 表示（FR-020 ほか） |
 | topojson-client | 3.1.0 | ISC | 地図データの変換 |
 | world-atlas | 2.0.2 | ISC | 国境の TopoJSON。元データは [Natural Earth](https://www.naturalearthdata.com/)（パブリックドメイン） |
@@ -39,5 +40,6 @@
 | 3D モデル（工場・製品・地図・KPI タワー） | `src/modules/threed/` などがコードで生成 | 本リポジトリのコード（外部素材なし、FR-068） |
 | BGM・操作音 | `src/audio/sound.ts` が Web Audio API で合成 | 同上（音声ファイルなし） |
 | サンプルデータ（青空精機） | `src/data/sample.ts` | 架空の企業・人物・数値。実在の組織とは無関係 |
+| 企業ニュースのメタデータ | Google News RSSと各記事の配信元 | 権利は各配信元に帰属。見出し・出典・公開日時・記事リンクのみを表示し、本文は転載しない。利用条件は各サービス・配信元に従う |
 
 製品名「Microsoft Fabric」「Azure AI Vision」などは、解決策の例として名称だけを記載しています（商標は各社に帰属）。

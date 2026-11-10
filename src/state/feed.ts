@@ -70,6 +70,10 @@ function mulberry32(seed: number) {
   };
 }
 
+/**
+ * Simulated live events over the active pack. A kind the pack has no entities for (e.g. an imported or generated pack
+ * without invoices) is replaced by the next kind that has some; with none at all the generator yields null.
+ */
 export function createGenerator(seed = 42) {
   const rnd = mulberry32(seed);
   const customers = entitiesOf('customer').filter((c) => c.classification === 'shareable');
@@ -77,22 +81,30 @@ export function createGenerator(seed = 42) {
   const invoices = entitiesOf('invoice');
   const plants = entitiesOf('site').filter((s) => s.role === 'plant');
   const kpis = entitiesOf('kpi').filter((k) => k.classification === 'shareable');
+  const available: Record<FeedKind, boolean> = {
+    order: customers.length > 0 && products.length > 0, payment: invoices.length > 0, utilization: plants.length > 0, kpi: kpis.length > 0,
+  };
+  const order: FeedKind[] = ['order', 'payment', 'utilization', 'kpi'];
   let seq = 0;
   const pickFrom = <T,>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)]!;
-  return (): FeedEvent => {
+  return (): FeedEvent | null => {
     const r = rnd();
+    const wanted: FeedKind = r < 0.35 ? 'order' : r < 0.55 ? 'payment' : r < 0.8 ? 'utilization' : 'kpi';
+    const start = order.indexOf(wanted);
+    const kind = [...order.slice(start), ...order.slice(0, start)].find((k) => available[k]);
+    if (!kind) return null;
     seq += 1;
     const base = { seq, at: Date.now(), perf: performance.now() };
-    if (r < 0.35) return { ...base, kind: 'order', entityId: pickFrom(customers).id, secondaryId: pickFrom(products).id, value: 10 + Math.floor(rnd() * 190) };
-    if (r < 0.55) return { ...base, kind: 'payment', entityId: pickFrom(invoices).id, value: 0 };
-    if (r < 0.8) return { ...base, kind: 'utilization', entityId: pickFrom(plants).id, value: 70 + Math.floor(rnd() * 28) };
+    if (kind === 'order') return { ...base, kind, entityId: pickFrom(customers).id, secondaryId: pickFrom(products).id, value: 10 + Math.floor(rnd() * 190) };
+    if (kind === 'payment') return { ...base, kind, entityId: pickFrom(invoices).id, value: 0 };
+    if (kind === 'utilization') return { ...base, kind, entityId: pickFrom(plants).id, value: 70 + Math.floor(rnd() * 28) };
     const k = pickFrom(kpis);
-    return { ...base, kind: 'kpi', entityId: k.id, value: Math.round((k.current + (rnd() - 0.5) * Math.abs(k.target - k.baseline) * 0.1) * 10) / 10 };
+    return { ...base, kind, entityId: k.id, value: Math.round((k.current + (rnd() - 0.5) * Math.abs(k.target - k.baseline) * 0.1) * 10) / 10 };
   };
 }
 
 let timer: number | null = null;
-let generator: (() => FeedEvent) | null = null;
+let generator: (() => FeedEvent | null) | null = null;
 
 /** Start/restart the simulation with the cadence implied by the current state. */
 export function runFeed() {
@@ -102,7 +114,10 @@ export function runFeed() {
   if (paused) return;
   generator ??= createGenerator();
   const interval = loadRate ? 1000 / loadRate : PARAMS.liveFeedIntervalMs;
-  const tick = () => useFeed.getState().push(generator!());
+  const tick = () => {
+    const e = generator!();
+    if (e) useFeed.getState().push(e);
+  };
   tick();
   timer = window.setInterval(tick, interval);
 }

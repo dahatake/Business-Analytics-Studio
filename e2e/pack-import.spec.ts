@@ -1,3 +1,4 @@
+import { crc32 } from 'node:zlib';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { open } from './helpers.ts';
@@ -56,10 +57,49 @@ function copilotParts(kpiSourceIds = ['src-plan']) {
     ],
   };
   const fence = (v: unknown) => `\`\`\`json\n${JSON.stringify(v, null, 2)}\n\`\`\``;
+  const { part: _p, ...head } = part1;
   return {
     answer1: `資料の一覧を作りました。\n\n| 資料名 | 種類 |\n|---|---|\n| 中期経営計画 2026 | PDF |\n\n${fence(part1)}\n\n続きは『続けて』と送ってください（PART 1/2）`,
     answer2: `PART 2/2 です。\n\n${fence(part2)}`,
+    pack: { ...head, entities: [...part1.entities, ...part2.entities] },
   };
+}
+
+/** A stored (uncompressed) zip, as Python's zipfile writes by default. */
+function storedZip(files: Record<string, string>): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [fileName, text] of Object.entries(files)) {
+    const body = Buffer.from(text, 'utf8');
+    const name = Buffer.from(fileName, 'utf8');
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc32(body), 14);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(body.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc32(body), 16);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(body.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, name, body);
+    centrals.push(central, name);
+    offset += local.length + name.length + body.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(centrals.length / 2, 8);
+  eocd.writeUInt16LE(centrals.length / 2, 10);
+  eocd.writeUInt32LE(cd.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, eocd]);
 }
 
 test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
@@ -68,13 +108,17 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('データ管理');
     await expect(page.getByTestId('pack-origin')).toContainText('アプリに同梱のサンプル');
 
-    // The Microsoft 365 Copilot prompt is available on the screen.
-    await page.getByTestId('pack-prompt').getByText('プロンプトの全文を表示').click();
+    // Two Microsoft 365 Copilot prompts: public web research without work data, then the pack as a zip with web search off (FR-307・FR-308).
+    await page.getByText('公開Web調査プロンプトを表示', { exact: true }).click();
+    await expect(page.getByTestId('pack-research-text')).toHaveValue(/公開Web/);
+    await expect(page.getByTestId('pack-research-text')).toHaveValue(/Bing/);
+    await page.getByTestId('pack-prompt').getByText('顧客パック作成プロンプトを表示').click();
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/顧客パック/);
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/sourceIds/);
-    await page.getByText('公開Web調査プロンプトを表示', { exact: true }).click();
-    await expect(page.getByTestId('pack-research-text')).toHaveValue(/インターネット/);
+    await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/pack\.json/);
+    await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/Web を検索しない/);
     await expect(page.getByTestId('pack-research-copy')).toBeVisible();
+    await expect(page.getByTestId('pack-prompt').getByRole('button', { name: /コピー/ })).toHaveCount(2);
 
     // 1) A number without a source: the check fails and offers a fix prompt for Copilot.
     const bad = copilotParts([]);
@@ -147,14 +191,18 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('pack-target')).toContainText('Fabrikam 精工-需要予測');
   });
 
-  test('English UI; the launch screen shows which projects have an imported pack', async ({ page }) => {
+  test('English UI; the zip from Copilot imports directly; the launch screen shows which projects have an imported pack', async ({ page }) => {
     await open(page, '/data', { lang: 'en' });
     await page.getByTestId('pack-current').getByTestId('pack-coverage').locator('summary').click();
     await expect(page.getByTestId('pack-current')).toContainText('No collection report');
     const good = copilotParts();
-    await page.getByTestId('pack-paste').fill(`${good.answer1}\n${good.answer2}`);
+    await page.getByTestId('pack-file-input').setInputFiles({
+      name: 'fabrikam-seiko.zip', mimeType: 'application/zip',
+      buffer: storedZip({ 'pack.json': JSON.stringify(good.pack, null, 2), 'README.md': '# Sources\n- Mid-term plan 2026\n' }),
+    });
     await page.getByTestId('pack-check').click();
     await expect(page.getByTestId('pack-verdict')).toContainText('The check passed');
+    await expect(page.getByTestId('pack-files')).toContainText('fabrikam-seiko.zip/pack.json');
     await page.getByTestId('pack-check-approved').check();
     await page.getByTestId('pack-check-classified').check();
     await page.getByTestId('pack-check-people').check();

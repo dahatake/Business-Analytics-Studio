@@ -1,0 +1,452 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
+  ProgressBar, Spinner, Textarea,
+} from '@fluentui/react-components';
+import {
+  ArrowUpload20Regular, BotSparkle20Regular, CheckmarkCircle20Filled, Delete20Regular, DismissCircle20Filled, Open20Regular, Settings20Regular,
+} from '@fluentui/react-icons';
+import { AiLiveError, aiLive, preflight, readLedger } from '../../ai/client.ts';
+import { jstDay, jstMonth } from '../../ai/budget.ts';
+import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
+import { isReadableFile } from '../../data/packImport.ts';
+import { saveImportedPack } from '../../data/packStore.ts';
+import { useI18n, type Lang } from '../../i18n/index.ts';
+import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
+import { AiReadiness, AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
+import { D4Warning, yenFine } from '../ai/AiCommon.tsx';
+import { fetchNewsHeadlines, fetchSitePages } from '../ai/relayClient.ts';
+import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
+import '../ai/liveTransport.ts';
+import {
+  generatePack, MAX_MATERIAL_CHARS, missingRequired, PackGenError, runPlan, stageAPrompt,
+  type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
+} from './packGenerate.ts';
+
+/** Where the generated pack goes: an existing project, or a company/project created when the pack is saved. */
+export type PackGenTarget =
+  | { kind: 'project'; projectId: string }
+  | { kind: 'new'; companyName: string; projectName: string };
+
+const STEPS: StepId[] = ['collect', 'foundation', 'business', 'verify', 'finalize'];
+/** PARAM-142 applies to each attached file, as for imports. */
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+type Phase =
+  | { kind: 'form' }
+  | { kind: 'running'; startedAt: number }
+  | { kind: 'saved'; result: GenResult; projectId: string }
+  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed'; detail: string; costJpy: number };
+
+function todayJst(): string {
+  return jstDay(new Date());
+}
+
+/** A new company/project name pair that addProject would accept (checked before spending anything). */
+function newTargetProblem(companyName: string, projectName: string): 'duplicateProject' | 'limit' | null {
+  const { companies, projects } = useProjects.getState();
+  const company = companies.find((c) => c.name === companyName.trim());
+  if (!company) return null;
+  const list = projects.filter((p) => p.companyId === company.id);
+  if (list.some((p) => p.name === projectName.trim())) return 'duplicateProject';
+  return list.length >= MAX_PROJECTS_PER_COMPANY ? 'limit' : null;
+}
+
+/**
+ * FR-311 (D-12): "Create the customer pack with Copilot". Required and optional inputs (missing required ones are listed
+ * from the start), readiness of the configured LLM with the AI settings one click away, the estimate and the
+ * confirmations C-03 requires, then a progress bar over the stages; the verified pack is saved with everything that
+ * went into it (inputs, retrieved sources, generation record, cost) and can be opened.
+ */
+export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
+  open: boolean;
+  target: PackGenTarget;
+  onClose: () => void;
+  onOpenProject: (projectId: string) => void;
+}) {
+  const { t, lang, fmt } = useI18n();
+  const companies = useProjects((s) => s.companies);
+  const projects = useProjects((s) => s.projects);
+  const ai = useAiSettings();
+  const existing = target.kind === 'project' ? projects.find((p) => p.id === target.projectId) : undefined;
+  const existingCompany = existing ? companies.find((c) => c.id === existing.companyId) : undefined;
+
+  const [companyName, setCompanyName] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [asOf, setAsOf] = useState(todayJst());
+  const [industry, setIndustry] = useState('');
+  const [officialUrl, setOfficialUrl] = useState('');
+  const [focus, setFocus] = useState('');
+  const [useNews, setUseNews] = useState(true);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [fileNotes, setFileNotes] = useState<string[]>([]);
+  const [researchNote, setResearchNote] = useState('');
+  const [approved, setApproved] = useState(false);
+  const [costOk, setCostOk] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [phase, setPhase] = useState<Phase>({ kind: 'form' });
+  const [steps, setSteps] = useState<Record<StepId, StepStatus>>(() => Object.fromEntries(STEPS.map((s) => [s, 'pending'])) as Record<StepId, StepStatus>);
+  const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setCompanyName(existingCompany?.name ?? (target.kind === 'new' ? target.companyName : ''));
+    setProjectName(existing?.name ?? (target.kind === 'new' ? target.projectName : ''));
+    setPhase({ kind: 'form' });
+    setApproved(false);
+    setCostOk(false);
+    void useAiSettings.getState().refreshRelay();
+    if (useAiSettings.getState().provider === 'copilotSdk') void useAiSettings.getState().checkCopilot();
+    // Only when the dialog opens or its target changes; the user's edits must survive re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, target.kind, target.kind === 'project' ? target.projectId : `${target.companyName}\u0000${target.projectName}`]);
+
+  useEffect(() => {
+    if (phase.kind !== 'running') return;
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - phase.startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [phase]);
+
+  const input: PackGenInput = { companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, materials, researchNote, useNews };
+  const missing = missingRequired(input);
+  const targetProblem = target.kind === 'new' && companyName.trim() && projectName.trim() ? newTargetProblem(companyName, projectName) : null;
+  const chars = materials.reduce((a, m) => a + m.text.length, 0) + researchNote.length;
+  const tooMuch = chars > MAX_MATERIAL_CHARS;
+
+  const estimate = useMemo(() => {
+    const plan = runPlan(input);
+    const prompt = stageAPrompt(input, []) + materials.map((m) => m.text).join('\n') + researchNote + ' '.repeat(Math.max(0, plan.promptChars - chars));
+    const pf = preflight({ use: 'packBuild', lang, prompt, maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, userConfirmed: true, personConfirmed: true });
+    const ledger = readLedger();
+    const month = jstMonth(new Date());
+    const spent = ledger.filter((r) => jstMonth(new Date(r.at)) === month).reduce((a, r) => a + r.costJpy, 0);
+    return {
+      calls: plan.maxCalls,
+      perCall: pf.estimatedCostJpy,
+      max: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * plan.maxCalls,
+      min: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * 2,
+      spent,
+      tokens: pf.estimatedInputTokens,
+      inputTooLarge: pf.budget.reasons.includes('inputTooLarge'),
+    };
+    // Recomputed when what is sent or the price settings change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, materials, researchNote, lang, ai.provider, ai.priceInputPerM, ai.priceOutputPerM, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
+  const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
+  const ready = liveReady(ai);
+  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget;
+
+  const addFiles = async (files: FileList) => {
+    const notes: string[] = [];
+    const added: Material[] = [];
+    for (const f of Array.from(files)) {
+      if (!isReadableFile(f.name, f.type)) { notes.push(t('proj.gen.fileUnsupported', { name: f.name })); continue; }
+      if (f.size > MAX_FILE_BYTES) { notes.push(t('proj.gen.fileTooLarge', { name: f.name })); continue; }
+      added.push({ name: f.name, text: (await f.text()).replace(/^\uFEFF/, '') });
+    }
+    setMaterials((m) => [...m, ...added.filter((a) => !m.some((x) => x.name === a.name))]);
+    setFileNotes(notes);
+  };
+
+  /** The project to save into; for a new target, also what was created so a failed save can undo exactly that. */
+  const resolveProject = (): { projectId: string; created: { companyId?: string; projectId?: string } } | null => {
+    if (target.kind === 'project') return { projectId: target.projectId, created: {} };
+    const { addCompany, addProject, deleteCompany } = useProjects.getState();
+    const name = companyName.trim();
+    let companyId = useProjects.getState().companies.find((c) => c.name === name)?.id;
+    let newCompany: string | undefined;
+    if (!companyId) {
+      const r = addCompany(name);
+      if (!r.ok) return null;
+      companyId = r.id;
+      newCompany = r.id;
+    }
+    const r = addProject(companyId, projectName.trim());
+    if (!r.ok) {
+      if (newCompany) deleteCompany(newCompany);
+      return null;
+    }
+    return { projectId: r.id, created: { ...(newCompany ? { companyId: newCompany } : {}), projectId: r.id } };
+  };
+
+  const rollback = (created: { companyId?: string; projectId?: string }) => {
+    const { deleteCompany, deleteProject } = useProjects.getState();
+    if (created.companyId) deleteCompany(created.companyId);
+    else if (created.projectId) deleteProject(created.projectId);
+  };
+
+  const start = async () => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setSteps(Object.fromEntries(STEPS.map((s) => [s, 'pending'])) as Record<StepId, StepStatus>);
+    setProgress(null);
+    setElapsed(0);
+    setPhase({ kind: 'running', startedAt: Date.now() });
+    const settings = useAiSettings.getState();
+    let result: GenResult;
+    try {
+      result = await generatePack(input, {
+        provider: settings.provider,
+        ...(settings.provider === 'copilotSdk' ? (settings.copilotModel ? { model: settings.copilotModel } : {}) : { model: settings.relayConnection?.deployment ?? settings.deployment }),
+        complete: (prompt, signal) => aiLive({
+          use: 'packBuild', lang: lang as Lang, prompt, userConfirmed: true, personConfirmed: true,
+          maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: PACK_BUILD_TIMEOUT_MS,
+        }, signal),
+        fetchSite: (url, signal) => fetchSitePages(url, signal),
+        fetchNews: (company, l, signal) => fetchNewsHeadlines(company, l, signal),
+      }, (e) => {
+        setProgress(e);
+        setSteps((s) => ({ ...s, [e.step]: e.status }));
+      }, controller.signal);
+    } catch (err) {
+      const e = err instanceof PackGenError ? err : null;
+      const reasons = err instanceof AiLiveError ? err.reasons.join(', ') : '';
+      setSteps((s) => Object.fromEntries(STEPS.map((k) => [k, s[k] === 'running' ? 'failed' : s[k]])) as Record<StepId, StepStatus>);
+      setPhase({ kind: 'error', code: e?.code ?? 'callFailed', detail: e?.detail ?? (reasons || (err as Error).message), costJpy: e?.costJpy ?? 0 });
+      return;
+    } finally {
+      abortRef.current = null;
+    }
+    const resolved = resolveProject();
+    if (!resolved) {
+      setPhase({ kind: 'error', code: 'saveFailed', detail: t('proj.err.duplicateProject'), costJpy: result.report.costJpy });
+      return;
+    }
+    const { projectId, created } = resolved;
+    try {
+      await saveImportedPack({
+        projectId,
+        packId: String(result.pack.packId),
+        company: { name: result.summary.company.name ?? { ja: companyName, en: companyName }, industry: result.summary.company.industry ?? { ja: '—', en: '—' } },
+        isSample: false,
+        entities: result.summary.entities,
+        importedAt: new Date().toISOString(),
+        files: [`generated:${settings.provider}`, ...materials.map((m) => m.name)],
+      }, result.pack);
+    } catch (err) {
+      rollback(created);
+      setPhase({ kind: 'error', code: 'saveFailed', detail: (err as Error).message, costJpy: result.report.costJpy });
+      return;
+    }
+    setPhase({ kind: 'saved', result, projectId });
+  };
+
+  const close = () => {
+    if (phase.kind === 'running') return;
+    onClose();
+  };
+
+  const labelOf = (f: RequiredField) => t(`proj.gen.field.${f}`);
+  const running = phase.kind === 'running';
+  const yen = (v: number) => yenFine(fmt.locale, v);
+  const stepIcon = (s: StepStatus) => (s === 'done' ? <CheckmarkCircle20Filled className="gen-ok" /> : s === 'failed' ? <DismissCircle20Filled className="gen-fail" /> : s === 'running' ? <Spinner size="extra-tiny" /> : <span className="gen-dot" aria-hidden />);
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) close(); }} modalType={running ? 'alert' : 'modal'}>
+        <DialogSurface className="gen-dialog" data-testid="gen-dialog" aria-describedby="gen-lead">
+          <DialogBody>
+            <DialogTitle>{t('proj.gen.title')}</DialogTitle>
+            <DialogContent>
+              {phase.kind === 'form' && (
+                <div className="gen-form">
+                  <p id="gen-lead" className="muted">{t('proj.gen.lead')}</p>
+                  {missing.length > 0 && (
+                    <MessageBar intent="warning" data-testid="gen-missing">
+                      <MessageBarBody>{t('proj.gen.missing', { fields: missing.map(labelOf).join(t('ai.listSep')) })}</MessageBarBody>
+                    </MessageBar>
+                  )}
+                  <section aria-labelledby="gen-required">
+                    <h3 id="gen-required" className="proj-h2">{t('proj.gen.required')} <Badge appearance="tint" color="danger">{t('proj.gen.requiredBadge')}</Badge></h3>
+                    <div className="gen-grid">
+                      <Field label={labelOf('companyName')} required validationState={missing.includes('companyName') ? 'warning' : 'none'}>
+                        <Input value={companyName} onChange={(_, d) => setCompanyName(d.value)} readOnly={target.kind === 'project'} data-testid="gen-company" />
+                      </Field>
+                      <Field
+                        label={labelOf('projectName')}
+                        required
+                        validationState={targetProblem ? 'error' : missing.includes('projectName') ? 'warning' : 'none'}
+                        validationMessage={targetProblem ? t(targetProblem === 'limit' ? 'proj.err.limit' : 'proj.err.duplicateProject', { max: MAX_PROJECTS_PER_COMPANY }) : undefined}
+                      >
+                        <Input value={projectName} onChange={(_, d) => setProjectName(d.value)} readOnly={target.kind === 'project'} data-testid="gen-project" />
+                      </Field>
+                      <Field label={labelOf('purpose')} required hint={t('proj.gen.purposeHint')} validationState={missing.includes('purpose') ? 'warning' : 'none'} className="gen-wide">
+                        <Input value={purpose} onChange={(_, d) => setPurpose(d.value)} data-testid="gen-purpose" />
+                      </Field>
+                      <Field label={labelOf('asOf')} required validationState={missing.includes('asOf') ? 'warning' : 'none'}>
+                        <Input type="date" value={asOf} onChange={(_, d) => setAsOf(d.value)} data-testid="gen-asof" />
+                      </Field>
+                    </div>
+                  </section>
+                  <section aria-labelledby="gen-optional">
+                    <h3 id="gen-optional" className="proj-h2">{t('proj.gen.optional')}</h3>
+                    <div className="gen-grid">
+                      <Field label={t('proj.gen.field.officialUrl')} hint={t('proj.gen.officialUrlHint')} className="gen-wide">
+                        <Input type="url" value={officialUrl} placeholder="https://www.example.co.jp" onChange={(_, d) => setOfficialUrl(d.value)} data-testid="gen-url" />
+                      </Field>
+                      <Field label={t('proj.gen.field.industry')}>
+                        <Input value={industry} onChange={(_, d) => setIndustry(d.value)} data-testid="gen-industry" />
+                      </Field>
+                      <Field label={t('proj.gen.field.focus')}>
+                        <Input value={focus} onChange={(_, d) => setFocus(d.value)} data-testid="gen-focus" />
+                      </Field>
+                      <Checkbox className="gen-wide" checked={useNews} onChange={(_, d) => setUseNews(d.checked === true)} label={t('proj.gen.useNews')} data-testid="gen-news" />
+                      <div className="gen-wide gen-files">
+                        <span className="ai-label">{t('proj.gen.field.materials')}</span>
+                        <p className="muted">{t('proj.gen.materialsHint', { max: fmt.integer(MAX_MATERIAL_CHARS) })}</p>
+                        <div className="proj-row">
+                          <Button icon={<ArrowUpload20Regular />} onClick={() => fileRef.current?.click()} data-testid="gen-add-files">{t('proj.gen.addFiles')}</Button>
+                        </div>
+                        <input
+                          ref={fileRef}
+                          type="file"
+                          multiple
+                          accept=".txt,.md,.csv,.tsv,.json,.html,.htm,text/*,application/json"
+                          className="visually-hidden"
+                          tabIndex={-1}
+                          aria-label={t('proj.gen.addFiles')}
+                          onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }}
+                          data-testid="gen-files"
+                        />
+                        {materials.length > 0 && (
+                          <ul className="gen-file-list" data-testid="gen-file-list">
+                            {materials.map((m) => (
+                              <li key={m.name}>
+                                <span>{m.name}</span>
+                                <span className="muted">{t('proj.gen.chars', { count: fmt.integer(m.text.length) })}</span>
+                                <Button size="small" appearance="subtle" icon={<Delete20Regular />} aria-label={t('proj.gen.removeFile', { name: m.name })} onClick={() => setMaterials((x) => x.filter((y) => y.name !== m.name))} />
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {fileNotes.map((n) => <p key={n} className="muted" role="status">{n}</p>)}
+                      </div>
+                      <Field label={t('proj.gen.field.researchNote')} hint={t('proj.gen.researchNoteHint')} className="gen-wide">
+                        <Textarea value={researchNote} onChange={(_, d) => setResearchNote(d.value)} resize="vertical" rows={3} data-testid="gen-note" />
+                      </Field>
+                      {tooMuch && <MessageBar intent="error" className="gen-wide"><MessageBarBody>{t('proj.gen.tooMuch', { count: fmt.integer(chars), max: fmt.integer(MAX_MATERIAL_CHARS) })}</MessageBarBody></MessageBar>}
+                    </div>
+                  </section>
+                  <section aria-labelledby="gen-llm" className="gen-llm" data-testid="gen-llm">
+                    <h3 id="gen-llm" className="proj-h2">{t('proj.gen.llm')}</h3>
+                    <p>
+                      {t('proj.gen.provider', {
+                        provider: t(`ai.provider.${ai.provider}`),
+                        model: (ai.provider === 'copilotSdk' ? ai.copilotModel : ai.relayConnection?.deployment) ?? t('ai.conn.notSaved'),
+                      })}
+                    </p>
+                    <AiReadiness />
+                    <div className="proj-row">
+                      <Button icon={<Settings20Regular />} onClick={() => setSettingsOpen(true)} data-testid="gen-open-settings">{t('proj.gen.openSettings')}</Button>
+                    </div>
+                    <dl className="gen-estimate" data-testid="gen-estimate">
+                      <dt>{t('proj.gen.calls')}</dt><dd>{t('proj.gen.callsValue', { min: 2, max: estimate.calls })}</dd>
+                      <dt>{t('proj.gen.cost')}</dt>
+                      <dd>{estimate.max === null ? t('proj.gen.noPrice') : t('proj.gen.costValue', { min: yen(estimate.min!), max: yen(estimate.max) })}</dd>
+                      <dt>{t('proj.gen.month')}</dt><dd>{t('proj.gen.monthValue', { spent: yen(estimate.spent), budget: fmt.yen(ai.monthlyBudgetJpy) })}</dd>
+                    </dl>
+                    {overBudget && <MessageBar intent="error" data-testid="gen-over-budget"><MessageBarBody>{t('proj.gen.overBudget')}</MessageBarBody></MessageBar>}
+                    {estimate.inputTooLarge && <MessageBar intent="error"><MessageBarBody>{t('proj.gen.inputTooLarge')}</MessageBarBody></MessageBar>}
+                    <p className="muted">{t('proj.gen.sends')}</p>
+                    <D4Warning testId="gen-d4" />
+                    <Checkbox checked={approved} onChange={(_, d) => setApproved(d.checked === true)} label={t('proj.gen.checkApproved')} data-testid="gen-check-approved" />
+                    <Checkbox checked={costOk} onChange={(_, d) => setCostOk(d.checked === true)} label={t('proj.gen.checkCost')} data-testid="gen-check-cost" />
+                  </section>
+                </div>
+              )}
+
+              {(phase.kind === 'running' || phase.kind === 'error') && (
+                <div className="gen-progress" data-testid="gen-progress" aria-live="polite">
+                  <ProgressBar value={progress?.ratio ?? 0} thickness="large" aria-label={t('proj.gen.progressLabel')} data-testid="gen-progress-bar" />
+                  <p className="muted">
+                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, cost: yen(progress?.costJpy ?? 0) })}
+                  </p>
+                  <ol className="gen-steps">
+                    {STEPS.map((s) => (
+                      <li key={s} data-step={s} data-status={steps[s]}>
+                        {stepIcon(steps[s])}
+                        <span>{t(`proj.gen.step.${s}`)}</span>
+                        {s === 'verify' && progress?.step === 'verify' && progress.round ? <span className="muted">{t('proj.gen.round', { round: progress.round, errors: progress.errors ?? 0 })}</span> : null}
+                      </li>
+                    ))}
+                  </ol>
+                  {phase.kind === 'error' && (
+                    <MessageBar intent="error" data-testid="gen-error">
+                      <MessageBarBody>
+                        {t(`proj.gen.error.${phase.code}`)}
+                        <span className="gen-detail" lang="en">{phase.detail}</span>
+                        {t('proj.gen.errorCost', { cost: yen(phase.costJpy) })}
+                      </MessageBarBody>
+                    </MessageBar>
+                  )}
+                </div>
+              )}
+
+              {phase.kind === 'saved' && <SavedSummary result={phase.result} />}
+            </DialogContent>
+            <DialogActions>
+              {phase.kind === 'form' && (
+                <>
+                  <Button appearance="primary" icon={<BotSparkle20Regular />} disabled={!canStart} onClick={() => void start()} data-testid="gen-start">{t('proj.gen.start')}</Button>
+                  <Button onClick={close}>{t('ai.person.cancel')}</Button>
+                </>
+              )}
+              {phase.kind === 'running' && <Button onClick={() => abortRef.current?.abort()} data-testid="gen-cancel">{t('proj.gen.cancel')}</Button>}
+              {phase.kind === 'error' && (
+                <>
+                  <Button appearance="primary" onClick={() => setPhase({ kind: 'form' })} data-testid="gen-back">{t('proj.gen.back')}</Button>
+                  <Button onClick={close}>{t('ai.dialog.close')}</Button>
+                </>
+              )}
+              {phase.kind === 'saved' && (
+                <>
+                  <Button appearance="primary" icon={<Open20Regular />} onClick={() => onOpenProject(phase.projectId)} data-testid="gen-open">{t('proj.gen.open')}</Button>
+                  <Button onClick={close}>{t('ai.dialog.close')}</Button>
+                </>
+              )}
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <AiSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+    </>
+  );
+}
+
+function SavedSummary({ result }: { result: GenResult }) {
+  const { t, fmt } = useI18n();
+  const { summary, report } = result;
+  const kinds = Object.entries(summary.byKind).filter(([, n]) => (n ?? 0) > 0);
+  return (
+    <div className="gen-saved" data-testid="gen-saved">
+      <MessageBar intent="success"><MessageBarBody>{t('proj.gen.saved', { entities: summary.entities })}</MessageBarBody></MessageBar>
+      <dl className="gen-estimate">
+        <dt>{t('proj.gen.sum.kinds')}</dt>
+        <dd data-testid="gen-kinds">{kinds.map(([k, n]) => `${k} ${n}`).join(' / ')}</dd>
+        <dt>{t('proj.gen.sum.classification')}</dt>
+        <dd>{t('proj.gen.sum.classificationValue', { internal: summary.internal, shareable: summary.shareable })}</dd>
+        <dt>{t('proj.gen.sum.sources')}</dt>
+        <dd>{t('proj.gen.sum.sourcesValue', { web: report.retrieved.filter((r) => r.kind === 'web' || r.kind === 'news').length, other: report.retrieved.filter((r) => r.kind === 'material' || r.kind === 'note').length })}</dd>
+        <dt>{t('proj.gen.sum.checks')}</dt>
+        <dd data-testid="gen-checks">{t('proj.gen.sum.checksValue', { rounds: report.fixRounds, removed: report.removed.length, dropped: report.droppedSources.length })}</dd>
+        <dt>{t('proj.gen.sum.cost')}</dt>
+        <dd data-testid="gen-cost">{t('proj.gen.sum.costValue', { cost: yenFine(fmt.locale, report.costJpy), calls: report.calls.length })}</dd>
+      </dl>
+      {report.ungrounded.length > 0 && (
+        <MessageBar intent="warning" data-testid="gen-ungrounded">
+          <MessageBarBody>
+            {t('proj.gen.sum.ungrounded', { count: report.ungrounded.length })}
+            <ul>{report.ungrounded.slice(0, 10).map((u) => <li key={`${u.id}.${u.field}`} lang="en">{`${u.id}.${u.field} = ${u.value}`}</li>)}</ul>
+          </MessageBarBody>
+        </MessageBar>
+      )}
+      {summary.people > 0 && <p className="muted">{t('proj.gen.sum.people', { count: summary.people })}</p>}
+      {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}
+      <p className="muted">{t('proj.gen.sum.next')}</p>
+    </div>
+  );
+}

@@ -9,6 +9,8 @@
  * - D-4: contracts/rights are settled before the app is started; the UI shows that assumption as a warning.
  * - D-9 (proposal, not approved): deliverable drafts get their own row instead of borrowing "structure"; it stays
  *   blocked until "explain" is measured (D-8), §3.1 has the row and the user approves it.
+ * - D-12 (user, 2026-11-10): "packBuild" (FR-311, customer pack generated in the app) is approved for the configured
+ *   provider, Microsoft Foundry or GitHub Copilot SDK, within the single monthly budget of 100,000 JPY.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
@@ -18,7 +20,8 @@ export type AiUse =
 export type Provider = 'foundry' | 'copilotSdk';
 
 export interface UseApproval {
-  provider: Provider | 'TBD';
+  /** The approved provider; a list when the user may choose any of them (D-10). */
+  provider: Provider | readonly Provider[] | 'TBD';
   /** What may be sent, as approved. */
   data: string | 'TBD';
   enableCondition: string | 'TBD';
@@ -59,12 +62,30 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   connectionTest: TBD_ROW(),
   research: TBD_ROW(),
   brandResearch: TBD_ROW(),
-  packBuild: TBD_ROW(),
+  packBuild: {
+    provider: ['foundry', 'copilotSdk'],
+    data: 'Company and project names, purpose, as-of date, the official site URL, pages the relay fetched from that site, news headlines, and the work material and research note the user attached (internal allowed, D-2); nothing else from the app',
+    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay (Foundry endpoint, deployment and key, or a signed-in GitHub Copilot CLI and a model) + unit prices entered + the user confirms content, data-owner approval and estimated cost before the run',
+    costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+    openQuestions: [],
+    decidedBy: 'docs/decision-guide.md D-12 (2026-11-10)',
+  },
   deliverableDraft: TBD_ROW(['§3.1 has no row for deliverable drafts yet (FR-136; rd-author adds it)', 'D-9 proposal awaiting user approval (docs/decision-guide.md)']),
 };
 
 export function isApproved(row: UseApproval): boolean {
   return row.provider !== 'TBD' && row.data !== 'TBD' && row.enableCondition !== 'TBD' && row.costCapJpy !== 'TBD' && row.openQuestions.length === 0;
+}
+
+/** Providers a row approves (empty for TBD). */
+export function approvedProviders(row: UseApproval): readonly Provider[] {
+  if (row.provider === 'TBD') return [];
+  return typeof row.provider === 'string' ? [row.provider] : row.provider;
+}
+
+/** An approved row that also approves this provider. Without a provider, any approved provider is enough. */
+export function isApprovedFor(row: UseApproval, provider?: Provider): boolean {
+  return isApproved(row) && (provider === undefined || approvedProviders(row).includes(provider));
 }
 
 /** Approved numeric limits (§3.3 PARAM-113〜119, Q-050/Q-051, D-3). */
@@ -104,4 +125,11 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   },
   chat: { dailyCalls: AI_LIMITS.dailyCalls },
   presentation: { maxOutputTokens: 4000 }, // PARAM-132
+  // PARAM-145〜147 (D-12): one run makes at most PACK_BUILD_MAX_CALLS calls; 8 runs a day fit the daily cap.
+  packBuild: { dailyCalls: 48, maxInputTokens: 100_000, maxOutputTokens: 16_000 },
 };
+
+/** PARAM-148: calls one pack generation may make (2 generation stages + up to 3 fix rounds = 5, plus 1 spare). */
+export const PACK_BUILD_MAX_CALLS = 6;
+/** PARAM-149: per-call timeout for pack generation (long JSON output). */
+export const PACK_BUILD_TIMEOUT_MS = 300_000;

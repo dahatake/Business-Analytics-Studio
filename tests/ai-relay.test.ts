@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import * as fs from 'node:fs';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { C03_TABLE, type AiUse, type UseApproval } from '../src/ai/policy.ts';
+import { C03_TABLE, isApproved, type AiUse, type UseApproval } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loaded } from '../src/data/pack.ts';
 import { SecretVault, protectorWorks, windowsDpapi, type KeyProtector } from '../server/vault.ts';
@@ -52,6 +52,34 @@ beforeEach(() => {
 afterEach(() => {
   for (const a of answers) expect(JSON.stringify(a.body)).not.toContain(FAKE_KEY);
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('authenticated company news relay', () => {
+  it('works without AI credentials and forwards only the validated search', async () => {
+    const doFetch: typeof fetch = async () => new Response('<rss><channel><title>News</title></channel></rss>');
+    const result = await call(req('POST', '/relay/news', { company: 'Acme', lang: 'en' }), { fetch: doFetch });
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ company: 'Acme', lang: 'en', articles: [], provider: 'Google News RSS' });
+  });
+
+  it('applies token, origin, method, input and outbound restrictions before contacting the provider', async () => {
+    let calls = 0;
+    const doFetch: typeof fetch = async () => { calls++; throw new Error('must not fetch'); };
+    const body = { company: 'Acme', lang: 'en' };
+    expect((await call(req('POST', '/relay/news', body, { headers: { 'x-bas-relay': 'wrong' } }), { fetch: doFetch })).status).toBe(403);
+    expect((await call(req('POST', '/relay/news', body, { headers: { origin: 'https://other.example' } }), { fetch: doFetch })).status).toBe(403);
+    expect((await call(req('GET', '/relay/news', body), { fetch: doFetch })).status).toBe(405);
+    expect((await call(req('POST', '/relay/news', { ...body, endpoint: 'https://example.com' }), { fetch: doFetch })).status).toBe(400);
+    expect((await call(req('POST', '/relay/news', body), { fetch: doFetch, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['example.com'] } })).body).toEqual({ error: 'outboundNotAllowed' });
+    expect(calls).toBe(0);
+  });
+
+  it('returns an explicit failure, never fabricated news or provider content', async () => {
+    const result = await call(req('POST', '/relay/news', { company: 'Acme', lang: 'ja' }), {
+      fetch: async () => new Response('private provider error', { status: 500 }),
+    });
+    expect(result).toEqual({ status: 502, body: { error: 'newsUnavailable' } });
+  });
 });
 
 describe('secret vault (AES-256-GCM)', () => {
@@ -236,7 +264,7 @@ describe('relay secrets and connection', () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, configured: false, keyProtection: 'file' } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, configured: false, keyProtection: 'file', copilot: null } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -317,7 +345,7 @@ interface Seen {
 let stub: Server;
 let stubUrl: string;
 let seen: Seen[] = [];
-let mode: 'ok' | 'hang' | 'error' | 'garbage' = 'ok';
+let mode: 'ok' | 'hang' | 'error' | 'garbage' | 'noJsonMode' = 'ok';
 const PROVIDER_SECRET_BODY = 'provider-internal-detail-should-not-leak';
 
 beforeAll(async () => {
@@ -327,6 +355,11 @@ beforeAll(async () => {
     r.on('end', () => {
       seen.push({ method: r.method ?? '', url: r.url ?? '', headers: r.headers, body: Buffer.concat(chunks).toString('utf8') });
       if (mode === 'hang') return;
+      if (mode === 'noJsonMode' && Buffer.concat(chunks).toString('utf8').includes('response_format')) {
+        res.statusCode = 400;
+        res.end('{}');
+        return;
+      }
       if (mode === 'error') {
         res.statusCode = 500;
         res.end(JSON.stringify({ error: { message: PROVIDER_SECRET_BODY } }));
@@ -381,7 +414,7 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
   });
 
   it('refuses every unapproved use without contacting the provider', async () => {
-    for (const use of (Object.keys(C03_TABLE) as AiUse[]).filter((u) => u !== 'explain')) {
+    for (const use of (Object.keys(C03_TABLE) as AiUse[]).filter((u) => !isApproved(C03_TABLE[u]))) {
       const r = await call(req('POST', '/relay/ai', aiBody({ use })), ctx());
       expect(r, use).toEqual({ status: 403, body: { allowed: false, reasons: ['c03NotApproved'] } });
     }
@@ -447,5 +480,113 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     mode = 'garbage';
     expect(await call(req('POST', '/relay/ai', aiBody()), ctx())).toEqual({ status: 502, body: { error: 'badProviderResponse' } });
     for (const a of answers) expect(JSON.stringify(a.body)).not.toContain(FAKE_KEY);
+  });
+});
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* D-12: customer pack generation (FR-311) — providers, JSON mode, Copilot, official-site reader                     */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+describe('D-12 packBuild through the relay', () => {
+  const testConfig: RelayConfig = { ...STRICT_RELAY_CONFIG, testOutbound: true };
+  const packBody = (extra: Record<string, unknown> = {}) => ({ use: 'packBuild', provider: 'foundry', lang: 'ja', prompt: '顧客パックを作ってください', context: '', maxOutputTokens: 16000, timeoutMs: 300000, ...extra });
+
+  const fakeCopilot = (answer = '{"entities":[]}') => {
+    const calls: { model: string; system: string; prompt: string }[] = [];
+    const service = {
+      status: async () => ({ available: true, authenticated: true, login: 'octocat', models: [{ id: 'gpt-5', name: 'GPT-5', multiplier: 1 }] }),
+      complete: async (i: { model: string; system: string; prompt: string }) => {
+        calls.push(i);
+        return { text: answer, inputTokens: 10, outputTokens: 20, premiumRequests: 1 };
+      },
+    };
+    return { calls, service: service as unknown as NonNullable<RelayContext['copilot']> };
+  };
+
+  beforeEach(() => {
+    seen = [];
+    mode = 'ok';
+  });
+
+  it('C-03: packBuild is approved for Foundry and Copilot; explain stays Foundry only', () => {
+    expect(relayAiDecision('packBuild', true, C03_TABLE, 'foundry')).toEqual([]);
+    expect(relayAiDecision('packBuild', true, C03_TABLE, 'copilotSdk')).toEqual([]);
+    expect(relayAiDecision('explain', true, C03_TABLE, 'copilotSdk')).toEqual(['c03NotApproved']);
+    expect(relayAiDecision('packBuild', false, C03_TABLE, 'copilotSdk')).toEqual(['notConfigured']);
+  });
+
+  it('Foundry: JSON mode with max_completion_tokens and the pack system prompt; a deployment rejecting it is retried once classically', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig })).status).toBe(200);
+    const r = await call(req('POST', '/relay/ai', packBody()), { config: testConfig });
+    expect(r.status).toBe(200);
+    const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[]; max_completion_tokens?: number; response_format?: { type: string } };
+    expect(sent.response_format).toEqual({ type: 'json_object' });
+    expect(sent.max_completion_tokens).toBe(16000);
+    expect(sent.messages[0]!.content).toContain('JSON');
+
+    seen = [];
+    mode = 'noJsonMode';
+    expect((await call(req('POST', '/relay/ai', packBody()), { config: testConfig })).status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(Object.keys(JSON.parse(seen[1]!.body) as object).sort()).toEqual(['max_tokens', 'messages']);
+  });
+
+  it('per-use caps: packBuild may send long material and wait longer; explain keeps its own caps', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig });
+    expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(150_000) })), { config: testConfig })).status).toBe(200);
+    expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(200_001) })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', packBody({ timeoutMs: 300_001 })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', packBody({ maxOutputTokens: 16_001 })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', packBody({ provider: 'openai' })), { config: testConfig })).status).toBe(400);
+  });
+
+  it('Copilot: model saved in the relay, call goes to the Copilot service with premium requests; nothing reaches Foundry', async () => {
+    const { calls, service } = fakeCopilot('{"packId":"x"}');
+    expect((await call(req('POST', '/relay/ai', packBody({ provider: 'copilotSdk' })), { copilot: service })).body).toEqual({ allowed: false, reasons: ['notConfigured'] });
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt 5; rm' }))).status).toBe(400);
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5', token: 'x' }))).status).toBe(400);
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    expect(((await call(req('GET', '/relay/status'))).body as { copilot: unknown }).copilot).toEqual({ model: 'gpt-5' });
+    const r = await call(req('POST', '/relay/ai', packBody({ provider: 'copilotSdk' })), { copilot: service });
+    expect(r).toEqual({ status: 200, body: { text: '{"packId":"x"}', inputTokens: 10, outputTokens: 20, premiumRequests: 1 } });
+    expect(calls[0]!.model).toBe('gpt-5');
+    expect(calls[0]!.system).toContain('JSON');
+    expect(seen).toHaveLength(0);
+    expect((await call(req('POST', '/relay/ai', { ...packBody({ provider: 'copilotSdk' }), use: 'explain', maxOutputTokens: 100, timeoutMs: 1000 }), { copilot: service })).body)
+      .toEqual({ allowed: false, reasons: ['c03NotApproved'] });
+    const st = await call(req('POST', '/relay/copilot/status', {}), { copilot: service });
+    expect(st.body).toMatchObject({ authenticated: true, login: 'octocat', settings: { model: 'gpt-5' } });
+    expect((await call(req('DELETE', '/relay/copilot'))).body).toEqual({ copilot: null });
+  });
+
+  it('official-site reader: token-protected, URL validated, outbound list honoured, errors mapped', async () => {
+    let used = 0;
+    const site = (async () => { used++; return { pages: [], failed: [] }; }) as unknown as RelayContext['site'];
+    expect((await call(req('POST', '/relay/site', { url: 'https://example.com' }, { headers: { 'x-bas-relay': 'bad' } }), { site })).status).toBe(403);
+    expect((await call(req('POST', '/relay/site', { url: 'https://example.com' }), { site })).status).toBe(200);
+    expect((await call(req('POST', '/relay/site', { url: 1 }), { site })).status).toBe(400);
+    expect(used).toBe(1);
+    expect((await call(req('POST', '/relay/site', { url: 'http://127.0.0.1/' }))).body).toEqual({ error: 'invalidUrl' });
+    expect((await call(req('POST', '/relay/site', { url: 'https://example.com/' }), { config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['contoso.com'] } })).body).toEqual({ error: 'outboundNotAllowed' });
+  });
+});
+
+describe('D-12 review fixes: Copilot and the outbound allowlist', () => {
+  it('a Foundry-only BAS_RELAY_OUTBOUND_HOSTS never lets material go to GitHub Copilot; listing the Copilot hosts allows it', async () => {
+    let calls = 0;
+    const copilot = {
+      status: async () => { calls++; return { available: true, authenticated: true, login: 'u', models: [] }; },
+      complete: async () => { calls++; return { text: '{}', inputTokens: 1, outputTokens: 1, premiumRequests: 1 }; },
+    } as unknown as NonNullable<RelayContext['copilot']>;
+    const foundryOnly: RelayConfig = { ...STRICT_RELAY_CONFIG, outboundHosts: ['res.openai.azure.com'] };
+    await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }), { config: foundryOnly });
+    const body = { use: 'packBuild', provider: 'copilotSdk', lang: 'ja', prompt: 'x', context: '', maxOutputTokens: 100, timeoutMs: 1000 };
+    expect((await call(req('POST', '/relay/ai', body), { config: foundryOnly, copilot })).body).toEqual({ error: 'outboundNotAllowed' });
+    expect((await call(req('POST', '/relay/copilot/status', {}), { config: foundryOnly, copilot })).body).toEqual({ error: 'outboundNotAllowed' });
+    expect(calls).toBe(0);
+    const withCopilot: RelayConfig = { ...foundryOnly, outboundHosts: ['res.openai.azure.com', 'api.githubcopilot.com', 'api.github.com', 'github.com'] };
+    expect((await call(req('POST', '/relay/ai', body), { config: withCopilot, copilot })).status).toBe(200);
+    expect(calls).toBe(1);
   });
 });

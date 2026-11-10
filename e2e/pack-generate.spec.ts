@@ -1,0 +1,84 @@
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
+import { JAPANESE, setup, visibleTextExcludingOtherLang } from './helpers.ts';
+
+/*
+ * FR-311 (D-12): "Create customer pack with Copilot" on the launch screen and in project management, with the AI
+ * settings reachable from there. These tests only read the relay; the live generation test changes the relay's saved
+ * connection, so it lives in e2e/ai.spec.ts, whose tests run in order in one worker (the relay is shared by the server).
+ */
+test.describe.configure({ mode: 'default' });
+
+const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+
+async function scan(page: Page) {
+  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
+  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
+    .exclude('[data-tabster-dummy]')
+    .analyze();
+  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
+}
+
+async function seed(page: Page, lang: 'ja' | 'en') {
+  await setup(page, { skipLaunch: false, lang });
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('bas.e2e.gen')) return;
+    sessionStorage.setItem('bas.e2e.gen', '1');
+    const createdAt = '2026-11-10T00:00:00.000Z';
+    localStorage.setItem('bas.projects', JSON.stringify({
+      version: 1,
+      state: {
+        companies: [{ id: 'co-c', name: 'Contoso', createdAt }],
+        projects: [{ id: 'pj-c', companyId: 'co-c', name: 'Delivery', createdAt, step: 'define' }],
+        target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define',
+      },
+    }));
+  });
+  await page.goto('/');
+  await expect(page.getByTestId('launch-screen')).toBeVisible();
+}
+
+test('launch screen: AI settings and the generator are reachable; missing required fields are listed and block the start', async ({ page }) => {
+  await seed(page, 'en');
+  await page.getByTestId('launch-ai-settings').click();
+  const settings = page.getByTestId('ai-settings-dialog');
+  await expect(settings).toBeVisible();
+  await expect(settings.getByTestId('ai-endpoint')).toBeVisible();
+  await settings.getByTestId('ai-provider-copilot').check();
+  await expect(settings.getByTestId('ai-copilot')).toBeVisible();
+  await expect(settings.getByTestId('ai-copilot-signin')).toContainText('Not checked');
+  await expect(settings.getByTestId('ai-endpoint')).toHaveCount(0);
+  await expect(settings.getByTestId('ai-price-request')).toBeVisible();
+  expect(await scan(page)).toEqual([]);
+  await settings.getByTestId('ai-provider-foundry').check();
+  await settings.getByTestId('ai-settings-dialog-close').click();
+  await expect(settings).toHaveCount(0);
+
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId('gen-company')).toHaveValue('Contoso');
+  await expect(dialog.getByTestId('gen-project')).toHaveValue('Delivery');
+  await expect(dialog.getByTestId('gen-missing')).toHaveText('Required fields missing: Purpose (improvement theme)');
+  await expect(dialog.getByTestId('gen-start')).toBeDisabled();
+  await expect(dialog.getByTestId('ai-readiness')).toContainText('To do');
+  await dialog.getByTestId('gen-purpose').fill('Reduce late deliveries');
+  await expect(dialog.getByTestId('gen-missing')).toHaveCount(0);
+  await expect(dialog.getByTestId('gen-start')).toBeDisabled(); // AI not configured, confirmations not given
+  const text = await visibleTextExcludingOtherLang(page, 'en');
+  expect(text.split('\n').filter((l) => JAPANESE.test(l))).toEqual([]);
+  expect(await scan(page)).toEqual([]);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.getByTestId('launch-generate').click();
+  await expect(page.getByTestId('gen-missing')).toContainText('Company name');
+  await expect(page.getByTestId('gen-missing')).toContainText('Project name');
+});
+
+test('Japanese labels on the launch screen', async ({ page }) => {
+  await seed(page, 'ja');
+  await expect(page.getByTestId('launch-generate')).toHaveText('顧客パックを Copilot で作成');
+  await expect(page.getByTestId('launch-ai-settings')).toHaveText('AI 設定');
+  await page.getByTestId('launch-generate').click();
+  await expect(page.getByTestId('gen-missing')).toContainText('企業名');
+});

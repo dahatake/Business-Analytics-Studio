@@ -154,6 +154,7 @@ export const opsEn: Record<keyof typeof opsJa, string> = {
 
   'ops.gate.candidate': 'Never sends (not in the catalog)',
   'ops.gate.devOnly': 'The app never sends (development and setup only)',
+  'ops.gate.companyNews': 'Automatically sends only the public company name and language for news search. Pause in the live bar to stop. Selection here does not enable or disable retrieval.',
   'ops.gate.blocked': 'Never sends ({question} is open)',
   'ops.gate.unknown': 'Never sends (condition unknown)',
   'ops.gate.c03NotApproved': 'Never sends (C-03 row "{use}" is not approved: {questions})',

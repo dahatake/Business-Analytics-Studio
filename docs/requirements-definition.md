@@ -12,7 +12,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 |---|---|
 | 文書名 | Envisioning Dashboard Builder（高速生成版）要求定義書 |
 | 版 | 1.0（2026-10-09、run 202610090557 で初版を作成） |
-| 最終更新 | 2026-11-09 |
+| 最終更新 | 2026-11-10 |
 | 元の資料 | リポジトリ直下の `要求定義書.md`（ドラフト v1.0、SRC-001）。原本は変更しない |
 | 本文の分割 | [A 共通アプリ本体（分析・UI・連動・保存）](requirements/app-core.md)、[A 共通アプリ本体（ブランド・演出・インク・雛形・ワークスペース）](requirements/app-experience.md)、[B 顧客パック](requirements/customer-pack.md)、[C 生成パイプライン](requirements/pipeline.md)、[非機能要求](requirements/quality.md)、[A データカタログ](requirements/data-catalog.md)、[外部連携カタログ](requirements/integration.md)、[A 関係グラフ・Twin ビュー・意味的ズーム](requirements/graph-twin.md) |
 
@@ -20,6 +20,8 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 
 | 日付 | 依頼の要約 | 行き先（要求 ID・Q・不採用の理由） | 反映した回答 | 監査で直した不整合 |
 |---|---|---|---|---|
+| 2026-11-10 | 依頼: 顧客パックを作る 2 つのプロンプトを、Microsoft 365 Copilot に 1 回貼り付けて実行する 1 つのプロンプトにし（できなければ 2 回でよい）、結果を（少量なら）Markdown のスニペットで表示し、量にかかわらず zip でダウンロードできるようにする。プロンプトは Claude Opus 5.5 の公式ガイドに従って書き直す | 変更: FR-307（2 段のまま、2 段目が `<packId>.zip`〈pack.json・README.md〉と 40 エンティティ以下の ```json を返し、BAS が zip をそのまま取り込む）、FR-308（2 段の分離を送信前の境界として明確化: 1 段目は社内データを使わない Web モードで公開の入力だけ、2 段目は Web 検索をオフにして送り、公開の事実は 1 段目の結果だけから取る）、AC-888（2 つのプロンプトの内容と境界、各 8,000 文字未満）、TODO-010（実テナントでの確認項目に zip と、2 段目で Web 検索クエリが出ないこと）。新規: AC-898（zip の取り込みと安全上の上限）。両プロンプトを書き直し | 利用者の明示した依頼を承認として反映（AI 提案・包括承認なし）。根拠: Microsoft Learn「Data, privacy, and security for web search」（Web 検索語はプロンプトから作られ、明示的に参照した資料や Copilot が社内データから見つけた名前〈例: 上司の名前〉にも影響される。検索語の引用表示と Purview の記録は送信後。利用者の Web 検索トグル、管理者の「Work モードで無効・Web モードで有効」）、「Code Interpreter」（ファイルを作って渡せる。zip は明記なし → ```json の代替を残す） | 1 つに統合する案も検討したが、社内データを扱うチャットで Web 検索を有効にすると、社内の語が Bing に送られることをプロンプトの指示でも事後の確認でも防げない（送った後に取り消せない）ため、2 回とした。Web モードを選べない環境では 1 段目でも Copilot が社内データを使う可能性が残り、管理者設定での強制を推奨する |
+| 2026-11-10 | 依頼: 既存の顧客名と、その配下の Project 名の編集、および企業・Project 自体の削除を実装し、要求定義書に記載する | 既存 FR-137・FR-138・FR-139・FR-306 の追記として [§3.9](#39-登録済み企業顧客とprojectの名前変更削除) に操作・入力制約・削除範囲・受入条件・検証先を記載。新規 ID の採番、既存 AC の変更はなし | 本会話の利用者の明示依頼と「要求定義書に記載をしてください」 | 起動時の選択画面に編集・削除の入口がなかった。管理画面と選択画面を共通ダイアログに統一し、名前変更時の空名・重複名の拒否を明確化 |
 | 2026-11-10 | 依頼: 取得予定のデータで BAS が使う全データを取得できているかを監査し（インターネットの情報も Microsoft 365 Copilot で取得したい）、修正事項を直す。続けて「要求定義書に記載をしてください」 | 新規: FR-308（公開 Web 調査のプロンプトと全区分の取得指示・出典の URL/確認日/位置）、FR-309（取得報告 `extensions.collection`）、FR-310（取り込みの厳格化・任意拡張と最適化/物の流れの検査・`dataCatalog` の Project での利用）、AC-888〜AC-897（分割本文がないため [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) に記載）、TODO-010（実テナントでの確認）。変更: FR-307 の対象をプロンプト 2 段（公開 Web 調査 → 顧客パック作成）に拡張、`source.publishedDate` を任意に（発行日を作らない）、`flows`・`optimization` に任意の `sourceIds`（ない場合は警告）。根拠は [取得範囲の監査](customer-pack-coverage-audit.md)。スキーマの 89 プロパティとプロンプトの照合を単体テストにした（AC-889） | 利用者の明示した依頼を承認として反映（AI 提案・包括承認なし） | 旧プロンプトは公開 Web 調査を指示せず、任意拡張 6 種類と出典の URL・確認日を取得していなかった。取り込んだ `dataCatalog` が Project の画面で使われていなかった。PART の欠落があっても取り込めた。索引の詳細リンク先 `requirements/*.md` がこのリポジトリにない（既存の不整合。本変更の FR は §3.8 を参照先にした） |
 | 2026-11-09 | 依頼: ①企業の Project のデータである顧客パックのインポート機能を作り、社内のいろいろなファイルを収集・整形して顧客パックにする Microsoft 365 Copilot 用の Prompt を用意し、取り込みデータを Business Analytics Studio のデータ管理機能の中で使う。②スプラッシュ画面と画面上部から「青空精機（架空）」の文言を削除する。③起動時は 1) スプラッシュ画面 2) 企業名と Project の選択画面（サンプルデータのある企業と Project を含む）3) Project 画面 の順に遷移する | 実装: FR-302〜FR-304（承認済み・未実装だったもの。管理グループの「データ管理」画面 /data。貼り付け・複数ファイル・ドラッグ＆ドロップ → ```json の抽出と PART の結合 → 形だけの整形（値は変えない）→ CLI と同じ `verifyPack`（src/data/verify.ts に移し scripts/lib/verify.ts は再輸出）→ 人の確認 → Project ごとに全か無かで保存。エラーには原因・対処と Copilot に送る修正用プロンプト）、FR-076（オープニングはアプリ名だけ）。新規: FR-306（起動の 3 段階と選択画面。FR-144・FR-267 の初回ダイアログを置き換え）、FR-307（Microsoft 365 Copilot 用の顧客パック作成プロンプト。原本は docs/copilot-customer-pack-prompt.md、スキーマとの食い違いは単体テストで検出）。変更（FR-241 の任意項目）: `optimization` を任意にし、ない場合は最適化の画面が理由を示して空のまま（値を作らない）。人物の `ageBand`・`gender`・`portrait` を任意にし、ない場合は似顔絵ではなく種類のアイコン（実在の人の属性を推測で作らない）。作業先メニュー・上部バーから企業名を外し、サンプルのときはバッジだけ。保持と削除の表に「取り込んだ顧客パック」を追加。PARAM-142 は 1 ファイルの上限として使用 | 利用者の明示した依頼を承認として反映（AI 提案・包括承認なし） | 既存のお手本パックは verify で出典のない数値のエラーになる（build の自己修正で補う前提）。本変更では変更せず、テストは出典を補ったパックで行う |
 | 2026-11-09 | 全5ステップの全タスク完了をGREENで示し、ToDoの「対応する」から対象コンポーネントへ移動する要求を記録 | FR-136 の追記として [§7.1](#71-ステップの完了シグナルとtodoの移動先) に完了・解除条件、移動先、受入基準と検証先を追加。FR-136 の索引から追記を参照。既存の FR・AC ID は変更しない | 本会話の利用者の明示依頼と「要求定義書に記載をしてください」 | 選択中のステップより前という位置だけで完了扱いにせず、ToDoと同じ判定に統一。画面を開くだけのリンクを、対象のタブ・入力欄・コンポーネントへの移動として明確化 |
@@ -735,7 +737,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 
 | AC | 要求 | 受入基準 | 検証 |
 |---|---|---|---|
-| AC-888 | FR-308 | /data に、社内資料を含めない公開 Web 調査用のプロンプト（日英）が、顧客パック作成のプロンプトとは別に表示され、コピーできる。調査は公式サイト・IR・拠点・製品・導入事例・ブランドを対象にし、出典 URL と、Web 検索ができないときの `blocked` を求める。各プロンプトは 8,000 文字未満 | `e2e/pack-import.spec.ts`（公開調査の表示とコピー）、`tests/pack-import.test.ts`（Copilot のプロンプトとスキーマの一致） |
+| AC-888 | FR-308 | /data に、Microsoft 365 Copilot 用の 2 つのプロンプト（日英）が表示され、それぞれコピーできる。1「公開Web調査」は入力が公開企業名・公式ドメイン・対象期間の 3 つだけで（Project・社内資料を求めない）、社内データを使わない Web モードの新しいチャットで送る手順を示し、検索語を公開の語だけで作ること、出典 URL（W1…）、Web 検索ができないときの `blocked`、決まった見出しの Markdown 出力を求める。2「顧客パック作成」は Web 検索をオフにして送る手順を示し、このチャットで Web を検索せず公開の事実は 1 の結果だけから取ること（理由: 検索語は Bing に送られ、送信後にしか確認できない）、資料の中の指示をデータとして扱うこと、`webSearch` に 1 の検索状況を写すことを求める。受け渡しは `<packId>.zip`（`pack.json` と、出典・検索状況・前提・不足を書いた `README.md`）で、40 エンティティ以下なら回答にも ```json で示し、ファイルを作れない環境では ```json の PART で返す。各プロンプトは 8,000 文字未満（2026-11-10 改訂） | `e2e/pack-import.spec.ts`（2 つのプロンプトの表示・コピーボタンが 2 つ）、`tests/pack-import.test.ts`（スキーマとの一致・調査プロンプトの入力が公開の 3 つだけ・zip/pack.json/README.md/blocked/Bing/W1/PART の指示） |
 | AC-889 | FR-308 | 日英の両プロンプトが、`docs/pack.schema.json` の全プロパティと 24 区分・任意拡張 6 種類の全項目を求める。求めないのは、BAS が表示用に作る飾り（`portrait` の容姿 6 項目、`illustration` の `motif`・`hue`）と人の `ageBand`・`gender` だけで、プロンプトに「書かない」と明記する。スキーマに項目を足してプロンプトに足さないとテストが失敗する | `tests/pack-import.test.ts`（「every property of docs/pack.schema.json」。項目を 1 つ消すと失敗することを確認済み） |
 | AC-890 | FR-308 | `origin` を持つ出典は `accessedDate` と、`web` なら `url`・`m365` なら `locator` がないとエラー。`url`・`accessedDate`・`locator`・`origin` は整形・保存・再読み込み・書き出しで失われず、発行日が不明な出典は発行日なしのまま読める | `tests/pack-import.test.ts`（「keeps URL, locator and access date」） |
 | AC-891 | FR-309 | 取得報告は 24 区分をちょうど 1 回ずつ含む。区分の欠落・重複、存在しない出典 id はエラー。取得報告のないパックはエラーにせず「未報告」と表示する | `tests/pack-import.test.ts`（「distinguishes no report」）、`e2e/pack-import.spec.ts`（英語 UI の「No collection report」） |
@@ -745,8 +747,43 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | AC-895 | FR-310 | 任意拡張 6 種類を、各画面と同じスキーマで検査し、形の誤り・グラフの未知の id への参照はエラーになる。拡張は PART をまたいで結合でき、PART 間で値が食い違うとエラー | `tests/pack-import.test.ts`（「all six extensions」） |
 | AC-896 | FR-310 | 最適化の行列が工場数 × 地域数と一致しない、工場が生産拠点でない、地域 id がエンティティや他の地域と重複する、物の流れの端が仕入先・拠点・顧客・地域でない、出典 id が source でないときはエラー | `tests/pack-import.test.ts`（「rejects conflicting region ids」） |
 | AC-897 | FR-310 | 取り込んだパックの `dataCatalog` を、再読み込みの後、その Project のデータカタログとして表示する。カタログを別途取り込んだ・削除したときはそちらを優先し、ほかの Project のカタログと混ぜない | `e2e/pack-import.spec.ts`（取り込み → 再読み込み → /catalog）、`tests/pack-import.test.ts`（Project のカタログの分離） |
+| AC-898 | FR-307 | 「取り込む」で Copilot の zip（無圧縮・deflate）を選ぶと、中の `.json` だけを `<zip名>/<項目名>` として読み、テキストの回答と同じ検査に掛ける（`README.md` は読まない）。zip 自体と展開後の各 JSON は 1 ファイル 5 MB（PARAM-142）まで。宣言サイズの超過・宣言より大きく展開されるもの・暗号化・Zip64・JSON が 21 個以上の zip は読まずに理由を示し、JSON のない zip は「認識できない」と表示する | `tests/zip-read.test.ts`、`e2e/pack-import.spec.ts`（英語 UI で zip を選んで検査に合格） |
 
 制約（未検証。TODO-010）: Microsoft 365 Copilot の Web 検索と社内資料の検索は、管理者・利用者の設定、ライセンス、権限に依存し、プロンプトでは変えられない。非公開の値（能力・原価・受注・請求など）は公開 Web からは取れず、社内資料が要る。実テナントでの取得の網羅率と回答の事実性は確かめていない。上の受入基準は、受け取った回答を正しく検査・表示・保存できることを保証するもので、回答の内容が事実であることを保証しない。
+
+### 3.9 登録済み企業（顧客）とProjectの名前変更・削除
+
+**要求の根拠・状態:** 利用者の明示依頼（2026-11-10）に基づく、FR-137（企業と Project の管理）・FR-138（切替とデータ分離）・FR-139（識別子）・FR-306（起動時の選択画面）の追加仕様。承認済み・MUST。本節の「顧客」は、利用者が登録した企業を指し、顧客パック内の個別顧客エンティティを指さない。既存 ID・AC は変更せず、本節で受入条件を補足する。
+
+#### 対象と操作
+
+- 起動時の「企業と Project を選ぶ」画面と「企業と Project」の管理画面の両方から、登録済み企業および配下の各 Project の「名前を変更」「削除」を実行できる。同じ検証・確認手順を使い、作業先メニューから選択画面に戻った場合も利用できる。
+- サンプル企業・デモ Project は編集・削除の対象外とする。
+- 名前変更は現在名を初期値とするダイアログで行い、「保存」で確定する。前後の空白を除去し、空白だけの名前、他の登録済み企業と同名の企業、同じ企業内の別 Project と同名の Project は保存せず、理由を表示する。自分の現在名への保存と、別企業の Project と同名への変更は許可する。対象が見つからない場合も保存せず、理由を表示する。
+- 名前変更の「キャンセル」または Escape では、保存済みの名前とデータを変更しない。
+- 名前変更では企業・Project の ID、親子関係、作成日時、ステップ、作業先、最後に開いた Project、および既存の作業データ・取り込み済み顧客パックを維持する。更新後の登録名を一覧・作業先メニュー・メイン画面見出しに反映し、再読み込み後も保持する。顧客パックの内容に含まれる会社名は書き換えない。
+
+#### 削除範囲と削除後の状態
+
+- 削除は確認ダイアログを必須とし、対象名、削除範囲、元に戻せないことを表示する。Project は企業名と Project 名で識別し、企業は配下の Project 数（0 件を含む）を表示する。確認の「削除」でのみ確定し、「キャンセル」または Escape では何も削除しない。
+- Project の削除では、その Project の登録情報、Project 別のローカルストレージ、取り込み済み顧客パック（索引・IndexedDB）、手書きボード（IndexedDB・保存ジャーナル）を削除する。最後の Project を削除しても企業は残り、新たな Project を追加できる。
+- 企業の削除では、企業の登録情報と配下の全 Project を上記と同じ範囲で削除する。Project が 0 件の企業も削除できる。
+- 削除対象が現在の作業先ならデモへ戻す。最後に開いた Project が削除対象なら参照を解除する。無関係な作業先・最後に開いた Project の参照は維持する。
+- 他企業・他 Project・デモの登録情報、保存データ、顧客パックは削除しない。削除済みの対象や保存データが、再読み込みにより復元されてはならない。外部へ書き出したバックアップファイルは削除対象外とする。
+
+#### 受入条件と検証
+
+| 条件 | 期待結果 | 検証先 |
+|---|---|---|
+| 両画面で企業・Project の名前を変更 | 現在名から編集でき、確定後の名前を保存・表示する。ID・関連データ・選択状態は維持 | `tests/projects.test.ts`、`e2e/project-management.spec.ts` |
+| 空名、同名企業、同じ企業内の同名 Project、自分の現在名、別企業の同名 Project | 不正入力は理由を表示して元の状態を維持。現在名と別企業の同名 Project は保存できる | `tests/projects.test.ts`、`e2e/project-management.spec.ts` |
+| 名前変更・削除をキャンセルまたは Escape で閉じる | 保存済みデータを変更しない | `e2e/project-management.spec.ts` |
+| 現在または最後に開いた Project を削除 | 対象データを削除し、該当する作業先と最終参照を解除。最後の Project の削除後も企業に追加可能 | `tests/projects.test.ts`、`e2e/project-management.spec.ts` |
+| 複数 Project のある企業と、Project がない企業を削除 | 件数を確認でき、企業と配下のデータだけが消える。他企業・デモは維持 | `tests/projects.test.ts`、`e2e/project-management.spec.ts` |
+| 顧客パック・手書きボードを持つ Project を含む企業を削除 | パック索引と IndexedDB の対象レコードが消え、別企業のレコードは残る | `e2e/project-management.spec.ts` |
+| 確定後に再読み込み、キーボード操作、日英・狭い画面で操作 | 変更・削除結果を保持。名前変更入力へフォーカスが移り、Enter で保存、Escape で中止できる。英語の狭い画面に横方向のはみ出しがない | `e2e/project-management.spec.ts` |
+
+**実装と確認記録（2026-11-10）:** `src/state/projects.ts`、`src/modules/project/useProjectManagement.tsx`、`LaunchScreen.tsx`、`ProjectsScreen.tsx`。型チェックと E2E 用ビルド成功。関連単体テスト 85 件（`projects`・`project`・`pack-import`・`ink`）、ブラウザーテスト 26 件（`project-management`・`project`・`pack-import`）が成功。既存画面と起動時一覧の axe 検証を含む。操作手順は [ユーザーガイド第3章](../users-guide/03-projects.md#名前の変更削除) に記載する。
 
 ## 4. ペルソナ
 
@@ -953,7 +990,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | FR-134 | パラメーターの編集と結果の更新 | 承認済み | MUST | AC-197〜AC-199 | [analysis-projects.md](requirements/analysis-projects.md) |
 | FR-135 | ビュアーの切替と結果の確認 | 承認済み | MUST | AC-200〜AC-201 | [analysis-projects.md](requirements/analysis-projects.md) |
 | FR-136 | 業務改善ステッパー | 承認済み | MUST | AC-202〜AC-204、AC-372。完了表示・ToDo移動の追加受入基準は §7.1 | [analysis-projects.md](requirements/analysis-projects.md)、[本書 §7.1](#71-ステップの完了シグナルとtodoの移動先) |
-| FR-137 | 企業の登録と複数 Project の管理 | 承認済み | MUST | AC-205〜AC-208 | [analysis-projects.md](requirements/analysis-projects.md) |
+| FR-137 | 企業の登録と複数 Project の管理（名前変更・削除の追加仕様は §3.9） | 承認済み | MUST | AC-205〜AC-208、§3.9 の受入条件 | [analysis-projects.md](requirements/analysis-projects.md)、[§3.9](#39-登録済み企業顧客とprojectの名前変更削除) |
 | FR-138 | Project の切替とデータの分離 | 承認済み | MUST | AC-209〜AC-210 | [analysis-projects.md](requirements/analysis-projects.md) |
 | FR-139 | 企業・Project の識別子と正本 | 承認済み | MAY | AC-211 | [analysis-projects.md](requirements/analysis-projects.md) |
 | FR-140 | 分析結果の AI 下書き | 承認済み | MAY | AC-212〜AC-213、AC-219 | [analysis-projects.md](requirements/analysis-projects.md) |
@@ -1076,9 +1113,9 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | FR-302 | 顧客パックのアップロードと Project への取り込み（複数ファイル・ドラッグ＆ドロップ・貼り付け、全か無か） | 承認済み | MUST | AC-837〜AC-844 | [customer-pack.md](requirements/customer-pack.md) |
 | FR-303 | ブラウザー内での顧客パックの検証（CLI の verify と同じ実装を使う） | 承認済み | MUST | AC-845〜AC-850 | [customer-pack.md](requirements/customer-pack.md) |
 | FR-304 | 取り込む前の人の確認（機密区分の件数・人・ロゴ） | 承認済み | MUST | AC-851〜AC-855 | [customer-pack.md](requirements/customer-pack.md) |
-| FR-306 | 起動の 3 段階（スプラッシュ → 企業と Project の選択（サンプルデータの企業とデモ Project を含む）→ Project 画面）。選択はブラウザーのセッションごとに 1 回、作業先メニューから戻れる | 承認済み | MUST | e2e/project.spec.ts・e2e/motion-feed.spec.ts | [app-experience.md](requirements/app-experience.md) |
-| FR-307 | 社内のファイルから顧客パックを作る Microsoft 365 Copilot 用プロンプト（資料の一覧 → 事実の抽出 → PART に分けた JSON。値を作らない・数値に出典）を画面からコピー・ダウンロードでき、検査のエラーから修正用プロンプトを作る（2026-11-10: 公開 Web 調査 → 顧客パック作成の 2 段に拡張。FR-308） | 承認済み | SHOULD | tests/pack-import.test.ts・e2e/pack-import.spec.ts | [customer-pack.md](requirements/customer-pack.md) |
-| FR-308 | 公開 Web 調査のプロンプト（社内資料と分離）と、BAS が使う全 24 区分・全項目の取得指示。出典に URL・確認日・資料内の位置を残す | 承認済み | MUST | AC-888〜AC-890 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
+| FR-306 | 起動の 3 段階（スプラッシュ → 企業と Project の選択（サンプルデータの企業とデモ Project を含む）→ Project 画面）。選択はブラウザーのセッションごとに 1 回、作業先メニューから戻れる。登録済み企業・Project の名前変更と削除は §3.9 | 承認済み | MUST | e2e/project.spec.ts・e2e/motion-feed.spec.ts、§3.9 の受入条件 | [app-experience.md](requirements/app-experience.md)、[§3.9](#39-登録済み企業顧客とprojectの名前変更削除) |
+| FR-307 | 社内のファイルから顧客パックを作る Microsoft 365 Copilot 用プロンプト（資料の一覧 → 事実の抽出 → PART に分けた JSON。値を作らない・数値に出典）を画面からコピー・ダウンロードでき、検査のエラーから修正用プロンプトを作る（2026-11-10: 公開 Web 調査 → 顧客パック作成の 2 段に拡張。FR-308。同日改訂: 2 段目が `<packId>.zip`（pack.json・README.md）と少量なら ```json を返し、BAS がそのまま取り込む。AC-898） | 承認済み | SHOULD | tests/pack-import.test.ts・tests/zip-read.test.ts・e2e/pack-import.spec.ts | [customer-pack.md](requirements/customer-pack.md) |
+| FR-308 | 公開 Web 調査の指示（検索語は公開名・ドメイン・一般語だけで作り、社内の語を入れない。2026-11-10 改訂: 送信前の境界として、公開 Web 調査は社内データを使わない Web モードで公開の入力だけを渡し、社内資料を使う顧客パック作成は Web 検索をオフにして送る）と、BAS が使う全 24 区分・全項目の取得指示。出典に URL・確認日・資料内の位置を残す | 承認済み | MUST | AC-888〜AC-890 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
 | FR-309 | 取得報告（`extensions.collection`）: 24 区分の状態・不足項目・次の取得方法・Web 検索の実施状況の検査と表示。データがあることを完了とみなさない | 承認済み | MUST | AC-891〜AC-893 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
 | FR-310 | 取り込みの厳格化（PART の欠落・矛盾・壊れた JSON を拒否）、任意拡張 6 種類と最適化・物の流れの検査、取り込んだ `dataCatalog` の Project での利用 | 承認済み | MUST | AC-894〜AC-897 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) || FR-289 | 生成 AI（Microsoft Foundry）による AI 取り込み（Foundry 設定済みのときだけ選べる） | 承認済み | SHOULD | AC-757〜AC-760 | [app-core.md](requirements/app-core.md) |
 | NFR-SEC-012 | Foundry の API キーをリポジトリ・ログ・テストデータに出さない | 承認済み | MUST | AC-729〜AC-730 | [app-core.md](requirements/app-core.md) |
@@ -2327,7 +2364,7 @@ Q-067 は全実在可視化の範囲と起点の回答、Q-068 は PARAM-133=200
 | TODO-007 | 残タスク | E2E-289（FR-185 AC-393）の退行の修正。Q-039 の回答に従い、境界のドラッグの追従の動きを直すか測り方を見直し、E2E-289 を pass にする（候補の修正 work/prof/candidate-stable-pane.diff は未検証。AUD-86。キュー fix-fps は blocked） | FR-185、AC-393、NFR-UX-017、AC-479、E2E-289、Q-039 | implementer、Q-039 の回答後 | 未着手（blocked: Q-039） |
 | TODO-008 | 残タスク | E2E-226（FR-147 AC-246）の基点からの fail（最初のフレーム 1149ms > {PARAM-038}。端末の性能による。run 202610141134 以前から継続。AUD-54）。標準の検証条件の端末での再測定、または描画の初期化の短縮 | FR-147、AC-246、E2E-226 | 未定 | 未着手（既知の基点からの fail） |
 | TODO-009 | 残タスク | IT-060〜IT-076（NFR-SEC-006）が基点 8dba365 のツールキット更新で fail。scripts/rdcheck.py の外部連携カタログ検査（import integration_catalog）の接続が落ちたため。run 202610192300 の変更が原因ではない。接続の復旧（rdcheck.py と integration_catalog の取り込みの整合）は利用者の判断が要る | NFR-SEC-006、IT-060〜IT-076 | 利用者の判断 | 未着手（既知の基点からの fail） |
-| TODO-010 | 残タスク | 実際の Microsoft 365 Copilot（Web 検索を許可したテナント）で 2 段のプロンプトを実行し、取得報告の区分ごとの状態・出典 URL を所有者が確かめ、未取得の区分を記録する（プロンプトの効果と回答の事実性は自動テストでは確かめられない） | FR-308、FR-309、AC-888〜AC-893 | 利用者、未定 | 未着手 |
+| TODO-010 | 残タスク | 実際の Microsoft 365 Copilot（Web 検索を許可したテナント）で 2 つのプロンプトを実行し、1 が Web モードで公開の語だけを検索語にしているか、Web 検索をオフにした 2 の回答に Web 検索クエリが出ないか、zip が作られて BAS の検査に合格するか、取得報告の区分ごとの状態・出典 URL を所有者が確かめ、未取得の区分を記録する（プロンプトの効果と回答の事実性は自動テストでは確かめられない） | FR-307、FR-308、FR-309、AC-888〜AC-893、AC-898 | 利用者、未定 | 未着手 |
 ## 11. 出典台帳
 
 | ID | 資料 | 版・日付 | 確認した位置 | 確認日 | 区分 |

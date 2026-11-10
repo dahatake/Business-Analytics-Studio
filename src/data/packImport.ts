@@ -437,7 +437,7 @@ const FIX_INTRO = {
     '直し方のルール:',
     '- 問題のある項目だけを直し、それ以外の項目は変えないでください。',
     '- 承認済みの資料・公開Webの出典だけを使い、根拠のない値は作らないでください。必須の値や参照先が見つからない場合は、そのエンティティと、それに依存して成立しないエンティティも除外し、extensions.collection に不足と次の取得方法を記録してください。必須の参照を空にしてはいけません。',
-    '- 出力は前回と同じ形式（```json のコードブロック、PART k/N に分割、1 回の回答は 40 エンティティまで）で、修正後の顧客パック全体を出し直してください。',
+    '- 修正後の顧客パック全体を前回と同じ方法で出し直してください（pack.json を含む zip。ファイルを作れない場合は ```json のコードブロックで、40 エンティティを超えるときは PART k/N に分割）。',
     '- 最後に、何を直したかを 1 行ずつ箇条書きで示してください。',
   ],
   en: [
@@ -445,7 +445,7 @@ const FIX_INTRO = {
     'Rules for the fix:',
     '- Change only the items with a problem; leave every other item as it is.',
     '- Use only approved material and public web sources; never invent values. If a required value or reference cannot be sourced, omit that entity and dependent entities that can no longer be valid. Record the gaps and next actions in extensions.collection; never leave required references empty.',
-    '- Output the whole corrected pack again in the same format (```json code blocks, split into PART k/N, at most 40 entities per answer).',
+    '- Output the whole corrected pack again the same way as before (a zip with pack.json; if you cannot create files, ```json code blocks split into PART k/N above 40 entities).',
     '- Finish with a bullet list of what you changed, one line per fix.',
   ],
 } as const;

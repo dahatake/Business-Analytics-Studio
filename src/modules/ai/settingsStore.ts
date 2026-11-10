@@ -12,7 +12,7 @@ import {
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
 
-/** Azure OpenAI chat-completions API version used when none is entered (also the relay's default). */
+/** Microsoft Foundry chat-completions API version used when none is entered (also the relay's default). */
 export const DEFAULT_API_VERSION = DEFAULT_FOUNDRY_API_VERSION;
 
 /** D-3: the single monthly budget is an integer number of JPY ≥ 0. Returns null for anything else. */

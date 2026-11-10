@@ -201,6 +201,11 @@ describe('FR-040 architecture from the pack', () => {
     expect(productLayer('Something Else')).toBe('process');
   });
 
+  it('classifies Microsoft Foundry on the intelligence layer', () => {
+    expect(productLayer('Microsoft Foundry')).toBe('intelligence');
+    expect(productLayer('  MICROSOFT FOUNDRY  ')).toBe('intelligence');
+  });
+
   it('a pack can override the derived blocks', () => {
     const pack = loadPack({ ...samplePack, extensions: { architecture: { asIs: [{ layer: 'data', name: 'Legacy DB' }] } } });
     const blocks = buildArchitecture('asis', pack).layers.flatMap((l) => l.blocks);

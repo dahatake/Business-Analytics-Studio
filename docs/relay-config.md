@@ -139,7 +139,7 @@ that a request comes from a page served by this app, not who the user is.
 > **Warning: secrets then live on a server.** The relay vault (`secrets.enc.json`, the master key and DPAPI) is designed
 > for one user's PC. DPAPI is not available on Linux containers, so the master key would be a plain file next to the
 > secrets. On Azure, do not store the API key in the relay vault: keep it in Azure Key Vault and let the app read it with a
-> managed identity, or better, use Microsoft Entra ID authentication to Azure OpenAI with a managed identity so there is
+> managed identity, or better, use Microsoft Entra ID authentication to Microsoft Foundry with a managed identity so there is
 > no key at all. Both need a code change in `server/relay.ts` (the key source) and an approval of C-01 for server use.
 
 The Content Security Policy is handled separately by the integrator (I-5) and is not configured here.

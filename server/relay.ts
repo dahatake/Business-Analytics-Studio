@@ -357,7 +357,7 @@ function validateAiCall(o: Record<string, unknown>, use: AiUse, provider: Provid
 }
 
 /**
- * Azure OpenAI chat completions (Foundry). Provider bodies are never echoed and nothing is logged.
+ * Microsoft Foundry chat completions. Provider bodies are never echoed and nothing is logged.
  * All calls try `max_completion_tokens`, as does the connection test. Pack generation also asks for JSON mode.
  * A deployment that rejects the modern body (HTTP 400, not billed) is retried once with the classic body.
  */

@@ -533,7 +533,7 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     seen = [];
   });
 
-  it('forwards to Azure OpenAI chat completions with the api-key header and returns text + token usage', async () => {
+  it('forwards to Microsoft Foundry chat completions with the api-key header and returns text + token usage', async () => {
     expect(internal.classification).toBe('internal');
     const r = await call(req('POST', '/relay/ai', aiBody()), ctx());
     expect(r).toEqual({ status: 200, body: { text: 'stub answer', inputTokens: 123, outputTokens: 45 } });

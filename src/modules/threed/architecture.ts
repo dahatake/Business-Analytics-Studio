@@ -49,7 +49,7 @@ const KNOWN_LAYER: Record<string, ArchLayerId> = {
   'azure machine learning': 'intelligence',
   'azure ai vision': 'intelligence',
   'azure ai search': 'intelligence',
-  'azure openai': 'intelligence',
+  'microsoft foundry': 'intelligence',
   'microsoft fabric': 'data',
   'azure digital twins': 'data',
   'azure sql database': 'data',

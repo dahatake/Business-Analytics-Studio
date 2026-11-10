@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
+import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
+import { ArchitectureExtension, CoreObjectExtension, GlossarySchema } from './extensionSchemas.ts';
+import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
+import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 
 /**
  * FR-127 / FR-303 verify: acceptance check of a customer pack. Pure (no file access) so the CLI, build's self-correction
@@ -10,7 +14,7 @@ import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normaliz
  */
 export type ProblemCode =
   | 'PARSE' | 'SCHEMA' | 'ENTITY_SCHEMA' | 'DUPLICATE_ID' | 'DANGLING_REF' | 'MISSING_SOURCE' | 'SOURCE_KIND'
-  | 'BRAND_SCHEMA' | 'BRAND_CONTRAST' | 'INTERNAL';
+  | 'BRAND_SCHEMA' | 'BRAND_CONTRAST' | 'INTERNAL' | 'EXTENSION_SCHEMA' | 'COLLECTION' | 'OPTIMIZATION';
 
 export interface Problem {
   severity: 'error' | 'warning';
@@ -106,9 +110,29 @@ export function verifyPack(raw: unknown): VerifyResult {
   });
   const byId = new Map(valid.map((e) => [e.id, e] as const));
   const regionIds = new Set(pack.regions.map((r) => r.id));
+  const checkSources = (ids: string[] | undefined, path: string) => {
+    if (!ids?.length) {
+      add({ severity: 'warning', code: 'MISSING_SOURCE', path, cause: 'Numeric pack data has no sourceIds (legacy packs remain supported).', action: 'Collect the source ids for these numeric facts; do not invent them.' });
+    }
+    ids?.forEach((id, i) => {
+      if (byId.get(id)?.kind !== 'source') add({ severity: 'error', code: 'SOURCE_KIND', path: `${path}[${i}]`, cause: `"${id}" is not an existing source.`, action: 'Use an existing source entity id.' });
+    });
+  };
+  const seenRegions = new Set<string>();
+  pack.regions.forEach((r, i) => {
+    if (seenRegions.has(r.id) || byId.has(r.id)) add({ severity: 'error', code: 'DUPLICATE_ID', path: `regions[${i}].id`, cause: `Region id "${r.id}" is not unique across regions and entities.`, action: 'Give each region a unique id and update references.' });
+    seenRegions.add(r.id);
+  });
 
   for (const e of valid) {
     const i = indexOf.get(e.id)!;
+    if (e.kind === 'source' && e.origin !== undefined) {
+      if (!e.accessedDate || (e.origin === 'web' ? !e.url : !e.locator)) add({
+        severity: 'error', code: 'ENTITY_SCHEMA', path: `entities[${i}]`, entityId: e.id,
+        cause: 'A collected source needs accessedDate and a web URL or M365 locator.',
+        action: 'Keep the actual source URL/location and access date. Do not invent a publication date.',
+      });
+    }
     const rec = e as unknown as Record<string, unknown>;
     for (const [field, kinds] of Object.entries(REFERENCES[e.kind] ?? {})) {
       const value = rec[field];
@@ -148,13 +172,58 @@ export function verifyPack(raw: unknown): VerifyResult {
     }
   }
   pack.flows.forEach((f, j) => {
+    checkSources(f.sourceIds, `flows[${j}].sourceIds`);
     for (const end of ['source', 'target'] as const) {
-      if (!byId.has(f[end]) && !regionIds.has(f[end])) add({ severity: 'error', code: 'DANGLING_REF', path: `flows[${j}].${end}`, cause: `"${f[end]}" does not exist.`, action: 'Use an existing supplier/site/customer/region id or remove the flow.' });
+      const entity = byId.get(f[end]);
+      if (!regionIds.has(f[end]) && (!entity || !['supplier', 'site', 'customer'].includes(entity.kind))) add({ severity: 'error', code: 'DANGLING_REF', path: `flows[${j}].${end}`, cause: `"${f[end]}" is not a supplier/site/customer/region.`, action: 'Use an existing supplier/site/customer/region id or remove the flow.' });
     }
   });
-  pack.optimization?.plants.forEach((p, j) => {
-    if (byId.get(p.siteId)?.kind !== 'site') add({ severity: 'error', code: 'DANGLING_REF', path: `optimization.plants[${j}].siteId`, cause: `"${p.siteId}" is not a site.`, action: 'Use the id of an existing plant site.' });
-  });
+  const opt = pack.optimization;
+  if (opt) {
+    checkSources(opt.sourceIds, 'optimization.sourceIds');
+    const plants = new Set<string>();
+    opt.plants.forEach((p, j) => {
+      const site = byId.get(p.siteId);
+      if (site?.kind !== 'site' || site.role !== 'plant') add({ severity: 'error', code: 'DANGLING_REF', path: `optimization.plants[${j}].siteId`, cause: `"${p.siteId}" is not a plant site.`, action: 'Use the id of an existing plant site.' });
+      if (plants.has(p.siteId)) add({ severity: 'error', code: 'OPTIMIZATION', path: `optimization.plants[${j}]`, cause: 'Duplicate plant.', action: 'List each plant once.' });
+      plants.add(p.siteId);
+    });
+    if (opt.regionDemandT.length !== pack.regions.length) add({ severity: 'error', code: 'OPTIMIZATION', path: 'optimization.regionDemandT', cause: 'Demand length differs from regions length.', action: 'Use exactly one demand per region, in regions order.' });
+    for (const key of ['transportCostPerT', 'leadTimeDays', 'co2TransportPerT', 'currentAllocation'] as const) {
+      if (opt[key].length !== opt.plants.length || opt[key].some((row) => row.length !== pack.regions.length)) add({ severity: 'error', code: 'OPTIMIZATION', path: `optimization.${key}`, cause: 'Matrix dimensions differ from plants × regions.', action: 'Supply one row per plant and one column per region in the same order.' });
+    }
+  }
+
+  const extensionSchemas = {
+    glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
+    architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
+  };
+  for (const [key, schema] of Object.entries(extensionSchemas)) {
+    const raw = pack.extensions?.[key];
+    if (raw === undefined) continue;
+    const result = schema.safeParse(raw);
+    if (!result.success) add({ severity: 'error', code: 'EXTENSION_SCHEMA', path: `extensions.${key}`, cause: zodIssues(result.error), action: 'Fix this extension using its documented structure; the screen would otherwise ignore invalid data.' });
+  }
+  for (const issue of parseGraphExtension(pack.extensions?.graph, new Set(byId.keys())).issues) {
+    add({ severity: 'error', code: 'EXTENSION_SCHEMA', path: 'extensions.graph', cause: issue, action: 'Fix the graph section and reference existing entities.' });
+  }
+  const report = CollectionReport.safeParse(pack.extensions?.collection);
+  if (report.success) {
+    const presence = collectionPresence({ ...pack, entities: valid });
+    const seen = new Set<string>();
+    report.data.sections.forEach((section, i) => {
+      const path = `extensions.collection.sections[${i}]`;
+      if (seen.has(section.key)) add({ severity: 'error', code: 'COLLECTION', path, cause: 'Duplicate collection section.', action: 'Report each section exactly once.' });
+      seen.add(section.key);
+      if (section.status === 'complete' && (!presence[section.key] || section.missingFields.length > 0 || section.sourceIds.length === 0)) add({ severity: 'error', code: 'COLLECTION', path, cause: 'A complete section needs data, sources and no missingFields.', action: 'Use partial/unavailable and list missing fields instead of claiming completeness.' });
+      section.sourceIds.forEach((id) => {
+        if (byId.get(id)?.kind !== 'source') add({ severity: 'error', code: 'SOURCE_KIND', path: `${path}.sourceIds`, cause: `"${id}" is not an existing source.`, action: 'Use an existing source entity id.' });
+      });
+    });
+    for (const key of COLLECTION_SECTIONS) {
+      if (!seen.has(key)) add({ severity: 'error', code: 'COLLECTION', path: 'extensions.collection.sections', cause: `Collection section "${key}" is missing.`, action: 'Report every section, including unavailable and notApplicable sections.' });
+    }
+  }
 
   const brand = parseBrand(pack.extensions);
   if (!brand.ok) {

@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { open } from './helpers.ts';
+import { COLLECTION_SECTIONS } from '../src/data/collection.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
@@ -25,8 +26,23 @@ function copilotParts(kpiSourceIds = ['src-plan']) {
     isSample: false,
     regions: [{ id: 'region-chubu', name: l('中部', 'Chubu') }],
     flows: [],
+    extensions: {
+      collection: {
+        asOf: '2026-11-10', webSearch: 'blocked', webSearchReason: 'Web search disabled by policy',
+        sections: COLLECTION_SECTIONS.map((key) => ({
+          key, status: 'partial', sourceIds: ['src-plan'], missingFields: ['full scope'],
+          reason: 'Available approved material only', nextAction: 'Ask the data owner',
+        })),
+      },
+      dataCatalog: { items: [{ name: 'Fabrikam Orders', columns: ['orderId'], url: 'https://example.com/orders' }] },
+      glossary: [{ term: 'OTD', definition: 'On time delivery' }],
+      graph: { relations: [{ source: 'site-gifu', target: 'kpi-otd', semantic: 'measurement' }] },
+      architecture: { asIs: [{ layer: 'data', name: 'Fabrikam ERP' }] },
+      coreObject: { candidates: [{ name: '岐阜工場' }], reason: 'Approved plant' },
+      brand: { primary: '#1267B4' },
+    },
     entities: [
-      { ...base('src-plan', 'source', 'digital', 'data', ['中期経営計画 2026', 'Mid-term plan 2026'], []), publisher: l('Fabrikam 精工', 'Fabrikam Seiko'), publishedDate: '2026-04-01' },
+      { ...base('src-plan', 'source', 'digital', 'data', ['中期経営計画 2026', 'Mid-term plan 2026'], []), publisher: l('Fabrikam 精工', 'Fabrikam Seiko'), publishedDate: '2026-04-01', url: 'https://example.com/plan', accessedDate: '2026-11-10', origin: 'web' },
       { ...base('site-gifu', 'site', 'real', 'site', ['岐阜工場', 'Gifu Plant']), role: 'plant', lat: 35.42, lon: 136.76, capacityTPerMonth: 300 },
     ],
   };
@@ -56,6 +72,9 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await page.getByTestId('pack-prompt').getByText('プロンプトの全文を表示').click();
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/顧客パック/);
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/sourceIds/);
+    await page.getByText('公開Web調査プロンプトを表示', { exact: true }).click();
+    await expect(page.getByTestId('pack-research-text')).toHaveValue(/インターネット/);
+    await expect(page.getByTestId('pack-research-copy')).toBeVisible();
 
     // 1) A number without a source: the check fails and offers a fix prompt for Copilot.
     const bad = copilotParts([]);
@@ -79,6 +98,11 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('pack-files')).toContainText('source.xlsx');
     await expect(page.getByTestId('pack-files')).toContainText('この形式は読めません');
     await expect(page.getByTestId('pack-summary')).toContainText('Fabrikam 精工');
+    // The preview and current-pack panels each expose coverage independently.
+    const previewCoverage = page.getByTestId('pack-coverage').last();
+    await previewCoverage.locator('summary').click();
+    await expect(previewCoverage).toContainText('利用不可');
+    await expect(previewCoverage.getByTestId('pack-coverage-dataCatalog')).toContainText('一部取得');
 
     // FR-304: a human confirms before the all-or-nothing import.
     const apply = page.getByTestId('pack-import-apply');
@@ -102,6 +126,10 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.locator('main#main')).toContainText('岐阜工場');
     await page.evaluate(() => { window.location.hash = '/optimize'; });
     await expect(page.getByTestId('optimize-unavailable')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/catalog'; });
+    await expect(page.getByTestId('uc-import')).toContainText('Fabrikam Orders');
+    await page.reload();
+    await expect(page.getByTestId('uc-import')).toContainText('Fabrikam Orders');
 
     // Switching to the demo goes back to the sample; the project keeps its pack.
     await page.getByTestId('proj-target-menu').click();
@@ -121,6 +149,8 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
 
   test('English UI; the launch screen shows which projects have an imported pack', async ({ page }) => {
     await open(page, '/data', { lang: 'en' });
+    await page.getByTestId('pack-current').getByTestId('pack-coverage').locator('summary').click();
+    await expect(page.getByTestId('pack-current')).toContainText('No collection report');
     const good = copilotParts();
     await page.getByTestId('pack-paste').fill(`${good.answer1}\n${good.answer2}`);
     await page.getByTestId('pack-check').click();

@@ -184,6 +184,9 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'field.suppliesTo': 'Supplies to',
   'field.publisher': 'Publisher',
   'field.publishedDate': 'Published',
+  'field.sourceUrl': 'Source URL',
+  'field.sourceLocator': 'Location in source',
+  'field.accessedDate': 'Accessed',
 
   'siteRole.hq': 'Head office',
   'siteRole.plant': 'Plant',
@@ -463,4 +466,3 @@ const coreEn: Record<keyof typeof coreJa, string> = {
 };
 
 export const en: Record<MessageKey, string> = { ...coreEn, ...modulesEn };
-

@@ -6,7 +6,8 @@ import {
   ArrowDownload20Regular, ArrowUpload20Regular, Copy20Regular, Delete20Regular, Dismiss16Regular, DocumentCheckmark20Regular, Open20Regular,
 } from '@fluentui/react-icons';
 import { basePack, loaded, packOrigin } from '../../data/pack.ts';
-import type { EntityKind } from '../../data/schema.ts';
+import { CustomerPack, type EntityKind } from '../../data/schema.ts';
+import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from '../../data/collection.ts';
 import {
   analyzeImport, buildFixPrompt, isReadableFile, MAX_PACK_FILE_BYTES, type FileReport, type ImportAnalysis, type InputDoc,
 } from '../../data/packImport.ts';
@@ -15,7 +16,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useActiveProject, useProjects } from '../../state/projects.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.tsx';
-import { copilotPrompt, PROMPT_DOC } from './packPrompt.ts';
+import { copilotPrompt, copilotResearchPrompt, PROMPT_DOC } from './packPrompt.ts';
 import { yyyymmdd } from './exportFormat.ts';
 import './project.css';
 
@@ -124,6 +125,7 @@ function CurrentPackPanel() {
         )}
       </dl>
       {target.kind === 'demo' && <p className="muted">{t('proj.pack.demoNote')}</p>}
+      <CollectionCoverage raw={loaded.pack} />
       <ConfirmDialog
         open={confirm}
         title={t('proj.pack.deleteTitle')}
@@ -137,9 +139,59 @@ function CurrentPackPanel() {
   );
 }
 
+function CollectionCoverage({ raw }: { raw: unknown }) {
+  const { t } = useI18n();
+  const parsed = CustomerPack.safeParse(raw);
+  if (!parsed.success) return null;
+  const presence = collectionPresence(parsed.data);
+  const report = CollectionReport.safeParse(parsed.data.extensions?.collection);
+  const sections = report.success ? report.data.sections : [];
+  const labels = {
+    company: 'proj.pack.company', regions: 'proj.pack.coverage.regions', flows: 'nav.flows',
+    optimization: 'nav.optimize', brand: 'ops.title', dataCatalog: 'uc.nav.catalog',
+    glossary: 'proj.pack.coverage.glossary', graph: 'graph.title',
+    architecture: 'proj.pack.coverage.architecture', coreObject: 'proj.pack.coverage.coreObject',
+  } as const;
+  return (
+    <details className="pack-details" data-testid="pack-coverage">
+      <summary>{t('proj.pack.coverage.title')}</summary>
+      <p>{t('proj.pack.coverage.note')}</p>
+      <p>{report.success
+        ? `${t('proj.pack.coverage.web')}: ${t(`proj.pack.coverage.web.${report.data.webSearch}`)} (${report.data.asOf}) · ${report.data.webSearchReason}`
+        : t('proj.pack.coverage.unreported')}</p>
+      <ScrollRegion label={t('proj.pack.coverage.title')}>
+        <table className="data-table compact">
+          <caption>{t('proj.pack.coverage.title')}</caption>
+          <thead><tr>
+            <th scope="col">{t('proj.pack.col.where')}</th>
+            <th scope="col">{t('proj.pack.coverage.present')}</th>
+            <th scope="col">{t('proj.pack.coverage.claim')}</th>
+            <th scope="col">{t('proj.pack.col.cause')}</th>
+            <th scope="col">{t('proj.pack.col.action')}</th>
+          </tr></thead>
+          <tbody>{COLLECTION_SECTIONS.map((key) => {
+            const section = sections.find((s) => s.key === key);
+            return (
+              <tr key={key} data-testid={`pack-coverage-${key}`}>
+                <th scope="row">{key in labels ? t(labels[key as keyof typeof labels]) : t(`proj.pack.kind.${key as EntityKind}`)}</th>
+                <td>{t(presence[key] ? 'proj.pack.yes' : 'proj.pack.no')}</td>
+                <td>{section ? t(`proj.pack.coverage.status.${section.status}`) : t('proj.pack.coverage.unknown')}</td>
+                <td>{section ? [section.reason, section.missingFields.join(', '), section.sourceIds.join(', ')].filter(Boolean).join(' · ') : '—'}</td>
+                <td>{section?.nextAction ?? '—'}</td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+      </ScrollRegion>
+      <p className="muted">{t('proj.pack.coverage.projectState')}</p>
+    </details>
+  );
+}
+
 function PromptPanel() {
   const { t, lang } = useI18n();
   const prompt = copilotPrompt(lang);
+  const researchPrompt = copilotResearchPrompt(lang);
   const [copied, setCopied] = useState<boolean | null>(null);
   return (
     <Panel title={t('proj.pack.promptTitle')} className="span-full" testId="pack-prompt">
@@ -151,10 +203,15 @@ function PromptPanel() {
         <li>{t('proj.pack.promptStep4')}</li>
       </ol>
       <div className="proj-row">
+        <Button icon={<Copy20Regular />} onClick={() => { void copyText(researchPrompt).then(setCopied); }} data-testid="pack-research-copy">{t('proj.pack.researchCopy')}</Button>
         <Button appearance="primary" icon={<Copy20Regular />} onClick={() => { void copyText(prompt).then(setCopied); }} data-testid="pack-prompt-copy">{t('proj.pack.promptCopy')}</Button>
         <Button icon={<ArrowDownload20Regular />} onClick={() => downloadText('copilot-customer-pack-prompt.md', PROMPT_DOC, 'text/markdown')} data-testid="pack-prompt-download">{t('proj.pack.promptDownload')}</Button>
         <span role="status" className="muted">{copied === true ? t('proj.pack.copied') : copied === false ? t('proj.pack.copyFailed') : ''}</span>
       </div>
+      <details className="pack-details">
+        <summary>{t('proj.pack.researchShow')}</summary>
+        <Textarea readOnly value={researchPrompt} resize="vertical" rows={10} aria-label={t('proj.pack.researchShow')} className="pack-textarea" data-testid="pack-research-text" />
+      </details>
       <details className="pack-details">
         <summary>{t('proj.pack.promptShow')}</summary>
         <Textarea readOnly value={prompt} resize="vertical" rows={14} aria-label={t('proj.pack.promptTitle')} className="pack-textarea" data-testid="pack-prompt-text" />
@@ -314,6 +371,7 @@ function ResultView({ analysis }: { analysis: ImportAnalysis }) {
           <div><dt>{t('proj.pack.extras')}</dt><dd>{t('proj.pack.extrasValue', { regions: summary.regions, flows: summary.flows, optimization: t(summary.hasOptimization ? 'proj.pack.yes' : 'proj.pack.no') })}</dd></div>
         </dl>
       )}
+      {analysis.pack && <CollectionCoverage raw={analysis.pack} />}
 
       {analysis.notes.length > 0 && (
         <section aria-labelledby="pack-notes-title" className="pack-notes" data-testid="pack-notes">

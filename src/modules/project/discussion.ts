@@ -3,6 +3,8 @@ import { UndoStack } from '../../state/history.ts';
 import { loc, type Localizable } from '../../state/text.ts';
 import type { Lang } from '../../i18n/core.ts';
 import { LocalizableSchema, newId, type Classification, type DiscussionData, type DiscussionRecord, type RecordKind, type Theme } from './model.ts';
+import { GlossaryEntrySchema } from '../../data/extensionSchemas.ts';
+export { GlossaryEntrySchema, GlossarySchema } from '../../data/extensionSchemas.ts';
 
 /** PARAM-063: decisions and next actions per discussed theme (each), G-001. */
 export const MIN_PER_THEME = 1;
@@ -214,13 +216,6 @@ export class DiscussionEditor {
 
 export type Lens = 'business' | 'it';
 
-export const GlossaryEntrySchema = z.object({
-  term: LocalizableSchema,
-  definition: LocalizableSchema,
-  /** The IT-lens label of the term (optional). */
-  it: LocalizableSchema.optional(),
-});
-export const GlossarySchema = z.array(GlossaryEntrySchema);
 export type GlossaryEntry = z.infer<typeof GlossaryEntrySchema>;
 
 /** Validate `extensions.glossary`; invalid entries are skipped (FR-102 style), not fatal. */

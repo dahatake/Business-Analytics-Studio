@@ -140,7 +140,11 @@ export const Supplier = z.object({ ...base, kind: z.literal('supplier'), regionI
 export const Source = z.object({
   ...base, kind: z.literal('source'),
   publisher: LText,
-  publishedDate: z.iso.date(),
+  publishedDate: z.iso.date().optional(),
+  url: z.url({ protocol: /^https?$/ }).optional(),
+  accessedDate: z.iso.date().optional(),
+  locator: z.string().min(1).optional(),
+  origin: z.enum(['web', 'm365']).optional(),
 });
 
 export const Entity = z.discriminatedUnion('kind', [
@@ -158,12 +162,14 @@ export const Flow = z.object({
   source: z.string(),
   target: z.string(),
   valueT: z.number().positive(),
+  sourceIds: z.array(z.string()).optional(),
 });
 export type Flow = z.infer<typeof Flow>;
 
 /** Optimization input: plants supply regions (a transportation problem). */
 export const OptimizationInput = z.object({
   period: LText,
+  sourceIds: z.array(z.string()).optional(),
   plants: z.array(z.object({
     siteId: z.string(),
     capacityT: z.number().int().positive(),
@@ -197,4 +203,3 @@ export const CustomerPack = z.object({
   extensions: z.record(z.string(), z.unknown()).optional(),
 });
 export type CustomerPack = z.infer<typeof CustomerPack>;
-

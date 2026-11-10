@@ -117,6 +117,12 @@ export function parseGraphExtension(raw: unknown, knownIds?: Set<string>): Exten
   ext.semantics = section('semantics', GraphExtensionSchema.shape.semantics.unwrap()) ?? {};
   ext.layers = Object.fromEntries(Object.entries(section('layers', GraphExtensionSchema.shape.layers.unwrap()) ?? {}).filter(([id]) => known(id)));
   ext.kpiStages = Object.fromEntries(Object.entries(section('kpiStages', GraphExtensionSchema.shape.kpiStages.unwrap()) ?? {}).filter(([id]) => known(id)));
+  for (const key of ['layers', 'kpiStages'] as const) {
+    const values = obj[key];
+    if (values && typeof values === 'object' && !Array.isArray(values)) {
+      for (const id of Object.keys(values)) if (!known(id)) issues.push(`graph.${key}.${id}: unknown entity`);
+    }
+  }
   ext.relations = items('relations', ExtraRelation, (r) => [r.source, r.target]);
   ext.twins = items('twins', TwinDecl, (r) => [r.digital, r.real]);
   ext.flows = items('flows', FlowDecl, (r) => [r.source, r.target]);

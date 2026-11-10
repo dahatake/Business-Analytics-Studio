@@ -2037,6 +2037,26 @@
                 "type": "string",
                 "format": "date",
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "accessedDate": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "locator": {
+                "type": "string",
+                "minLength": 1
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "web",
+                  "m365"
+                ]
               }
             },
             "required": [
@@ -2049,8 +2069,7 @@
               "author",
               "sourceIds",
               "kind",
-              "publisher",
-              "publishedDate"
+              "publisher"
             ],
             "additionalProperties": false
           }
@@ -2071,6 +2090,12 @@
           "valueT": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "sourceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -2101,6 +2126,12 @@
             "en"
           ],
           "additionalProperties": false
+        },
+        "sourceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "plants": {
           "minItems": 1,

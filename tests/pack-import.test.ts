@@ -1,9 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Entity } from '../src/data/schema.ts';
+import { CustomerPack, Entity } from '../src/data/schema.ts';
 import { samplePack } from '../src/data/sample.ts';
-import { loadPack } from '../src/data/pack.ts';
+import { activatePack, loadPack } from '../src/data/pack.ts';
+import { COLLECTION_SECTIONS, CollectionReport, collectionPresence } from '../src/data/collection.ts';
+import { ArchitectureExtension, CoreObjectExtension, GlossaryEntrySchema } from '../src/data/extensionSchemas.ts';
+import { GraphExtensionSchema, graphExtensionFor } from '../src/modules/graph/extensions.ts';
+import { BrandProfile } from '../src/modules/ops/brand.ts';
+import { CatalogItem } from '../src/modules/usecases/catalogSchema.ts';
+import { catalogForScope } from '../src/modules/usecases/catalog.ts';
+import { scopedKey } from '../src/state/projects.ts';
+import { buildArchitecture } from '../src/modules/threed/architecture.ts';
+import { coreObjectChoice } from '../src/modules/threed/coreObject.ts';
+import { parseGlossary } from '../src/modules/project/discussion.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import { verifyPack as cliVerifyPack } from '../scripts/lib/verify.ts';
 import {
@@ -80,6 +90,125 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
     expect(a.notes.find((n) => n.code === 'partMissing')?.count).toBe(answers.length - 2);
     expect(a.notes.find((n) => n.code === 'conflict')?.detail).toBe('isSample');
     expect(a.pack!.isSample).toBe(true);
+    expect(a.canImport).toBe(false);
+  });
+
+  describe('collection audit regressions', () => {
+    const report = () => ({
+      asOf: '2026-11-10', webSearch: 'blocked', webSearchReason: 'Disabled by policy',
+      sections: COLLECTION_SECTIONS.map((key) => ({
+        key, status: 'partial', sourceIds: ['src-annual-report'], missingFields: ['scope not confirmed'],
+        reason: 'Only supplied material', nextAction: 'Ask the data owner',
+      })),
+    });
+    const analyze = (raw: unknown) => analyzeImport([{ name: 'answer.json', text: JSON.stringify(raw) }]);
+    const extensions = () => ({
+      brand: { primary: '#1267B4' },
+      dataCatalog: { items: [{ name: 'Orders', columns: ['orderId'], url: 'https://example.com/dictionary' }] },
+      glossary: [{ term: 'OTD', definition: 'On time delivery' }],
+      graph: { relations: [{ source: 'site-nagoya', target: 'kpi-otd', semantic: 'measurement' }] },
+      architecture: { asIs: [{ layer: 'data', name: 'ERP actual' }], toBe: [{ layer: 'experience', name: 'Approved portal' }] },
+      coreObject: { candidates: [{ name: 'Selected product', summary: 'Sourced candidate' }], reason: 'Documented choice' },
+      collection: report(),
+    });
+
+    it('keeps URL, locator and access date through normalization, load and export; unknown publication dates stay unknown', () => {
+      const raw = {
+        ...sourcedSample,
+        entities: sourcedSample.entities.map((e) => {
+          if (e.kind !== 'source') return e;
+          const { publishedDate: _date, ...source } = e;
+          return { ...source, url: 'https://example.com/ir', locator: 'page 7', accessedDate: '2026-11-10', origin: 'web' };
+        }),
+      };
+      const result = analyze(raw);
+      expect(result.canImport).toBe(true);
+      const exported = JSON.parse(JSON.stringify(loadPack(result.pack).pack));
+      const source = exported.entities.find((e: { kind: string }) => e.kind === 'source');
+      expect(source).toMatchObject({ url: 'https://example.com/ir', locator: 'page 7', accessedDate: '2026-11-10', origin: 'web' });
+      expect(source).not.toHaveProperty('publishedDate');
+      const invalid = structuredClone(raw);
+      delete (invalid.entities.find((e) => e.kind === 'source') as { url?: string }).url;
+      expect(analyze(invalid).canImport).toBe(false);
+    });
+
+    it('all six extensions and the report survive split answers and are consumed by their screen models', () => {
+      const ext = extensions();
+      const text = [
+        fence({ part: '1/3', ...sourcedSample, isSample: false, extensions: { brand: ext.brand, dataCatalog: ext.dataCatalog, graph: ext.graph } }),
+        fence({ part: '2/3', extensions: { dataCatalog: { items: [{ name: 'Invoices' }] }, glossary: ext.glossary, architecture: ext.architecture } }),
+        fence({ part: '3/3', extensions: { coreObject: ext.coreObject, collection: ext.collection } }),
+      ].join('\n');
+      const result = analyzeImport([{ name: 'answer', text }]);
+      expect(result.verify?.problems.filter((p) => p.severity === 'error')).toEqual([]);
+      expect(result.canImport).toBe(true);
+      const data = loadPack(result.pack);
+      expect(graphExtensionFor(data).ext.relations).toHaveLength(1);
+      expect(buildArchitecture('asis', data).layers.flatMap((l) => l.blocks).map((b) => b.label)).toContainEqual({ text: 'ERP actual' });
+      expect(coreObjectChoice(data).candidates[0]?.name).toBe('Selected product');
+      expect(parseGlossary(data.pack.extensions?.glossary)).toHaveLength(1);
+      expect(CollectionReport.parse(data.pack.extensions?.collection).sections).toHaveLength(COLLECTION_SECTIONS.length);
+      expect(collectionPresence(data.pack)).toMatchObject({ brand: true, dataCatalog: true, glossary: true, graph: true, architecture: true, coreObject: true });
+
+      localStorage.removeItem(scopedKey('pj-audit', 'catalog.import'));
+      try {
+        activatePack(result.pack, { kind: 'imported', projectId: 'pj-audit' });
+        expect(catalogForScope(null, 'pj-audit')?.items.map((i) => i.name)).toEqual(['Orders', 'Invoices']);
+        expect(catalogForScope(null, 'pj-other')).toBeNull();
+        localStorage.setItem(scopedKey('pj-audit', 'catalog.import'), 'null');
+        expect(catalogForScope(null, 'pj-audit')).toBeNull();
+      } finally {
+        localStorage.removeItem(scopedKey('pj-audit', 'catalog.import'));
+        activatePack(samplePack, { kind: 'sample' });
+      }
+    });
+
+    it.each([
+      ['dataCatalog', { items: [{ columns: ['x'] }] }],
+      ['glossary', [{ term: 'missing definition' }]],
+      ['graph', { relations: [{ source: 'site-missing', target: 'site-nagoya', semantic: 'dependency' }] }],
+      ['graph', { layers: { 'site-missing': 'operations' } }],
+      ['architecture', { asIs: [{ layer: 'not-a-layer', name: 'ERP' }] }],
+      ['coreObject', { candidates: 'not an array' }],
+      ['collection', { asOf: 'not-a-date' }],
+    ])('rejects invalid %s instead of silently ignoring it', (key, value) => {
+      const result = analyze({ ...sourcedSample, extensions: { [key as string]: value } });
+      expect(result.canImport).toBe(false);
+      expect(result.verify?.problems.some((p) => p.code === 'EXTENSION_SCHEMA')).toBe(true);
+    });
+
+    it('distinguishes no report, empty extension, and a partial/blocked report without fabricating completeness', () => {
+      const pack = CustomerPack.parse({ ...sourcedSample, extensions: { graph: { relations: [] }, dataCatalog: { items: [] } } });
+      expect(collectionPresence(pack)).toMatchObject({ graph: false, dataCatalog: false, site: true });
+      expect(analyze({ ...sourcedSample, extensions: { collection: report() } }).canImport).toBe(true);
+      const missing = report();
+      missing.sections.pop();
+      expect(analyze({ ...sourcedSample, extensions: { collection: missing } }).canImport).toBe(false);
+      const falseClaim = report();
+      falseClaim.sections[0]!.status = 'complete';
+      expect(analyze({ ...sourcedSample, extensions: { collection: falseClaim } }).canImport).toBe(false);
+    });
+
+    it('rejects conflicting/missing parts and malformed blocks even when remaining entities are valid', () => {
+      const good = fence({ ...sourcedSample, part: '1/2' });
+      expect(analyzeImport([{ name: 'a', text: good }]).canImport).toBe(false);
+      expect(analyzeImport([{ name: 'a', text: `${good}\n${fence({ part: '2/3', entities: [] })}` }]).canImport).toBe(false);
+      expect(analyze({ ...sourcedSample, part: '1/not-known' }).canImport).toBe(false);
+      expect(analyze({ ...sourcedSample, regions: 'unreadable' }).canImport).toBe(false);
+      expect(analyzeImport([{ name: 'a', text: `${fence(sourcedSample)}\n${fence({ entities: 'unreadable' })}` }]).canImport).toBe(false);
+      expect(analyzeImport([{ name: 'a', text: `${fence(sourcedSample)}\n\`\`\`json\n{"entities": [}\n\`\`\`` }]).canImport).toBe(false);
+      const conflict = `${fence({ ...sourcedSample, extensions: { brand: { primary: '#1267B4' } } })}\n${fence({ extensions: { brand: { primary: '#000000' } } })}`;
+      expect(analyzeImport([{ name: 'a', text: conflict }]).canImport).toBe(false);
+    });
+
+    it('rejects conflicting region ids, incorrect flow kinds and incorrect matrix dimensions', () => {
+      expect(verifyPack({ ...sourcedSample, regions: [...sourcedSample.regions, sourcedSample.regions[0]] }).ok).toBe(false);
+      expect(analyze({ ...sourcedSample, regions: [...sourcedSample.regions, { ...sourcedSample.regions[0], name: { ja: '異なる地域', en: 'Different region' } }] }).canImport).toBe(false);
+      expect(analyze({ ...sourcedSample, flows: [{ source: 'kpi-otd', target: 'site-nagoya', valueT: 1 }] }).canImport).toBe(false);
+      expect(analyze({ ...sourcedSample, optimization: { ...sourcedSample.optimization, transportCostPerT: [[1]] } }).canImport).toBe(false);
+      expect(analyze({ ...sourcedSample, optimization: { ...sourcedSample.optimization, regionDemandT: [1] } }).canImport).toBe(false);
+      expect(analyze({ ...sourcedSample, flows: [{ source: 'site-nagoya', target: 'site-osaka', valueT: 1, sourceIds: ['kpi-otd'] }] }).canImport).toBe(false);
+    });
   });
 
   it('drops exact duplicates (Copilot repeats items when continuing) but reports conflicting ids', () => {
@@ -232,7 +361,7 @@ describe('the Microsoft 365 Copilot prompt stays in step with the schema', () =>
   it.each(['ja', 'en'] as const)('%s prompt names every kind, every field and the world/type of each kind', (lang) => {
     const text = sections[lang];
     expect(text.length).toBeGreaterThan(1000);
-    // Well inside the chat input limit of Microsoft 365 Copilot.
+    // Keep each copyable stage within our 8,000-character prompt budget.
     expect(text.length).toBeLessThan(8000);
     const worldType = new Map(samplePack.entities.map((e) => [e.kind, `${e.world}/${e.type}`] as const));
     for (const option of Entity.options) {
@@ -246,5 +375,37 @@ describe('the Microsoft 365 Copilot prompt stays in step with the schema', () =>
       }
     }
     for (const field of ['packId', 'company', 'isSample', 'regions', 'flows', 'optimization', 'regionDemandT', 'currentAllocation']) expect(text).toContain(field);
+    for (const key of COLLECTION_SECTIONS) expect(text).toContain(key);
+    for (const schema of [ArchitectureExtension, CoreObjectExtension, GlossaryEntrySchema, GraphExtensionSchema, BrandProfile, CatalogItem, CollectionReport]) {
+      for (const key of Object.keys(schema.shape)) {
+        if (key !== 'logo') expect(text, `${lang}: extension field ${key}`).toContain(key);
+      }
+    }
+    const research = promptSection(doc, lang, 'research');
+    expect(research.length).toBeGreaterThan(500);
+    expect(research.length).toBeLessThan(8000);
+    expect(research).toContain('blocked');
+    expect(research).toContain('URL');
+    expect(text).toContain('notApplicable');
+    expect(text).toContain('missingFields');
+  });
+
+  it.each(['ja', 'en'] as const)('%s prompt asks for every property of docs/pack.schema.json except the declared decorative exclusions', (lang) => {
+    const text = sections[lang];
+    const schema: unknown = JSON.parse(readFileSync(resolve(process.cwd(), 'docs/pack.schema.json'), 'utf8'));
+    const names = new Set<string>();
+    const walk = (node: unknown): void => {
+      if (!node || typeof node !== 'object') return;
+      const props = (node as { properties?: unknown }).properties;
+      if (props && typeof props === 'object') for (const key of Object.keys(props)) names.add(key);
+      for (const value of Object.values(node)) walk(value);
+    };
+    walk(schema);
+    // Generated by BAS for display (FR-241); asking Copilot would invent a real person's appearance.
+    const excluded = new Set(['ja', 'en', 'skin', 'hair', 'hairColor', 'glasses', 'beard', 'outfitHue', 'motif', 'hue']);
+    const missing = [...names].filter((n) => !excluded.has(n) && !text.includes(n));
+    expect(names.size).toBeGreaterThan(50);
+    expect(missing, `${lang}: schema properties the prompt never asks for`).toEqual([]);
+    for (const parent of ['portrait', 'illustration']) expect(text, `${lang}: exclusion of ${parent} is stated`).toContain(parent);
   });
 });

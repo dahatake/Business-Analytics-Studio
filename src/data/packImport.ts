@@ -117,7 +117,7 @@ export function extractJson(text: string): ExtractResult {
 /* ---------- 2. Classify and merge parts ---------- */
 
 const PACK_KEYS = ['packId', 'company', 'isSample', 'regions', 'entities', 'flows', 'optimization', 'extensions'] as const;
-const SCALAR_KEYS = ['packId', 'company', 'isSample', 'optimization', 'extensions'] as const;
+const SCALAR_KEYS = ['packId', 'company', 'isSample', 'optimization'] as const;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isEntityLike = (v: unknown) => isRecord(v) && typeof v.kind === 'string';
@@ -142,24 +142,55 @@ const stable = (v: unknown) => JSON.stringify(v);
 
 export function mergeParts(parts: Part[]): { raw: Record<string, unknown>; notes: Note[] } {
   const notes: Note[] = [];
+  const conflicts: string[] = [];
   const sorted = [...parts].sort((a, b) => a.order - b.order);
   const totals = new Set(sorted.map((p) => p.total).filter((t): t is number => t !== null));
   if (totals.size) {
+    if (totals.size > 1 || sorted.some((p) => p.total !== null && (!Number.isSafeInteger(p.order) || !Number.isSafeInteger(p.total) || p.order < 1 || p.order > p.total || p.total > 10000))) {
+      conflicts.push('PART numbering');
+    }
     const total = Math.max(...totals);
     const seen = new Set(sorted.filter((p) => p.label).map((p) => p.order));
-    const missing = Array.from({ length: total }, (_, i) => i + 1).filter((n) => !seen.has(n));
+    const missing = Array.from({ length: Math.min(total, 10000) }, (_, i) => i + 1).filter((n) => !seen.has(n));
     if (missing.length) notes.push({ code: 'partMissing', count: missing.length, detail: missing.map((n) => `PART ${n}/${total}`).join(', ') });
   }
   const raw: Record<string, unknown> = {};
-  const conflicts: string[] = [];
+  const numberedParts = new Map<string, string>();
   for (const p of sorted) {
+    if ('part' in p.value && p.label === null) conflicts.push('PART numbering');
+    if (p.label) {
+      const previous = numberedParts.get(p.label);
+      if (previous !== undefined && previous !== stable(p.value)) conflicts.push(`PART ${p.label}`);
+      numberedParts.set(p.label, stable(p.value));
+    }
+    for (const key of ['entities', 'regions', 'flows'] as const) {
+      if (key in p.value && !Array.isArray(p.value[key])) conflicts.push(`${key}: expected an array`);
+    }
     for (const key of SCALAR_KEYS) {
       if (!(key in p.value)) continue;
       if (!(key in raw)) raw[key] = p.value[key];
       else if (stable(raw[key]) !== stable(p.value[key])) conflicts.push(key);
     }
   }
-  if (conflicts.length) notes.push({ code: 'conflict', count: conflicts.length, detail: [...new Set(conflicts)].join(', ') });
+  const mergeExtension = (previous: unknown, next: unknown, path: string): unknown => {
+    if (previous === undefined || stable(previous) === stable(next)) return next;
+    if (Array.isArray(previous) && Array.isArray(next)) {
+      return [...new Map([...previous, ...next].map((item) => [stable(item), item])).values()];
+    }
+    if (isRecord(previous) && isRecord(next)) {
+      const merged = { ...previous };
+      for (const [key, value] of Object.entries(next)) {
+        const old = Object.hasOwn(merged, key) ? merged[key] : undefined;
+        Object.defineProperty(merged, key, { value: mergeExtension(old, value, `${path}.${key}`), enumerable: true, writable: true, configurable: true });
+      }
+      return merged;
+    }
+    conflicts.push(path);
+    return previous;
+  };
+  for (const p of sorted) {
+    if ('extensions' in p.value) raw.extensions = mergeExtension(raw.extensions, p.value.extensions, 'extensions');
+  }
 
   let dropped = 0;
   const concat = (key: 'entities' | 'flows') => {
@@ -185,7 +216,9 @@ export function mergeParts(parts: Part[]): { raw: Record<string, unknown>; notes
   if (sorted.some((p) => Array.isArray(p.value.regions))) {
     const regions = new Map<string, unknown>();
     for (const p of sorted) {
-      for (const r of (p.value.regions as unknown[] | undefined) ?? []) {
+      const list = p.value.regions;
+      if (!Array.isArray(list)) continue;
+      for (const r of list) {
         const id = isRecord(r) && typeof r.id === 'string' ? r.id : stable(r);
         if (!regions.has(id)) regions.set(id, r);
         else if (stable(regions.get(id)) === stable(r)) dropped++;
@@ -195,6 +228,7 @@ export function mergeParts(parts: Part[]): { raw: Record<string, unknown>; notes
     raw.regions = [...regions.values()];
   }
   if (dropped) notes.push({ code: 'duplicateDropped', count: dropped });
+  if (conflicts.length) notes.push({ code: 'conflict', count: conflicts.length, detail: [...new Set(conflicts)].join(', ') });
   return { raw, notes };
 }
 
@@ -373,6 +407,18 @@ export function analyzeImport(docs: InputDoc[], rejected: FileReport[] = [], now
   const merged = mergeParts(parts);
   const normalized = normalizePack(merged.raw, now);
   const verify = verifyPack(normalized.pack);
+  const importErrors: Problem[] = [
+    ...merged.notes.filter((n) => n.code === 'partMissing' || n.code === 'conflict').map((n): Problem => ({
+      severity: 'error', code: 'PARSE', path: 'parts', cause: `${n.code}: ${n.detail}`,
+      action: 'Provide every PART with consistent numbering and values. Do not import an incomplete or conflicting answer.',
+    })),
+    ...files.filter((f) => f.status === 'used' && f.detail).map((f): Problem => ({
+      severity: 'error', code: 'PARSE', path: f.name, cause: f.detail!,
+      action: 'Correct the malformed JSON block; valid blocks alone may omit required data.',
+    })),
+  ];
+  verify.problems.push(...importErrors);
+  if (importErrors.length) verify.ok = false;
   return {
     files,
     notes: [...merged.notes, ...normalized.notes],
@@ -390,7 +436,7 @@ const FIX_INTRO = {
     'Business Analytics Studio（BAS）で、あなたが出力した顧客パックを検査したところ、次の問題が見つかりました。',
     '直し方のルール:',
     '- 問題のある項目だけを直し、それ以外の項目は変えないでください。',
-    '- 資料に根拠のない値は作らないでください。根拠が見つからない場合は、そのエンティティを削除し、それを参照している項目からも id を外してください。',
+    '- 承認済みの資料・公開Webの出典だけを使い、根拠のない値は作らないでください。必須の値や参照先が見つからない場合は、そのエンティティと、それに依存して成立しないエンティティも除外し、extensions.collection に不足と次の取得方法を記録してください。必須の参照を空にしてはいけません。',
     '- 出力は前回と同じ形式（```json のコードブロック、PART k/N に分割、1 回の回答は 40 エンティティまで）で、修正後の顧客パック全体を出し直してください。',
     '- 最後に、何を直したかを 1 行ずつ箇条書きで示してください。',
   ],
@@ -398,7 +444,7 @@ const FIX_INTRO = {
     'Business Analytics Studio (BAS) checked the customer pack you produced and found the problems below.',
     'Rules for the fix:',
     '- Change only the items with a problem; leave every other item as it is.',
-    '- Do not invent values. If no source supports a value, delete that entity and remove its id from every item that refers to it.',
+    '- Use only approved material and public web sources; never invent values. If a required value or reference cannot be sourced, omit that entity and dependent entities that can no longer be valid. Record the gaps and next actions in extensions.collection; never leave required references empty.',
     '- Output the whole corrected pack again in the same format (```json code blocks, split into PART k/N, at most 40 entities per answer).',
     '- Finish with a bullet list of what you changed, one line per fix.',
   ],

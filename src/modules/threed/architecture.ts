@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { ArchitectureExtension } from '../../data/extensionSchemas.ts';
+export { ArchitectureExtension } from '../../data/extensionSchemas.ts';
 import { entitiesOf, getEntity, loaded, type LoadedPack } from '../../data/pack.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import type { Audience } from '../../state/settings.ts';
@@ -71,13 +72,6 @@ export function productLayer(product: string): ArchLayerId {
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'x';
-
-const LayerItem = z.object({ layer: z.enum(['edge', 'data', 'intelligence', 'process', 'experience']), name: z.string().min(1) });
-/** Optional pack data (pack.extensions.architecture): explicit AsIs / ToBe blocks override the derived ones. */
-export const ArchitectureExtension = z.object({
-  asIs: z.array(LayerItem).optional(),
-  toBe: z.array(LayerItem).optional(),
-}).passthrough();
 
 const AS_IS_GENERIC: Record<ArchLayerId, MessageKey> = {
   experience: 'td.arch.asis.experience',

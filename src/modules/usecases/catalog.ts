@@ -1,30 +1,10 @@
-import { z } from 'zod';
-import { loaded } from '../../data/pack.ts';
-import { createScopedStore } from '../../state/projects.ts';
+import { loaded, packOrigin } from '../../data/pack.ts';
+import { createScopedStore, scopedKey } from '../../state/projects.ts';
 import { locAll } from '../../state/text.ts';
 import type { DataEntity } from './catalogModel.ts';
 import { normalizeId, normalizeName } from './normalize.ts';
-
-/** PARAM-050 / PARAM-051: company data catalog import limits. */
-export const MAX_CATALOG_BYTES = 5 * 1024 * 1024;
-export const MAX_CATALOG_ITEMS = 5000;
-
-const text = (max: number) => z.string().trim().max(max);
-const optionalText = (max: number) => z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), text(max).optional());
-
-/** One item of a company data catalog. URLs are recorded as sources only; the app never fetches them. */
-export const CatalogItem = z.object({
-  id: optionalText(200),
-  name: text(200).min(1),
-  description: optionalText(2000),
-  columns: z.preprocess(
-    (v) => (Array.isArray(v) ? v.map((c) => (c && typeof c === 'object' && 'name' in c ? (c as { name: unknown }).name : c)) : v),
-    z.array(text(200).min(1)).max(1000).optional(),
-  ),
-  domain: optionalText(200),
-  url: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : typeof v === 'string' ? v.trim() : v), z.url({ protocol: /^https?$/ }).max(2000).optional()),
-});
-export type CatalogItem = z.infer<typeof CatalogItem>;
+import { CatalogItem, MAX_CATALOG_BYTES, MAX_CATALOG_ITEMS, PackCatalog } from './catalogSchema.ts';
+export { CatalogItem, MAX_CATALOG_BYTES, MAX_CATALOG_ITEMS } from './catalogSchema.ts';
 
 export interface ImportedCatalog {
   fileName: string;
@@ -123,17 +103,22 @@ export function parseCatalogFile(fileName: string, content: string, sizeBytes: n
   return { ok: true, catalog: { fileName, importedAt: now.toISOString(), items }, rowErrors };
 }
 
-const PackCatalog = z.object({ items: z.array(CatalogItem).max(MAX_CATALOG_ITEMS) });
-
 /** A customer pack may carry its company catalog in extensions.dataCatalog; validated with our own schema. */
 function packCatalog(): ImportedCatalog | null {
   const raw = loaded.pack.extensions?.dataCatalog;
-  const r = PackCatalog.safeParse(Array.isArray(raw) ? { items: raw } : raw);
+  const r = PackCatalog.safeParse(raw);
   return r.success && r.data.items.length > 0 ? { fileName: 'pack', importedAt: '1970-01-01T00:00:00.000Z', items: r.data.items } : null;
 }
 
 /** Imported company catalog, per project (G-007). Re-import replaces it. */
 export const useCatalogImport = createScopedStore<ImportedCatalog | null>('catalog.import', (scope) => (scope === 'demo' ? packCatalog() : null));
+
+/** Resolve after async pack activation; an explicit local import/deletion always wins over pack data. */
+export function catalogForScope(value: ImportedCatalog | null, scope: string): ImportedCatalog | null {
+  if (localStorage.getItem(scopedKey(scope, 'catalog.import')) !== null) return value;
+  if (packOrigin.kind === 'imported') return packOrigin.projectId === scope ? packCatalog() : value;
+  return scope === 'demo' ? packCatalog() : value;
+}
 
 export type ReconCategory = 'match' | 'difference' | 'basOnly' | 'catalogOnly';
 export const RECON_CATEGORIES: ReconCategory[] = ['match', 'difference', 'basOnly', 'catalogOnly'];

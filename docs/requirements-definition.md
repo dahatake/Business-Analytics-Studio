@@ -20,6 +20,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 
 | 日付 | 依頼の要約 | 行き先（要求 ID・Q・不採用の理由） | 反映した回答 | 監査で直した不整合 |
 |---|---|---|---|---|
+| 2026-11-10 | 依頼: 取得予定のデータで BAS が使う全データを取得できているかを監査し（インターネットの情報も Microsoft 365 Copilot で取得したい）、修正事項を直す。続けて「要求定義書に記載をしてください」 | 新規: FR-308（公開 Web 調査のプロンプトと全区分の取得指示・出典の URL/確認日/位置）、FR-309（取得報告 `extensions.collection`）、FR-310（取り込みの厳格化・任意拡張と最適化/物の流れの検査・`dataCatalog` の Project での利用）、AC-888〜AC-897（分割本文がないため [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) に記載）、TODO-010（実テナントでの確認）。変更: FR-307 の対象をプロンプト 2 段（公開 Web 調査 → 顧客パック作成）に拡張、`source.publishedDate` を任意に（発行日を作らない）、`flows`・`optimization` に任意の `sourceIds`（ない場合は警告）。根拠は [取得範囲の監査](customer-pack-coverage-audit.md)。スキーマの 89 プロパティとプロンプトの照合を単体テストにした（AC-889） | 利用者の明示した依頼を承認として反映（AI 提案・包括承認なし） | 旧プロンプトは公開 Web 調査を指示せず、任意拡張 6 種類と出典の URL・確認日を取得していなかった。取り込んだ `dataCatalog` が Project の画面で使われていなかった。PART の欠落があっても取り込めた。索引の詳細リンク先 `requirements/*.md` がこのリポジトリにない（既存の不整合。本変更の FR は §3.8 を参照先にした） |
 | 2026-11-09 | 依頼: ①企業の Project のデータである顧客パックのインポート機能を作り、社内のいろいろなファイルを収集・整形して顧客パックにする Microsoft 365 Copilot 用の Prompt を用意し、取り込みデータを Business Analytics Studio のデータ管理機能の中で使う。②スプラッシュ画面と画面上部から「青空精機（架空）」の文言を削除する。③起動時は 1) スプラッシュ画面 2) 企業名と Project の選択画面（サンプルデータのある企業と Project を含む）3) Project 画面 の順に遷移する | 実装: FR-302〜FR-304（承認済み・未実装だったもの。管理グループの「データ管理」画面 /data。貼り付け・複数ファイル・ドラッグ＆ドロップ → ```json の抽出と PART の結合 → 形だけの整形（値は変えない）→ CLI と同じ `verifyPack`（src/data/verify.ts に移し scripts/lib/verify.ts は再輸出）→ 人の確認 → Project ごとに全か無かで保存。エラーには原因・対処と Copilot に送る修正用プロンプト）、FR-076（オープニングはアプリ名だけ）。新規: FR-306（起動の 3 段階と選択画面。FR-144・FR-267 の初回ダイアログを置き換え）、FR-307（Microsoft 365 Copilot 用の顧客パック作成プロンプト。原本は docs/copilot-customer-pack-prompt.md、スキーマとの食い違いは単体テストで検出）。変更（FR-241 の任意項目）: `optimization` を任意にし、ない場合は最適化の画面が理由を示して空のまま（値を作らない）。人物の `ageBand`・`gender`・`portrait` を任意にし、ない場合は似顔絵ではなく種類のアイコン（実在の人の属性を推測で作らない）。作業先メニュー・上部バーから企業名を外し、サンプルのときはバッジだけ。保持と削除の表に「取り込んだ顧客パック」を追加。PARAM-142 は 1 ファイルの上限として使用 | 利用者の明示した依頼を承認として反映（AI 提案・包括承認なし） | 既存のお手本パックは verify で出典のない数値のエラーになる（build の自己修正で補う前提）。本変更では変更せず、テストは出典を補ったパックで行う |
 | 2026-11-09 | 全5ステップの全タスク完了をGREENで示し、ToDoの「対応する」から対象コンポーネントへ移動する要求を記録 | FR-136 の追記として [§7.1](#71-ステップの完了シグナルとtodoの移動先) に完了・解除条件、移動先、受入基準と検証先を追加。FR-136 の索引から追記を参照。既存の FR・AC ID は変更しない | 本会話の利用者の明示依頼と「要求定義書に記載をしてください」 | 選択中のステップより前という位置だけで完了扱いにせず、ToDoと同じ判定に統一。画面を開くだけのリンクを、対象のタブ・入力欄・コンポーネントへの移動として明確化 |
 | 2026-11-09 | 未統合の run/202611081851（1257・1551 を含む）と run/202611082320 を main（a4ae02d6）に統合し、衝突を解消（統合ブランチ integrate/20261109-runs。差し戻し中の work/202611082320/I-01 は取り込まない） | 変更履歴・決定記録・§10.3・出典台帳は双方の行を保持。SRC-060 は run 202611082320 の拡張版に一本化。FR-276 と PARAM-117〜120 は run 202611082320 の文面（月の総予算、C-03 の行の確定まで個別用途への適用を推定しない）を基に、Q-051 2026-11-09（日本時間の暦月・全 Project の合算・円・税込）を保持。Q-059 2026-11-09 の回答により FR-276・FR-286・AC-747・PARAM-113・C-03 の説明に共通の日次枠への合算を反映。新規 ID なし | SRC-060・SRC-062（Q-051・Q-059） | 統合で生じた Q-059 の未回答扱いと回答済みの食い違いを解消。AC-747 の本文変更による台帳ケースの見直し（CHK-11）、E2E-377・E2E-383 の扱い、AC-711・AC-731 の追加観点のケースは test-designer に引き継ぐ |
@@ -714,6 +715,39 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | 図の全画面表示 | デジタル世界 | 画面コンポーネント | なし | 位置 | なし | なし |
 | 図の詳細カード | デジタル世界 | 画面コンポーネント | なし | 位置 | なし | なし |
 
+### 3.8 顧客パックの取得範囲・出典・取得報告（FR-308〜FR-310）
+
+分割した本文（`requirements/customer-pack.md`）はこのリポジトリにないため、FR-308〜FR-310 の受入基準はここに置く。根拠は [取得範囲の監査](customer-pack-coverage-audit.md)（2026-11-10）。取得の対象は、BAS の画面が読むパックの 24 区分（`company`・`regions`・エンティティ 16 種類・`flows`・`optimization`・任意拡張 6 種類〈`brand`・`dataCatalog`・`glossary`・`graph`・`architecture`・`coreObject`〉）。Project の作業データ（分析・OKR・決定・レイアウト・接続設定など）はパックの対象外で、取り込みで上書きしない。
+
+追加したデータ項目（いずれも任意。旧形式のパックはそのまま読める）:
+
+| 項目 | 形式 | 意味 |
+|---|---|---|
+| `source.url` | http/https の URL | 公開 Web の出典 |
+| `source.accessedDate` | 日付 | 取得者が出典を確認した日 |
+| `source.locator` | 文字列 | Microsoft 365 内の資料の位置（ファイル・ページ・メール・会議など） |
+| `source.origin` | `web`・`m365` | 出典の種類。`web` は `url`、`m365` は `locator`、どちらも `accessedDate` が必要 |
+| `source.publishedDate` | 日付（任意に変更） | 発行日が不明なら書かない（推測で作らない） |
+| `flows[].sourceIds`・`optimization.sourceIds` | source の id の配列 | 物量・最適化入力の出典。ない場合は旧形式として警告 |
+| `extensions.collection` | `asOf`・`webSearch`（`searched`・`blocked`・`notRequested`）・`webSearchReason`・`sections[]`（`key`・`status`〈`complete`・`partial`・`unavailable`・`notApplicable`〉・`sourceIds`・`missingFields`・`reason`・`nextAction`） | 取得報告。区分ごとの取得状態・不足・次の取得方法 |
+
+受入基準（検証は `npm test` と `$env:BAS_PORT='4291'; $env:BAS_OUT='dist-e2e'; npx playwright test pack-import.spec --project=desktop`）:
+
+| AC | 要求 | 受入基準 | 検証 |
+|---|---|---|---|
+| AC-888 | FR-308 | /data に、社内資料を含めない公開 Web 調査用のプロンプト（日英）が、顧客パック作成のプロンプトとは別に表示され、コピーできる。調査は公式サイト・IR・拠点・製品・導入事例・ブランドを対象にし、出典 URL と、Web 検索ができないときの `blocked` を求める。各プロンプトは 8,000 文字未満 | `e2e/pack-import.spec.ts`（公開調査の表示とコピー）、`tests/pack-import.test.ts`（Copilot のプロンプトとスキーマの一致） |
+| AC-889 | FR-308 | 日英の両プロンプトが、`docs/pack.schema.json` の全プロパティと 24 区分・任意拡張 6 種類の全項目を求める。求めないのは、BAS が表示用に作る飾り（`portrait` の容姿 6 項目、`illustration` の `motif`・`hue`）と人の `ageBand`・`gender` だけで、プロンプトに「書かない」と明記する。スキーマに項目を足してプロンプトに足さないとテストが失敗する | `tests/pack-import.test.ts`（「every property of docs/pack.schema.json」。項目を 1 つ消すと失敗することを確認済み） |
+| AC-890 | FR-308 | `origin` を持つ出典は `accessedDate` と、`web` なら `url`・`m365` なら `locator` がないとエラー。`url`・`accessedDate`・`locator`・`origin` は整形・保存・再読み込み・書き出しで失われず、発行日が不明な出典は発行日なしのまま読める | `tests/pack-import.test.ts`（「keeps URL, locator and access date」） |
+| AC-891 | FR-309 | 取得報告は 24 区分をちょうど 1 回ずつ含む。区分の欠落・重複、存在しない出典 id はエラー。取得報告のないパックはエラーにせず「未報告」と表示する | `tests/pack-import.test.ts`（「distinguishes no report」）、`e2e/pack-import.spec.ts`（英語 UI の「No collection report」） |
+| AC-892 | FR-309 | `complete` はデータがあり、出典が 1 件以上、`missingFields` が空のときだけ通る。そうでなければエラーにし、`partial`・`unavailable`・`notApplicable` を使うよう対処を示す。データがあることを完了の証明として扱わない | `tests/pack-import.test.ts`（「distinguishes no report」） |
+| AC-893 | FR-309 | 取り込み前の確認と現在のパックの表示に、区分ごとの状態・不足項目・理由・次の取得方法と、Web 検索の実施状況（実施できなかった理由を含む）が出る | `e2e/pack-import.spec.ts`（取得報告・Web 検索不能の表示） |
+| AC-894 | FR-310 | PART の欠落・番号や値の矛盾・使う回答の中の壊れた JSON ブロックがあると、残りがスキーマに合っても取り込めない（エラー） | `tests/pack-import.test.ts`（「rejects conflicting/missing parts」） |
+| AC-895 | FR-310 | 任意拡張 6 種類を、各画面と同じスキーマで検査し、形の誤り・グラフの未知の id への参照はエラーになる。拡張は PART をまたいで結合でき、PART 間で値が食い違うとエラー | `tests/pack-import.test.ts`（「all six extensions」） |
+| AC-896 | FR-310 | 最適化の行列が工場数 × 地域数と一致しない、工場が生産拠点でない、地域 id がエンティティや他の地域と重複する、物の流れの端が仕入先・拠点・顧客・地域でない、出典 id が source でないときはエラー | `tests/pack-import.test.ts`（「rejects conflicting region ids」） |
+| AC-897 | FR-310 | 取り込んだパックの `dataCatalog` を、再読み込みの後、その Project のデータカタログとして表示する。カタログを別途取り込んだ・削除したときはそちらを優先し、ほかの Project のカタログと混ぜない | `e2e/pack-import.spec.ts`（取り込み → 再読み込み → /catalog）、`tests/pack-import.test.ts`（Project のカタログの分離） |
+
+制約（未検証。TODO-010）: Microsoft 365 Copilot の Web 検索と社内資料の検索は、管理者・利用者の設定、ライセンス、権限に依存し、プロンプトでは変えられない。非公開の値（能力・原価・受注・請求など）は公開 Web からは取れず、社内資料が要る。実テナントでの取得の網羅率と回答の事実性は確かめていない。上の受入基準は、受け取った回答を正しく検査・表示・保存できることを保証するもので、回答の内容が事実であることを保証しない。
+
 ## 4. ペルソナ
 
 アプリに利用者の認証・権限はない（C-01）。ペルソナは利用者像で、アクセス制御の役割ではない。権限の正本はないため「役割」の欄は該当なしとする。
@@ -1043,8 +1077,10 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | FR-303 | ブラウザー内での顧客パックの検証（CLI の verify と同じ実装を使う） | 承認済み | MUST | AC-845〜AC-850 | [customer-pack.md](requirements/customer-pack.md) |
 | FR-304 | 取り込む前の人の確認（機密区分の件数・人・ロゴ） | 承認済み | MUST | AC-851〜AC-855 | [customer-pack.md](requirements/customer-pack.md) |
 | FR-306 | 起動の 3 段階（スプラッシュ → 企業と Project の選択（サンプルデータの企業とデモ Project を含む）→ Project 画面）。選択はブラウザーのセッションごとに 1 回、作業先メニューから戻れる | 承認済み | MUST | e2e/project.spec.ts・e2e/motion-feed.spec.ts | [app-experience.md](requirements/app-experience.md) |
-| FR-307 | 社内のファイルから顧客パックを作る Microsoft 365 Copilot 用プロンプト（資料の一覧 → 事実の抽出 → PART に分けた JSON。値を作らない・数値に出典）を画面からコピー・ダウンロードでき、検査のエラーから修正用プロンプトを作る | 承認済み | SHOULD | tests/pack-import.test.ts・e2e/pack-import.spec.ts | [customer-pack.md](requirements/customer-pack.md) |
-| FR-289 | 生成 AI（Microsoft Foundry）による AI 取り込み（Foundry 設定済みのときだけ選べる） | 承認済み | SHOULD | AC-757〜AC-760 | [app-core.md](requirements/app-core.md) |
+| FR-307 | 社内のファイルから顧客パックを作る Microsoft 365 Copilot 用プロンプト（資料の一覧 → 事実の抽出 → PART に分けた JSON。値を作らない・数値に出典）を画面からコピー・ダウンロードでき、検査のエラーから修正用プロンプトを作る（2026-11-10: 公開 Web 調査 → 顧客パック作成の 2 段に拡張。FR-308） | 承認済み | SHOULD | tests/pack-import.test.ts・e2e/pack-import.spec.ts | [customer-pack.md](requirements/customer-pack.md) |
+| FR-308 | 公開 Web 調査のプロンプト（社内資料と分離）と、BAS が使う全 24 区分・全項目の取得指示。出典に URL・確認日・資料内の位置を残す | 承認済み | MUST | AC-888〜AC-890 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
+| FR-309 | 取得報告（`extensions.collection`）: 24 区分の状態・不足項目・次の取得方法・Web 検索の実施状況の検査と表示。データがあることを完了とみなさない | 承認済み | MUST | AC-891〜AC-893 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
+| FR-310 | 取り込みの厳格化（PART の欠落・矛盾・壊れた JSON を拒否）、任意拡張 6 種類と最適化・物の流れの検査、取り込んだ `dataCatalog` の Project での利用 | 承認済み | MUST | AC-894〜AC-897 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) || FR-289 | 生成 AI（Microsoft Foundry）による AI 取り込み（Foundry 設定済みのときだけ選べる） | 承認済み | SHOULD | AC-757〜AC-760 | [app-core.md](requirements/app-core.md) |
 | NFR-SEC-012 | Foundry の API キーをリポジトリ・ログ・テストデータに出さない | 承認済み | MUST | AC-729〜AC-730 | [app-core.md](requirements/app-core.md) |
 | NFR-COST-001 | 分析実行の利用量と月の予算の上限 | 承認済み | SHOULD | AC-731〜AC-732 | [app-core.md](requirements/app-core.md) |
 
@@ -2291,6 +2327,7 @@ Q-067 は全実在可視化の範囲と起点の回答、Q-068 は PARAM-133=200
 | TODO-007 | 残タスク | E2E-289（FR-185 AC-393）の退行の修正。Q-039 の回答に従い、境界のドラッグの追従の動きを直すか測り方を見直し、E2E-289 を pass にする（候補の修正 work/prof/candidate-stable-pane.diff は未検証。AUD-86。キュー fix-fps は blocked） | FR-185、AC-393、NFR-UX-017、AC-479、E2E-289、Q-039 | implementer、Q-039 の回答後 | 未着手（blocked: Q-039） |
 | TODO-008 | 残タスク | E2E-226（FR-147 AC-246）の基点からの fail（最初のフレーム 1149ms > {PARAM-038}。端末の性能による。run 202610141134 以前から継続。AUD-54）。標準の検証条件の端末での再測定、または描画の初期化の短縮 | FR-147、AC-246、E2E-226 | 未定 | 未着手（既知の基点からの fail） |
 | TODO-009 | 残タスク | IT-060〜IT-076（NFR-SEC-006）が基点 8dba365 のツールキット更新で fail。scripts/rdcheck.py の外部連携カタログ検査（import integration_catalog）の接続が落ちたため。run 202610192300 の変更が原因ではない。接続の復旧（rdcheck.py と integration_catalog の取り込みの整合）は利用者の判断が要る | NFR-SEC-006、IT-060〜IT-076 | 利用者の判断 | 未着手（既知の基点からの fail） |
+| TODO-010 | 残タスク | 実際の Microsoft 365 Copilot（Web 検索を許可したテナント）で 2 段のプロンプトを実行し、取得報告の区分ごとの状態・出典 URL を所有者が確かめ、未取得の区分を記録する（プロンプトの効果と回答の事実性は自動テストでは確かめられない） | FR-308、FR-309、AC-888〜AC-893 | 利用者、未定 | 未着手 |
 ## 11. 出典台帳
 
 | ID | 資料 | 版・日付 | 確認した位置 | 確認日 | 区分 |

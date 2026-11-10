@@ -42,13 +42,13 @@ describe.skipIf(process.platform !== 'win32')('Windows run.cmd', () => {
     });
   }
 
-  it('starts from another directory, handles spaces and forwards preview arguments', () => {
+  it('starts from another directory, handles spaces and requests a browser with the forwarded preview arguments', () => {
     const result = launch();
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toContain(`cwd=${app}`);
     expect(result.stdout).toContain('args=run build');
-    expect(result.stdout).toContain('args=run preview -- --port 4187');
+    expect(result.stdout).toContain('args=run preview -- --open --port 4187');
     expect(result.stdout.indexOf('args=run build')).toBeLessThan(result.stdout.indexOf('args=run preview'));
   });
 

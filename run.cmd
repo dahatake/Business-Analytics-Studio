@@ -34,9 +34,9 @@ if not exist "dist\index.html" (
   goto :failed
 )
 
-echo Starting Business Analytics Studio. Open the URL printed below.
+echo Starting Business Analytics Studio. Opening the app in your default web browser.
 echo Press Ctrl+C to stop.
-call npm.cmd run preview -- %*
+call npm.cmd run preview -- --open %*
 set "result=%errorlevel%"
 if not "%result%"=="0" echo Startup failed. Read the error above, fix the cause and run run.cmd again.
 goto :finish

@@ -183,6 +183,9 @@ export const coreJa = {
   'field.suppliesTo': '供給先',
   'field.publisher': '発行元',
   'field.publishedDate': '発行日',
+  'field.sourceUrl': '出典URL',
+  'field.sourceLocator': '資料内の位置',
+  'field.accessedDate': '確認日',
 
   'siteRole.hq': '本社',
   'siteRole.plant': '工場',
@@ -465,4 +468,3 @@ export const coreJa = {
 /** The complete key set. en.ts must match it exactly (checked by tsc and tests). */
 export const ja = { ...coreJa, ...modulesJa };
 export type MessageKey = keyof typeof ja;
-

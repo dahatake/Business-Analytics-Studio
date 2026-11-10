@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { CoreObjectExtension } from '../../data/extensionSchemas.ts';
+export { CoreObjectExtension } from '../../data/extensionSchemas.ts';
 import { entitiesOf, getEntity, loaded, type LoadedPack } from '../../data/pack.ts';
 import type { EntityOf } from '../../data/schema.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
@@ -6,17 +8,6 @@ import type { Audience } from '../../state/settings.ts';
 import type { Label } from './model.ts';
 import type { Localizable } from '../../state/text.ts';
 
-/** §3.6 optional `coreObject` of a customer pack (read from pack.extensions.coreObject). */
-export const CoreObjectExtension = z.object({
-  candidates: z.array(z.object({
-    name: z.string().optional(),
-    label: z.string().optional(),
-    summary: z.string().optional(),
-    scores: z.record(z.string(), z.string()).optional(),
-  }).passthrough()).optional(),
-  criteria: z.array(z.object({ id: z.string(), label: z.string() }).passthrough()).optional(),
-  reason: z.string().optional(),
-}).passthrough();
 export type CoreObjectExtension = z.infer<typeof CoreObjectExtension>;
 
 export interface CoreCandidate {

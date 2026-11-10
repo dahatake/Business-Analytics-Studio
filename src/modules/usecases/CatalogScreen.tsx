@@ -8,7 +8,7 @@ import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import {
-  countByCategory, enrichEntities, MAX_CATALOG_BYTES, MAX_CATALOG_ITEMS, parseCatalogFile, RECON_CATEGORIES, reconcile,
+  catalogForScope, countByCategory, enrichEntities, MAX_CATALOG_BYTES, MAX_CATALOG_ITEMS, parseCatalogFile, RECON_CATEGORIES, reconcile,
   useCatalogImport, type ReconCategory, type ReconRow, type RowError,
 } from './catalog.ts';
 import { buildClusters, deriveDataModel, isSimplified, linkKey, totalColumns, VIEWER_MAX_COLUMNS, VIEWER_MAX_ENTITIES, ZOOM_FOR, type DataEntity } from './catalogModel.ts';
@@ -40,7 +40,9 @@ function CategoryMark({ category }: { category: ReconCategory }) {
 export function CatalogScreen() {
   const { t, lang, fmt } = useI18n();
   const useCases = useUseCases((s) => s.value);
-  const catalog = useCatalogImport((s) => s.value);
+  const storedCatalog = useCatalogImport((s) => s.value);
+  const scope = useCatalogImport((s) => s.scope);
+  const catalog = useMemo(() => catalogForScope(storedCatalog, scope), [storedCatalog, scope]);
   const setCatalog = useCatalogImport((s) => s.set);
   const explicit = useCatalogLinks((s) => s.value);
   const setExplicit = useCatalogLinks((s) => s.set);

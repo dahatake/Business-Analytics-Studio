@@ -150,7 +150,10 @@ export const cardSpecs: Specs = {
     route: null,
     fields: [
       { label: 'field.publisher', value: (e, c) => c.tx(e.publisher) },
-      { label: 'field.publishedDate', value: (e, c) => c.fmt.date(e.publishedDate) },
+      { label: 'field.publishedDate', value: (e, c) => e.publishedDate ? c.fmt.date(e.publishedDate) : '—' },
+      { label: 'field.sourceUrl', value: (e) => e.url ?? '—' },
+      { label: 'field.sourceLocator', value: (e) => e.locator ?? '—' },
+      { label: 'field.accessedDate', value: (e, c) => e.accessedDate ? c.fmt.date(e.accessedDate) : '—' },
     ],
   },
 };

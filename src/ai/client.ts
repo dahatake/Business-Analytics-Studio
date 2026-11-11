@@ -1,4 +1,5 @@
 import type { Entity } from '../data/schema.ts';
+import { appStorage as localStorage } from '../data/deviceStorage.ts';
 import { loaded } from '../data/pack.ts';
 import { AI_LIMITS, C03_TABLE, PER_USE_LIMITS, type AiUse, type Limits, type Provider } from './policy.ts';
 import { actualCostJpy, checkBudget, estimateCostJpy, estimateTokens, type BudgetDecision, type UnitPrices, type UsageRecord } from './budget.ts';

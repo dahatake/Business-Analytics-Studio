@@ -1,4 +1,5 @@
 import { entitiesOf, getEntity, loaded, type LoadedPack } from '../../data/pack.ts';
+import { appStorage as localStorage } from '../../data/deviceStorage.ts';
 import type { EntityOf } from '../../data/schema.ts';
 import { makeFormatters, pick, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { rankIssues, type PriorityWeights, type RankedIssue } from '../../domain/priority.ts';
@@ -439,4 +440,3 @@ export function actionForKey(key: string): ShortcutAction | null {
 export function shortVideoSceneMs(sceneCount: number): number {
   return Math.round(SHOW_PARAMS.shortVideoMs / Math.max(1, sceneCount));
 }
-

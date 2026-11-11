@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { actualCostJpy, checkBudget, estimateCostJpy, parseRequestPrice, parseUnitPrices, type UnitPrices } from '../../ai/budget.ts';
 import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
@@ -227,3 +228,4 @@ export function liveReady(s: AiSettingsState): boolean {
 }
 
 setRuntimeSettingsProvider(runtimeSettings);
+syncDeviceStore(AI_SETTINGS_KEY, () => useAiSettings.persist.rehydrate());

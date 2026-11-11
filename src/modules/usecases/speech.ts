@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { appStorage as localStorage } from '../../data/deviceStorage.ts';
 import type { Lang } from '../../i18n/core.ts';
 
 const PREF_KEY = 'bas.uc.readAloud';

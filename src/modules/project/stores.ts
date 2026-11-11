@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { loaded } from '../../data/pack.ts';
 import { createScopedStore } from '../../state/projects.ts';
@@ -55,6 +56,7 @@ export const useProjUi = create<ProjUiState>()(
     { name: 'bas.proj.ui', version: 1, storage: createJSONStorage(() => localStorage) },
   ),
 );
+syncDeviceStore('bas.proj.ui', () => useProjUi.persist.rehydrate());
 
 /** Transient UI state shared by the top bar, the overlay and the screens. */
 interface ProjTransient {

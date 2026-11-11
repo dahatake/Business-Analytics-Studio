@@ -6,6 +6,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createDeviceService } from './device.ts';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -24,7 +25,8 @@ export interface Served {
 export function startServer(dir: string, port = 4180, host = '127.0.0.1'): Promise<Served> {
   const root = resolve(dir);
   if (!existsSync(join(root, 'index.html'))) return Promise.reject(new Error(`No index.html in ${root}. Build first (npm run build, or bas build <customer>).`));
-  const server = createServer((req, res) => {
+  const device = createDeviceService(process.env.BAS_DEVICE_DIR ?? resolve('.bas-local'));
+  const server = createServer((req, res) => device.handle(req, res, () => {
     const url = new URL(req.url ?? '/', `http://${host}`);
     let rel = decodeURIComponent(url.pathname);
     if (rel.endsWith('/')) rel += 'index.html';
@@ -41,7 +43,8 @@ export function startServer(dir: string, port = 4180, host = '127.0.0.1'): Promi
     }
     res.writeHead(200, { 'Content-Type': TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
     createReadStream(target).pipe(res);
-  });
+  }));
+  server.once('close', device.close);
   return new Promise((ok, fail) => {
     server.once('error', fail);
     server.listen(port, host, () => {

@@ -1,8 +1,8 @@
 import type { LText } from './schema.ts';
+import { appStorage as localStorage, hasDeviceStorage, readDeviceBinary, writeDeviceBinary } from './deviceStorage.ts';
 
 /**
- * FR-302: customer packs imported in the app, one per project. The pack JSON (up to several MB) lives in IndexedDB;
- * a small index in localStorage lets the launch screen and the startup code know synchronously which projects have one.
+ * FR-302: imported packs use device storage; IndexedDB remains the legacy backend for migration and unit tests.
  */
 export interface ImportedPackMeta {
   projectId: string;
@@ -58,7 +58,12 @@ class IdbBackend implements Backend {
 }
 
 let backend: Backend | null = null;
-const store = (): Backend => (backend ??= typeof indexedDB === 'undefined' ? new MemoryBackend() : new IdbBackend());
+class DeviceBackend implements Backend {
+  async get(id: string) { return readDeviceBinary(`bas.binary.pack.${id}`); }
+  async put(id: string, pack: unknown) { await writeDeviceBinary(`bas.binary.pack.${id}`, pack); }
+  async delete(id: string) { await writeDeviceBinary(`bas.binary.pack.${id}`, null); }
+}
+const store = (): Backend => (backend ??= hasDeviceStorage() ? new DeviceBackend() : typeof indexedDB === 'undefined' ? new MemoryBackend() : new IdbBackend());
 
 /** Tests swap in a memory backend. */
 export function setMemoryPackStore() {

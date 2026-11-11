@@ -1,6 +1,7 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
+import { appStorage as localStorage, syncDeviceStore } from '../data/deviceStorage.ts';
 
 /** PARAM-031: projects per company. */
 export const MAX_PROJECTS_PER_COMPANY = 50;
@@ -141,6 +142,7 @@ export const useProjects = create<ProjectsState>()(
     },
   ),
 );
+syncDeviceStore(PROJECTS_STORAGE_KEY, () => useProjects.persist.rehydrate());
 
 /** 'demo' or the active project id. Every scoped store keys its data by this (G-007: no cross-project mixing). */
 export function scopeOf(target: WorkTarget): string {
@@ -207,6 +209,11 @@ export function createScopedStore<T>(name: string, initial: (scope: string) => T
   useProjects.subscribe((s) => {
     const scope = scopeOf(s.target);
     if (scope !== store.getState().scope) store.setState({ scope, value: load(scope) });
+  });
+  if (typeof window !== 'undefined') window.addEventListener('bas-device-change', (event) => {
+    if (event instanceof CustomEvent && event.detail === scopedKey(store.getState().scope, name)) {
+      store.setState({ value: load(store.getState().scope) });
+    }
   });
   return store;
 }

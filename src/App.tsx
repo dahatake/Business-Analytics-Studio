@@ -23,6 +23,7 @@ import { EntityPage } from './screens/EntityPage.tsx';
 import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
 import { ActionSlots, ContextSlot, Overlays, StepBandSlot } from './app/globals.tsx';
 import { useBrandVariants } from './modules/ops/theme.ts';
+import { DeviceStorageStatus, useDeviceBlocked } from './ui/DeviceStorageStatus.tsx';
 
 /** Fluent themes from the 16-step brand ramp (PARAM-017). Dark mode lifts brand foregrounds for contrast. */
 function useThemes(): { dark: Theme; light: Theme } {
@@ -150,6 +151,7 @@ function Screen() {
 }
 
 export function App() {
+  const storageBlocked = useDeviceBlocked();
   const { t, lang } = useI18n();
   const dark = useEffectiveDark();
   const reduced = useReducedMotion();
@@ -197,7 +199,8 @@ export function App() {
       {/* Fluent's motion components use the Web Animations API, which the CSS rule for reduced motion cannot stop. */}
       <MotionBehaviourProvider value={reduced ? 'skip' : 'default'}>
       {/* Layout styles live on an inner wrapper: Fluent copies the provider className onto portal mount nodes. */}
-      <div className={`app ${dark ? 'theme-dark' : 'theme-light'}`} data-motion={reduced ? 'reduced' : 'full'}>
+      <DeviceStorageStatus />
+      <div className={`app ${dark ? 'theme-dark' : 'theme-light'}`} data-motion={reduced ? 'reduced' : 'full'} inert={storageBlocked}>
       <div className="aurora" aria-hidden />
       {stage !== 'app' ? (
         // Start-up step 2: choose a company and project before any project screen (step 3) is shown.
@@ -226,5 +229,4 @@ export function App() {
     </FluentProvider>
   );
 }
-
 

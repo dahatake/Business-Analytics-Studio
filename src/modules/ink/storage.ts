@@ -1,9 +1,10 @@
 /**
- * FR-086 / FR-095: stroke data lives in IndexedDB keyed by scope + board (scales to PARAM-010 strokes).
- * Unsaved changes are journaled in localStorage under the project's scope prefix so a crash/reload restores them,
+ * FR-086 / FR-095: stroke data uses device storage keyed by scope + board (scales to PARAM-010 strokes).
+ * Unsaved changes are journaled under the project's scope prefix so a crash/reload restores them,
  * and the project's deletion (purgeScope) also removes the journal.
  */
 import { onProjectDeleted, scopedKey } from '../../state/projects.ts';
+import { appStorage as localStorage, binaryKeys, hasDeviceStorage, readDeviceBinary, writeDeviceBinary } from '../../data/deviceStorage.ts';
 import { AUTOSAVE_MS, type BoardContent, type Card, type Link, type Note, type Stroke } from './model.ts';
 
 export interface InkStorage {
@@ -87,8 +88,17 @@ onProjectDeleted((id) => {
 });
 
 let shared: InkStorage | null = null;
+class DeviceInkStorage implements InkStorage {
+  private key(scope: string, id: string) { return `bas.binary.ink.${contentKey(scope, id)}`; }
+  async load(scope: string, id: string) { return readDeviceBinary(this.key(scope, id)) as BoardContent | null; }
+  async save(scope: string, id: string, content: BoardContent) { await writeDeviceBinary(this.key(scope, id), content); }
+  async remove(scope: string, id: string) { await writeDeviceBinary(this.key(scope, id), null); }
+  async removeScope(scope: string) {
+    for (const key of binaryKeys(`bas.binary.ink.${scope}::`)) await writeDeviceBinary(key, null);
+  }
+}
 export function inkStorage(): InkStorage {
-  shared ??= typeof indexedDB === 'undefined' ? new MemoryStorage() : new IdbStorage();
+  shared ??= hasDeviceStorage() ? new DeviceInkStorage() : typeof indexedDB === 'undefined' ? new MemoryStorage() : new IdbStorage();
   return shared;
 }
 

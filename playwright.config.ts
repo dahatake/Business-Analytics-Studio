@@ -28,11 +28,10 @@ export default defineConfig({
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
     // E2E never touches the user's real vault (.bas-local): each build output gets its own relay folder.
-    env: { BAS_RELAY_DIR: process.env.BAS_RELAY_DIR ?? `.bas-local/e2e-${outDir}` },
+    env: { BAS_RELAY_DIR: process.env.BAS_RELAY_DIR ?? `.bas-local/e2e-${outDir}`, BAS_DEVICE_TEST_MODE: '1' },
     timeout: 180_000,
   },
 });
-
 
 
 

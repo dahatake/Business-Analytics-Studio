@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { appStorage as localStorage } from '../../data/deviceStorage.ts';
 import { MAX_PROJECTS_PER_COMPANY, SCOPE_PREFIX, scopedKey, useProjects, IMPROVEMENT_STEPS, type Company, type Project } from '../../state/projects.ts';
 
 /** FR-139 (MAY): a project file keeps the system-assigned ids of the company and the project, plus every scoped store. */

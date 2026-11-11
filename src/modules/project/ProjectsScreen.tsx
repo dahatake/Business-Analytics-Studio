@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { reloadAfterDeviceSave } from '../../data/deviceStorage.ts';
 import { Badge, Button, Field, Input, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import { Add20Regular, ArrowDownload20Regular, ArrowUpload20Regular, BotSparkle20Regular, Delete20Regular, Edit20Regular, Open20Regular, Settings20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
@@ -116,7 +117,7 @@ export function ProjectsScreen() {
             navigate(hrefFor('/home'));
             setTarget({ kind: 'project', projectId });
             // A pack saved for the project that is already active needs an explicit restart to be loaded (main.tsx).
-            window.location.reload();
+            reloadAfterDeviceSave();
           }}
         />
       )}

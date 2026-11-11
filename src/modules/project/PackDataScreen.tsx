@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { reloadAfterDeviceSave } from '../../data/deviceStorage.ts';
 import {
   Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Textarea,
 } from '@fluentui/react-components';
@@ -88,7 +89,7 @@ function CurrentPackPanel() {
   const onDelete = async () => {
     if (packOrigin.kind !== 'imported') return;
     await deleteImportedPack(packOrigin.projectId);
-    window.location.reload();
+    reloadAfterDeviceSave();
   };
 
   return (
@@ -504,7 +505,7 @@ function ConfirmAndImport({ analysis }: { analysis: ImportAnalysis }) {
     sessionStorage.setItem(JUST_IMPORTED_KEY, `${c?.name ?? ''}-${p?.name ?? ''}`);
     // Switching the target reloads with the new pack (main.tsx); re-importing into the same project needs an explicit reload.
     useProjects.getState().setTarget({ kind: 'project', projectId });
-    window.location.reload();
+    reloadAfterDeviceSave();
   };
 
   return (

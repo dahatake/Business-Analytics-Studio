@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as RPointerEvent } from 'react';
+import { appStorage as localStorage } from '../../data/deviceStorage.ts';
 import {
   Button, Field, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Select, Text, ToggleButton, Tooltip,
 } from '@fluentui/react-components';

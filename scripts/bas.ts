@@ -235,10 +235,12 @@ async function dispatch(command: string, args: Args, s: ReturnType<typeof settin
         mkdirSync(dest, { recursive: true });
         cpSync(app, join(dest, 'app'), { recursive: true });
         cpSync(join(ROOT, 'scripts', 'lib', 'serve.ts'), join(dest, 'serve.ts'));
+        cpSync(join(ROOT, 'scripts', 'lib', 'device.ts'), join(dest, 'device.ts'));
+        cpSync(join(ROOT, 'scripts', 'lib', 'deviceProtocol.ts'), join(dest, 'deviceProtocol.ts'));
         writePackageStarters(dest, customer);
       });
       io.out(`package ${customer}: ${dest}`);
-      io.out('  contents: app/ (built app + data/pack.json), serve.ts, start.ps1, start.sh, start.command, README.txt');
+      io.out('  contents: app/ (built app + data/pack.json), serve.ts, device.ts, deviceProtocol.ts, start.ps1, start.sh, start.command, README.txt');
       io.out('  needs only Node.js on the target PC; no npm install, no network, serves on 127.0.0.1 (FR-105).');
       return 0;
     }

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { reloadAfterDeviceSave } from '../../data/deviceStorage.ts';
 import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import { Add20Regular, BotSparkle20Regular, Delete20Regular, Edit20Regular, Open20Regular, Settings20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { basePack } from '../../data/pack.ts';
@@ -156,7 +157,7 @@ export function LaunchScreen() {
             onOpenProject={(projectId) => {
               open({ kind: 'project', projectId });
               // A pack saved for the project that is already active needs an explicit restart to be loaded (main.tsx).
-              window.location.reload();
+              reloadAfterDeviceSave();
             }}
           />
         )}

@@ -1,4 +1,5 @@
 import type { BrandVariants } from '@fluentui/react-components';
+import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
@@ -38,6 +39,7 @@ export const useBrandOverride = create<BrandOverrideState>()(
     },
   ),
 );
+syncDeviceStore(BRAND_STORAGE_KEY, () => useBrandOverride.persist.rehydrate());
 
 export function useResolvedBrand(): ResolvedBrand {
   const primary = useBrandOverride((s) => s.primary);

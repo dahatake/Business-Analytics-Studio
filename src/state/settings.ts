@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Lang } from '../i18n/core.ts';
+import { appStorage as localStorage, syncDeviceStore } from '../data/deviceStorage.ts';
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type MotionPref = 'system' | 'reduce' | 'full';
@@ -56,4 +57,4 @@ export const useSettings = create<SettingsState>()(
     },
   ),
 );
-
+syncDeviceStore(SETTINGS_STORAGE_KEY, () => useSettings.persist.rehydrate());

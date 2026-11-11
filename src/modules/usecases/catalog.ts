@@ -1,4 +1,5 @@
 import { loaded, packOrigin } from '../../data/pack.ts';
+import { appStorage as localStorage } from '../../data/deviceStorage.ts';
 import { createScopedStore, scopedKey } from '../../state/projects.ts';
 import { locAll } from '../../state/text.ts';
 import type { DataEntity } from './catalogModel.ts';

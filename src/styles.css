@@ -451,3 +451,27 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
 
 
 
+.device-save-status {
+  position: fixed;
+  right: 12px;
+  bottom: 4px;
+  z-index: 20;
+  padding: 2px 8px;
+  background: var(--colorNeutralBackground1);
+  color: var(--colorNeutralForeground1);
+  font-size: 11px;
+  pointer-events: none;
+}
+.device-storage-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  padding: 10vh max(24px, 12vw);
+  background: var(--colorNeutralBackground1);
+  color: var(--colorNeutralForeground1);
+}
+.device-startup-error {
+  max-width: 760px;
+  margin: 10vh auto;
+  padding: 24px;
+}

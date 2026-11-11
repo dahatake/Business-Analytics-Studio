@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 export type Lang = 'ja' | 'en';
 
@@ -9,13 +10,17 @@ export interface SetupOptions {
   skipOpening?: boolean;
   /** Skip start-up step 2 (company and project selection). Defaults to skipOpening. */
   skipLaunch?: boolean;
+  /** Share a device namespace only in tests which explicitly exercise multiple origins. */
+  deviceId?: string;
 }
 
 /** Seed persisted settings before the app boots (same shape zustand/persist writes). */
 export async function setup(page: Page, opts: SetupOptions = {}) {
   const { lang = 'ja', audience = 'internal', motion = 'reduce', skipOpening = true } = opts;
   const skipLaunch = opts.skipLaunch ?? skipOpening;
-  await page.addInitScript(({ lang, audience, motion, skipOpening, skipLaunch }) => {
+  const deviceId = opts.deviceId ?? randomUUID();
+  await page.addInitScript(({ lang, audience, motion, skipOpening, skipLaunch, deviceId }) => {
+    localStorage.setItem('bas.device.test', deviceId);
     if (sessionStorage.getItem('bas.e2e.seeded')) return;
     sessionStorage.setItem('bas.e2e.seeded', '1');
     if (skipOpening) sessionStorage.setItem('bas.openingSeen', '1');
@@ -24,7 +29,7 @@ export async function setup(page: Page, opts: SetupOptions = {}) {
       state: { lang, theme: 'dark', motion, muted: true, bgm: true, sfx: true, volume: 0.5, audience },
       version: 1,
     }));
-  }, { lang, audience, motion, skipOpening, skipLaunch });
+  }, { lang, audience, motion, skipOpening, skipLaunch, deviceId });
 }
 
 export async function open(page: Page, route: string, opts: SetupOptions = {}) {

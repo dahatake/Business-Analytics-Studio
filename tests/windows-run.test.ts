@@ -1,6 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+// @vitest-environment node
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 
 const root = resolve('.bas-local', `test-windows-run-${process.pid}`);
@@ -48,7 +51,7 @@ describe.skipIf(process.platform !== 'win32')('Windows run.cmd', () => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toContain(`cwd=${app}`);
     expect(result.stdout).toContain('args=run build');
-    expect(result.stdout).toContain('args=run preview -- --open --port 4187');
+    expect(result.stdout).toContain('args=run preview -- --strictPort false --open --port 4187');
     expect(result.stdout.indexOf('args=run build')).toBeLessThan(result.stdout.indexOf('args=run preview'));
   });
 
@@ -128,4 +131,66 @@ describe.skipIf(process.platform !== 'win32')('Windows run.cmd', () => {
       writeFileSync(join(app, 'node_modules', 'vite', 'bin', 'vite.js'), '');
     }
   });
+
+  it.each(['free', 'occupied', 'strict'] as const)('runs the real preview CLI with a %s port', async (mode) => {
+    writeFileSync(join(app, 'dist', 'index.html'), '<!doctype html><title>Launcher test</title>');
+    const blocker = createServer((_req, res) => res.end('existing server'));
+    await new Promise<void>((resolve, reject) => {
+      blocker.once('error', reject);
+      blocker.listen(0, '127.0.0.1', resolve);
+    });
+    const address = blocker.address();
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP port');
+    const port = address.port;
+    if (mode === 'free') await new Promise<void>((resolve) => blocker.close(() => resolve()));
+
+    const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { scripts: { preview: string } };
+    const launcher = readFileSync(resolve('run.cmd'), 'utf8');
+    const forwarded = /call npm\.cmd run preview -- (.+) %\*/.exec(launcher)?.[1];
+    if (!forwarded) throw new Error('Preview command missing from run.cmd');
+    const child = spawn(process.execPath, [
+      resolve('node_modules', 'vite', 'bin', 'vite.js'),
+      ...pkg.scripts.preview.split(' ').slice(1),
+      ...forwarded.split(' '),
+      '--port', String(port), '--outDir', join(app, 'dist'),
+      ...(mode === 'strict' ? ['--strictPort'] : []),
+    ], {
+      cwd: resolve('.'),
+      env: { ...process.env, BROWSER: 'none', NO_COLOR: '1', BAS_RELAY_DIR: join(root, 'relay') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+    child.stderr.on('data', (data: Buffer) => { output += data.toString(); });
+    try {
+      if (mode === 'strict') {
+        await vi.waitFor(() => expect(child.exitCode, output).toBe(1), { timeout: 20_000 });
+        expect(output).toContain(`Port ${port} is already in use`);
+      } else {
+        await vi.waitFor(() => expect(output, output).toMatch(/http:\/\/127\.0\.0\.1:\d+/), { timeout: 20_000 });
+        const url = /http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
+        if (!url) throw new Error(`Preview URL missing: ${output}`);
+        const origin = url[0];
+        if (mode === 'free') expect(Number(url[1])).toBe(port);
+        if (mode === 'occupied') {
+          expect(Number(url[1])).toBeGreaterThan(port);
+          expect(output).toContain(`Port ${port} is in use, trying another one`);
+        }
+        expect(await (await fetch(origin)).text()).toContain('<!doctype html>');
+        const session = await fetch(`${origin}/relay/session`, { method: 'POST', headers: { origin } });
+        expect(session.status).toBe(200);
+        expect(await session.json()).toEqual({ token: expect.any(String) });
+      }
+      if (mode !== 'free') {
+        expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe('existing server');
+      }
+    } finally {
+      if (child.exitCode === null) {
+        const exited = once(child, 'exit');
+        child.kill();
+        await exited;
+      }
+      if (blocker.listening) await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  }, 30_000);
 });

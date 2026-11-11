@@ -35,8 +35,10 @@ if not exist "dist\index.html" (
 )
 
 echo Starting Business Analytics Studio. Opening the app in your default web browser.
+echo If the port is in use, Vite will report it and open the next available port.
+echo Browser-saved data is separate for each port. Use the original port to access existing data.
 echo Press Ctrl+C to stop.
-call npm.cmd run preview -- --open %*
+call npm.cmd run preview -- --strictPort false --open %*
 set "result=%errorlevel%"
 if not "%result%"=="0" echo Startup failed. Read the error above, fix the cause and run run.cmd again.
 goto :finish

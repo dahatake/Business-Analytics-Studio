@@ -91,9 +91,35 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(r.status).toBe(200);
     expect(r.ai).toBe(403);
     expect(r.body).toEqual({ allowed: false, reasons: ['c03NotApproved', 'notConfigured'] });
-    await expect(page.getByTestId('ai-connection-save')).toBeDisabled();
+    await expect(page.getByTestId('ai-connection-save')).toBeEnabled();
+    await page.getByTestId('ai-connection-save').click();
+    await expect(page.getByTestId('ai-connection-blockers')).toContainText('No connection test was sent');
     await expect(page.getByTestId('ai-connection-test-info')).toContainText('No customer');
   });
+
+  for (const lang of ['en', 'ja'] as const) {
+    test(`${lang}: launch settings explains blocked tests instead of disabling the action`, async ({ page }) => {
+      await page.setViewportSize({ width: 768, height: 920 });
+      await seedLaunch(page, lang);
+      await page.getByTestId('launch-ai-settings').click();
+      const settings = page.getByTestId('ai-settings-dialog');
+      let sends = 0;
+      page.on('request', (req) => {
+        if (req.url().endsWith('/relay/connection') && req.method() === 'PUT') sends++;
+      });
+      await settings.getByTestId('ai-endpoint').fill('https://resource.services.ai.azure.com/api/projects/project');
+      await settings.getByTestId('ai-deployment').fill('gpt-deployed');
+      await settings.getByTestId('ai-price-input').fill('10000');
+      await settings.getByTestId('ai-price-output').fill('10000');
+      await settings.getByTestId('ai-connection-consent').check();
+      await expect(settings.getByTestId('ai-connection-save')).toBeEnabled();
+      await settings.getByTestId('ai-connection-save').click();
+      await expect(settings.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
+      await expect(settings.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'No connection test was sent' : '接続テストは送信していません');
+      expect(sends).toBe(0);
+      expect(await scan(page)).toEqual([]);
+    });
+  }
 });
 
 test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
@@ -173,7 +199,9 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       await page.getByTestId('ai-endpoint').fill('https://resource.services.ai.azure.com/api/projects/project');
       await page.getByTestId('ai-deployment').fill('gpt-deployed');
       await expect(page.getByTestId('ai-connection-validation')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
-      await expect(page.getByTestId('ai-connection-save')).toBeDisabled();
+      await expect(page.getByTestId('ai-connection-save')).toBeEnabled();
+      await page.getByTestId('ai-connection-save').click();
+      await expect(page.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
       expect(sent).toHaveLength(0);
       await page.getByTestId('ai-foundry-key-input').fill(FAKE_KEY);
       await page.getByTestId('ai-foundry-key-save').click();
@@ -188,7 +216,10 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       await page.waitForTimeout(5100);
       await page.getByTestId('ai-endpoint').fill(`${stubUrl}/openai/v1/`);
       await expect(page.getByTestId('ai-api-version')).toBeDisabled();
-      await expect(page.getByTestId('ai-connection-save')).toBeDisabled();
+      await expect(page.getByTestId('ai-connection-save')).toBeEnabled();
+      await page.getByTestId('ai-connection-save').click();
+      await expect(page.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'consent checkbox' : '同意チェック');
+      expect(sent).toHaveLength(0);
       await page.getByTestId('ai-connection-consent').check();
       await page.getByTestId('ai-connection-save').click();
       await expect(page.getByTestId('ai-connection-msg')).toContainText('HTTP 401');

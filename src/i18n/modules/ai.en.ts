@@ -265,6 +265,8 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.conn.testInfo': 'Sends a fixed "Reply with OK only" connection test to the endpoint and deployment above. No customer, project or material is sent. Times out after 30 seconds; saves only after a usable model response. Failures leave the existing connection unchanged.',
   'ai.conn.testCost': 'Estimated test cap {cost} (256 output tokens, safety factor included). Included in the usage ledger and monthly budget.',
   'ai.conn.consent': 'I confirm the test destination and estimated cost shown above',
+  'ai.conn.checkBeforeTest': 'No connection test was sent. Check the following items.',
+  'ai.conn.msg.consentRequired': 'Review the destination and estimated cost, then select the consent checkbox above.',
   'ai.conn.delete': 'Delete the connection settings',
   'ai.conn.msg.saved': 'The model responded and the connection was saved.',
   'ai.conn.msg.deleted': 'The connection was deleted and the real connection was turned off.',

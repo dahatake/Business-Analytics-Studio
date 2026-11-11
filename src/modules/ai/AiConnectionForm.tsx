@@ -70,9 +70,19 @@ export function ConnectionActions() {
   const [providerStatus, setProviderStatus] = useState<number | undefined>();
   const [testing, setTesting] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [validationRequested, setValidationRequested] = useState(false);
   const relay = s.relayConnection;
   const problem = connectionDraftProblem(s);
   const precheck = connectionTestPreflight(s);
+  const blockers = [
+    problem ? t(`ai.conn.msg.${problem}`) : null,
+    !s.relayReachable ? t('ai.relay.unreachable') : null,
+    s.authMethod !== 'apiKey' ? t('ai.auth.entraIdNote') : null,
+    !s.foundryKeySaved ? t('ai.conn.msg.keyMissing') : null,
+    !precheck.prices ? t('ai.conn.msg.noUnitPrice') : null,
+    !precheck.budget.allowed ? t('ai.conn.msg.budget') : null,
+    !consent ? t('ai.conn.msg.consentRequired') : null,
+  ].filter((reason) => reason !== null);
   const [, refreshBudget] = useState(0);
   const coolingDown = precheck.budget.reasons.includes('tooSoon');
   useEffect(() => {
@@ -87,9 +97,13 @@ export function ConnectionActions() {
     setConsent(false);
   }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.priceInputPerM, s.priceOutputPerM, s.monthlyBudgetJpy]);
   const save = async () => {
-    setTesting(true);
+    if (testing) return;
     setMessage(null);
     setProviderStatus(undefined);
+    setValidationRequested(true);
+    if (blockers.length > 0) return;
+    setValidationRequested(false);
+    setTesting(true);
     try {
       const r = await s.saveConnection();
       setMessage(r.ok ? 'saved' : r.error);
@@ -118,8 +132,16 @@ export function ConnectionActions() {
       {!s.foundryKeySaved && <p className="muted">{t('ai.conn.msg.keyMissing')}</p>}
       {!precheck.budget.allowed && <p role="alert">{t('ai.conn.msg.budget')}</p>}
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={testing} label={t('ai.conn.consent')} data-testid="ai-connection-consent" />
+      {validationRequested && blockers.length > 0 && (
+        <MessageBar intent="error" data-testid="ai-connection-blockers">
+          <MessageBarBody>
+            <p>{t('ai.conn.checkBeforeTest')}</p>
+            <ul>{blockers.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+          </MessageBarBody>
+        </MessageBar>
+      )}
       <div className="ai-row">
-        <Button appearance="primary" icon={testing ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void save()} disabled={testing || !s.relayReachable || !s.foundryKeySaved || s.authMethod !== 'apiKey' || !!problem || !consent || !precheck.prices || !precheck.budget.allowed} data-testid="ai-connection-save">{t(testing ? 'ai.conn.testing' : 'ai.conn.save')}</Button>
+        <Button appearance="primary" icon={testing ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void save()} disabled={testing} data-testid="ai-connection-save">{t(testing ? 'ai.conn.testing' : 'ai.conn.save')}</Button>
         <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={testing || !s.relayReachable || (relay === null && s.endpoint === '' && s.deployment === '')} data-testid="ai-connection-delete">{t('ai.conn.delete')}</Button>
       </div>
       {message && <MessageBar intent={message === 'saved' || message === 'deleted' ? 'success' : 'error'} data-testid="ai-connection-msg"><MessageBarBody>{t(`ai.conn.msg.${message}`)}{providerStatus !== undefined && ` (HTTP ${providerStatus})`}</MessageBarBody></MessageBar>}

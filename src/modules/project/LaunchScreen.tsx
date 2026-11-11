@@ -10,7 +10,8 @@ import { useProjects, MAX_PROJECTS_PER_COMPANY, type WorkTarget } from '../../st
 import { hrefFor, navigate } from '../../state/router.ts';
 import { LanguageToggle } from '../../ui/LanguageToggle.tsx';
 import { AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
-import { PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
+import { generatePrefillFor, PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
+import type { PackGenInput } from './packGenerate.ts';
 import { useProjectManagement } from './useProjectManagement.tsx';
 import './project.css';
 
@@ -24,13 +25,15 @@ export function LaunchScreen() {
   const projects = useProjects((s) => s.projects);
   const lastProjectId = useProjects((s) => s.lastProjectId);
   const choose = useLaunch((s) => s.choose);
-  const packs = useMemo(() => importedPacks(), []);
   const [companyName, setCompanyName] = useState('');
   const [projectName, setProjectName] = useState('');
   const [importAfter, setImportAfter] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const management = useProjectManagement();
-  const [genTarget, setGenTarget] = useState<PackGenTarget | null>(null);
+  const [gen, setGen] = useState<{ target: PackGenTarget; prefill: Partial<PackGenInput> | null } | null>(null);
+  // Re-read when the generate dialog closes, so a pack saved there shows at once.
+  const packs = useMemo(() => importedPacks(), [gen]);
+  const generate = async (projectId: string) => setGen({ target: { kind: 'project', projectId }, prefill: await generatePrefillFor(projectId) });
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
 
   const open =  (target: WorkTarget, path = '/home') => {
@@ -118,6 +121,7 @@ export function LaunchScreen() {
                         {list.map((p) => (
                           <li key={p.id} data-testid={`launch-project-${p.id}`}>
                             <span className="launch-project-name">{p.name}</span>
+                            {p.brief?.purpose && <span className="muted launch-project-purpose" data-testid={`launch-purpose-${p.id}`}>{p.brief.purpose}</span>}
                             <span className="muted">{t('proj.launch.step', { step: t(`proj.step.${p.step}`) })}</span>
                             <span className="proj-badges">
                               {packs[p.id] && <Badge appearance="tint" color="success">{t('proj.launch.packImported')}</Badge>}
@@ -132,7 +136,7 @@ export function LaunchScreen() {
                               >
                                 {t('proj.launch.open')}
                               </Button>
-                              <Button icon={<BotSparkle20Regular />} onClick={() => setGenTarget({ kind: 'project', projectId: p.id })} aria-label={t('proj.gen.buttonNamed', { name: `${c.name}-${p.name}` })} data-testid={`launch-generate-${p.id}`}>{t('proj.gen.buttonShort')}</Button>
+                              <Button icon={<BotSparkle20Regular />} onClick={() => void generate(p.id)} aria-label={t(packs[p.id] ? 'proj.projects.refetchNamed' : 'proj.gen.buttonNamed', { name: `${c.name}-${p.name}` })} data-testid={`launch-generate-${p.id}`}>{t(packs[p.id] ? 'proj.ready.refetch' : 'proj.gen.buttonShort')}</Button>
                               <Button icon={<Edit20Regular />} onClick={() => management.renameProject(p)} aria-label={t('proj.projects.renameNamed', { name: `${c.name}-${p.name}` })}>{t('proj.rename')}</Button>
                               <Button icon={<Delete20Regular />} onClick={() => management.deleteProject(p)} aria-label={t('proj.projects.deleteNamed', { name: `${c.name}-${p.name}` })}>{t('proj.delete')}</Button>
                             </div>
@@ -149,11 +153,12 @@ export function LaunchScreen() {
 
         {management.dialogs}
         <AiSettingsDialog open={aiSettingsOpen} onClose={() => setAiSettingsOpen(false)} />
-        {genTarget && (
+        {gen && (
           <PackGenerateDialog
             open
-            target={genTarget}
-            onClose={() => setGenTarget(null)}
+            target={gen.target}
+            prefill={gen.prefill}
+            onClose={() => setGen(null)}
             onOpenProject={(projectId) => {
               open({ kind: 'project', projectId });
               // A pack saved for the project that is already active needs an explicit restart to be loaded (main.tsx).
@@ -177,7 +182,7 @@ export function LaunchScreen() {
             {error && <MessageBar intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <div className="proj-row">
               <Button type="submit" appearance="primary" icon={<Add20Regular />} data-testid="launch-create">{t('proj.launch.create')}</Button>
-              <Button icon={<BotSparkle20Regular />} onClick={() => setGenTarget({ kind: 'new', companyName, projectName })} data-testid="launch-generate">{t('proj.gen.button')}</Button>
+              <Button icon={<BotSparkle20Regular />} onClick={() => setGen({ target: { kind: 'new', companyName, projectName }, prefill: null })} data-testid="launch-generate">{t('proj.gen.button')}</Button>
               <Button appearance="subtle" icon={<Sparkle20Regular />} onClick={() => open({ kind: 'demo' }, '/data')}>{t('proj.launch.howToPack')}</Button>
             </div>
           </form>

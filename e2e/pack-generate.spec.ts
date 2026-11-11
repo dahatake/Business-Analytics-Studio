@@ -19,21 +19,24 @@ async function scan(page: Page) {
   return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
 }
 
-async function seed(page: Page, lang: 'ja' | 'en') {
+async function seed(page: Page, lang: 'ja' | 'en', withInputs = false) {
   await setup(page, { skipLaunch: false, lang });
-  await page.addInitScript(() => {
+  await page.addInitScript((inputs) => {
     if (sessionStorage.getItem('bas.e2e.gen')) return;
     sessionStorage.setItem('bas.e2e.gen', '1');
     const createdAt = '2026-11-10T00:00:00.000Z';
     localStorage.setItem('bas.projects', JSON.stringify({
       version: 1,
       state: {
-        companies: [{ id: 'co-c', name: 'Contoso', createdAt }],
-        projects: [{ id: 'pj-c', companyId: 'co-c', name: 'Delivery', createdAt, step: 'define' }],
+        companies: [{ id: 'co-c', name: 'Contoso', createdAt, ...(inputs ? { industry: 'IT サービス', officialUrl: 'https://www.contoso.example' } : {}) }],
+        projects: [{
+          id: 'pj-c', companyId: 'co-c', name: 'Delivery', createdAt, step: 'define',
+          ...(inputs ? { brief: { purpose: '配送遅延を減らす\n顧客満足度を上げる', focus: '関東の物流', asOf: '2026-10-01' } } : {}),
+        }],
         target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define',
       },
     }));
-  });
+  }, withInputs);
   await page.goto('/');
   await expect(page.getByTestId('launch-screen')).toBeVisible();
 }
@@ -100,4 +103,36 @@ test('D-14: with GitHub Copilot as the provider the generator neither offers nor
   await expect(dialog.getByTestId('gen-news')).toBeVisible();
   await expect(dialog.getByTestId('gen-workiq-section')).toHaveCount(0);
   await expect(dialog.getByTestId('gen-sends')).not.toContainText('Work IQ');
+});
+
+test('company information is entered once and reused; the project inputs come back multi-line in the generator', async ({ page }) => {
+  await seed(page, 'ja', true);
+  await expect(page.getByTestId('launch-purpose-pj-c')).toContainText('配送遅延を減らす');
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await expect(dialog.getByTestId('gen-company-note')).toContainText('登録済みの企業です');
+  await expect(dialog.getByTestId('gen-industry')).toHaveValue('IT サービス');
+  await expect(dialog.getByTestId('gen-url')).toHaveValue('https://www.contoso.example');
+  await expect(dialog.getByTestId('gen-purpose')).toHaveValue('配送遅延を減らす\n顧客満足度を上げる');
+  await expect(dialog.getByTestId('gen-focus')).toHaveValue('関東の物流');
+  await expect(dialog.getByTestId('gen-asof')).toHaveValue('2026-10-01');
+  await expect(dialog.getByTestId('gen-missing')).toHaveCount(0);
+  await expect(dialog.getByTestId('gen-replaces')).toHaveCount(0); // no pack yet
+  // Company first, then the project.
+  expect(await dialog.evaluate((el) => {
+    const company = el.querySelector('[data-testid="gen-company-section"]')!;
+    const purpose = el.querySelector('[data-testid="gen-purpose"]')!;
+    return Boolean(company.compareDocumentPosition(purpose) & Node.DOCUMENT_POSITION_FOLLOWING);
+  })).toBe(true);
+  expect(await scan(page)).toEqual([]);
+  await dialog.getByRole('button', { name: 'キャンセル' }).click();
+
+  // A new project of the same company does not ask for the company information again.
+  await page.getByTestId('launch-company-name').fill('Contoso');
+  await page.getByTestId('launch-project-name').fill('Billing');
+  await page.getByTestId('launch-generate').click();
+  await expect(dialog.getByTestId('gen-company-note')).toContainText('登録済みの企業です');
+  await expect(dialog.getByTestId('gen-industry')).toHaveValue('IT サービス');
+  await expect(dialog.getByTestId('gen-url')).toHaveValue('https://www.contoso.example');
+  await expect(dialog.getByTestId('gen-purpose')).toHaveValue('');
 });

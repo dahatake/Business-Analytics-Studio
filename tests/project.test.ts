@@ -335,7 +335,7 @@ describe('export and restore (FR-051〜FR-056, FR-219)', () => {
 describe('project file with ids (FR-139)', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
   });
 
   it('exports and re-imports a project with the same ids and data', () => {
@@ -355,5 +355,30 @@ describe('project file with ids (FR-139)', () => {
     expect(useProjects.getState().companies[0]!.id).toBe(c.id);
     expect(JSON.parse(localStorage.getItem(scopedKey(p.id, 'proj.discussion'))!)).toEqual({ themes: [{ id: 't' }], records: [] });
     expect(importProject('nope')).toEqual({ ok: false, error: 'invalid' });
+  });
+
+  it('carries the company information, project inputs and relations to projects that exist', () => {
+    const s = useProjects.getState();
+    const c = s.addCompany('Contoso', { industry: 'Retail', notes: 'Sales org' });
+    if (!c.ok) throw new Error();
+    const a = s.addProject(c.id, 'Pipeline', { purpose: 'Improve\nforecast', asOf: '2025-01-31' });
+    const b = s.addProject(c.id, 'Quote');
+    if (!a.ok || !b.ok) throw new Error();
+    const rel = s.addRelation(a.id, b.id, 'dependsOn', 'quote data feeds pipeline');
+    if (!rel.ok) throw new Error();
+    const file = JSON.parse(JSON.stringify(exportProject(a.id)));
+    expect(file.relations).toHaveLength(1);
+
+    s.deleteProject(a.id);
+    expect(useProjects.getState().relations).toEqual([]);
+    expect(importProject(JSON.stringify(file))).toMatchObject({ ok: true, projectId: a.id });
+    expect(useProjects.getState().projects.find((p) => p.id === a.id)!.brief).toEqual({ purpose: 'Improve\nforecast', asOf: '2025-01-31' });
+    expect(useProjects.getState().relations).toEqual([expect.objectContaining({ id: rel.id, from: a.id, to: b.id, kind: 'dependsOn' })]);
+
+    // In a fresh store the other project is missing, so the relation is not restored; the company information is.
+    useProjects.setState({ companies: [], projects: [], relations: [] });
+    expect(importProject(JSON.stringify(file)).ok).toBe(true);
+    expect(useProjects.getState().relations).toEqual([]);
+    expect(useProjects.getState().companies[0]).toMatchObject({ name: 'Contoso', industry: 'Retail', notes: 'Sales org' });
   });
 });

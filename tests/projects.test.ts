@@ -1,11 +1,11 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { createScopedStore, MAX_PROJECTS_PER_COMPANY, onProjectDeleted, scopedKey, useProjects } from '../src/state/projects.ts';
+import { closesCycle, createScopedStore, MAX_PROJECTS_PER_COMPANY, onProjectDeleted, scopedKey, useProjects } from '../src/state/projects.ts';
 import { UndoStack } from '../src/state/history.ts';
 
 describe('companies and projects (FR-137〜139)', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
   });
 
   it('validates names and enforces PARAM-031 per company', () => {
@@ -144,6 +144,57 @@ describe('companies and projects (FR-137〜139)', () => {
     expect(useProjects.getState().target).toEqual({ kind: 'demo' });
     expect(useProjects.getState().lastProjectId).toBeNull();
     expect(s.addProject(c.id, 'New').ok).toBe(true);
+  });
+});
+
+describe('company information and project inputs', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+  });
+
+  it('keeps company information once per company and the inputs per project, trimming and clearing fields', () => {
+    const s = useProjects.getState();
+    const c = s.addCompany('Contoso', { industry: ' Retail ', officialUrl: 'https://contoso.example' });
+    if (!c.ok) throw new Error();
+    const p = s.addProject(c.id, 'Sales', { purpose: 'Line 1\nLine 2', materialNames: ['a.csv'] });
+    if (!p.ok) throw new Error();
+    expect(useProjects.getState().companies[0]).toMatchObject({ industry: 'Retail', officialUrl: 'https://contoso.example' });
+    expect(useProjects.getState().projects[0]!.brief).toEqual({ purpose: 'Line 1\nLine 2', materialNames: ['a.csv'] });
+
+    s.updateCompanyProfile(c.id, { notes: 'Global sales org', officialUrl: '' });
+    expect(useProjects.getState().companies[0]).toMatchObject({ industry: 'Retail', notes: 'Global sales org' });
+    expect(useProjects.getState().companies[0]).not.toHaveProperty('officialUrl');
+
+    s.updateProjectBrief(p.id, { focus: 'Japan', materialNames: [], useWorkIq: true });
+    expect(useProjects.getState().projects[0]!.brief).toEqual({ purpose: 'Line 1\nLine 2', focus: 'Japan', useWorkIq: true });
+  });
+
+  it('registers relations once per pair, rejects self, other company and cycles, and drops them with the project', () => {
+    const s = useProjects.getState();
+    const a = s.addCompany('A');
+    const b = s.addCompany('B');
+    if (!a.ok || !b.ok) throw new Error();
+    const [x, y, z, other] = [s.addProject(a.id, 'X'), s.addProject(a.id, 'Y'), s.addProject(a.id, 'Z'), s.addProject(b.id, 'O')];
+    if (!x.ok || !y.ok || !z.ok || !other.ok) throw new Error();
+
+    expect(s.addRelation(x.id, x.id, 'same')).toEqual({ ok: false, reason: 'self' });
+    expect(s.addRelation(x.id, 'missing', 'same')).toEqual({ ok: false, reason: 'notFound' });
+    expect(s.addRelation(x.id, other.id, 'correlated')).toEqual({ ok: false, reason: 'otherCompany' });
+    expect(s.addRelation(x.id, y.id, 'dependsOn').ok).toBe(true);
+    expect(s.addRelation(y.id, x.id, 'correlated')).toEqual({ ok: false, reason: 'duplicate' });
+    expect(s.addRelation(y.id, z.id, 'dependsOn').ok).toBe(true);
+    // X → Y → Z, so Z → X would close a loop.
+    expect(s.addRelation(z.id, x.id, 'dependsOn')).toEqual({ ok: false, reason: 'cycle' });
+    expect(closesCycle(useProjects.getState().relations, z.id, x.id)).toBe(true);
+    const r = s.addRelation(z.id, x.id, 'correlated', '  same customers ');
+    expect(r.ok).toBe(true);
+    expect(useProjects.getState().relations.find((rel) => r.ok && rel.id === r.id)).toMatchObject({ companyId: a.id, note: 'same customers' });
+
+    s.deleteProject(y.id);
+    expect(useProjects.getState().relations.map((rel) => [rel.from, rel.to])).toEqual([[z.id, x.id]]);
+    s.deleteCompany(a.id);
+    expect(useProjects.getState().relations).toEqual([]);
   });
 });
 

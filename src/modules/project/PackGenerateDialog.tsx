@@ -11,7 +11,7 @@ import { jstDay, jstMonth } from '../../ai/budget.ts';
 import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
 import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
 import { isReadableFile } from '../../data/packImport.ts';
-import { saveImportedPack } from '../../data/packStore.ts';
+import { importedPackMeta, loadImportedPack, saveImportedPack } from '../../data/packStore.ts';
 import { useI18n, type Lang } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
 import { AiReadiness, AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
@@ -20,7 +20,7 @@ import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspec
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import {
-  DEFAULT_WORKIQ_ROUNDS, generatePack, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, runPlan, stageAPrompt,
+  DEFAULT_WORKIQ_ROUNDS, generatePack, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt,
   type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
 } from './packGenerate.ts';
 import { ReadinessView } from './ReadinessView.tsx';
@@ -42,6 +42,16 @@ type Phase =
 
 function todayJst(): string {
   return jstDay(new Date());
+}
+
+/** One pack per project: when the project already has a generated pack, its recorded inputs (with the files) come back. */
+export async function generatePrefillFor(projectId: string): Promise<Partial<PackGenInput> | null> {
+  if (!importedPackMeta(projectId)) return null;
+  try {
+    return prefillFromPack(await loadImportedPack(projectId));
+  } catch {
+    return null;
+  }
 }
 
 /** A new company/project name pair that addProject would accept (checked before spending anything). */
@@ -105,23 +115,39 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     setPhase({ kind: 'form' });
     setApproved(false);
     setCostOk(false);
-    if (prefill) {
-      setPurpose(prefill.purpose ?? '');
-      setIndustry(prefill.industry ?? '');
-      setOfficialUrl(prefill.officialUrl ?? '');
-      setFocus(prefill.focus ?? '');
-      setResearchNote(prefill.researchNote ?? '');
-      setMaterials(prefill.materials ?? []);
-      setUseNews(prefill.useNews ?? true);
-      setUseWorkIq(prefill.useWorkIq ?? true);
-      setWorkIqRounds(prefill.workIqRounds ?? DEFAULT_WORKIQ_ROUNDS);
-      setAsOf(todayJst());
+    // The pack's recorded inputs first, then what the user has since entered for the project, then the shared company profile.
+    const brief = existing?.brief ?? {};
+    const from = { ...(prefill ?? {}), ...brief };
+    if (prefill || existing?.brief) {
+      setPurpose(from.purpose ?? '');
+      setFocus(from.focus ?? '');
+      setResearchNote(from.researchNote ?? '');
+      setMaterials(prefill?.materials ?? []);
+      setUseNews(from.useNews ?? true);
+      setUseWorkIq(from.useWorkIq ?? true);
+      setWorkIqRounds(from.workIqRounds ?? DEFAULT_WORKIQ_ROUNDS);
+      // Re-fetching collects as of today; a first run keeps the date the user chose for the project.
+      setAsOf(prefill ? todayJst() : brief.asOf ?? todayJst());
     }
+    const company = existingCompany ?? (target.kind === 'new' ? companies.find((c) => c.name === target.companyName.trim()) : undefined);
+    setIndustry(company?.industry ?? prefill?.industry ?? '');
+    setOfficialUrl(company?.officialUrl ?? prefill?.officialUrl ?? '');
     void useAiSettings.getState().refreshRelay();
     if (useAiSettings.getState().provider === 'copilotSdk') void useAiSettings.getState().checkCopilot();
     // Only when the dialog opens or its target changes; the user's edits must survive re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, target.kind, target.kind === 'project' ? target.projectId : `${target.companyName}\u0000${target.projectName}`]);
+
+  // A company registered earlier brings its shared profile, so it is not entered again for every project.
+  const knownCompany = existingCompany ?? companies.find((c) => c.name === companyName.trim());
+  useEffect(() => {
+    if (!open || !knownCompany || target.kind === 'project') return;
+    setIndustry((v) => v || knownCompany.industry || '');
+    setOfficialUrl((v) => v || knownCompany.officialUrl || '');
+    // Only when the typed name starts matching another registered company.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, knownCompany?.id]);
+  const hasPack = target.kind === 'project' && importedPackMeta(target.projectId) !== null;
 
   useEffect(() => {
     if (phase.kind !== 'running') return;
@@ -200,7 +226,19 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     else if (created.projectId) deleteProject(created.projectId);
   };
 
+  /** Keep what was entered with the company (shared) and the project, so neither is typed again. */
+  const remember = (projectId: string) => {
+    const s = useProjects.getState();
+    const project = s.projects.find((p) => p.id === projectId);
+    if (!project) return;
+    s.updateCompanyProfile(project.companyId, { officialUrl, industry });
+    s.updateProjectBrief(projectId, {
+      purpose, focus, asOf, researchNote, useNews, useWorkIq, workIqRounds, materialNames: materials.map((m) => m.name),
+    });
+  };
+
   const start = async () => {
+    if (target.kind === 'project') remember(target.projectId);
     const controller = new AbortController();
     abortRef.current = controller;
     // The run's ledger records stay under this scope until the project they were spent for is known.
@@ -264,6 +302,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       return;
     }
     rebindLedgerScope(runScope, projectId);
+    remember(projectId);
     setPhase({ kind: 'saved', result, projectId });
   };
 
@@ -295,12 +334,27 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                       <MessageBarBody>{t('proj.gen.missing', { fields: missing.map(labelOf).join(t('ai.listSep')) })}</MessageBarBody>
                     </MessageBar>
                   )}
-                  <section aria-labelledby="gen-required">
-                    <h3 id="gen-required" className="proj-h2">{t('proj.gen.required')} <Badge appearance="tint" color="danger">{t('proj.gen.requiredBadge')}</Badge></h3>
+                  {hasPack && (
+                    <MessageBar intent="warning" data-testid="gen-replaces"><MessageBarBody>{t('proj.gen.replaces')}</MessageBarBody></MessageBar>
+                  )}
+                  <section aria-labelledby="gen-company-h" data-testid="gen-company-section">
+                    <h3 id="gen-company-h" className="proj-h2">{t('proj.gen.companySection')}</h3>
+                    <p className="muted" data-testid="gen-company-note">{t(knownCompany ? 'proj.gen.companyKnown' : 'proj.gen.companyNew')}</p>
                     <div className="gen-grid">
                       <Field label={labelOf('companyName')} required validationState={missing.includes('companyName') ? 'warning' : 'none'}>
                         <Input value={companyName} onChange={(_, d) => setCompanyName(d.value)} readOnly={target.kind === 'project'} data-testid="gen-company" />
                       </Field>
+                      <Field label={t('proj.gen.field.industry')}>
+                        <Input value={industry} onChange={(_, d) => setIndustry(d.value)} data-testid="gen-industry" />
+                      </Field>
+                      <Field label={t('proj.gen.field.officialUrl')} hint={t('proj.gen.officialUrlHint')} className="gen-wide">
+                        <Input type="url" value={officialUrl} placeholder="https://www.example.co.jp" onChange={(_, d) => setOfficialUrl(d.value)} data-testid="gen-url" />
+                      </Field>
+                    </div>
+                  </section>
+                  <section aria-labelledby="gen-required">
+                    <h3 id="gen-required" className="proj-h2">{t('proj.gen.projectSection')} <Badge appearance="tint" color="danger">{t('proj.gen.requiredBadge')}</Badge></h3>
+                    <div className="gen-grid">
                       <Field
                         label={labelOf('projectName')}
                         required
@@ -309,26 +363,20 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                       >
                         <Input value={projectName} onChange={(_, d) => setProjectName(d.value)} readOnly={target.kind === 'project'} data-testid="gen-project" />
                       </Field>
-                      <Field label={labelOf('purpose')} required hint={t('proj.gen.purposeHint')} validationState={missing.includes('purpose') ? 'warning' : 'none'} className="gen-wide">
-                        <Input value={purpose} onChange={(_, d) => setPurpose(d.value)} data-testid="gen-purpose" />
-                      </Field>
                       <Field label={labelOf('asOf')} required validationState={missing.includes('asOf') ? 'warning' : 'none'}>
                         <Input type="date" value={asOf} onChange={(_, d) => setAsOf(d.value)} data-testid="gen-asof" />
+                      </Field>
+                      <Field label={labelOf('purpose')} required hint={t('proj.gen.purposeHint')} validationState={missing.includes('purpose') ? 'warning' : 'none'} className="gen-wide">
+                        <Textarea value={purpose} onChange={(_, d) => setPurpose(d.value)} resize="vertical" rows={5} data-testid="gen-purpose" />
+                      </Field>
+                      <Field label={t('proj.gen.field.focus')} className="gen-wide">
+                        <Input value={focus} onChange={(_, d) => setFocus(d.value)} data-testid="gen-focus" />
                       </Field>
                     </div>
                   </section>
                   <section aria-labelledby="gen-optional">
                     <h3 id="gen-optional" className="proj-h2">{t('proj.gen.optional')}</h3>
                     <div className="gen-grid">
-                      <Field label={t('proj.gen.field.officialUrl')} hint={t('proj.gen.officialUrlHint')} className="gen-wide">
-                        <Input type="url" value={officialUrl} placeholder="https://www.example.co.jp" onChange={(_, d) => setOfficialUrl(d.value)} data-testid="gen-url" />
-                      </Field>
-                      <Field label={t('proj.gen.field.industry')}>
-                        <Input value={industry} onChange={(_, d) => setIndustry(d.value)} data-testid="gen-industry" />
-                      </Field>
-                      <Field label={t('proj.gen.field.focus')}>
-                        <Input value={focus} onChange={(_, d) => setFocus(d.value)} data-testid="gen-focus" />
-                      </Field>
                       <Checkbox className="gen-wide" checked={useNews} onChange={(_, d) => setUseNews(d.checked === true)} label={t('proj.gen.useNews')} data-testid="gen-news" />
                       {workIqShown && (
                         <div className="gen-wide" data-testid="gen-workiq-section">

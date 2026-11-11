@@ -149,15 +149,21 @@ test('launch confirms deletion, cascades data cleanup and leaves other companies
 test('management screen uses the same validated dialogs and preserves a company after its last project is deleted', async ({ page }) => {
   await seed(page, false);
   const company = page.getByTestId('proj-company-Contoso');
-  const rename = page.getByTestId('proj-rename-dialog');
-  await company.getByRole('button', { name: 'Contoso の名前を変更', exact: true }).click();
-  await rename.getByRole('textbox').fill('Other');
-  await rename.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(rename).toContainText('同じ名前の企業がすでにあります。');
-  await rename.getByRole('button', { name: 'キャンセル' }).click();
-  await company.getByRole('button', { name: 'Alpha の名前を変更', exact: true }).click();
-  await rename.getByRole('textbox').fill('Updated');
-  await rename.getByRole('button', { name: '保存', exact: true }).click();
+  const companyDialog = page.getByTestId('proj-company-dialog');
+  await company.getByRole('button', { name: 'Contoso の企業情報を編集', exact: true }).click();
+  await expect(page.getByTestId('proj-company-edit-name')).toHaveValue('Contoso');
+  await page.getByTestId('proj-company-edit-name').fill('Other');
+  await page.getByTestId('proj-company-edit-save').click();
+  await expect(companyDialog).toContainText('同じ名前の企業がすでにあります。');
+  await companyDialog.getByRole('button', { name: 'キャンセル' }).click();
+  const projectDialog = page.getByTestId('proj-edit-dialog');
+  await company.getByRole('button', { name: 'Alpha を編集', exact: true }).click();
+  await page.getByTestId('proj-edit-name').fill('Beta');
+  await page.getByTestId('proj-edit-save').click();
+  await expect(projectDialog).toContainText('この企業に同じ名前の Project がすでにあります。');
+  await page.getByTestId('proj-edit-name').fill('Updated');
+  await page.getByTestId('proj-edit-save').click();
+  await expect(projectDialog).toHaveCount(0);
   await expect(company.getByRole('rowheader', { name: 'Updated', exact: false })).toBeVisible();
   await expect(page.getByTestId('proj-target-menu')).toContainText('Contoso-Updated');
   for (const name of ['Updated', 'Beta']) {
@@ -170,6 +176,80 @@ test('management screen uses the same validated dialogs and preserves a company 
   await page.getByTestId('proj-project-name-Contoso').fill('Replacement');
   await company.getByRole('button', { name: 'Project を作成', exact: true }).click();
   await expect(company.getByRole('rowheader', { name: 'Replacement' })).toBeVisible();
+});
+
+test('company information comes first and is shared; project inputs are multi-line and relations are drawn', async ({ page }) => {
+  await seed(page, false);
+  const company = page.getByTestId('proj-company-Contoso');
+  const profile = company.getByTestId('proj-company-profile');
+  // Company information is the first block of the company, above the projects table.
+  expect(await company.evaluate((el) => {
+    const info = el.querySelector('[data-testid="proj-company-profile"]')!;
+    const table = el.querySelector('table')!;
+    return Boolean(info.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING);
+  })).toBe(true);
+  await expect(profile).toContainText('未入力');
+
+  await company.getByRole('button', { name: 'Contoso の企業情報を編集', exact: true }).click();
+  await page.getByTestId('proj-company-edit-industry').fill('IT サービス');
+  await page.getByTestId('proj-company-edit-url').fill('https://www.contoso.example');
+  await page.getByTestId('proj-company-edit-notes').fill('グローバルの営業組織\n日本はアジア地域の一部');
+  await page.getByTestId('proj-company-edit-save').click();
+  await expect(profile).toContainText('IT サービス');
+  await expect(profile.getByRole('link', { name: 'https://www.contoso.example' })).toBeVisible();
+
+  await company.getByRole('button', { name: 'Alpha を編集', exact: true }).click();
+  const purpose = page.getByTestId('proj-edit-purpose');
+  expect(await purpose.evaluate((el) => el.tagName)).toBe('TEXTAREA');
+  await purpose.fill('受注予測の精度を上げる\n営業パイプラインの滞留を減らす');
+  await page.getByTestId('proj-edit-focus').fill('日本の営業');
+  await page.getByTestId('proj-edit-save').click();
+  const brief = page.getByTestId('proj-brief-purpose-pj-alpha');
+  await expect(brief).toHaveText('受注予測の精度を上げる\n営業パイプラインの滞留を減らす');
+  expect(await brief.evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(30);
+  await expect(page.getByTestId('proj-brief-pj-alpha')).toContainText('日本の営業');
+  await expect(page.getByTestId('proj-brief-pj-beta')).toContainText('目的が未入力です');
+
+  await page.getByTestId('proj-project-name-Contoso').fill('Forecast');
+  await page.getByTestId('proj-project-purpose-Contoso').fill('営業パイプラインのデータから受注予測を作る');
+  await company.getByRole('button', { name: 'Project を作成', exact: true }).click();
+  await expect(company.getByRole('rowheader', { name: 'Forecast' })).toBeVisible();
+
+  const rel = company.getByTestId('proj-rel');
+  await expect(rel.getByTestId('proj-rel-suggestion')).toHaveCount(1);
+  await expect(rel.getByTestId('proj-rel-suggestion')).toContainText('Alpha');
+  await expect(rel.getByTestId('proj-rel-suggestion')).toContainText('Forecast');
+  await rel.getByTestId('proj-rel-suggestion').getByRole('button', { name: '同じ課題として登録' }).click();
+  await expect(rel.getByTestId('proj-rel-edge')).toHaveCount(1);
+  await expect(rel.getByTestId('proj-rel-edge')).toHaveAttribute('data-kind', 'same');
+  await expect(rel.getByTestId('proj-rel-groups')).toContainText('Alpha');
+  await expect(rel.getByTestId('proj-rel-suggest')).toHaveCount(0);
+
+  const form = rel.getByTestId('proj-rel-form');
+  await form.getByTestId('proj-rel-from').selectOption({ label: 'Beta' });
+  await form.getByTestId('proj-rel-kind').selectOption('dependsOn');
+  await form.getByTestId('proj-rel-to').selectOption({ label: 'Alpha' });
+  await form.getByTestId('proj-rel-add').click();
+  await form.getByTestId('proj-rel-from').selectOption({ label: 'Alpha' });
+  await form.getByTestId('proj-rel-kind').selectOption('dependsOn');
+  await form.getByTestId('proj-rel-to').selectOption({ label: 'Beta' });
+  await form.getByTestId('proj-rel-add').click();
+  await expect(rel.getByTestId('proj-rel-error')).toContainText('この 2 つの Project にはすでに関係があります');
+  await expect(rel.getByTestId('proj-rel-edge')).toHaveCount(2);
+  await expect(rel.getByTestId('proj-rel-table')).toContainText('Beta は Alpha に依存する');
+
+  await page.reload();
+  await expect(company.getByTestId('proj-rel-edge')).toHaveCount(2);
+  await expect(page.getByTestId('proj-brief-purpose-pj-alpha')).toHaveText('受注予測の精度を上げる\n営業パイプラインの滞留を減らす');
+  const accessibility = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).exclude('[data-tabster-dummy]').analyze();
+  expect(accessibility.violations).toEqual([]);
+
+  // The project is deleted with its relations.
+  await company.getByRole('button', { name: 'Beta を削除', exact: true }).click();
+  await page.getByTestId('proj-delete-confirm').getByRole('button', { name: '削除', exact: true }).click();
+  await expect(company.getByTestId('proj-rel-edge')).toHaveCount(1);
+  expect((await stored(page)).registry.relations).toHaveLength(1);
 });
 
 test('English launch management works on a narrow screen without horizontal overflow', async ({ page }) => {

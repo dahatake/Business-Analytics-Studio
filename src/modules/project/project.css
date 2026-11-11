@@ -313,3 +313,49 @@
 .gen-dot { width: 10px; height: 10px; margin: 0 5px; border-radius: 50%; border: 2px solid var(--colorNeutralStroke1); display: inline-block; }
 .gen-detail { display: block; font-family: var(--fontFamilyMonospace); font-size: var(--fontSizeBase200); margin: 4px 0; overflow-wrap: anywhere; }
 .gen-saved { display: grid; gap: 12px; }
+
+/* Company information first, then every input of each project, then relations between projects. */
+.proj-h3 { margin: 12px 0 4px; font-size: var(--fontSizeBase300); font-weight: var(--fontWeightSemibold); }
+.proj-company-info { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--colorNeutralStroke2); border-left: 4px solid var(--colorBrandStroke1); border-radius: var(--borderRadiusLarge); background: var(--colorNeutralBackground2); }
+.proj-company-info p { margin: 6px 0 0; }
+.proj-brief { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; min-width: 260px; }
+.proj-brief dt { color: var(--colorNeutralForeground3); font-size: var(--fontSizeBase200); }
+.proj-brief dd { margin: 0; overflow-wrap: anywhere; }
+.proj-prewrap { white-space: pre-wrap; }
+.proj-missing { font-weight: var(--fontWeightSemibold); font-style: italic; }
+.proj-edit-form { display: grid; gap: 12px; }
+.launch-project-purpose { display: block; max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.proj-rel { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--colorNeutralStroke2); display: grid; gap: 10px; }
+.proj-rel p { margin: 0; }
+.proj-rel-figure { margin: 0; }
+.proj-rel-figure svg { width: 100%; max-width: 640px; height: auto; display: block; background: var(--colorNeutralBackground1); border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusLarge); }
+.proj-rel-own { stroke: var(--colorNeutralStroke1); stroke-width: 1; stroke-dasharray: 2 4; }
+.proj-rel-edge { stroke-width: 3; fill: none; }
+.proj-rel-edge-same { stroke: var(--colorPaletteRedForeground1); stroke-width: 5; }
+.proj-rel-edge-dependsOn { stroke: var(--colorPaletteBlueForeground2); }
+.proj-rel-edge-correlated { stroke: var(--colorPaletteDarkOrangeForeground1); stroke-dasharray: 8 5; }
+.proj-rel-arrowhead { fill: var(--colorPaletteBlueForeground2); }
+.proj-rel-company rect { fill: var(--colorBrandBackground); }
+.proj-rel-company text { fill: var(--colorNeutralForegroundOnBrand); font-weight: var(--fontWeightSemibold); font-size: 14px; }
+.proj-rel-node circle { fill: var(--colorNeutralBackground1); stroke: var(--colorBrandStroke1); stroke-width: 3; }
+.proj-rel-node circle.proj-rel-node-same { fill: var(--colorPaletteRedBackground2); stroke: var(--colorPaletteRedForeground1); }
+.proj-rel-node text { fill: var(--colorNeutralForeground1); font-size: 13px; }
+.proj-rel-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; font-size: var(--fontSizeBase200); }
+.proj-rel-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.proj-rel-key { display: inline-block; width: 24px; height: 0; border-top: 3px solid; }
+.proj-rel-key-company { height: 12px; border: 0; border-radius: 2px; background: var(--colorBrandBackground); }
+.proj-rel-key-own { border-top: 1px dashed var(--colorNeutralStroke1); }
+.proj-rel-key-same { border-top: 5px solid var(--colorPaletteRedForeground1); }
+.proj-rel-key-dependsOn { border-top-color: var(--colorPaletteBlueForeground2); }
+.proj-rel-key-correlated { border-top: 3px dashed var(--colorPaletteDarkOrangeForeground1); }
+.proj-rel-badge-same { color: var(--colorPaletteRedForeground1); }
+.proj-rel-badge-dependsOn { color: var(--colorPaletteBlueForeground2); }
+.proj-rel-badge-correlated { color: var(--colorPaletteDarkOrangeForeground1); }
+.proj-rel-suggest { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed var(--colorNeutralStroke1); border-radius: var(--borderRadiusLarge); }
+.proj-rel-suggest ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+@media (forced-colors: active) {
+  .proj-rel-edge, .proj-rel-own, .proj-rel-node circle { stroke: CanvasText; }
+  .proj-rel-company rect { fill: Highlight; }
+  .proj-rel-company text { fill: HighlightText; }
+}

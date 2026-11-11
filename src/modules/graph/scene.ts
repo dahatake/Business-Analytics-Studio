@@ -36,6 +36,8 @@ export interface SceneNode {
   /** Spatial nesting box (2D spatial layout), in drawing units. */
   box?: { x: number; y: number; w: number; h: number };
   degree: number;
+  /** Public web / news context: drawn small and faint so the project's own problem stays in front. */
+  peripheral?: boolean;
 }
 
 export interface SceneEdge {
@@ -89,6 +91,17 @@ export interface SceneInput {
 const SHAPE_CLUSTER: Record<string, NodeShape> = { real: 'hexagon', digital: 'diamond' };
 
 const kindShapeOf = (k: EntityKind): NodeShape => kindShape[k];
+
+const EXTERNAL_GROUP = 'cl:external';
+const isWebSource = (e: Entity | undefined) => !!e && e.kind === 'source'
+  && ((e as { origin?: string }).origin === 'web' || e.id.startsWith('source-news-') || e.id.startsWith('source-web-'));
+
+/** Web/news sources, and entities whose only evidence is web/news: context around the problem, not its core. */
+export function isExternalContext(e: Entity, byId: Map<string, Entity>): boolean {
+  if (e.kind === 'source') return isWebSource(e);
+  const ids = e.sourceIds ?? [];
+  return ids.length > 0 && ids.every((id) => isWebSource(byId.get(id)));
+}
 
 function entityNode(e: Entity, inp: SceneInput, lane: number, group: string, degree: number, extraLabel?: string): SceneNode {
   const { t, tx } = inp;
@@ -222,13 +235,21 @@ function relationsScene(inp: SceneInput): Scene {
   if (inp.level === 'detail') return detailScene(inp, ents, rels, twins.map((tw) => ({ source: tw.digital, target: tw.real, type: `twin:${tw.kind}`, semantic: 'measurement' as Semantic, label: t(`graph.twin.${tw.kind}`), twin: tw.kind })), 'relations');
 
   // element level
-  const agg = aggregateNodes(ents.map((e) => e.id), (id) => classify(data.byId.get(id)!).cluster);
+  const external = new Set(ents.filter((e) => isExternalContext(e, data.byId)).map((e) => e.id));
+  const groupOf = (id: string) => (external.has(id) ? EXTERNAL_GROUP : classify(data.byId.get(id)!).cluster);
+  const agg = aggregateNodes(ents.map((e) => e.id), groupOf, undefined, EXTERNAL_GROUP);
   const nodes: SceneNode[] = agg.nodes.map((id) => {
     const e = data.byId.get(id)!;
     const cl = classify(e).cluster;
-    return entityNode(e, inp, laneOfCluster(cl), cl, deg.get(id) ?? 0);
+    const n = entityNode(e, inp, laneOfCluster(cl), cl, deg.get(id) ?? 0);
+    return external.has(id) ? { ...n, size: 0.7, peripheral: true } : n;
   });
   for (const [cl, members] of agg.clusters) {
+    if (cl === EXTERNAL_GROUP) {
+      const label = t('graph.cluster.external', { count: members.length });
+      nodes.push({ id: cl, label, aria: label, role: 'cluster', shape: 'circle', color: 'var(--colorNeutralForeground3)', size: 0.9, lane: 1, group: cl, degree: 0, peripheral: true, info: [{ label: t('graph.attr.members'), value: inp.fmtNumber(members.length) }], relations: members.map((m) => nameOf(m, inp)) });
+      continue;
+    }
     const [, world, type] = cl.split(':') as [string, Entity['world'], Entity['type']];
     const label = t('graph.cluster.label', { world: t(`world.${world}`), type: t(`graph.type.${type}`), count: members.length });
     nodes.push({ id: cl, label, aria: label, role: 'cluster', shape: SHAPE_CLUSTER[world]!, color: kindColor[data.byId.get(members[0]!)!.kind], size: 2, lane: laneOfCluster(cl), group: cl, degree: 0, info: [{ label: t('graph.attr.members'), value: inp.fmtNumber(members.length) }], relations: members.map((m) => nameOf(m, inp)) });

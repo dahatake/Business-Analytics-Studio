@@ -20,7 +20,7 @@
 | 4 | [分析・KPI・OKR](users-guide/04-analysis-kpi.md) | 分析手法、入力項目、結果・目標の読み方 |
 | 5 | [議論・決定・次のアクション](users-guide/05-discussion.md) | 論点ツリー、記録、編集、変更履歴 |
 | 6 | [データカタログの取り込みと突合](users-guide/06-data-catalog.md) | CSV/JSONの項目定義をローカルで突合 |
-| 7 | [実データと顧客パック](users-guide/07-real-data-pack.md) | データ準備、JSONパック、検証、起動 |
+| 7 | [実データと顧客パック](users-guide/07-real-data-pack.md) | データ準備、JSONパック、検証、起動、Copilot での作成、Work IQ（社内情報） |
 | 8 | [会議での確認・出力・保管](users-guide/08-meetings-and-backup.md) | 結果の読み方、共有前確認、エクスポート |
 
 ## 起動
@@ -37,6 +37,25 @@ run.cmd
 毎回、現在のソースから `npm.cmd run build` でビルドし、成功した場合だけアプリをローカル API・中継機能付きで起動します。既存のビルドが新しくてもビルドを省略しません。ビルドに失敗した場合は古いビルドで起動せず、エラーを表示してその終了コードを返します。起動後、PC に設定済みの既定の Web ブラウザーでアプリの URL（既定: `http://127.0.0.1:4173`）を自動で開きます。ブラウザーを新たにインストールすることはありません。停止は Ctrl+C です。別のフォルダーからの実行にも対応し、起動時のパッケージ取得は行いません。前提ツール・依存関係の不足や起動失敗はメッセージと非ゼロの終了コードで通知します。なお、代替の `start.ps1`・`start.sh` は自動ビルドせず、[scripts/check-build.mjs](scripts/check-build.mjs) で古いビルドの起動を止める動作のままです。
 
 ポートを変える場合は `run.cmd --port 4180` と指定できます。`run.cmd` はポートが使用中ならその旨を表示し、次の空きポートへ自動で切り替えて、その URL をブラウザーで開きます。既存のプロセスは停止しません。**同じPC・同じBASフォルダーでは、ポートやブラウザーが変わっても同じ作業データを利用できます。** 自動切り替えを無効にする場合は `run.cmd --strictPort` を指定します。`npm run preview` と E2E は従来どおりポート固定です。
+
+生成 AI（Microsoft Foundry・GitHub Copilot）と Work IQ は、AI 中継を含む `run.cmd`（または `npm run preview`）で起動したときだけ使えます。`start.ps1`・`start.sh` の静的サーバーには AI 中継がありません。
+
+### Work IQ（Microsoft 365 の社内情報）を使う準備（任意）
+
+「顧客パックを Copilot で作成」で、接続先が **Microsoft Foundry** のとき、Microsoft Work IQ で見つけた社内情報（あなたがアクセスできるメール・会議・Teams・OneDrive／SharePoint のファイル）を材料に加えられます。BAS は既定で Microsoft の **Work IQ CLI**（`@microsoft/workiq`）を中継から起動して使うため、BAS 用のアプリの登録や管理者の同意は不要です（Microsoft 365 Copilot のライセンスまたは Copilot Credits は必要です）。GitHub Copilot を選んでいるときは使いません。
+
+```powershell
+npm run workiq:check     # Work IQ CLI の起動・サインイン・retrieve ツールを確認（検索も EULA への同意もしない）
+# または setup と同時に: powershell -ExecutionPolicy Bypass -File setup.ps1 -WorkIq
+```
+
+その後、BAS の **AI 設定** → Work IQ の欄で次の 3 つを行います。
+
+1. **この PC の Work IQ CLI** を選び、**Work IQ CLI を使う** を押す。
+2. EULA（[github.com/microsoft/work-iq](https://github.com/microsoft/work-iq)）を読み、ご自身で同意する場合だけ **Work IQ の EULA に同意** を押す（BAS は代わりに同意しません）。
+3. **Work IQ の情報取得を検証** を押し、出典付きで取得できたこと（検証日時の表示）を確認する。検証が済むまで Foundry での顧客パック作成は始められません。
+
+詳しい手順・画面の表示・困ったときの対処は [第7章 Work IQ で社内情報を加える](users-guide/07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)、管理者向けの仕様（REST API で自分のアプリの登録を使う方法を含む）は [docs/relay-config.md](docs/relay-config.md#work-iq-retrieval-verification-microsoft-foundry-only) にあります。
 
 ### ポートに依存しない保存と旧データの移行
 
@@ -112,6 +131,8 @@ E2E は、初回だけ `npx playwright install chromium` が必要な場合が�
 
 中継の保護（待ち受けるアドレス・Host・Origin・外向きの接続先）は環境変数で変えられます。既定は `127.0.0.1` の完全一致だけです。Azure などへ展開するときの設定と注意は [docs/relay-config.md](docs/relay-config.md) にあります。ビルドした画面には Content Security Policy（`unsafe-eval` なし、外部の接続先なし）を付けています。
 
+顧客パックの作成（Foundry のとき）で使う Work IQ は、LLM のトークンとは別に Copilot Credits などで課金される可能性があり、金額はアプリの月予算に含まれません。準備は上の「Work IQ（Microsoft 365 の社内情報）を使う準備」を参照してください。
+
 ## 生成パイプライン（CLI）
 
 ```powershell
@@ -121,6 +142,7 @@ npm run bas -- verify <pack.json>   # 受け入れ判定。原因と対処を表
 npm run bas -- launch <顧客名>       # 127.0.0.1 で起動
 npm run bas -- package <顧客名>      # オフラインで動く配布物
 npm run integrations:check          # 外部連携カタログの検査
+npm run workiq:check                # Work IQ CLI の確認（D-14。検索も EULA への同意もしない）
 ```
 
 所要時間は `logs/timing.json` に記録します。起動・セットアップ用に `start.ps1`／`start.sh`／`start.command`、`setup.ps1`／`setup.sh` があります。顧客パックの形式は [docs/pack.schema.json](docs/pack.schema.json) です。

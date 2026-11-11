@@ -10,7 +10,7 @@ import { cacheAge, CACHE_DAYS, research, slugify } from '../scripts/lib/research
 import { appendTiming, isoWithOffset, ISO_WITH_OFFSET, Timer, type TimingEntry } from '../scripts/lib/timing.ts';
 import { packJsonSchema, validateJsonSchema } from '../scripts/lib/schema.ts';
 import { generateDraft, researchSourceId } from '../scripts/lib/generate.ts';
-import { run } from '../scripts/bas.ts';
+import { run, workIqCheck } from '../scripts/bas.ts';
 import { contrastRatio } from '../src/modules/ops/color.ts';
 
 const TMP = resolve('.bas-local', `test-ops-${process.pid}`);
@@ -279,5 +279,38 @@ describe('FR-120 CLI end to end (in-process)', () => {
     const r2 = spawnSync(process.execPath, ['scripts/bas.ts', 'verify', file, '--logs', join(TMP, 'logs')], { encoding: 'utf8' });
     expect(r2.status).toBe(1);
     expect(r2.stdout).toMatch(/PARSE/);
+  });
+});
+
+describe('D-14 workiq check (first-time Work IQ CLI check)', () => {
+  const capture = () => {
+    const lines: string[] = [];
+    return { lines, io: { out: (l: string) => lines.push(l), err: (l: string) => lines.push(l) } };
+  };
+  const command = () => ({ command: 'node', args: ['npx-cli.js', '-y', '@microsoft/workiq@1', 'mcp'], shell: false });
+
+  it('passes when the CLI starts with retrieve, shows the signed-in account and the next steps, and runs no tool', async () => {
+    const { lines, io } = capture();
+    const list = async () => ({ name: 'WorkIQ', version: '1.0.0', tools: ['ask', 'retrieve', 'accept_eula'] });
+    expect(await workIqCheck(io, 'ja', 60_000, { command, list, config: async () => ({ account: 'user@contoso.example', eulaAccepted: true }) })).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('retrieve: あり');
+    expect(text).toContain('user@contoso.example');
+    expect(text).toContain('同意済み（I-accept-EULA=true）');
+    expect(text).toContain('EULA への同意もしていません');
+    expect(text).toContain('Work IQ の情報取得を検証');
+  });
+
+  it('fails with a concrete next action when the CLI is missing, times out or lacks retrieve', async () => {
+    const fail = (code: string) => async () => { throw Object.assign(new Error(code), { code }); };
+    for (const [code, hint] of [['workiqCliMissing', 'BAS_WORKIQ_CLI'], ['workiqTimeout', 'auth login'], ['workiqUnavailable', 'workiq.svc.cloud.microsoft']] as const) {
+      const { lines, io } = capture();
+      expect(await workIqCheck(io, 'en', 60_000, { command, list: fail(code), config: async () => null })).toBe(1);
+      expect(lines.join('\n')).toContain(hint);
+    }
+    const { lines, io } = capture();
+    const noRetrieve = async () => ({ name: 'WorkIQ', version: '1.0.0', tools: ['ask'] });
+    expect(await workIqCheck(io, 'en', 60_000, { command, list: noRetrieve, config: async () => null })).toBe(1);
+    expect(lines.join('\n')).toContain('retrieve: missing');
   });
 });

@@ -31,4 +31,5 @@ if ! node scripts/check-build.mjs "$PWD"; then
   echo "The app was not rebuilt after the last change, so it would show an older version. Run npm run build, then start.sh again." >&2
   exit 1
 fi
+echo "Note: this static server has no AI relay. To use Microsoft Foundry, GitHub Copilot or Work IQ, start with npm run preview instead."
 exec node scripts/bas.ts serve --dir dist --port "$PORT"

@@ -13,7 +13,7 @@ import { buildArchitecture, ARCH_MODES, type ArchMode } from './architecture.ts'
 import { coreObjectChoice } from './coreObject.ts';
 import { detectWebGL, ORBIT_STEP, ZOOM_STEP } from './engine.ts';
 import { ancestry, labelText, objectById, TABS, type SceneModel, type SceneObject, type TabKey, type Vec3 } from './model.ts';
-import { buildArchModel, buildKpiModel, buildMapModel, buildTwinModel, type ArchScene, type KpiScene, type MapScene } from './models.ts';
+import { buildArchModel, buildKpiModel, buildMapModel, buildTwinModel, type ArchScene, type TwinScene, type KpiScene, type MapScene } from './models.ts';
 import type { Quality, QualityChange } from './quality.ts';
 import { dofBlockReason } from './dof.ts';
 import { SCENE_BUILDERS } from './scenes.ts';
@@ -170,7 +170,7 @@ export function ThreeDScreen() {
       </div>
 
       <div className="td-layout">
-        <Panel title={title} rationale={RATIONALE[tab]} className="td-main" testId="td-main">
+        <Panel title={title} rationale={tab === 'twin' && (model as TwinScene).office ? 'td.rationale.office' : RATIONALE[tab]} className="td-main" testId="td-main">
           <nav aria-label={t('td.breadcrumb')} className="td-breadcrumb" data-testid="td-breadcrumb">
             <ol>
               {crumbs.map((c, i) => (
@@ -220,7 +220,7 @@ export function ThreeDScreen() {
               {tab === 'arch' && <Arch2D model={model} selected={selected} onPick={onPick} text={text} title={view2dTitle} roleText={(r) => t(`td.arch.role.${r as 'product' | 'current' | 'painPoint'}`)} />}
             </div>
           )}
-          <Legend tab={tab} />
+          <Legend tab={tab} office={(model as TwinScene).office} />
         </Panel>
 
         <div className="td-side">
@@ -395,10 +395,14 @@ function FlowTable({ model }: { model: MapScene }) {
   );
 }
 
-function Legend({ tab }: { tab: TabKey }) {
+function Legend({ tab, office }: { tab: TabKey; office?: boolean }) {
   const { t } = useI18n();
   const all: Record<TabKey, { cls: string; key: MessageKey }[]> = {
-    twin: [
+    twin: office ? [
+      { cls: 'step-machining', key: 'td.legend.stage' },
+      { cls: 'twin-line', key: 'td.legend.team' },
+      { cls: 'twin-piece', key: 'td.legend.workItem' },
+    ] : [
       { cls: 'step-machining', key: 'td.legend.machine' },
       { cls: 'twin-line', key: 'td.legend.line' },
       { cls: 'twin-product', key: 'td.legend.product' },
@@ -408,6 +412,7 @@ function Legend({ tab }: { tab: TabKey }) {
       { cls: 'map-plant', key: 'td.legend.plant' },
       { cls: 'map-hq', key: 'td.legend.hq' },
       { cls: 'map-dc', key: 'td.legend.dc' },
+      { cls: 'map-office', key: 'td.legend.office' },
       { cls: 'map-supplier', key: 'td.legend.supplier' },
       { cls: 'map-region', key: 'td.legend.region' },
       { cls: 'map-flow', key: 'td.legend.flow' },

@@ -191,7 +191,7 @@ export function buildTwinScene(model: SceneModel): SceneBuild {
   const edges = new THREE.LineSegments(k.geo(`edges-${width}-${depth}`, () => new THREE.EdgesGeometry(new THREE.BoxGeometry(width - 2, 7, depth - 2))), k.line(0x9cc3ff, 0.7));
   edges.position.y = 3.5;
   shell.add(edges);
-  const teeth = Math.floor((width - 2) / 6);
+  const teeth = m.office ? 0 : Math.floor((width - 2) / 6);
   const tooth = k.geo('roof-tooth', () => new THREE.CylinderGeometry(0.01, 1.6, depth - 2, 3, 1).rotateX(Math.PI / 2));
   for (let i = 0; i < teeth; i++) shell.add(k.mesh(tooth, k.lambert(0x6d87a8, { opacity: 0.55 }), -width / 2 + 4 + i * 6, 7.6, 0));
   k.add(shell, [0, 0]);
@@ -270,7 +270,7 @@ export function buildMapScene(model: SceneModel): SceneBuild {
     const pts = ring.map(([x, z]) => new THREE.Vector3(x, 0.06, z));
     k.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), k.line(0x5cc8ff, 0.55)));
   }
-  const ROLE_COLOR = { hq: 0xffd866, plant: 0x5cc8ff, dc: 0x8fd694 } as const;
+  const ROLE_COLOR = { hq: 0xffd866, plant: 0x5cc8ff, dc: 0x8fd694, office: 0xc6a8ff } as const;
   for (const o of m.objects) {
     const [x, y, z] = o.position;
     if (o.kind === 'site') {

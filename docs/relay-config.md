@@ -17,7 +17,7 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`), prompt + context ≤ 32 000 characters (200 000 for "packBuild"), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild"). |
 | C-03 | `/relay/ai` re-checks the C-03 table: "explain" to Foundry (D-1), "packBuild" to Foundry or GitHub Copilot (D-12). D-13 approves only a fixed synthetic "connectionTest" through `PUT /relay/connection`; `/relay/ai` refuses that use. Other uses get `403 c03NotApproved`. |
 | Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. |
-| Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Redirects are not followed. |
+| Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Work IQ (D-14, Microsoft Foundry only) uses the fixed `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/{devicecode,token}` and `https://workiq.svc.cloud.microsoft/rest/conversations` endpoints. Redirects are not followed. |
 | Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status is returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
 
 ### Foundry: test before saving (D-13)
@@ -71,9 +71,10 @@ when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' |
 | `BAS_RELAY_ALLOW_IPV6_LOOPBACK` | `0` | `0` or `1` | `1` also accepts clients from `::1`. |
 | `BAS_RELAY_ALLOWED_HOSTS` | empty | comma-separated exact `host` or `host:port` | Extra accepted `Host` header values. Compared exactly (case-insensitive). For default ports the browser sends no port, so list `bas.example.com`, not `bas.example.com:443`. |
 | `BAS_RELAY_ALLOWED_ORIGINS` | empty | comma-separated exact origins | Extra accepted `Origin` values, e.g. `https://bas.example.com` (scheme + host + optional port, no trailing slash). |
-| `BAS_RELAY_OUTBOUND_HOSTS` | unset | comma-separated exact hostnames | When set, the provider hostname must also be in this list. Checked when the connection is saved and again before every call. News retrieval additionally requires `news.google.com` in this list. GitHub Copilot (D-12) is refused unless `api.githubcopilot.com`, `api.github.com` and `github.com` are all listed, so a Foundry-only list never lets material go to GitHub. |
+| `BAS_RELAY_OUTBOUND_HOSTS` | unset | comma-separated exact hostnames | When set, the provider hostname must also be in this list. Checked when the connection is saved and again before every call. News retrieval additionally requires `news.google.com` in this list. Work IQ (D-14) is refused unless `login.microsoftonline.com` and `workiq.svc.cloud.microsoft` are both listed. GitHub Copilot (D-12) is refused unless `api.githubcopilot.com`, `api.github.com` and `github.com` are all listed, so a Foundry-only list never lets material go to GitHub. |
 | `BAS_RELAY_TEST_OUTBOUND` | `0` | `0` or `1` | **Tests only.** `1` additionally allows `http://127.0.0.1:<port>` as the provider endpoint (local stub servers in `tests/ai-relay.test.ts` and `e2e/ai.spec.ts`). Never set it in normal use. |
 | `BAS_RELAY_DIR` | `.bas-local` | path | Folder for `secrets.enc.json`, the master key and `connection.json`. E2E builds (`BAS_OUT=dist-x`) use `.bas-local/e2e-dist-x`. |
+| `BAS_WORKIQ_CLI` | unset | path to `workiq` (or a `.js` entry) | Work IQ CLI route (D-14): the program the relay starts as `<path> mcp`. Unset runs `npx -y @microsoft/workiq@1 mcp` with npm's npx next to the relay's Node. |
 
 Wildcards (`*`) are refused in every list. A malformed entry or a flag other than `0`/`1` stops the server with an error
 that names the variable (the value is not printed).
@@ -131,6 +132,92 @@ history and sustainability, spreading the pages over sections; tracking paramete
 `403 redirectNotAllowed`, `403 outboundNotAllowed`, `502 siteUnavailable` / `notHtml` / `tooLarge`, `504 siteTimeout`.
 A DNS answer that changes between the check and the connection is not fully excluded; the relay serves this PC only
 (C-01) and the caps bound the impact.
+## Work IQ retrieval verification (Microsoft Foundry only)
+
+The Work IQ section is included in both AI settings and the **Connect to AI** dialog. A refresh token only proves
+sign-in, not service enablement, billing assignment or access to Microsoft 365 data. Foundry customer-pack generation
+requires the separate retrieval check; ordinary Foundry explanations and GitHub Copilot SDK behavior are unchanged.
+The SDK's MCP configuration is not read or modified by BAS.
+
+The relay reaches Work IQ in one of two ways, chosen in the Work IQ section:
+
+| Route | Who signs in | What the tenant must allow | When to use |
+| --- | --- | --- | --- |
+| **Work IQ CLI** (default) | Microsoft's [Work IQ CLI](https://github.com/microsoft/work-iq) (`@microsoft/workiq`) with its own Microsoft-published client and the user's Windows (WAM) or browser sign-in | Whatever the CLI already needs in that tenant; BAS adds no app registration or admin consent | The tenant will not consent to a custom app for `WorkIQAgent.Ask` (D-14, 2026-11-11), or the user's Microsoft 365 home tenant differs from the Azure subscription tenant |
+| **My own app registration** (REST) | Device code with the user's public-client app | Work IQ enablement, billing assignment and admin consent for `WorkIQAgent.Ask` in the user's **home** tenant | The organisation manages its own app registration |
+
+### Work IQ CLI route
+
+The relay starts `workiq mcp` as a local MCP stdio server for each verification or customer retrieval and stops it
+afterwards. By default it runs npm's own `npx-cli.js` next to the relay's Node (`npx -y @microsoft/workiq@1 mcp`; the
+first run downloads the package from the npm registry). `BAS_WORKIQ_CLI` overrides this with an installed `workiq`
+executable (or a `.js` entry run with the same Node). Before the first use, `npm run workiq:check` (also
+`setup.ps1 -WorkIq` / `setup.sh --workiq`) starts the same command once, lists its tools and shows the CLI's saved
+account; it calls no tool, so nothing is searched or billed and the EULA is not accepted. It exits 1 with a next action
+when the CLI cannot start, times out (sign-in not finished; `--timeout <seconds>`), or offers no `retrieve`.
+Only two tools are called by the relay:
+
+- `retrieve` with `strategy: "grounding"` (read-only). Two payload shapes under
+  `structuredContent["application/vnd.ms-workiq.retrieval"]` are read: the [documented contract](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/mcp/retrieve)
+  (top-level `markdown` with `retrievalHits[].webUrl`) and the shape `@microsoft/workiq` 1.0.x actually returned on
+  2026-11-11 (`results[]`, each with its own `markdown`, `webUrl`, `entityType`, `resourceMetadata`, `sensitivityLabel`
+  and `contentProtection`). Each result becomes a numbered section `[n] title (type, date) <url>` of the internal
+  source and one citation; a result whose `contentProtection` is not `allowed` keeps its citation but its text is not
+  passed on. HTTPS `webUrl`s only; sensitivity-label names are kept. `isError` or `stoppedReason: "error"` is a
+  failure, never an empty success. Reading only the documented shape made every real verification fail with
+  `workiqNoGrounding` although sources were returned; if the CLI changes its shape again, verification fails the same
+  way instead of passing.
+- `accept_eula` with `https://github.com/microsoft/work-iq`, only through `POST /relay/workiq/eula`
+  `{ "provider": "foundry", "accept": true }`, which the UI sends when the user ticks "I have read the Work IQ EULA and
+  accept it myself" next to the EULA link. Success requires the CLI to have persisted the acceptance
+  (`workiq config show` → `I-accept-EULA=true`); otherwise the answer is `412 workiqEulaRequired`. Until then retrieval
+  answers `412 workiqEulaRequired`. `npm run workiq:check` shows the persisted state.
+
+The CLI's stderr is discarded (it can contain account names). A missing Node/npx or program is `503 workiqCliMissing`;
+the CLI exiting early is `502 workiqUnavailable`; the 120-second limit is `504 workiqTimeout`. A CLI verification is
+sealed with an HMAC keyed by a relay-only vault secret (`workiqCliKey`), so editing `workiq.json` cannot fake it;
+switching routes or deleting the settings removes that key. The CLI makes its own network connections
+(`login.microsoftonline.com`, `workiq.svc.cloud.microsoft`, and `registry.npmjs.org` for npx), which
+`BAS_RELAY_OUTBOUND_HOSTS` cannot enforce on a child process; the relay still refuses the route when the allowlist is
+set without the two Work IQ hosts.
+
+### App registration route
+
+1. Follow [tenant enablement](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/enable-work-iq):
+   a Global Administrator provisions the Work IQ enterprise application
+   (`az ad sp create --id fdcc1f02-fc51-4226-8753-f668596af7f7`) and configures a Copilot Studio usage-based
+   billing plan linked to an Azure subscription/resource group, assigning the user to it.
+2. Register a **single-tenant public client**, enable public-client flows, and add delegated `WorkIQAgent.Ask`
+   (resource app `fdcc1f02-fc51-4226-8753-f668596af7f7`, scope `0b1715fd-f4bf-4c63-b16d-5be31f9847c2`).
+   Grant admin consent. See the [official registration quickstart](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/a2a/quickstart).
+   No client secret, extra Foundry agent or MCP server is needed.
+3. Save the tenant/client IDs in BAS and sign in. The Foundry API key does **not** identify or authenticate the
+   Microsoft 365 user/tenant. Do not infer the Work IQ tenant from an Azure subscription or model response.
+4. Confirm the possible Copilot Credits charge and press **Verify Work IQ retrieval**.
+
+### Verification (both routes)
+
+`POST /relay/workiq/verify` accepts only `{ "provider": "foundry" }`. The REST route uses the same fixed endpoints,
+delegated credentials, outbound allowlist, response-size cap and 120-second timeout as customer retrieval and asks for
+one accessible OneDrive/SharePoint file with web grounding disabled; the CLI route runs one `retrieve` for a recent
+Microsoft 365 item. A nonempty response **with an HTTPS source
+citation** is required; sign-in, conversation creation or an ungrounded response alone cannot pass. This is a retrieval
+smoke test, not proof of complete customer coverage or independent attestation of the cited document.
+No customer name, project or attachments are sent. Retrieved text/URLs are discarded and never returned, logged,
+saved in the settings or sent to Foundry by this diagnostic.
+
+The response contains only the public Work IQ status, including `verifiedAt`. The timestamp and an HMAC bound to
+the current tenant/client/refresh credential are saved in `workiq.json`; the HMAC is never exposed. Verification
+survives restarts, but credential changes, new sign-in, settings changes, deletion or a failed retest invalidate it.
+The UI shows sign-in and retrieval verification separately. `workiqForbidden` points to enablement/consent/billing,
+`workiqNoGrounding` to missing source evidence (including absent/unindexed accessible files), and timeout, busy and
+network failures remain explicit. Repeated tests have a five-second minimum interval.
+
+Work IQ charges are separate from LLM token accounting and are unknown, not zero. A zero app budget blocks UI
+diagnostics; otherwise BAS cannot enforce a yen-denominated Work IQ billing cap. For a JPY 10,000/month target,
+check both Azure/Foundry and Copilot Credits charges and configure billing controls/alerts before enabling paid use.
+Budget alerts alone do not stop spending. App registration itself adds no Azure compute resource or inference charge.
+
 ## Azure deployment
 
 C-01 assumes that the app and the relay run on the user's own PC. Running them on a server changes that assumption and

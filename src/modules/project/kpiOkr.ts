@@ -1,4 +1,5 @@
 import type { CustomerPack, EntityOf } from '../../data/schema.ts';
+import { OkrExtension } from '../../data/extensionSchemas.ts';
 import type { KpiData, KpiDef, Okr } from './model.ts';
 
 /** PARAM-044: achievement (%) at or above which a KPI reads 「達成」. */
@@ -44,6 +45,28 @@ export function validateKpi(k: { name: string; unit: string; baseline: string; c
   for (const f of ['baseline', 'current', 'target'] as const) if (k[f].trim() === '' || !Number.isFinite(Number(k[f]))) bad.push(f);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(k.deadline) || Number.isNaN(Date.parse(k.deadline))) bad.push('deadline');
   return bad;
+}
+
+/**
+ * KPIs of a generated (imported) pack: numeric kpi entities become editable KpiDefs, and the internal
+ * OKRs (extensions.okr) become OKRs where their key results point at those KPIs. Text-only KPIs stay in
+ * extensions.okr and are shown read-only, since they lack the numbers a KpiDef needs.
+ */
+export function packKpis(pack: CustomerPack, today = new Date()): KpiData {
+  const next = new Date(Date.UTC(today.getUTCFullYear() + 1, today.getUTCMonth(), today.getUTCDate()));
+  const deadline = next.toISOString().slice(0, 10);
+  const kpis: KpiDef[] = pack.entities
+    .filter((e): e is EntityOf<'kpi'> => e.kind === 'kpi')
+    .map((k) => ({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline }));
+  const ids = new Set(kpis.map((k) => k.id));
+  const ext = OkrExtension.safeParse(pack.extensions?.okr);
+  const okrs: Okr[] = (ext.success ? ext.data.objectives : []).flatMap((o) => {
+    const keyResults = o.keyResults
+      .map((kr, i) => ({ id: `${o.id}-kr-${i + 1}`, text: kr.text, kpiId: kr.kpiId ?? '' }))
+      .filter((kr) => ids.has(kr.kpiId));
+    return keyResults.length ? [{ id: o.id, objective: o.objective, keyResults }] : [];
+  });
+  return { kpis, okrs };
 }
 
 /** Demo KPIs come from the pack's KPIs; the OKRs link them. New projects start empty. */

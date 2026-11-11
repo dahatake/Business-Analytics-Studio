@@ -88,6 +88,7 @@ export const graphJa = {
   'graph.edge.bundleShort': '束ね線',
   'graph.edge.counted': '{label} ×{count}',
   'graph.cluster.label': '{world}・{type}（{count}）',
+  'graph.cluster.external': '外部の文脈（ニュース・公開Web）（{count}）',
   'graph.group.label': '{name}（{count}）',
   'graph.attr.world': '世界',
   'graph.attr.type': '種別',

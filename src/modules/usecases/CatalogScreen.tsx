@@ -68,6 +68,7 @@ export function CatalogScreen() {
   const simplified = isSimplified(entities.length, columnCount);
   const counts = countByCategory(rows);
   const categoryOf = useMemo(() => new Map(rows.filter((r) => r.entity).map((r) => [r.entity!.id, r.category] as const)), [rows]);
+  const catalogOnly = useMemo(() => rows.filter((r) => r.category === 'catalogOnly' && r.item).map((r) => r.item!), [rows]);
   const ucOf = (entityId: string): UseCase[] => useCases.filter((u) => links.has(linkKey(entityId, u.id)));
   const selected = selectedId ? entities.find((e) => e.id === selectedId) : undefined;
 
@@ -157,6 +158,32 @@ export function CatalogScreen() {
           </tbody>
         </table>
       </div>
+      {catalogOnly.length > 0 && (
+        <div className="table-scroll uc-entity-scroll" data-testid="uc-catalog-items" role="region" tabIndex={0} aria-label={t('uc.entities.fromCatalogCaption')}>
+          <p className="muted">{t('uc.entities.fromCatalog', { n: catalogOnly.length })}</p>
+          <table className="data-table compact">
+            <caption className="visually-hidden">{t('uc.entities.fromCatalogCaption')}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{t('uc.entities.col.name')}</th>
+                <th scope="col">{t('uc.entities.col.domain')}</th>
+                <th scope="col">{t('uc.entities.col.description')}</th>
+                <th scope="col">{t('uc.entities.col.columns')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalogOnly.map((it, i) => (
+                <tr key={`${it.id ?? it.name}-${i}`}>
+                  <td>{it.url && /^https:\/\//.test(it.url) ? <a href={it.url} target="_blank" rel="noreferrer noopener">{it.name}</a> : it.name}</td>
+                  <td>{it.domain ?? ''}</td>
+                  <td>{it.description ?? ''}</td>
+                  <td>{fmt.integer(it.columns?.length ?? 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Panel>
   );
 

@@ -17,6 +17,21 @@ import { kindColor, kindIcon } from '../ui/icons.ts';
 type View = 'chain' | 'graph' | 'table';
 const VIEWS: View[] = ['chain', 'graph', 'table'];
 const DEFAULT_FOCUS = 'cust-sakura-motors';
+/** Kinds that anchor the business problem; a generated pack rarely contains the sample customer. */
+const FOCUS_KINDS: EntityKind[] = ['issue', 'customer', 'kpi', 'initiative'];
+
+function defaultFocus(visible: (e: NonNullable<ReturnType<typeof getEntity>>) => boolean): string {
+  const own = getEntity(DEFAULT_FOCUS);
+  if (own && visible(own)) return DEFAULT_FOCUS;
+  const degree = new Map<string, number>();
+  for (const e of loaded.edges) for (const id of [e.source, e.target]) degree.set(id, (degree.get(id) ?? 0) + 1);
+  const candidates = loaded.pack.entities.filter((e) => visible(e) && e.kind !== 'source');
+  for (const kind of FOCUS_KINDS) {
+    const best = candidates.filter((e) => e.kind === kind).sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))[0];
+    if (best) return best.id;
+  }
+  return candidates.sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))[0]?.id ?? DEFAULT_FOCUS;
+}
 const LEGEND_KINDS: EntityKind[] = ['customer', 'deal', 'deliverable', 'invoice', 'product', 'person', 'site', 'issue', 'cause', 'solution', 'kpi', 'initiative', 'supplier', 'source'];
 
 function SelectionPanel({ id }: { id: string | null }) {
@@ -43,9 +58,10 @@ export function Relations() {
   const audience = useSettings((s) => s.audience);
   const view = (VIEWS as string[]).includes(route.query.get('view') ?? '') ? (route.query.get('view') as View) : 'chain';
   const sel = route.query.get('sel');
-  const focusParam = route.query.get('focus') ?? DEFAULT_FOCUS;
+  const focusParam = route.query.get('focus') ?? '';
   const focusEntity = getEntity(focusParam);
-  const focus = focusEntity && !isHidden(focusEntity, audience) ? focusParam : DEFAULT_FOCUS;
+  const fallback = useMemo(() => defaultFocus((e) => !isHidden(e, audience)), [audience]);
+  const focus = focusEntity && !isHidden(focusEntity, audience) ? focusParam : fallback;
   const hops = Math.min(PARAMS.graphHopsMax, Math.max(PARAMS.graphHopsMin, Number(route.query.get('hops') ?? 2) || 2));
 
   const visibleEntities = useMemo(() => loaded.pack.entities.filter((e) => !isHidden(e, audience)), [audience]);

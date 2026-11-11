@@ -89,6 +89,7 @@ export const graphEn: Record<keyof typeof graphJa, string> = {
   'graph.edge.bundleShort': 'Bundle',
   'graph.edge.counted': '{label} x{count}',
   'graph.cluster.label': '{world} - {type} ({count})',
+  'graph.cluster.external': 'External context: news and public web ({count})',
   'graph.group.label': '{name} ({count})',
   'graph.attr.world': 'World',
   'graph.attr.type': 'Type',

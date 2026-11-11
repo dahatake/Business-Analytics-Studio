@@ -38,6 +38,7 @@ echo Starting Business Analytics Studio. Opening the app in your default web bro
 echo If the port is in use, Vite will report it and open the next available port.
 echo Project data is shared across ports in this application's .bas-local folder.
 echo For old browser-only data, open the updated app once at its original port to migrate it.
+echo To use Work IQ with Microsoft Foundry, check the Work IQ CLI once with: npm run workiq:check
 echo Press Ctrl+C to stop.
 call npm.cmd run preview -- --strictPort false --open %*
 set "result=%errorlevel%"

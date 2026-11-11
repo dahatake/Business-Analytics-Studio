@@ -228,7 +228,7 @@ export function Diagram2D({ scene, format, zoom, pan, onPan, onZoomStep, highlig
             if (!p) return null;
             const box = useBoxes ? n.box : undefined;
             const r = R * Math.min(2.2, Math.max(0.7, n.size)) * u;
-            const cls = `graph2-node graph2-node--${n.role} ${n.id === highlight ? 'is-highlighted' : ''} ${n.id === scene.focusId ? 'is-focus' : ''} ${card?.itemId === n.id ? 'is-open' : ''}`;
+            const cls = `graph2-node graph2-node--${n.role} ${n.peripheral ? 'is-peripheral' : ''} ${n.id === highlight ? 'is-highlighted' : ''} ${n.id === scene.focusId ? 'is-focus' : ''} ${card?.itemId === n.id ? 'is-open' : ''}`;
             const transformN = box ? `translate(${box.x} ${box.y})` : `translate(${p.x} ${p.y})`;
             return (
               <GraphNodeEl

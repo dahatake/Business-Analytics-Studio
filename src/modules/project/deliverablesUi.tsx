@@ -21,7 +21,7 @@ import {
   applyDraft, evaluateStep, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
   type CheckContext, type CheckRef, type TodoResult,
 } from './deliverables.ts';
-import { useAnalyses, useDeliverables, useDiscussion, useKpis, useProjTransient, useProjUi } from './stores.ts';
+import { useAnalyses, useDeliverables, useDiscussion, useProjTransient, useProjUi, useScopeKpis } from './stores.ts';
 import './project.css';
 
 /** YYYY-MM-DD in the app's time zone. The demo is judged on the sample's "as of" date so it stays deterministic. */
@@ -31,7 +31,7 @@ export function todayIn(timeZone: string = PARAMS.timeZone, now = new Date()): s
 
 export function useCheckContext(): CheckContext {
   const discussion = useDiscussion((s) => s.value);
-  const kpi = useKpis((s) => s.value);
+  const kpi = useScopeKpis();
   const analysis = useAnalyses((s) => s.value);
   const useCases = useUseCases((s) => s.value);
   const raw = useDeliverables((s) => s.value);

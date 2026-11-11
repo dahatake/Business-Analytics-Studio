@@ -124,7 +124,7 @@ id, kind, name, description, world, type, classification, author, sourceIds
 
 # kind ごとの項目（world/type はこのとおり）
 - source（digital/data）: publisher（表示文）, publishedDate（判明時のみ）, url（Web は必須）, accessedDate, locator（ページ/シート/節/メール・会議の識別）, origin は "web"・"m365"。発行日を確認日で代用しない。sourceIds は []。
-- site（real/site）: role は "hq"・"plant"・"dc", lat, lon, capacityTPerMonth（月間トン。非生産と確認できる拠点だけ 0）
+- site（real/site）: role は "hq"・"plant"・"dc"・"office"（オフィス・営業拠点。工場がなければ plant にしない）, lat, lon, capacityTPerMonth（月間トン。非生産と確認できる拠点だけ 0）
 - person（real/person）: role（役職の表示文）, siteId。資料に業務上の役割として出る人だけ。ageBand, gender, portrait は書かない。
 - customer（real/organization）: industry（表示文）, regionId
 - product（real/thing）: category（表示文）, siteId, unitPriceJpy
@@ -187,7 +187,7 @@ id, kind, name, description, world, type, classification, author, sourceIds
 
 # Per kind (world/type exactly as given)
 - source (digital/data): publisher (text), publishedDate (if known; never the access date), url (required for web), accessedDate, locator (page/sheet/section/mail/meeting), origin "web"/"m365". sourceIds=[].
-- site (real/site): role "hq"/"plant"/"dc", lat, lon, capacityTPerMonth (monthly tonnes; 0 only if confirmed non-producing)
+- site (real/site): role "hq"/"plant"/"dc"/"office", lat, lon, capacityTPerMonth (monthly tonnes; 0 only if confirmed non-producing)
 - person (real/person): role (text), siteId. Only people in a documented business role; omit ageBand, gender, portrait.
 - customer (real/organization): industry (text), regionId
 - product (real/thing): category (text), siteId, unitPriceJpy

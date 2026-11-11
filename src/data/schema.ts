@@ -51,7 +51,8 @@ export type PortraitSpec = z.infer<typeof PortraitSpec>;
 
 export const Site = z.object({
   ...base, kind: z.literal('site'),
-  role: z.enum(['hq', 'plant', 'dc']),
+  /** office: a sales, service or administrative location (no production capacity; capacityTPerMonth is 0). */
+  role: z.enum(['hq', 'plant', 'dc', 'office']),
   lat: z.number(), lon: z.number(),
   capacityTPerMonth: z.number().nonnegative(),
 });

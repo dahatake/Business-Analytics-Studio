@@ -2,11 +2,15 @@
 # Prepares the template on this PC: checks Node.js, installs the locked dependencies (npm ci) and builds the app.
 # Safe by design: no admin rights, no global installs, no network access other than the npm registry (npm ci),
 # idempotent (skips npm ci when package-lock.json has not changed since the last successful run).
-#   powershell -ExecutionPolicy Bypass -File setup.ps1 [-SkipBuild] [-Force] [-DryRun]
+# -WorkIq (optional, D-14) also checks the Microsoft Work IQ CLI used by "Work IQ CLI on this PC": it downloads
+# @microsoft/workiq from the npm registry, may show a Microsoft 365 sign-in window and contacts Microsoft. It runs no
+# Work IQ search (nothing billed) and never accepts the Work IQ EULA for you.
+#   powershell -ExecutionPolicy Bypass -File setup.ps1 [-SkipBuild] [-Force] [-DryRun] [-WorkIq]
 param(
   [switch]$SkipBuild,
   [switch]$Force,
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$WorkIq
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
@@ -60,9 +64,17 @@ if (-not $SkipBuild) {
 }
 Invoke-Step 'Checking the customer-pack schema (docs/pack.schema.json)' { node scripts/bas.ts schema --check }
 
+if ($WorkIq) {
+  Invoke-Step 'Checking the Microsoft Work IQ CLI (optional; no search, no EULA acceptance)' { node scripts/bas.ts workiq check }
+}
+
 Write-Host ''
 Write-Host 'Setup finished.' -ForegroundColor Green
-Write-Host '  Start the template:        .\start.ps1'
-Write-Host '  Prepare a customer:        node scripts/bas.ts build "Customer name"'
-Write-Host '  Start a customer:          .\start.ps1 -Customer "Customer name"'
+Write-Host '  Start the app (with AI and Work IQ):  .\run.cmd'
+Write-Host '  Start without AI (static server):     .\start.ps1'
+Write-Host '  Prepare a customer:                   node scripts/bas.ts build "Customer name"'
+Write-Host '  Start a customer:                     .\start.ps1 -Customer "Customer name"'
+if (-not $WorkIq) {
+  Write-Host '  Work IQ (optional, Microsoft Foundry only): npm run workiq:check   (see users-guide/07-real-data-pack.md)'
+}
 exit 0

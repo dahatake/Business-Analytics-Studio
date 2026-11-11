@@ -43,6 +43,22 @@
 
 同じロックファイルに対して成功済みなら依存インストールは省略されます。ビルドのみ省く場合の `-SkipBuild`、変更を行わず確認だけする `-DryRun` もあります。セットアップの初回はnpmレジストリからパッケージを取得しますが、顧客データを送信しません。
 
+### Work IQ を使う場合の準備（任意）
+
+顧客パックの作成で Microsoft 365 の社内情報（Microsoft Work IQ）を使う予定があれば、セットアップのときに Work IQ CLI も確認しておくと、後の設定がスムーズです。Work IQ は生成AIの接続先が Microsoft Foundry のときだけ使います。使わない場合、この手順は不要です。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -WorkIq
+```
+
+または、セットアップ後にいつでも次で確認できます。
+
+```powershell
+npm run workiq:check
+```
+
+確認では Microsoft の Work IQ CLI（`@microsoft/workiq`）をnpmレジストリからダウンロードして起動し、Microsoft 365 のサインインを求められることがあります。Work IQ の検索（課金の対象）は行わず、使用許諾契約（EULA）への同意もしません。サインインしたアカウントが表示されるので、顧客の情報を探すのに使う職場アカウントか確認してください。BAS 画面での設定（EULA への同意と必須の接続検証）は [第7章 Work IQ で社内情報を加える](07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ) で説明します。
+
 ## アプリを起動する
 
 ```bat
@@ -69,8 +85,9 @@ run.cmd
 | 依存の強制再インストール | `powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Force` |
 | 最新のソースから毎回ビルドして起動 | `run.cmd` |
 | 代替の静的サーバーで起動 | `.\start.ps1` |
+| Work IQ CLI の確認（任意） | `npm run workiq:check` |
 
-`start.ps1` は自動ビルドせず、`dist/` があり、ソースより新しいことを確認して静的サーバーを起動します。`run.cmd` は毎回ビルドした後、Vite previewでローカルAPIとAI中継を含めて起動します。いずれも既定では `127.0.0.1` で待ち受けます。
+`start.ps1` は自動ビルドせず、`dist/` があり、ソースより新しいことを確認して静的サーバーを起動します。`run.cmd` は毎回ビルドした後、Vite previewでローカルAPIとAI中継を含めて起動します。いずれも既定では `127.0.0.1` で待ち受けます。**生成AI（Microsoft Foundry・GitHub Copilot）と Work IQ を使うときは、AI中継を含む `run.cmd` で起動してください。** `start.ps1` にはAI中継がありません。
 
 ## 困ったとき
 
@@ -82,5 +99,6 @@ run.cmd
 - 変更が画面に出ない: 以前のサーバーを Ctrl+C で停止し、`run.cmd` で起動し直してブラウザーを再読み込みします。
 - ポート使用中: `run.cmd` は次の空きポートで起動し、移行済みデータはそのまま利用できます。旧版のデータが見えない場合は、上記の初回移行を確認してください。`--strictPort` を指定した場合や代替の起動スクリプトでは、不要なサーバーを Ctrl+C で停止するか、別ポートを指定します。
 - 「データ保護のため操作を停止しました」と出る: 復旧用コピーをダウンロードし、サーバー、ディスク容量・保存先の権限を確認して再試行します。競合時は別画面の保存内容を上書きしません。未保存の内容を保護するため、確認前にブラウザーの保存領域を消さないでください。
+- `npm run workiq:check` が `NG:` で終わる: 表示される「次にすること」に従います。原因別の対処は [第7章の「Work IQ で困ったとき」](07-real-data-pack.md#work-iq-で困ったとき) にあります。Work IQ を使わない場合は無視してかまいません。
 
 次は[画面の見方と最初の操作](02-orientation.md)へ進んでください。

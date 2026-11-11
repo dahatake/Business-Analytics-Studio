@@ -351,6 +351,12 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
 
 /* Sankey */
 .sankey { width: 100%; height: auto; }
+.workflow-stages { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.workflow-stage { border: 1px solid var(--colorNeutralStroke2, #3a3f47); border-radius: 8px; padding: 10px 14px; }
+.workflow-stage h3 { margin: 0 0 6px; font-size: 1rem; }
+.workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; }
+.workflow-grid ul { margin: 2px 0 0; padding-left: 18px; }
+.workflow-label { font-size: 0.85em; }
 .sankey-link { fill: none; stroke-opacity: 0.38; transition: stroke-opacity var(--durationNormal) var(--curveEasyEase); }
 .sankey-link.on { stroke-opacity: 0.8; }
 .sankey-link.dim { stroke-opacity: 0.08; }

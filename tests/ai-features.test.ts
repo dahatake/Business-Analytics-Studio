@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { DEFAULT_MONTHLY_BUDGET_JPY } from '../src/ai/policy.ts';
 import { loaded } from '../src/data/pack.ts';
-import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, liveReady, parseBudget, runtimeSettings } from '../src/modules/ai/settingsStore.ts';
+import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, liveReady, parseBudget, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
 import {
@@ -216,6 +216,15 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     });
   });
   afterEach(() => setLiveTransport(null));
+
+  it('requires retrieval evidence for Work IQ and never applies it to the Copilot SDK provider', () => {
+    const workiq = { method: 'app' as const, tenantId: 'tenant', clientId: 'client', account: null, signedIn: true, verifiedAt: null };
+    expect(workIqReady({ provider: 'foundry', workiq })).toBe(false);
+    const verified = { ...workiq, verifiedAt: '2026-11-11T05:00:00.000Z' };
+    expect(workIqReady({ provider: 'foundry', workiq: verified })).toBe(true);
+    expect(workIqReady({ provider: 'copilotSdk', workiq: verified })).toBe(false);
+    expect(workIqReady({ provider: 'foundry', workiq: { ...verified, signedIn: false } })).toBe(false);
+  });
 
   it('accepts project URLs and v1 formats, and guards diagnostic costs before sending', () => {
     expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/api/projects/project' })).toBeNull();

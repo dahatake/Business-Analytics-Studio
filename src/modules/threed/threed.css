@@ -110,6 +110,7 @@
 .td-sw.map-plant { background: #5cc8ff; }
 .td-sw.map-hq { background: #ffd866; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .td-sw.map-dc { background: #8fd694; }
+.td-sw.map-office { background: #c6a8ff; border-radius: 50%; }
 .td-sw.map-supplier { background: #e3c08d; transform: rotate(45deg) scale(0.8); }
 .td-sw.map-region { background: #ffb86b; border-radius: 50%; }
 .td-sw.map-flow { background: #5cc8ff; height: 3px; width: 18px; }

@@ -9,6 +9,7 @@ import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
+import './ai.css';
 
 /** Reasons the UI can explain: the client gate's reasons plus the relay's own refusals. */
 export const KNOWN_REASONS = [

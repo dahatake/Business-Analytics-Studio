@@ -16,13 +16,14 @@ import { useI18n, type Lang } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
 import { AiReadiness, AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
 import { D4Warning, TokenTable, yenFine } from '../ai/AiCommon.tsx';
-import { fetchNewsHeadlines, fetchSitePages } from '../ai/relayClient.ts';
-import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
+import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect } from '../ai/relayClient.ts';
+import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import {
-  generatePack, MAX_MATERIAL_CHARS, missingRequired, PackGenError, runPlan, stageAPrompt,
+  DEFAULT_WORKIQ_ROUNDS, generatePack, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, runPlan, stageAPrompt,
   type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
 } from './packGenerate.ts';
+import { ReadinessView } from './ReadinessView.tsx';
 
 /** Where the generated pack goes: an existing project, or a company/project created when the pack is saved. */
 export type PackGenTarget =
@@ -59,9 +60,11 @@ function newTargetProblem(companyName: string, projectName: string): 'duplicateP
  * confirmations C-03 requires, then a progress bar over the stages; the verified pack is saved with everything that
  * went into it (inputs, retrieved sources, generation record, cost) and can be opened.
  */
-export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
+export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProject }: {
   open: boolean;
   target: PackGenTarget;
+  /** The previous run's inputs, when re-fetching for a project that already has a generated pack. */
+  prefill?: Partial<PackGenInput> | null;
   onClose: () => void;
   onOpenProject: (projectId: string) => void;
 }) {
@@ -80,6 +83,8 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
   const [officialUrl, setOfficialUrl] = useState('');
   const [focus, setFocus] = useState('');
   const [useNews, setUseNews] = useState(true);
+  const [useWorkIq, setUseWorkIq] = useState(true);
+  const [workIqRounds, setWorkIqRounds] = useState(DEFAULT_WORKIQ_ROUNDS);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [fileNotes, setFileNotes] = useState<string[]>([]);
   const [researchNote, setResearchNote] = useState('');
@@ -100,6 +105,18 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
     setPhase({ kind: 'form' });
     setApproved(false);
     setCostOk(false);
+    if (prefill) {
+      setPurpose(prefill.purpose ?? '');
+      setIndustry(prefill.industry ?? '');
+      setOfficialUrl(prefill.officialUrl ?? '');
+      setFocus(prefill.focus ?? '');
+      setResearchNote(prefill.researchNote ?? '');
+      setMaterials(prefill.materials ?? []);
+      setUseNews(prefill.useNews ?? true);
+      setUseWorkIq(prefill.useWorkIq ?? true);
+      setWorkIqRounds(prefill.workIqRounds ?? DEFAULT_WORKIQ_ROUNDS);
+      setAsOf(todayJst());
+    }
     void useAiSettings.getState().refreshRelay();
     if (useAiSettings.getState().provider === 'copilotSdk') void useAiSettings.getState().checkCopilot();
     // Only when the dialog opens or its target changes; the user's edits must survive re-renders.
@@ -112,7 +129,10 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
     return () => clearInterval(timer);
   }, [phase]);
 
-  const input: PackGenInput = { companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, materials, researchNote, useNews };
+  // D-14: Work IQ is part of the Microsoft Foundry path only; with GitHub Copilot it is neither shown nor sent.
+  const workIqShown = ai.provider === 'foundry';
+  const workIqOn = workIqShown && workIqReady(ai) && useWorkIq;
+  const input: PackGenInput = { companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, materials, researchNote, useNews, useWorkIq: workIqOn, ...(workIqOn ? { workIqRounds } : {}) };
   const missing = missingRequired(input);
   const targetProblem = target.kind === 'new' && companyName.trim() && projectName.trim() ? newTargetProblem(companyName, projectName) : null;
   const chars = materials.reduce((a, m) => a + m.text.length, 0) + researchNote.length;
@@ -136,10 +156,10 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
     };
     // Recomputed when what is sent or the price settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, materials, researchNote, lang, ai.provider, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
   const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
-  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget;
+  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget && (!workIqShown || workIqReady(ai));
 
   const addFiles = async (files: FileList) => {
     const notes: string[] = [];
@@ -202,6 +222,9 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
         }, signal),
         fetchSite: (url, signal) => fetchSitePages(url, signal),
         fetchNews: (company, l, signal) => fetchNewsHeadlines(company, l, signal),
+        ...(settings.provider === 'foundry' && input.useWorkIq ? {
+          fetchWorkIq: (q, signal) => askWorkIqSections({ ...q, aspects: (q.aspects ?? []) as WorkIqAspect[], topics: q.topics ?? [], timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }, signal),
+        } : {}),
       }, (e) => {
         setProgress(e);
         setSteps((s) => ({ ...s, [e.step]: e.status }));
@@ -260,10 +283,13 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
         <DialogSurface className="gen-dialog" data-testid="gen-dialog" aria-describedby="gen-lead">
           <DialogBody>
             <DialogTitle>{t('proj.gen.title')}</DialogTitle>
-            <DialogContent>
+            <DialogContent tabIndex={phase.kind === 'saved' ? 0 : undefined}>
               {phase.kind === 'form' && (
                 <div className="gen-form">
                   <p id="gen-lead" className="muted">{t('proj.gen.lead')}</p>
+                  {prefill && (
+                    <MessageBar intent="info" data-testid="gen-prefilled"><MessageBarBody>{t('proj.gen.prefilled')}</MessageBarBody></MessageBar>
+                  )}
                   {missing.length > 0 && (
                     <MessageBar intent="warning" data-testid="gen-missing">
                       <MessageBarBody>{t('proj.gen.missing', { fields: missing.map(labelOf).join(t('ai.listSep')) })}</MessageBarBody>
@@ -304,6 +330,35 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
                         <Input value={focus} onChange={(_, d) => setFocus(d.value)} data-testid="gen-focus" />
                       </Field>
                       <Checkbox className="gen-wide" checked={useNews} onChange={(_, d) => setUseNews(d.checked === true)} label={t('proj.gen.useNews')} data-testid="gen-news" />
+                      {workIqShown && (
+                        <div className="gen-wide" data-testid="gen-workiq-section">
+                          <Checkbox
+                            checked={workIqOn}
+                            disabled={!workIqReady(ai)}
+                            onChange={(_, d) => setUseWorkIq(d.checked === true)}
+                            label={t('proj.gen.useWorkIq')}
+                            data-testid="gen-workiq"
+                          />
+                          <p className="muted" data-testid="gen-workiq-note">
+                            {!workIqReady(ai) ? t('proj.gen.workIqNotReady') : ai.workiq?.method === 'cli' ? t('proj.gen.workIqHintCli') : t('proj.gen.workIqHint', { account: ai.workiq?.account ?? '—' })}
+                          </p>
+                          {workIqOn && (
+                            <Field label={t('proj.gen.workIqRounds')} hint={t('proj.gen.workIqRoundsHint', { max: MAX_WORKIQ_ROUNDS })}>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={MAX_WORKIQ_ROUNDS}
+                                value={String(workIqRounds)}
+                                onChange={(_, d) => {
+                                  const n = Math.round(Number(d.value));
+                                  if (Number.isFinite(n)) setWorkIqRounds(Math.min(MAX_WORKIQ_ROUNDS, Math.max(1, n)));
+                                }}
+                                data-testid="gen-workiq-rounds"
+                              />
+                            </Field>
+                          )}
+                        </div>
+                      )}
                       <div className="gen-wide gen-files">
                         <span className="ai-label">{t('proj.gen.field.materials')}</span>
                         <p className="muted">{t('proj.gen.materialsHint', { max: fmt.integer(MAX_MATERIAL_CHARS) })}</p>
@@ -360,7 +415,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
                     </dl>
                     {overBudget && <MessageBar intent="error" data-testid="gen-over-budget"><MessageBarBody>{t('proj.gen.overBudget')}</MessageBarBody></MessageBar>}
                     {estimate.inputTooLarge && <MessageBar intent="error"><MessageBarBody>{t('proj.gen.inputTooLarge')}</MessageBarBody></MessageBar>}
-                    <p className="muted">{t('proj.gen.sends')}</p>
+                    <p className="muted" data-testid="gen-sends">{t('proj.gen.sends')}{workIqOn ? ` ${t('proj.gen.sendsWorkIq')}` : ''}</p>
                     <D4Warning testId="gen-d4" />
                     <Checkbox checked={approved} onChange={(_, d) => setApproved(d.checked === true)} label={t('proj.gen.checkApproved')} data-testid="gen-check-approved" />
                     <Checkbox checked={costOk} onChange={(_, d) => setCostOk(d.checked === true)} label={t('proj.gen.checkCost')} data-testid="gen-check-cost" />
@@ -380,6 +435,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
                         {stepIcon(steps[s])}
                         <span>{t(`proj.gen.step.${s}`)}</span>
                         {s === 'verify' && progress?.step === 'verify' && progress.round ? <span className="muted">{t('proj.gen.round', { round: progress.round, errors: progress.errors ?? 0 })}</span> : null}
+                        {s === progress?.step && progress.collectRound ? <span className="muted" data-testid="gen-collect-round">{t('proj.gen.collectRound', { round: progress.collectRound, unmet: progress.unmet?.length ?? 0 })}</span> : null}
                       </li>
                     ))}
                   </ol>
@@ -440,7 +496,7 @@ function SavedSummary({ result }: { result: GenResult }) {
         <dt>{t('proj.gen.sum.classification')}</dt>
         <dd>{t('proj.gen.sum.classificationValue', { internal: summary.internal, shareable: summary.shareable })}</dd>
         <dt>{t('proj.gen.sum.sources')}</dt>
-        <dd>{t('proj.gen.sum.sourcesValue', { web: report.retrieved.filter((r) => r.kind === 'web' || r.kind === 'news').length, other: report.retrieved.filter((r) => r.kind === 'material' || r.kind === 'note').length })}</dd>
+        <dd>{t('proj.gen.sum.sourcesValue', { web: report.retrieved.filter((r) => r.kind === 'web' || r.kind === 'news').length, other: report.retrieved.filter((r) => r.kind === 'material' || r.kind === 'note' || r.kind === 'workiq').length })}</dd>
         <dt>{t('proj.gen.sum.checks')}</dt>
         <dd data-testid="gen-checks">{t('proj.gen.sum.checksValue', { rounds: report.fixRounds, removed: report.removed.length, dropped: report.droppedSources.length })}</dd>
         <dt>{t('proj.gen.sum.cost')}</dt>
@@ -456,6 +512,27 @@ function SavedSummary({ result }: { result: GenResult }) {
         </MessageBar>
       )}
       {summary.people > 0 && <p className="muted">{t('proj.gen.sum.people', { count: summary.people })}</p>}
+      {(() => {
+        const wiq = report.retrieved.filter((r) => r.kind === 'workiq');
+        if (!wiq.length) return null;
+        const urls = new Set(wiq.flatMap((r) => (r.citations ?? []).map((c) => c.url)));
+        const labels = [...new Set(wiq.map((r) => r.sensitivity).filter((l): l is string => !!l))];
+        return (
+          <div data-testid="gen-sum-workiq">
+            <p className="muted">{t('proj.gen.sum.workIq', { sections: wiq.length, citations: urls.size, label: labels.join(', ') || '—' })}</p>
+            <ul className="muted" data-testid="gen-sum-workiq-sections">
+              {wiq.map((r) => <li key={r.sourceId}>{`${r.title} — ${t('proj.gen.sum.workIqCitations', { count: r.citations?.length ?? 0 })}`}</li>)}
+            </ul>
+          </div>
+        );
+      })()}
+      {report.readiness && (
+        <section aria-label={t('proj.ready.title')}>
+          <h3 className="proj-h2">{t('proj.ready.title')}</h3>
+          <ReadinessView items={report.readiness} rounds={report.collectionRounds} stopReasons={report.stopReasons} testId="gen-readiness" />
+        </section>
+      )}
+      {report.retrievalErrors.some((e) => e.what === 'workiq') && <p className="muted" data-testid="gen-sum-workiq-failed">{t('proj.gen.sum.workIqFailed', { error: report.retrievalErrors.filter((e) => e.what === 'workiq').map((e) => e.error).join(' / ') })}</p>}
       {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}
       <p className="muted">{t('proj.gen.sum.next')}</p>
     </div>

@@ -44,8 +44,12 @@ test('launch screen: AI settings and the generator are reachable; missing requir
   const settings = page.getByTestId('ai-settings-dialog');
   await expect(settings).toBeVisible();
   await expect(settings.getByTestId('ai-endpoint')).toBeVisible();
+  await expect(settings.getByTestId('ai-workiq')).toBeVisible();
+  await expect(settings.getByTestId('ai-workiq-route-cli')).toBeChecked(); // D-14: Microsoft's Work IQ CLI is the default route
+  await expect(settings.getByTestId('ai-workiq-check')).toBeDisabled(); // nothing saved yet
   await settings.getByTestId('ai-provider-copilot').check();
   await expect(settings.getByTestId('ai-copilot')).toBeVisible();
+  await expect(settings.getByTestId('ai-workiq')).toHaveCount(0); // D-14: Work IQ belongs to Microsoft Foundry only
   await expect(settings.getByTestId('ai-copilot-signin')).toContainText('Not checked');
   await expect(settings.getByTestId('ai-endpoint')).toHaveCount(0);
   await expect(settings.getByTestId('ai-price-request')).toBeVisible();
@@ -62,6 +66,8 @@ test('launch screen: AI settings and the generator are reachable; missing requir
   await expect(dialog.getByTestId('gen-missing')).toHaveText('Required fields missing: Purpose (improvement theme)');
   await expect(dialog.getByTestId('gen-start')).toBeDisabled();
   await expect(dialog.getByTestId('ai-readiness')).toContainText('To do');
+  await expect(dialog.getByTestId('gen-workiq')).toBeDisabled(); // Foundry is selected, but nobody signed in to Work IQ
+  await expect(dialog.getByTestId('gen-workiq-note')).toContainText('choose the Work IQ CLI');
   await dialog.getByTestId('gen-purpose').fill('Reduce late deliveries');
   await expect(dialog.getByTestId('gen-missing')).toHaveCount(0);
   await expect(dialog.getByTestId('gen-start')).toBeDisabled(); // AI not configured, confirmations not given
@@ -81,4 +87,17 @@ test('Japanese labels on the launch screen', async ({ page }) => {
   await expect(page.getByTestId('launch-ai-settings')).toHaveText('AI 設定');
   await page.getByTestId('launch-generate').click();
   await expect(page.getByTestId('gen-missing')).toContainText('企業名');
+});
+
+test('D-14: with GitHub Copilot as the provider the generator neither offers nor mentions Work IQ', async ({ page }) => {
+  await seed(page, 'en');
+  await page.getByTestId('launch-ai-settings').click();
+  const settings = page.getByTestId('ai-settings-dialog');
+  await settings.getByTestId('ai-provider-copilot').check();
+  await settings.getByTestId('ai-settings-dialog-close').click();
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await expect(dialog.getByTestId('gen-news')).toBeVisible();
+  await expect(dialog.getByTestId('gen-workiq-section')).toHaveCount(0);
+  await expect(dialog.getByTestId('gen-sends')).not.toContainText('Work IQ');
 });

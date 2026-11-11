@@ -3,7 +3,7 @@ import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
-import { ArchitectureExtension, CoreObjectExtension, GlossarySchema } from './extensionSchemas.ts';
+import { ArchitectureExtension, CoreObjectExtension, GlossarySchema, OkrExtension, WorkflowExtension } from './extensionSchemas.ts';
 import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 
@@ -197,12 +197,31 @@ export function verifyPack(raw: unknown): VerifyResult {
   const extensionSchemas = {
     glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
+    workflow: WorkflowExtension, okr: OkrExtension,
   };
   for (const [key, schema] of Object.entries(extensionSchemas)) {
     const raw = pack.extensions?.[key];
     if (raw === undefined) continue;
     const result = schema.safeParse(raw);
     if (!result.success) add({ severity: 'error', code: 'EXTENSION_SCHEMA', path: `extensions.${key}`, cause: zodIssues(result.error), action: 'Fix this extension using its documented structure; the screen would otherwise ignore invalid data.' });
+  }
+  const sourceRefs = (ids: string[] | undefined, path: string) => ids?.forEach((id, i) => {
+    if (byId.get(id)?.kind !== 'source') add({ severity: 'error', code: 'SOURCE_KIND', path: `${path}[${i}]`, cause: `"${id}" is not an existing source.`, action: 'Use an existing source entity id.' });
+  });
+  const workflow = WorkflowExtension.safeParse(pack.extensions?.workflow);
+  if (workflow.success) {
+    const stageIds = new Set(workflow.data.stages.map((s) => s.id));
+    workflow.data.stages.forEach((s, i) => {
+      s.next.forEach((n, j) => {
+        if (!stageIds.has(n)) add({ severity: 'error', code: 'DANGLING_REF', path: `extensions.workflow.stages[${i}].next[${j}]`, cause: `"${n}" is not a stage id.`, action: 'Point next at an existing stage id, or name the team in handoffTo.' });
+      });
+      sourceRefs(s.sourceIds, `extensions.workflow.stages[${i}].sourceIds`);
+    });
+  }
+  const okr = OkrExtension.safeParse(pack.extensions?.okr);
+  if (okr.success) {
+    okr.data.kpis.forEach((k, i) => sourceRefs(k.sourceIds, `extensions.okr.kpis[${i}].sourceIds`));
+    okr.data.objectives.forEach((o, i) => sourceRefs(o.sourceIds, `extensions.okr.objectives[${i}].sourceIds`));
   }
   for (const issue of parseGraphExtension(pack.extensions?.graph, new Set(byId.keys())).issues) {
     add({ severity: 'error', code: 'EXTENSION_SCHEMA', path: 'extensions.graph', cause: issue, action: 'Fix the graph section and reference existing entities.' });

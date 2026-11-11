@@ -189,7 +189,8 @@
                 "enum": [
                   "hq",
                   "plant",
-                  "dc"
+                  "dc",
+                  "office"
                 ]
               },
               "lat": {

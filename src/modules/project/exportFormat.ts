@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { TokenSummary, TokenTotals } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
 import { translate, type Lang, type MessageKey, type Vars } from '../../i18n/core.ts';
 import { loc, type Localizable } from '../../state/text.ts';
@@ -156,7 +157,7 @@ function meta(tag: 'theme' | 'record', fields: Record<string, string | undefined
   return `<!-- bas:${tag} ${p.toString()} -->`;
 }
 
-export function toMarkdown(b: ExportBundle): string {
+export function toMarkdown(b: ExportBundle, aiUsage?: TokenSummary): string {
   const tr = (key: MessageKey, vars?: Vars) => translate(b.lang, key, vars);
   const L = (x: Localizable) => loc(x, b.lang);
   const out: string[] = [];
@@ -250,8 +251,32 @@ export function toMarkdown(b: ExportBundle): string {
     }
   }
 
+  // Token use is internal information: never in what goes outside the company.
+  if (aiUsage && b.audience === 'internal') out.push(...tokenSection(aiUsage, b.lang));
+
   out.push(`## ${tr('proj.md.data')}`, '', tr('proj.md.dataNote'), '', '```json bas-export', JSON.stringify(b, null, 2), '```', '');
   return out.join('\n');
+}
+
+/** Markdown table of the project's generative-AI tokens per step, the export itself (0) and the total. */
+export function tokenSection(s: TokenSummary, lang: Lang): string[] {
+  const tr = (key: MessageKey, vars?: Vars) => translate(lang, key, vars);
+  const locale = lang === 'ja' ? 'ja-JP' : 'en-US';
+  const n = (v: number) => new Intl.NumberFormat(locale).format(v);
+  const yen = (v: number | null) => (v === null ? tr('ai.cost.unavailable') : new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 2 }).format(v));
+  const row = (label: string, x: TokenTotals) => `| ${cell(label)} | ${n(x.calls)} | ${n(x.inputTokens)} | ${n(x.outputTokens)} | ${n(x.totalTokens)} | ${cell(yen(x.costJpy))} |`;
+  const out = [`## ${tr('proj.md.tokens')}`, '', tr('proj.md.tokensNote'), ''];
+  out.push(
+    `| ${tr('ai.tokens.step')} | ${tr('ai.tokens.calls')} | ${tr('ai.tokens.input')} | ${tr('ai.tokens.output')} | ${tr('ai.tokens.total')} | ${tr('ai.tokens.cost')} |`,
+    '|---|---:|---:|---:|---:|---:|',
+  );
+  for (const l of s.lines) {
+    const label = l.step ? tr(`proj.gen.step.${l.step}` as MessageKey) : tr(`ai.use.${l.use}` as MessageKey);
+    out.push(row(l.estimatedCalls > 0 ? `${label} ${tr('ai.tokens.estimatedMark')}` : label, l));
+  }
+  out.push(row(tr('proj.export.tokens.export'), { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costJpy: 0, estimatedCalls: 0 }));
+  out.push(row(`**${tr('ai.tokens.sum')}**`, s.total), '');
+  return out;
 }
 
 /** FR-055: a short follow-up document (decisions, next actions, open AI suggestions) generated with the export. */

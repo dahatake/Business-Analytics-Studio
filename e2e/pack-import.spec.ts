@@ -36,6 +36,10 @@ function copilotParts(kpiSourceIds = ['src-plan']) {
         })),
       },
       dataCatalog: { items: [{ name: 'Fabrikam Orders', columns: ['orderId'], url: 'https://example.com/orders' }] },
+      okr: {
+        kpis: [{ id: 'okr-kpi-nps', name: '顧客推奨度', target: '前年比 +5 ポイント', sourceIds: ['src-plan'] }],
+        objectives: [{ id: 'okr-delivery', objective: '納期で選ばれる', keyResults: [{ text: '納期遵守率を 95% にする', kpiId: 'kpi-otd' }], sourceIds: ['src-plan'] }],
+      },
       glossary: [{ term: 'OTD', definition: 'On time delivery' }],
       graph: { relations: [{ source: 'site-gifu', target: 'kpi-otd', semantic: 'measurement' }] },
       architecture: { asIs: [{ layer: 'data', name: 'Fabrikam ERP' }] },
@@ -165,6 +169,20 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('pack-origin')).toContainText('copilot-part2.txt');
     await expect(page.getByTestId('proj-target-menu')).toContainText('Fabrikam 精工-需要予測');
     await expect(page.getByTestId('sample-pack-badge')).toHaveCount(0);
+    // The app's own count of what the analysis needs, and a re-fetch the user starts when they choose.
+    await expect(page.getByTestId('pack-ready-dataCatalog')).toHaveAttribute('data-met', 'false');
+    await expect(page.getByTestId('pack-ready-dataCatalog')).toContainText('不足');
+    await expect(page.getByTestId('pack-ready-kpi')).toHaveAttribute('data-met', 'true');
+    await expect(page.getByTestId('pack-ready-summary')).toContainText('項目が基準を満たしています');
+    expect(await scan(page)).toEqual([]);
+    await page.getByTestId('pack-refetch').click();
+    const regen = page.getByTestId('gen-dialog');
+    await expect(regen.getByTestId('gen-company')).toHaveValue('Fabrikam 精工');
+    await expect(regen.getByTestId('gen-project')).toHaveValue('需要予測');
+    await expect(regen.getByTestId('gen-prefilled')).toHaveCount(0); // imported, not generated: nothing to prefill
+    await expect(regen.getByTestId('gen-start')).toBeDisabled();
+    await regen.getByRole('button', { name: 'キャンセル' }).click();
+    await expect(regen).toHaveCount(0);
 
     await page.evaluate(() => { window.location.hash = '/directory'; });
     await expect(page.locator('main#main')).toContainText('岐阜工場');
@@ -172,8 +190,17 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('optimize-unavailable')).toBeVisible();
     await page.evaluate(() => { window.location.hash = '/catalog'; });
     await expect(page.getByTestId('uc-import')).toContainText('Fabrikam Orders');
+    // Catalog items no use-case entity covers are still listed with the data entities.
+    await expect(page.getByTestId('uc-catalog-items')).toContainText('Fabrikam Orders');
     await page.reload();
     await expect(page.getByTestId('uc-import')).toContainText('Fabrikam Orders');
+    // The project starts from its own pack's KPIs and internal OKRs.
+    await page.evaluate(() => { window.location.hash = '/analysis?tab=kpi'; });
+    await expect(page.getByTestId('proj-kpi-panel')).toContainText('納期遵守率');
+    await expect(page.getByTestId('proj-okr-panel')).toContainText('納期で選ばれる');
+    await expect(page.getByTestId('proj-pack-okr')).toContainText('顧客推奨度');
+    await expect(page.getByTestId('proj-pack-okr')).toContainText('未計測');
+    expect(await scan(page)).toEqual([]);
 
     // Switching to the demo goes back to the sample; the project keeps its pack.
     await page.getByTestId('proj-target-menu').click();

@@ -11,6 +11,8 @@ import type { Audience } from '../../state/settings.ts';
 import type { CoreCandidate } from './coreObject.ts';
 import { ARCH_LAYERS, LAYER_LABEL, type Architecture, type ArchBlock } from './architecture.ts';
 import type { SceneModel, SceneObject, Vec3 } from './model.ts';
+import { WorkflowExtension } from '../../data/extensionSchemas.ts';
+import type { Localizable } from '../../state/text.ts';
 
 // ---------------------------------------------------------------- digital twin (FR-020)
 
@@ -37,17 +39,83 @@ export interface TwinScene extends SceneModel {
   lines: TwinLine[];
   heroId: string | undefined;
   siteEntityId: string | undefined;
+  /** A sales/service organisation: teams (lanes) and the stages of their work instead of production lines. */
+  office?: boolean;
 }
 
 export const TWIN_LINE_SPACING = 7;
 export const TWIN_MACHINE_X0 = -15;
 export const TWIN_MACHINE_STEP = 6.5;
 export const TWIN_PRODUCT_X = 17;
+const MAX_OFFICE_STAGES = 8;
+const MAX_OFFICE_TEAMS = 6;
+
+/**
+ * An organisation without a plant: one lane per team, the work stages in order along the lanes, so the hand-offs
+ * between teams are visible (extensions.workflow; FR-020 for non-manufacturing customers).
+ */
+function buildOfficeModel(workflow: WorkflowExtension, data: LoadedPack): TwinScene {
+  const office = entitiesOf('site', data).find((s) => s.role === 'office' || s.role === 'hq');
+  const stages = workflow.stages.slice(0, MAX_OFFICE_STAGES);
+  const keyOf = (team: Localizable | undefined) => (team === undefined ? '' : typeof team === 'string' ? team : team.en || team.ja);
+  const teams: { key: string; label: Localizable | undefined }[] = [];
+  for (const s of stages) {
+    const key = keyOf(s.team);
+    if (!teams.some((x) => x.key === key) && teams.length < MAX_OFFICE_TEAMS) teams.push({ key, label: s.team });
+  }
+  const depth = teams.length * TWIN_LINE_SPACING + 8;
+  const rootId = 'twin-site';
+  const objects: SceneObject[] = [{
+    id: rootId, kind: 'site', label: office ? { text: office.name } : { key: 'td.twin.genericOffice' },
+    level: 0, lod: 0, position: [0, 0, 0], size: Math.max(20, depth * 0.9), entityId: office?.id, labelLod: 0,
+  }];
+  const step = stages.length > 1 ? Math.min(TWIN_MACHINE_STEP, 32 / (stages.length - 1)) : 0;
+  const lines: TwinLine[] = teams.map((team, k) => {
+    const z = (k - (teams.length - 1) / 2) * TWIN_LINE_SPACING;
+    const lineId = `twin-line-${k + 1}`;
+    objects.push({
+      id: lineId, kind: 'team', parentId: rootId, level: 1, lod: 0, position: [-1, 0.6, z], size: 12, labelLod: 1,
+      label: team.label !== undefined ? { text: team.label } : { key: 'td.twin.ownTeam' },
+    });
+    const machines: TwinLine['machines'] = [];
+    stages.forEach((s, i) => {
+      if (keyOf(s.team) !== team.key) return;
+      const id = `twin-m-${k + 1}-${i + 1}`;
+      const x = -16 + i * step;
+      objects.push({
+        id, kind: 'stage', parentId: lineId, level: 2, lod: 1, position: [x, 1.4, z], size: 4.5, labelLod: 2,
+        label: { text: s.name },
+        detail: { key: 'td.twin.stageDetail', vars: { n: i + 1, outputs: {
+          ja: s.outputs.map((o) => (typeof o === 'string' ? o : o.ja)).join('、') || '—',
+          en: s.outputs.map((o) => (typeof o === 'string' ? o : o.en)).join(', ') || '—',
+        } } },
+      });
+      machines.push({ id, step: TWIN_STEPS[i % TWIN_STEPS.length]!, x });
+    });
+    return { id: lineId, z, hue: 210 + k * 40, machines };
+  });
+  return {
+    tab: 'twin', rootId, objects,
+    lodThresholds: [40, 18],
+    levelNames: ['td.lod.office', 'td.lod.team', 'td.lod.stage'],
+    home: { target: [0, 0, 0], distance: 54, azimuth: -0.6, polar: 0.95 },
+    minDistance: 4, maxDistance: 140,
+    floor: { width: 44, depth },
+    lines,
+    heroId: undefined,
+    siteEntityId: office?.id,
+    office: true,
+  };
+}
 
 /** Procedural plant of the core object: site → production lines → machines and products (no external assets, FR-068). */
 export function buildTwinModel(core: CoreCandidate | undefined, data: LoadedPack = loaded, audience: Audience = 'internal'): TwinScene {
   const site = core?.siteId ? getEntity(core.siteId, data) : undefined;
   const siteEntity = site?.kind === 'site' ? site : entitiesOf('site', data).find((s) => s.role === 'plant');
+  if (!siteEntity || siteEntity.role !== 'plant') {
+    const workflow = WorkflowExtension.safeParse(data.pack.extensions?.workflow);
+    if (workflow.success) return buildOfficeModel(workflow.data, data);
+  }
   const products = entitiesOf('product', data).filter((p) => p.siteId === siteEntity?.id && !isHidden(p, audience));
   const heroEntityId = core?.entityId && products.some((p) => p.id === core.entityId) ? core.entityId : products[0]?.id;
   const lineCount = Math.max(1, products.length);
@@ -100,13 +168,19 @@ export function buildTwinModel(core: CoreCandidate | undefined, data: LoadedPack
 
 // ---------------------------------------------------------------- 3D map (FR-021)
 
-const GEO_CENTER = { lat: 36.6, lon: 137.0 };
-const GEO_SCALE = 2.4;
-const COS_LAT = Math.cos((GEO_CENTER.lat * Math.PI) / 180);
+interface GeoFrame { lat: number; lon: number; scale: number; cosLat: number; world: boolean }
+const JAPAN_FRAME: GeoFrame = { lat: 36.6, lon: 137.0, scale: 2.4, cosLat: Math.cos((36.6 * Math.PI) / 180), world: false };
+/** Plate carrée world: about 58 × 26 scene units, the same size as the Japan view. */
+const WORLD_FRAME: GeoFrame = { lat: 15, lon: 10, scale: 0.16, cosLat: 1, world: true };
 
-/** Equirectangular projection around central Japan → scene X (east) / Z (south). */
-export function geoToXZ(lat: number, lon: number): [number, number] {
-  return [(lon - GEO_CENTER.lon) * GEO_SCALE * COS_LAT, -(lat - GEO_CENTER.lat) * GEO_SCALE];
+/** Sites abroad switch the 3D map from Japan to the world (a global organisation's locations). */
+export function geoFrameFor(sites: { lat: number; lon: number }[]): GeoFrame {
+  return sites.some((s) => !(s.lat >= 20 && s.lat <= 46.5 && s.lon >= 122 && s.lon <= 154)) ? WORLD_FRAME : JAPAN_FRAME;
+}
+
+/** Equirectangular projection around the frame centre → scene X (east) / Z (south). Default: central Japan. */
+export function geoToXZ(lat: number, lon: number, f: GeoFrame = JAPAN_FRAME): [number, number] {
+  return [(lon - f.lon) * f.scale * f.cosLat, -(lat - f.lat) * f.scale];
 }
 
 /** Approximate centres of the sample regions (pack regions carry no coordinates). */
@@ -148,22 +222,43 @@ export function japanOutline(): [number, number][][] {
   return outlineCache;
 }
 
+let worldCache: [number, number][][] | null = null;
+/** Coastlines of every country (outer rings of the larger polygons, thinned), Antarctica left out. */
+export function worldOutline(): [number, number][][] {
+  if (worldCache) return worldCache;
+  const topo = countriesTopo as unknown as Topology<{ countries: GeometryCollection }>;
+  const fc = feature(topo, topo.objects.countries) as FeatureCollection<Geometry>;
+  const rings: Position[][] = [];
+  for (const f of fc.features) {
+    if (String(f.id) === '010') continue;
+    if (f.geometry.type === 'MultiPolygon') f.geometry.coordinates.forEach((poly) => poly[0] && rings.push(poly[0]));
+    else if (f.geometry.type === 'Polygon' && f.geometry.coordinates[0]) rings.push(f.geometry.coordinates[0]);
+  }
+  worldCache = rings
+    .filter((r) => r.length >= 60)
+    .map((r) => r.filter((_, i) => i % 6 === 0).map((p) => geoToXZ(p[1]!, p[0]!, WORLD_FRAME)))
+    .filter((r) => r.length >= 4);
+  return worldCache;
+}
+
 export function buildMapModel(data: LoadedPack = loaded, audience: Audience = 'internal'): MapScene {
   const rootId = 'map-root';
-  const objects: SceneObject[] = [{ id: rootId, kind: 'country', label: { key: 'td.map.root' }, level: 0, lod: 0, position: [0, 0, 0], size: 17 }];
   const pos = new Map<string, Vec3>();
   const sites = entitiesOf('site', data).filter((s) => !isHidden(s, audience));
+  const frame = geoFrameFor(sites);
+  const objects: SceneObject[] = [{ id: rootId, kind: 'country', label: { key: frame.world ? 'td.map.rootWorld' : 'td.map.root' }, level: 0, lod: 0, position: [0, 0, 0], size: 17 }];
+  const xz = (lat: number, lon: number) => geoToXZ(lat, lon, frame);
   const capMax = Math.max(1, ...sites.map((s) => s.capacityTPerMonth));
   for (const s of sites) {
-    const [x, z] = geoToXZ(s.lat, s.lon);
+    const [x, z] = xz(s.lat, s.lon);
     const h = siteHeight(s, capMax);
     pos.set(s.id, [x, 0.2, z]);
-    objects.push({ id: `map-${s.id}`, kind: 'site', label: { text: s.name }, detail: { key: `td.map.role.${s.role}` }, parentId: rootId, level: 1, lod: 0, position: [x, h / 2, z], size: 3, entityId: s.id, labelLod: 0, value: s.capacityTPerMonth });
+    objects.push({ id: `map-${s.id}`, kind: 'site', label: { text: s.name }, detail: { key: `td.map.role.${s.role}` }, parentId: rootId, level: 1, lod: 0, position: [x, h / 2, z], size: frame.world ? 1.6 : 3, entityId: s.id, labelLod: frame.world ? 1 : 0, value: s.capacityTPerMonth });
   }
   for (const r of data.pack.regions) {
     const ll = REGION_LATLON[r.id];
     if (!ll) continue;
-    const [x, z] = geoToXZ(ll[0], ll[1]);
+    const [x, z] = xz(ll[0], ll[1]);
     pos.set(r.id, [x, 0.2, z]);
     const inflow = data.pack.flows.filter((f) => f.target === r.id).reduce((a, f) => a + f.valueT, 0);
     objects.push({ id: `map-${r.id}`, kind: 'region', label: { text: r.name }, detail: { key: 'td.map.demand' }, parentId: rootId, level: 1, lod: 0, position: [x, 0.3, z], size: 3, labelLod: 1, value: inflow });
@@ -171,7 +266,7 @@ export function buildMapModel(data: LoadedPack = loaded, audience: Audience = 'i
   for (const s of entitiesOf('supplier', data).filter((e) => !isHidden(e, audience))) {
     const ll = REGION_LATLON[s.regionId];
     if (!ll) continue;
-    const [x, z] = geoToXZ(ll[0], ll[1]);
+    const [x, z] = xz(ll[0], ll[1]);
     const p: Vec3 = [x - 1.6, 0.2, z + 1.4];
     pos.set(s.id, p);
     const outflow = data.pack.flows.filter((f) => f.source === s.id).reduce((a, f) => a + f.valueT, 0);
@@ -192,7 +287,7 @@ export function buildMapModel(data: LoadedPack = loaded, audience: Audience = 'i
     if (a && b) flows.push({ id: `flow-${i}`, from: f.source, to: f.target, fromPos: a, toPos: b, valueT: f.valueT });
   });
   return {
-    tab: 'map', rootId, objects, flows, outline: japanOutline(),
+    tab: 'map', rootId, objects, flows, outline: frame.world ? worldOutline() : japanOutline(),
     lodThresholds: [30, 11],
     levelNames: ['td.lod.country', 'td.lod.sites', 'td.lod.products'],
     home: { target: [0, 0, -1], distance: 50, azimuth: 0, polar: 0.75 },
@@ -201,6 +296,7 @@ export function buildMapModel(data: LoadedPack = loaded, audience: Audience = 'i
 }
 
 export function siteHeight(s: EntityOf<'site'>, capMax: number): number {
+  if (s.role === 'office') return 1.6;
   return s.role === 'hq' ? 2.6 : 1 + (s.capacityTPerMonth / capMax) * 5;
 }
 

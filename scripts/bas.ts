@@ -101,6 +101,8 @@ const HELP = `Business Analytics Studio pipeline (FR-120)
   schema [--check]                                           write docs/pack.schema.json from the zod schema (FR-118)
   presets                                                    list industry presets (FR-103)
   integrations check|list|impact <id>                        check docs/integration-catalog.md (FR-199, NFR-SEC-006, NFR-OPS-001)
+  workiq check [--timeout 300] [--lang ja|en]                check that the Work IQ CLI starts, signs in and offers "retrieve" (D-14);
+                                                             no Work IQ search is run (nothing billed) and the EULA is not accepted
 
 Variables (FR-130): flags win over BAS_CUSTOMER, BAS_INDUSTRY, BAS_LANG, BAS_TEMPLATE, BAS_WORK_DIR, BAS_CACHE_DIR, BAS_LOG_DIR.
 Every command appends step durations to logs/timing.json (FR-129).`;
@@ -300,9 +302,84 @@ async function dispatch(command: string, args: Args, s: ReturnType<typeof settin
       return errors.length ? 1 : 0;
     }
 
+    case 'workiq': {
+      const sub = args.positional[1] ?? 'check';
+      if (sub !== 'check') throw new UsageError(`Unknown workiq subcommand "${sub}". Run: node scripts/bas.ts workiq check`);
+      const timeoutSec = Number(args.flags.timeout ?? 300);
+      if (!Number.isFinite(timeoutSec) || timeoutSec < 10) throw new UsageError('--timeout must be a number of seconds (10 or more).');
+      return await timer.step('workiq-check', () => workIqCheck(io, s.lang, timeoutSec * 1000));
+    }
+
     default:
       throw new UsageError(`Unknown command "${command}". Run: node scripts/bas.ts help`);
   }
+}
+
+/**
+ * D-14: first-time check of the Work IQ CLI route. Starts `workiq mcp` once and lists its tools (no `retrieve` call, so
+ * no Work IQ search and no charge; the EULA is never accepted here). Exit 0 when BAS can use the route.
+ */
+export async function workIqCheck(io: Io, lang: 'ja' | 'en', timeoutMs: number, deps: {
+  command?: () => import('../server/workiqCli.ts').WorkIqCliCommand;
+  list?: typeof import('../server/workiqCli.ts').listMcpTools;
+  config?: typeof import('../server/workiqCli.ts').workIqCliConfig;
+} = {}): Promise<number> {
+  const cli = await import('../server/workiqCli.ts');
+  const ja = lang === 'ja';
+  const say = (jaText: string, enText: string) => io.out(ja ? jaText : enText);
+  const cmd = (deps.command ?? cli.workIqCliCommand)();
+  const shown = [cmd.command, ...cmd.args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+  const manual = `npx -y ${cli.WORKIQ_CLI_PACKAGE}`;
+  say('Work IQ CLI の確認（BAS の「この PC の Work IQ CLI」方式。接続先が Microsoft Foundry のときだけ使います）',
+    'Work IQ CLI check (the "Work IQ CLI on this PC" route of BAS; used only with Microsoft Foundry)');
+  say(`[1/3] Node.js ${process.versions.node}: OK`, `[1/3] Node.js ${process.versions.node}: OK`);
+  say(`[2/3] 起動するコマンド: ${shown}`, `[2/3] Command: ${shown}`);
+  say('      CLI を起動しています。初回はダウンロードと Microsoft 365 へのサインインで数十秒〜数分かかります。',
+    '      Starting the CLI. The first run downloads it and signs in to Microsoft 365, which can take from seconds to minutes.');
+  say('      サインインの画面が出たら、Work IQ を使う Microsoft 365 の職場アカウントでサインインしてください。',
+    '      If a sign-in window appears, sign in with the Microsoft 365 work account you want to use for Work IQ.');
+  let info: import('../server/workiqCli.ts').McpServerInfo;
+  try {
+    info = await (deps.list ?? cli.listMcpTools)(cmd, undefined, timeoutMs);
+  } catch (e) {
+    const code = (e as { code?: string }).code ?? 'workiqUnavailable';
+    say(`      NG: ${code}`, `      FAILED: ${code}`);
+    if (code === 'workiqCliMissing') {
+      say('次にすること: Node.js 22.18 以降（npm と npx を含む）を入れ直してターミナルを開き直すか、Work IQ CLI を入れて環境変数 BAS_WORKIQ_CLI にその workiq のパスを設定してから、もう一度実行してください。',
+        'Next action: reinstall Node.js 22.18 or later (with npm and npx) and open a new terminal, or install the Work IQ CLI and set BAS_WORKIQ_CLI to its workiq program, then run this again.');
+    } else if (code === 'workiqTimeout') {
+      say(`次にすること: サインインが終わっていない可能性があります。「${manual} auth login」を実行してサインインしてから、もう一度実行してください（--timeout 600 で待ち時間を延ばせます）。`,
+        `Next action: the sign-in may not have finished. Run "${manual} auth login", sign in, then run this again (--timeout 600 waits longer).`);
+    } else {
+      say(`次にすること: CLI が途中で終了しました。社内プロキシで registry.npmjs.org・login.microsoftonline.com・workiq.svc.cloud.microsoft に接続できるか確認し、「${manual} auth login」でサインインしてから、もう一度実行してください。`,
+        `Next action: the CLI stopped. Check that registry.npmjs.org, login.microsoftonline.com and workiq.svc.cloud.microsoft are reachable through your proxy, sign in with "${manual} auth login", then run this again.`);
+    }
+    return 1;
+  }
+  const hasRetrieve = info.tools.includes('retrieve');
+  say(`      OK: ${info.name ?? 'Work IQ'} ${info.version ?? ''} が起動し、ツール ${info.tools.length} 個を確認しました（retrieve: ${hasRetrieve ? 'あり' : 'なし'}）。`,
+    `      OK: ${info.name ?? 'Work IQ'} ${info.version ?? ''} started with ${info.tools.length} tool(s) (retrieve: ${hasRetrieve ? 'available' : 'missing'}).`);
+  const config = await (deps.config ?? cli.workIqCliConfig)(cmd);
+  const account = config?.account ?? null;
+  const eula = config?.eulaAccepted === true;
+  say(`[3/3] CLI のサインイン アカウント: ${account ?? '（未保存。BAS の接続検証のときに CLI がサインインを求めます）'}`,
+    `[3/3] CLI sign-in account: ${account ?? '(none saved yet; the CLI asks you to sign in during the BAS connection test)'}`);
+  say(`      EULA への同意: ${eula ? '同意済み（I-accept-EULA=true）' : '未同意（BAS の画面で同意します）'}`,
+    `      EULA: ${eula ? 'accepted (I-accept-EULA=true)' : 'not accepted yet (accept it in BAS)'}`);
+  if (!hasRetrieve) {
+    say('次にすること: この組織では Work IQ の retrieve ツールが提供されていません（公開プレビュー・テナントの方針による）。管理者に Work IQ MCP の提供状況を確認してください。BAS は retrieve がないと Work IQ を使えません。',
+      'Next action: this organisation does not offer the Work IQ "retrieve" tool (public preview / tenant policy). Ask your administrator about Work IQ MCP. BAS cannot use Work IQ without it.');
+    return 1;
+  }
+  say('この確認では Work IQ の検索（課金の対象）は行わず、EULA への同意もしていません。', 'This check ran no Work IQ search (nothing billed) and did not accept the EULA.');
+  say('次にすること（BAS の画面）:', 'Next steps (in BAS):');
+  say('  1. run.cmd で BAS を起動し、最初の画面の「AI 設定」ボタン（またはメニューの「AI の接続設定」）を開きます。', '  1. Start BAS with run.cmd and open "AI settings" on the first screen (or "AI connection settings" in the menu).');
+  say('  2. 接続先で Microsoft Foundry を選び、エンドポイント・デプロイ名・API キーを入れて「接続をテストして保存」を押します。', '  2. Choose Microsoft Foundry, enter the endpoint, deployment and API key, and press "Test connection and save".');
+  say('  3. 「Work IQ」の欄で「この PC の Work IQ CLI」を選び、「Work IQ CLI を使う」を押します。', '  3. In "Work IQ", choose "Work IQ CLI on this PC" and press "Use the Work IQ CLI".');
+  say(`  4. EULA（${cli.WORKIQ_EULA_URL}）を読み、ご自身で同意する場合だけチェックして「Work IQ の EULA に同意」を押します。${eula ? '（この PC では同意済みのため不要）' : ''}`,
+    `  4. Read the EULA (${cli.WORKIQ_EULA_URL}); only if you accept it yourself, tick the box and press "Accept the Work IQ EULA".${eula ? ' (Already accepted on this PC.)' : ''}`);
+  say('  5. 課金の可能性に同意して「Work IQ の情報取得を検証」を押し、検証日時が表示されれば完了です。', '  5. Agree to the possible charge and press "Verify Work IQ retrieval". It is done when the verification time is shown.');
+  return 0;
 }
 
 function writePackageStarters(dest: string, customer: string) {

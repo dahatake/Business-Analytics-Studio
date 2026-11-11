@@ -25,6 +25,8 @@
 .graph2-edge:focus-visible .graph2-edge-line { stroke: var(--colorStrokeFocus2); }
 .graph2-edge-label { fill: var(--colorNeutralForeground2); paint-order: stroke; stroke: var(--colorNeutralBackground1); stroke-width: 3px; stroke-linejoin: round; }
 .graph2-node { cursor: pointer; }
+.graph2-node.is-peripheral { opacity: 0.45; }
+.graph2-node.is-peripheral:hover, .graph2-node.is-peripheral:focus-visible, .graph2-node.is-peripheral.is-open { opacity: 1; }
 .graph2-node:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 .graph2-node-hit { fill: transparent; }
 .graph2-shape { stroke: var(--colorNeutralBackground1); }

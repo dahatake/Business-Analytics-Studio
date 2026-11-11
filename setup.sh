@@ -3,15 +3,18 @@
 # Prepares the template on this PC: checks Node.js, installs the locked dependencies (npm ci) and builds the app.
 # Safe by design: no sudo, no global installs, no network access other than the npm registry (npm ci),
 # idempotent (skips npm ci when package-lock.json has not changed since the last successful run).
-#   sh setup.sh [--skip-build] [--force] [--dry-run]
+# --workiq (optional, D-14) also checks the Microsoft Work IQ CLI (downloads @microsoft/workiq, may ask you to sign in
+# to Microsoft 365, contacts Microsoft; no Work IQ search and no EULA acceptance).
+#   sh setup.sh [--skip-build] [--force] [--dry-run] [--workiq]
 cd "$(dirname "$0")" || exit 1
-SKIP_BUILD=0; FORCE=0; DRY_RUN=0
+SKIP_BUILD=0; FORCE=0; DRY_RUN=0; WORKIQ=0
 for a in "$@"; do
   case "$a" in
     --skip-build) SKIP_BUILD=1 ;;
     --force) FORCE=1 ;;
     --dry-run) DRY_RUN=1 ;;
-    *) echo "Unknown option: $a (use --skip-build, --force, --dry-run)" >&2; exit 2 ;;
+    --workiq) WORKIQ=1 ;;
+    *) echo "Unknown option: $a (use --skip-build, --force, --dry-run, --workiq)" >&2; exit 2 ;;
   esac
 done
 
@@ -50,9 +53,12 @@ fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then run_step "Building the app (npm run build -> dist/)" npm run build; fi
 run_step "Checking the customer-pack schema (docs/pack.schema.json)" node scripts/bas.ts schema --check
+if [ "$WORKIQ" -eq 1 ]; then run_step "Checking the Microsoft Work IQ CLI (optional; no search, no EULA acceptance)" node scripts/bas.ts workiq check; fi
 
 echo ""
 echo "Setup finished."
-echo "  Start the template:   sh start.sh"
-echo "  Prepare a customer:   node scripts/bas.ts build \"Customer name\""
-echo "  Start a customer:     sh start.sh \"Customer name\""
+echo "  Start the app (with AI and Work IQ):  npm run preview"
+echo "  Start without AI (static server):     sh start.sh"
+echo "  Prepare a customer:                   node scripts/bas.ts build \"Customer name\""
+echo "  Start a customer:                     sh start.sh \"Customer name\""
+if [ "$WORKIQ" -eq 0 ]; then echo "  Work IQ (optional, Microsoft Foundry only): npm run workiq:check   (see users-guide/07-real-data-pack.md)"; fi

@@ -23,10 +23,12 @@ export interface TokenSummary {
   total: TokenTotals;
 }
 
-/** Pack generation stages map to the dialog's steps; every fix round belongs to "verify". */
+/** Pack generation stages map to the dialog's steps; every fix round belongs to "verify", every re-run to its stage. */
 export function stepOfStage(stage: string | undefined): string | undefined {
   if (!stage) return undefined;
-  return stage.startsWith('fix-') ? 'verify' : stage;
+  if (stage.startsWith('fix-')) return 'verify';
+  const rerun = /^(foundation|business)-\d+$/.exec(stage);
+  return rerun ? rerun[1] : stage;
 }
 
 const empty = (): TokenTotals => ({ calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costJpy: 0, estimatedCalls: 0 });

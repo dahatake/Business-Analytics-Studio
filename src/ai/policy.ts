@@ -12,6 +12,8 @@
  * - D-12 (user, 2026-11-10): "packBuild" (FR-311, customer pack generated in the app) is approved for the configured
  *   provider, Microsoft Foundry or GitHub Copilot SDK, within the single monthly budget of 100,000 JPY.
  * - D-13 (2026-11-11): fixed synthetic Foundry connection tests are approved through the settings route only.
+ * - D-14 (user, 2026-11-11): "packBuild" may use Microsoft Work IQ as a material source, only when the provider is
+ *   Microsoft Foundry (WORKIQ_SOURCE). With GitHub Copilot SDK the app neither shows nor calls Work IQ.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
@@ -72,7 +74,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   brandResearch: TBD_ROW(),
   packBuild: {
     provider: ['foundry', 'copilotSdk'],
-    data: 'Company and project names, purpose, as-of date, the official site URL, pages the relay fetched from that site, news headlines, and the work material and research note the user attached (internal allowed, D-2); nothing else from the app',
+    data: 'Company and project names, purpose, as-of date, the official site URL, pages the relay fetched from that site, news headlines, the work material and research note the user attached (internal allowed, D-2), and with Microsoft Foundry only the Work IQ answer and its citation titles (internal, D-14); nothing else from the app',
     enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + confirmation of content, data-owner approval and cost information (Foundry charges unknown, not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
@@ -134,11 +136,37 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   },
   chat: { dailyCalls: AI_LIMITS.dailyCalls },
   presentation: { maxOutputTokens: 4000 }, // PARAM-132
-  // PARAM-145〜147 (D-12): one run makes at most PACK_BUILD_MAX_CALLS calls; 8 runs a day fit the daily cap.
-  packBuild: { dailyCalls: 48, maxInputTokens: 100_000, maxOutputTokens: 16_000 },
+  // PARAM-145〜147 (D-12): one run makes at most PACK_BUILD_MAX_CALLS calls; about 5 full-depth runs a day fit the cap.
+  packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 16_000 },
 };
 
-/** PARAM-148: calls one pack generation may make (2 generation stages + up to 3 fix rounds = 5, plus 1 spare). */
-export const PACK_BUILD_MAX_CALLS = 6;
+/**
+ * PARAM-148: calls one pack generation may make (2 generation stages + up to 2×4 re-runs after Work IQ follow-up
+ * rounds + up to 3 fix rounds = 13, plus 1 spare). The dialog shows the run's own bound (maxCallsFor) before it starts.
+ */
+export const PACK_BUILD_MAX_CALLS = 14;
 /** PARAM-149: per-call timeout for pack generation (long JSON output). */
 export const PACK_BUILD_TIMEOUT_MS = 300_000;
+
+/**
+ * D-14 (user, 2026-11-11): Work IQ (Microsoft 365 work data) as material for "packBuild". Not a C-03 LLM row of its
+ * own: Work IQ answers with the user's delegated Microsoft 365 permissions and the answer then travels as packBuild
+ * material. The relay enforces the provider (server/relay.ts /relay/workiq/ask) and the dialog only offers it then.
+ */
+export const WORKIQ_SOURCE = {
+  use: 'packBuild' as const,
+  providers: ['foundry'] as readonly Provider[],
+  data: 'To Work IQ: company and project names, purpose, focus and as-of date in one fixed question the relay builds. The answer and citation titles are internal and go to Foundry as packBuild material',
+  enableCondition: 'Microsoft Foundry selected and verified + Work IQ tenant and app (client) ID saved in the relay + the user signed in by device code (delegated WorkIQAgent.Ask) + opt-in per run in the pack dialog',
+  cost: 'Billed by Microsoft as Copilot Credits or within the Microsoft 365 Copilot licence; unknown to the app and not counted in the app budget',
+  decidedBy: 'docs/decision-guide.md D-14 (2026-11-11)',
+};
+
+export function workIqAllowedFor(provider: Provider): boolean {
+  return WORKIQ_SOURCE.providers.includes(provider) && isApprovedFor(C03_TABLE[WORKIQ_SOURCE.use], provider);
+}
+
+/** D-14: characters of one Work IQ answer handed to the pack generator (the relay truncates longer answers). */
+export const WORKIQ_MAX_ANSWER_CHARS = 12_000;
+/** D-14: characters of one section search (org, KPI, process, data …); eight sections stay within the input budget. */
+export const WORKIQ_SECTION_MAX_CHARS = 6_000;

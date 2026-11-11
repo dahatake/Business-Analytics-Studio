@@ -1,14 +1,21 @@
 import { spawnSync } from 'node:child_process';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { replaceFileSync } from './files.ts';
 
-/** Secrets the relay may hold (C-01 exception, NFR-SEC-001/005/012). Anything else is rejected. */
+/** Secrets the user enters through the relay (C-01 exception, NFR-SEC-001/005/012). Anything else is rejected. */
 export const SECRET_NAMES = ['foundryKey', 'speechKey'] as const;
-export type SecretName = (typeof SECRET_NAMES)[number];
+export type UserSecretName = (typeof SECRET_NAMES)[number];
+/** Secrets only the relay itself writes (D-14: the Work IQ refresh token, the key that seals a CLI verification); never accepted over HTTP. */
+export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey'] as const;
+export type SecretName = UserSecretName | (typeof INTERNAL_SECRET_NAMES)[number];
 export const MAX_SECRET_LENGTH = 4096;
+/** Refresh tokens issued by Microsoft Entra can be longer than an API key. */
+const MAX_INTERNAL_SECRET_LENGTH = 16_384;
 
-export function isSecretName(v: string): v is SecretName {
+/** Names the HTTP route /relay/secrets/:name accepts (user-entered secrets only). */
+export function isSecretName(v: string): v is UserSecretName {
   return (SECRET_NAMES as readonly string[]).includes(v);
 }
 
@@ -156,7 +163,7 @@ export class SecretVault {
     this.ensureDir();
     const tmp = `${this.protectedKeyPath}.${randomBytes(4).toString('hex')}.tmp`;
     writeFileSync(tmp, blob.toString('base64'), { mode: 0o600 });
-    renameSync(tmp, this.protectedKeyPath);
+    replaceFileSync(tmp, this.protectedKeyPath);
     restrict(this.protectedKeyPath, 0o600);
     return true;
   }
@@ -213,18 +220,19 @@ export class SecretVault {
     this.ensureDir();
     const tmp = `${this.filePath}.${randomBytes(4).toString('hex')}.tmp`;
     writeFileSync(tmp, JSON.stringify(file, null, 2), { mode: 0o600 });
-    renameSync(tmp, this.filePath);
+    replaceFileSync(tmp, this.filePath);
     restrict(this.filePath, 0o600);
   }
 
-  /** Which secrets are saved. Never returns values. */
-  status(): Record<SecretName, boolean> {
+  /** Which user-entered secrets are saved. Never returns values. */
+  status(): Record<UserSecretName, boolean> {
     const entries = this.read().entries;
-    return Object.fromEntries(SECRET_NAMES.map((n) => [n, Boolean(entries[n])])) as Record<SecretName, boolean>;
+    return Object.fromEntries(SECRET_NAMES.map((n) => [n, Boolean(entries[n])])) as Record<UserSecretName, boolean>;
   }
 
   set(name: SecretName, value: string): void {
-    if (!value || value.length > MAX_SECRET_LENGTH) throw new RangeError('invalid secret length');
+    const max = (INTERNAL_SECRET_NAMES as readonly string[]).includes(name) ? MAX_INTERNAL_SECRET_LENGTH : MAX_SECRET_LENGTH;
+    if (!value || value.length > max) throw new RangeError('invalid secret length');
     const key = this.masterKey(true)!;
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, iv);

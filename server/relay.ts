@@ -1,14 +1,20 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { replaceFileSync } from './files.ts';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
-import { AI_LIMITS, C03_TABLE, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, isApprovedFor, type AiUse, type Provider, type UseApproval } from '../src/ai/policy.ts';
+import { AI_LIMITS, C03_TABLE, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, isApprovedFor, workIqAllowedFor, type AiUse, type Provider, type UseApproval } from '../src/ai/policy.ts';
 import { MAX_SECRET_LENGTH, SecretVault, isSecretName } from './vault.ts';
 import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
 import { COPILOT_MODEL_PATTERN, CopilotError, CopilotService } from './copilot.ts';
 import { SiteError, fetchSitePages } from './site.ts';
+import {
+  WORKIQ_OUTBOUND_HOSTS, WORKIQ_SETTINGS_FILE, WorkIqError, WorkIqService, loadWorkIqSettings, parseWorkIqQuestion, removeWorkIqSettings,
+  validateWorkIqInput, type StoredWorkIq, type WorkIqErrorCode,
+} from './workiq.ts';
+import { WorkIqCliService } from './workiqCli.ts';
 import {
   CONNECTION_TEST_MAX_TOKENS, CONNECTION_TEST_PROMPT, CONNECTION_TEST_TIMEOUT_MS, DEFAULT_FOUNDRY_API_VERSION,
   foundryChatUrl, isFoundryV1, parseFoundryConnection, type ConnectionInputError, type FoundryConnection, type FoundryError,
@@ -227,7 +233,7 @@ function writeJsonAtomic(dir: string, file: string, value: unknown) {
   const path = join(dir, file);
   const tmp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
   writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
-  renameSync(tmp, path);
+  replaceFileSync(tmp, path);
 }
 
 /** GitHub Copilot settings held by the relay (non-secret: the sign-in belongs to the Copilot CLI). */
@@ -283,6 +289,19 @@ export function copilotOutboundAllowed(config: RelayConfig): boolean {
   return config.outboundHosts === null || COPILOT_OUTBOUND_HOSTS.every((h) => config.outboundHosts!.includes(h));
 }
 
+/** D-14: Work IQ needs both Microsoft Entra sign-in and the Work IQ API host when an outbound allowlist is set. */
+export function workIqOutboundAllowed(config: RelayConfig): boolean {
+  return config.outboundHosts === null || WORKIQ_OUTBOUND_HOSTS.every((h) => config.outboundHosts!.includes(h));
+}
+
+const WORKIQ_STATUS: Record<WorkIqErrorCode, number> = {
+  invalidSettings: 400, invalidQuestion: 400, notConfigured: 409, signInNotStarted: 409, notSignedIn: 401, signInExpired: 410,
+  signInDeclined: 403, workiqForbidden: 403, authFailed: 502, workiqBusy: 429, workiqTimeout: 504, workiqUnavailable: 502, badWorkiqResponse: 502, workiqNoGrounding: 502,
+  workiqEulaRequired: 412, workiqCliMissing: 503,
+};
+
+const WORKIQ_ASK_FIELDS = new Set(['provider', 'company', 'project', 'purpose', 'focus', 'asOf', 'lang', 'timeZone', 'aspects', 'topics']);
+
 /** Server-side C-03 re-check (defence in depth behind src/ai/gate.ts): approved rows and providers only, and a complete connection. */
 export function relayAiDecision(use: AiUse, configured: boolean, table: Record<AiUse, UseApproval> = C03_TABLE, provider: Provider = 'foundry'): RelayRefusal[] {
   const reasons: RelayRefusal[] = [];
@@ -302,6 +321,10 @@ export interface RelayContext {
   fetch?: typeof fetch;
   news?: NewsService;
   copilot?: CopilotService;
+  /** D-14 Work IQ sign-in and questions (one per relay process; tests inject one with a stub fetch). */
+  workiq?: WorkIqService;
+  /** D-14 Work IQ through Microsoft's Work IQ CLI (MCP stdio); tests inject one with a fake server. */
+  workiqCli?: WorkIqCliService;
   /** Official-site reader (tests inject a stub). */
   site?: typeof fetchSitePages;
   /** Aborted when the browser closes the request (cancel), so an upstream call stops too. */
@@ -475,13 +498,150 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
   const copilotSettings = () => loadCopilotSettings(vault.dir);
   const configuredFor = (provider: Provider) => (provider === 'copilotSdk' ? copilotSettings() !== null : verifiedAt(connection(), vault) !== null);
   const configured = () => configuredFor('foundry');
+  const workiqSettings = () => loadWorkIqSettings(vault.dir);
+  const workiq = ctx.workiq ?? workIqServiceFor(vault, ctx);
+  const workiqCli = ctx.workiqCli ?? new WorkIqCliService();
+  const workiqStatus = () => {
+    const s = workiqSettings();
+    if (!s) return null;
+    if (s.method === 'cli') {
+      const at = cliVerifiedAt(vault, s);
+      return { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: at !== null, verifiedAt: at };
+    }
+    return { method: 'app', tenantId: s.tenantId, clientId: s.clientId, account: s.account, signedIn: workiq.signedIn(s), verifiedAt: workiq.verifiedAt(s) };
+  };
+  const workiqFailure = (error: unknown) => {
+    if (!(error instanceof WorkIqError)) throw error;
+    return json(WORKIQ_STATUS[error.code], { error: error.code });
+  };
+  /** A failed retest must not leave the previous green check in place. */
+  const clearWorkIqVerification = (s: StoredWorkIq) => {
+    if (!s.verifiedAt) return;
+    writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, s.method === 'cli' ? { method: 'cli' } : { tenantId: s.tenantId, clientId: s.clientId, account: s.account });
+  };
 
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
     return json(200, {
       relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault), configured: configured(), keyProtection: vault.keyProtection(),
-      copilot: copilotSettings(),
+      copilot: copilotSettings(), workiq: workiqStatus(),
     });
+  }
+
+  if (path === '/relay/workiq') {
+    if (method === 'PUT') {
+      const next = validateWorkIqInput(parseBody(req.body));
+      if (!next) return json(400, { error: 'invalidSettings' });
+      const current = workiqSettings();
+      if (next.method === 'cli') {
+        if (current?.method !== 'cli') {
+          workiq.signOut();
+          vault.delete('workiqCliKey');
+          writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, { method: 'cli' });
+        }
+        return json(200, { workiq: workiqStatus() });
+      }
+      const same = current?.method === 'app' && current.tenantId === next.tenantId && current.clientId === next.clientId;
+      if (!same) {
+        workiq.signOut();
+        vault.delete('workiqCliKey');
+      }
+      writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, same ? current : { tenantId: next.tenantId, clientId: next.clientId, account: null });
+      return json(200, { workiq: workiqStatus() });
+    }
+    if (method === 'DELETE') {
+      workiq.signOut();
+      vault.delete('workiqCliKey');
+      removeWorkIqSettings(vault.dir);
+      return json(200, { workiq: null });
+    }
+    return json(405, { error: 'methodNotAllowed' });
+  }
+
+  if (path === '/relay/workiq/verify') {
+    if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+    const body = parseBody(req.body);
+    if (!body || Object.keys(body).some((k) => k !== 'provider')) return json(400, { error: 'invalidQuestion' });
+    if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
+    if (!workIqAllowedFor('foundry')) return json(403, { error: 'c03NotApproved' });
+    const s = workiqSettings();
+    if (!s) return json(409, { error: 'notConfigured' });
+    if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+    clearWorkIqVerification(s);
+    try {
+      const at = new Date((ctx.now ?? Date.now)()).toISOString();
+      if (s.method === 'cli') {
+        await workiqCli.verify(ctx.signal);
+        if (workiqSettings()?.method !== 'cli') throw new WorkIqError('notConfigured');
+        writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, { method: 'cli', verifiedAt: at, verification: cliVerification(vault, at, true) });
+        return json(200, { workiq: workiqStatus() });
+      }
+      await workiq.verify(s, ctx.signal);
+      const current = workiqSettings();
+      const verification = workiq.verification(s, at);
+      if (current?.method !== 'app' || current.tenantId !== s.tenantId || current.clientId !== s.clientId || !verification) throw new WorkIqError('notSignedIn');
+      writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, { tenantId: current.tenantId, clientId: current.clientId, account: current.account, verifiedAt: at, verification });
+      return json(200, { workiq: workiqStatus() });
+    } catch (error) {
+      return workiqFailure(error);
+    }
+  }
+
+  if (path === '/relay/workiq/eula') {
+    if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+    const body = parseBody(req.body);
+    // The user's explicit acceptance, made on the screen that links the EULA; never sent by anything else.
+    if (!body || Object.keys(body).some((k) => k !== 'provider' && k !== 'accept') || body.accept !== true) return json(400, { error: 'invalidSettings' });
+    if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
+    if (!workIqAllowedFor('foundry')) return json(403, { error: 'c03NotApproved' });
+    if (workiqSettings()?.method !== 'cli') return json(409, { error: 'notConfigured' });
+    if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+    try {
+      await workiqCli.acceptEula(ctx.signal);
+      return json(200, { accepted: true });
+    } catch (error) {
+      return workiqFailure(error);
+    }
+  }
+
+  if (path === '/relay/workiq/signin' || path === '/relay/workiq/signin/poll') {
+    if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+    const s = workiqSettings();
+    // The Work IQ CLI keeps its own sign-in (Windows account or browser); there is no device code here.
+    if (s?.method !== 'app') return json(409, { error: 'notConfigured' });
+    if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+    try {
+      if (path === '/relay/workiq/signin') clearWorkIqVerification(s);
+      return json(200, path === '/relay/workiq/signin' ? await workiq.startSignIn(s, ctx.signal) : await workiq.pollSignIn(s, ctx.signal));
+    } catch (error) {
+      return workiqFailure(error);
+    }
+  }
+
+  if (path === '/relay/workiq/ask') {
+    if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+    const body = parseBody(req.body);
+    if (!body || Object.keys(body).some((k) => !WORKIQ_ASK_FIELDS.has(k))) return json(400, { error: 'invalidQuestion' });
+    // D-14: Work IQ belongs to the Microsoft Foundry path only; GitHub Copilot SDK runs never reach it.
+    if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
+    if (!workIqAllowedFor('foundry') || !isApprovedFor(table.packBuild, 'foundry')) return json(403, { error: 'c03NotApproved' });
+    if (!configured()) return json(403, { error: 'foundryNotConfigured' });
+    const s = workiqSettings();
+    if (!s) return json(409, { error: 'notConfigured' });
+    if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+    const fields: Record<string, unknown> = { ...body };
+    delete fields.provider;
+    const question = parseWorkIqQuestion(fields);
+    if (!question) return json(400, { error: 'invalidQuestion' });
+    try {
+      if (question.aspects.length || question.topics.length) {
+        const sections = s.method === 'cli' ? await workiqCli.askSections(question, ctx.signal) : await workiq.askSections(s, question, ctx.signal);
+        return json(200, { sections });
+      }
+      return json(200, s.method === 'cli' ? await workiqCli.ask(question, ctx.signal) : await workiq.ask(s, question, ctx.signal));
+    } catch (error) {
+      return workiqFailure(error);
+    }
   }
 
   if (path === '/relay/copilot/status') {
@@ -623,6 +783,41 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
   return json(404, { error: 'notFound' });
 }
 
+/**
+ * Seals a Work IQ CLI verification with a relay-only key, so editing workiq.json cannot turn the check green.
+ * `create` makes the key on the first successful verification.
+ */
+export function cliVerification(vault: SecretVault, at: string, create = false): string | null {
+  let key: string | undefined;
+  try {
+    key = vault.get('workiqCliKey');
+  } catch {
+    return null;
+  }
+  if (!key && create) {
+    key = randomBytes(32).toString('hex');
+    vault.set('workiqCliKey', key);
+  }
+  return key ? createHmac('sha256', key).update(`workiq-cli\n${at}`).digest('hex') : null;
+}
+
+export function cliVerifiedAt(vault: SecretVault, s: { verifiedAt?: string; verification?: string }): string | null {
+  if (!s.verifiedAt || !s.verification) return null;
+  const expected = cliVerification(vault, s.verifiedAt);
+  return expected && timingSafeEqual(Buffer.from(expected), Buffer.from(s.verification)) ? s.verifiedAt : null;
+}
+
+/** A Work IQ service whose sign-in writes the account name next to the saved tenant and app. */
+export function workIqServiceFor(vault: SecretVault, ctx: Pick<RelayContext, 'fetch' | 'now'> = {}): WorkIqService {
+  return new WorkIqService(vault, {
+    fetch: ctx.fetch, now: ctx.now,
+    saveAccount: (account) => {
+      const s = loadWorkIqSettings(vault.dir);
+      if (s?.method === 'app') writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, { tenantId: s.tenantId, clientId: s.clientId, account });
+    },
+  });
+}
+
 function readBody(req: IncomingMessage): Promise<string | null> {
   return new Promise((resolveBody) => {
     const chunks: Buffer[] = [];
@@ -650,6 +845,8 @@ export function relayMiddleware(vault: SecretVault, token: string = newRelayToke
   const lastCall = new Map<string, number>();
   const news = new NewsService();
   const copilot = new CopilotService();
+  const workiq = workIqServiceFor(vault);
+  const workiqCli = new WorkIqCliService();
   return (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url || !req.url.startsWith(RELAY_PREFIX)) return next();
     const aborted = new AbortController();
@@ -663,7 +860,7 @@ export function relayMiddleware(vault: SecretVault, token: string = newRelayToke
         const request: RelayRequest = {
           method: req.method ?? 'GET', url: req.url!, remoteAddress: req.socket.remoteAddress, localPort: req.socket.localPort, headers: req.headers, body,
         };
-        const r = await handleRelay(request, { vault, token, config, lastCall, news, copilot, signal: aborted.signal });
+        const r = await handleRelay(request, { vault, token, config, lastCall, news, copilot, workiq, workiqCli, signal: aborted.signal });
         if (!aborted.signal.aborted) send(res, r);
       } catch {
         // Deliberately no logging and no error details: an error could carry request content (NFR-SEC-012).

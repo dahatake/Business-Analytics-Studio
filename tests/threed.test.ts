@@ -253,6 +253,23 @@ describe('FR-018 core object candidates', () => {
     const sendai = buildTwinModel(c.candidates.find((x) => x.id === 'site-sendai'), data);
     expect(sendai.siteEntityId).toBe('site-sendai');
   });
+
+  it('an organisation without a plant gets an office twin: team lanes holding its work stages, not machines', () => {
+    const raw = structuredClone(samplePack);
+    for (const e of raw.entities) if (e.kind === 'site' && e.role === 'plant') e.role = 'office';
+    raw.extensions = { ...raw.extensions, workflow: { stages: [
+      { id: 'st-in', name: '案件の受付', team: '営業', outputs: ['案件リスト'], next: ['st-plan'] },
+      { id: 'st-plan', name: '提案', team: '営業', next: ['st-dev'] },
+      { id: 'st-dev', name: '技術検証', team: 'エンジニアリング' },
+    ] } };
+    const office = loadPack(raw);
+    const twin = buildTwinModel(coreObjectChoice(office).candidates[0], office);
+    expect(twin.office).toBe(true);
+    expect(twin.objects.some((o) => o.kind === 'machine' || o.kind === 'product')).toBe(false);
+    expect(twin.objects.filter((o) => o.kind === 'team').map((o) => o.label)).toEqual([{ text: '営業' }, { text: 'エンジニアリング' }]);
+    const stage = twin.objects.find((o) => o.kind === 'stage' && JSON.stringify(o.label) === JSON.stringify({ text: '技術検証' }))!;
+    expect(ancestry(twin, stage.id).map((o) => o.kind)).toEqual(['site', 'team', 'stage']);
+  });
 });
 
 describe('scene models', () => {

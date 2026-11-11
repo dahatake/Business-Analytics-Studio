@@ -20,9 +20,29 @@ export interface RelayStatus {
   keyProtection: KeyProtection | null;
   /** GitHub Copilot model saved in the relay (D-12). */
   copilot: { model: string } | null;
+  /** D-14: Work IQ tenant and app saved in the relay, and whether the user is signed in (never the token). */
+  workiq: WorkIqStatus | null;
 }
 
-const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null };
+export interface WorkIqStatus {
+  /** `cli`: Microsoft's Work IQ CLI on this PC holds the sign-in; `app`: the user's app registration and device code. */
+  method: 'app' | 'cli';
+  tenantId: string | null;
+  clientId: string | null;
+  account: string | null;
+  signedIn: boolean;
+  verifiedAt: string | null;
+}
+
+const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null };
+
+function asWorkIq(v: unknown): WorkIqStatus | null {
+  if (!v || typeof v !== 'object') return null;
+  const w = v as Partial<WorkIqStatus>;
+  const common = { account: typeof w.account === 'string' ? w.account : null, signedIn: w.signedIn === true, verifiedAt: typeof w.verifiedAt === 'string' ? w.verifiedAt : null };
+  if (w.method === 'cli') return { method: 'cli', tenantId: null, clientId: null, ...common };
+  return typeof w.tenantId === 'string' && typeof w.clientId === 'string' ? { method: 'app', tenantId: w.tenantId, clientId: w.clientId, ...common } : null;
+}
 
 /**
  * The relay's per-launch token, kept in memory only (never in browser storage). It is handed out on POST so that the
@@ -77,7 +97,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown };
     return {
       reachable: true,
       secrets: { foundryKey: body.secrets?.foundryKey === true, speechKey: body.secrets?.speechKey === true },
@@ -85,6 +105,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
       connectionVerifiedAt: typeof body.connectionVerifiedAt === 'string' ? body.connectionVerifiedAt : null,
       keyProtection: body.keyProtection === 'dpapi' || body.keyProtection === 'file' ? body.keyProtection : null,
       copilot: typeof body.copilot?.model === 'string' ? { model: body.copilot.model } : null,
+      workiq: asWorkIq(body.workiq),
     };
   } catch {
     return UNREACHABLE;
@@ -311,4 +332,128 @@ export async function fetchNewsHeadlines(company: string, lang: 'ja' | 'en', sig
   const res = await relayFetch('/relay/news', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company, lang }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as { provider: string; fetchedAt: string; articles: NewsHeadline[] };
+}
+
+/* ---------- Microsoft Work IQ (D-14, Microsoft Foundry only) ---------- */
+
+const jsonInit = (method: string, body: unknown): RequestInit & { extraHeaders: Record<string, string> } => ({
+  method, extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+
+export type WorkIqSettingsInput = { method: 'cli' } | { method: 'app'; tenantId: string; clientId: string };
+
+/** Saves the route: the Work IQ CLI, or the tenant and public-client app (client) ID. A change signs the user out in the relay. */
+export async function saveWorkIqSettings(input: WorkIqSettingsInput): Promise<{ ok: true; workiq: WorkIqStatus } | { ok: false; error: string }> {
+  try {
+    const res = await relayFetch('/relay/workiq', jsonInit('PUT', input));
+    if (!res.ok) return { ok: false, error: await errorCode(res) };
+    const workiq = asWorkIq(((await res.json()) as { workiq?: unknown }).workiq);
+    return workiq ? { ok: true, workiq } : { ok: false, error: 'failed' };
+  } catch {
+    return { ok: false, error: 'relayUnreachable' };
+  }
+}
+
+export async function deleteWorkIqSettings(): Promise<boolean> {
+  try {
+    return (await relayFetch('/relay/workiq', { method: 'DELETE' })).ok;
+  } catch {
+    return false;
+  }
+}
+
+export interface WorkIqDeviceCode {
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+}
+
+/** Starts the Microsoft Entra device-code sign-in in the relay (the device code itself stays there). */
+export async function startWorkIqSignIn(): Promise<WorkIqDeviceCode> {
+  const res = await relayFetch('/relay/workiq/signin', jsonInit('POST', {}));
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as WorkIqDeviceCode;
+}
+
+export async function pollWorkIqSignIn(): Promise<{ status: 'pending'; interval: number } | { status: 'signedIn'; account: string | null }> {
+  const res = await relayFetch('/relay/workiq/signin/poll', jsonInit('POST', {}));
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as { status: 'pending'; interval: number } | { status: 'signedIn'; account: string | null };
+}
+
+export async function verifyWorkIq(): Promise<WorkIqStatus> {
+  const res = await relayFetch('/relay/workiq/verify', {
+    ...jsonInit('POST', { provider: 'foundry' }), signal: AbortSignal.timeout(125_000),
+  });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const status = asWorkIq(((await res.json()) as { workiq?: unknown }).workiq);
+  if (!status?.signedIn || !status.verifiedAt) throw new RelayError(502, 'badWorkiqResponse');
+  return status;
+}
+
+/** The user's own acceptance of the Work IQ CLI EULA (the button sits next to the EULA link). */
+export async function acceptWorkIqEula(): Promise<void> {
+  const res = await relayFetch('/relay/workiq/eula', { ...jsonInit('POST', { provider: 'foundry', accept: true }), signal: AbortSignal.timeout(125_000) });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+}
+
+export interface WorkIqQuestionInput {
+  company: string;
+  project: string;
+  purpose: string;
+  focus: string;
+  asOf: string;
+  lang: 'ja' | 'en';
+  timeZone: string;
+}
+
+/** Sections the relay can search one by one (server/workiq.ts WORKIQ_ASPECTS). */
+export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
+export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
+
+export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string }) | { key: string; error: string };
+
+function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
+  if (typeof b.answer !== 'string' || typeof b.question !== 'string' || typeof b.fetchedAt !== 'string' || !Array.isArray(b.citations)) return null;
+  return {
+    question: b.question, answer: b.answer, fetchedAt: b.fetchedAt, sensitivity: typeof b.sensitivity === 'string' ? b.sensitivity : null,
+    citations: b.citations.filter((c): c is { title: string; url: string } => typeof c?.title === 'string' && typeof c?.url === 'string'),
+  };
+}
+
+/**
+ * One Work IQ search per section and per follow-up topic. A failed section comes back as `{ key, error }`; the call
+ * itself fails only when none could run (sign-in, permission, EULA, CLI missing).
+ */
+export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: readonly WorkIqAspect[]; topics?: readonly string[] }, signal?: AbortSignal): Promise<WorkIqSectionInfo[]> {
+  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { provider: 'foundry', ...q, aspects: q.aspects ?? [], topics: q.topics ?? [] }), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const b = (await res.json()) as { sections?: unknown };
+  if (!Array.isArray(b.sections)) throw new RelayError(502, 'badRelayAnswer');
+  return b.sections.flatMap((s): WorkIqSectionInfo[] => {
+    if (!s || typeof s !== 'object' || typeof (s as { key?: unknown }).key !== 'string') return [];
+    const key = (s as { key: string }).key;
+    if (typeof (s as { error?: unknown }).error === 'string') return [{ key, error: (s as { error: string }).error }];
+    const a = answerInfo(s as Partial<WorkIqAnswerInfo>);
+    return a ? [{ key, ...a }] : [{ key, error: 'badRelayAnswer' }];
+  });
+}
+
+export interface WorkIqAnswerInfo {
+  question: string;
+  answer: string;
+  citations: { title: string; url: string }[];
+  sensitivity: string | null;
+  fetchedAt: string;
+}
+
+/** One question to Work IQ through the relay, which refuses it unless the provider is Microsoft Foundry. */
+export async function askWorkIq(q: WorkIqQuestionInput, signal?: AbortSignal): Promise<WorkIqAnswerInfo> {
+  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { provider: 'foundry', ...q }), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const b = (await res.json()) as Partial<WorkIqAnswerInfo>;
+  const a = answerInfo(b);
+  if (!a) throw new RelayError(502, 'badRelayAnswer');
+  return a;
 }

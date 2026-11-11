@@ -33,6 +33,7 @@ if ($Customer) {
     Write-Host 'The app was not rebuilt after the last change, so it would show an older version. Run npm run build, then start.ps1 again.' -ForegroundColor Red
     exit 1
   }
+  Write-Host 'Note: this static server has no AI relay. To use Microsoft Foundry, GitHub Copilot or Work IQ, start with run.cmd instead.' -ForegroundColor Yellow
   node scripts/bas.ts serve --dir dist --port $Port
 }
 exit $LASTEXITCODE

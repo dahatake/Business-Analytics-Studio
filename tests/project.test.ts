@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { samplePack } from '../src/data/sample.ts';
 import { loadPack } from '../src/data/pack.ts';
 import type { Entity } from '../src/data/schema.ts';
@@ -6,7 +7,7 @@ import { useProjects } from '../src/state/projects.ts';
 import { computeAnalysis, demoAnalyses, categoryScore, newAnalysis, validateItems } from '../src/modules/project/analysis.ts';
 import { describeInsight } from '../src/modules/project/analysisText.ts';
 import { translate } from '../src/i18n/core.ts';
-import { achievementPct, demoKpis, kpiStatusText, okrPct, statusForPct, validateKpi } from '../src/modules/project/kpiOkr.ts';
+import { achievementPct, demoKpis, kpiStatusText, okrPct, packKpis, statusForPct, validateKpi } from '../src/modules/project/kpiOkr.ts';
 import {
   addRecord, addTheme, adoptSuggestion, applyLens, deleteTheme, DEMO_GLOSSARY, demoDiscussion, DiscussionEditor, parseGlossary,
   themeCounts, treeOrder, validateRecord, validateTheme,
@@ -129,6 +130,18 @@ describe('KPI status thresholds (PARAM-044 / PARAM-045)', () => {
     expect(d.kpis.length).toBe(pack.pack.entities.filter((e) => e.kind === 'kpi').length);
     expect(d.okrs.every((o) => o.keyResults.length >= 1 && o.keyResults.every((kr) => d.kpis.some((k) => k.id === kr.kpiId)))).toBe(true);
   });
+
+  it('a generated pack seeds its numeric KPIs and only the internal OKRs whose key results reach them', () => {
+    const kpiId = samplePack.entities.find((e) => e.kind === 'kpi')!.id;
+    const raw = { ...samplePack, extensions: { ...samplePack.extensions, okr: { objectives: [
+      { id: 'okr-linked', objective: '顧客満足を高める', keyResults: [{ text: 'NSAT を上げる', kpiId }, { text: '文章だけの目標' }] },
+      { id: 'okr-text', objective: '文章だけの OKR', keyResults: [{ text: '社内展開する', target: '全社' }] },
+    ] } } };
+    const d = packKpis(raw, new Date('2026-05-10T00:00:00Z'));
+    expect(d.kpis.map((k) => k.id)).toEqual(samplePack.entities.filter((e) => e.kind === 'kpi').map((e) => e.id));
+    expect(d.kpis.every((k) => k.deadline === '2027-05-10')).toBe(true);
+    expect(d.okrs).toEqual([{ id: 'okr-linked', objective: '顧客満足を高める', keyResults: [{ id: 'okr-linked-kr-1', text: 'NSAT を上げる', kpiId }] }]);
+  });
 });
 
 describe('discussion editing (FR-042, FR-044〜FR-050)', () => {
@@ -233,6 +246,18 @@ describe('export and restore (FR-051〜FR-056, FR-219)', () => {
     if (!back.ok) throw new Error(back.error);
     expect(back.result.discussion.records.find((r) => r.id === 'rec-demo-2')!.text).toBe('Cut lead time to 9 days.');
     expect(back.result.discussion.records.find((r) => r.id === 'rec-demo-1')!.text).toEqual(data.discussion.records[0]!.text);
+  });
+
+  it('includes the AI token table only for internal recipients, and still restores', () => {
+    const usage = summarizeTokens([{ at: '2026-05-01T00:00:00Z', use: 'explain', inputTokens: 2000, outputTokens: 300, costJpy: null }]);
+    const internal = toMarkdown(prepareExport(source(demoData()), opts({ lang: 'en' })).bundle, usage);
+    expect(internal).toContain('## Generative AI token usage');
+    expect(internal).toContain('| Explain current state | 1 | 2,000 | 300 | 2,300 |');
+    const back = parseMarkdown(internal);
+    if (!back.ok) throw new Error(back.error);
+    expect(back.result.discussion).toEqual(demoData().discussion);
+    const external = toMarkdown(prepareExport(source(demoData()), opts({ lang: 'en', audience: 'external' })).bundle, usage);
+    expect(external).not.toContain('Generative AI token usage');
   });
 
   it('restores from the readable sections alone when the data block was removed', () => {

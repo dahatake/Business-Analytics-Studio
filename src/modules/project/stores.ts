@@ -1,11 +1,12 @@
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { loaded } from '../../data/pack.ts';
-import { createScopedStore } from '../../state/projects.ts';
+import { loaded, packOrigin } from '../../data/pack.ts';
+import { createScopedStore, scopedKey } from '../../state/projects.ts';
 import { demoAnalyses } from './analysis.ts';
 import { demoDiscussion, DiscussionEditor, type ChangeEntry, type Lens } from './discussion.ts';
-import { demoKpis } from './kpiOkr.ts';
+import { demoKpis, packKpis } from './kpiOkr.ts';
 import type { AnalysisData, DiscussionData, KpiData } from './model.ts';
 import { emptyDeliverables, type DeliverableData } from './deliverables.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
@@ -16,6 +17,19 @@ import { UseCaseImportUndo } from './useCaseImport.ts';
 export const useDiscussion = createScopedStore<DiscussionData>('proj.discussion', (scope) => (scope === 'demo' ? demoDiscussion() : { themes: [], records: [] }));
 export const useChangeHistory = createScopedStore<ChangeEntry[]>('proj.history', () => []);
 export const useKpis = createScopedStore<KpiData>('proj.kpi', (scope) => (scope === 'demo' ? demoKpis(loaded.pack) : { kpis: [], okrs: [] }));
+/**
+ * A project whose own customer pack is active starts from that pack's KPIs/OKRs until the user saves edits.
+ * Resolved at render time because the imported pack is activated after the stores load (like catalogForScope).
+ */
+export function kpisForScope(value: KpiData, scope: string): KpiData {
+  if (localStorage.getItem(scopedKey(scope, 'proj.kpi')) !== null) return value;
+  return packOrigin.kind === 'imported' && packOrigin.projectId === scope ? packKpis(loaded.pack) : value;
+}
+export function useScopeKpis(): KpiData {
+  const value = useKpis((s) => s.value);
+  const scope = useKpis((s) => s.scope);
+  return useMemo(() => kpisForScope(value, scope), [value, scope]);
+}
 export const useAnalyses = createScopedStore<AnalysisData>('proj.analysis', (scope) => (scope === 'demo' ? demoAnalyses(loaded.pack) : { analyses: [], activeId: null }));
 /** Step deliverables (fields added on top of the pack and project data) and sign-offs. Every scope starts empty. */
 export const useDeliverables = createScopedStore<DeliverableData>('proj.deliverables', () => emptyDeliverables());

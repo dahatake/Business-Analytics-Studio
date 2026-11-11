@@ -3,15 +3,19 @@ import {
   Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input,
   MessageBar, MessageBarBody, Radio, RadioGroup,
 } from '@fluentui/react-components';
+import { readLedger } from '../../ai/client.ts';
+import { recordsOfScope, summarizeTokens } from '../../ai/tokenUsage.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
+import { currentScope } from '../../state/projects.ts';
 import { useSettings, type Audience } from '../../state/settings.ts';
+import { TokenTable } from '../ai/AiCommon.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { useTargetNames, downloadText } from './common.tsx';
 import { themeCounts } from './discussion.ts';
 import { defaultFileName, prepareExport, toFollowUp, toJson, toMarkdown, type ExportFormat } from './exportFormat.ts';
-import { useAnalyses, useDiscussion, useKpis, useProjTransient } from './stores.ts';
+import { useAnalyses, useDiscussion, useProjTransient, useScopeKpis } from './stores.ts';
 
 /** FR-051〜FR-055, FR-219: scope, preview, confidentiality check, format, follow-up, person confirmation. */
 export function ExportDialog() {
@@ -30,7 +34,7 @@ function ExportSurface({ presetTheme, onClose }: { presetTheme: string | null; o
   const { t, lang } = useI18n();
   const settingsAudience = useSettings((s) => s.audience);
   const discussion = useDiscussion((s) => s.value);
-  const kpi = useKpis((s) => s.value);
+  const kpi = useScopeKpis();
   const analysis = useAnalyses((s) => s.value);
   const useCases = useUseCases((s) => s.value);
   const names = useTargetNames();
@@ -42,12 +46,13 @@ function ExportSurface({ presetTheme, onClose }: { presetTheme: string | null; o
   const [customName, setCustomName] = useState<string | null>(null);
   const [step, setStep] = useState<'options' | 'persons'>('options');
   const now = useMemo(() => new Date(), []);
+  const aiUsage = useMemo(() => summarizeTokens(recordsOfScope(readLedger(), currentScope())), []);
 
   const prepared = useMemo(
     () => prepareExport({ company: names.company, project: names.project, data: { discussion, kpi, analysis }, useCases, byId: loaded.byId, now }, { lang, audience, themeId, include }),
     [names.company, names.project, discussion, kpi, analysis, useCases, now, lang, audience, themeId, include],
   );
-  const content = format === 'markdown' ? toMarkdown(prepared.bundle) : toJson(prepared.bundle);
+  const content = format === 'markdown' ? toMarkdown(prepared.bundle, aiUsage) : toJson(prepared.bundle);
   const defaultName = defaultFileName(names.company, names.project, now, 'discussion', format);
   const fileName = customName ?? defaultName;
   const counts = themeCounts(prepared.bundle.discussion);
@@ -129,6 +134,11 @@ function ExportSurface({ presetTheme, onClose }: { presetTheme: string | null; o
               <MessageBar intent="warning" layout="multiline"><MessageBarBody>{t('proj.export.personsNote', { count: prepared.personCount })}</MessageBarBody></MessageBar>
             )}
             <p className="proj-goal-line" data-testid="proj-export-goal">{t('proj.export.goal', { met, total: counts.length })}</p>
+            <section className="proj-export-tokens" aria-labelledby="proj-export-tokens-title" data-testid="proj-export-tokens">
+              <h3 className="proj-h3" id="proj-export-tokens-title">{t('proj.export.tokens.title')}</h3>
+              <TokenTable summary={aiUsage} extraRows={[t('proj.export.tokens.export')]} testId="proj-export-tokens-table" />
+              <p className="muted">{t('proj.export.tokens.note')}</p>
+            </section>
           </div>
           <div className="proj-export-preview">
             <h3 className="proj-h3" id="proj-export-preview-title">{t('proj.export.preview')}</h3>

@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
   Radio, RadioGroup, Select, Spinner, Switch,
 } from '@fluentui/react-components';
-import { ArrowSync20Regular, Delete20Regular, Key20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
+import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { D4Warning } from './AiCommon.tsx';
-import { type ConnectionSaveError, type SecretName } from './relayClient.ts';
-import { connectionTestPreflight, isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode } from './relayClient.ts';
+import { connectionTestPreflight, isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
 
@@ -223,7 +223,212 @@ export function FoundryFields() {
           {s.keyProtection ? t(`ai.keyProtection.${s.keyProtection}`) : t('ai.keyProtection.unknown')}
         </Badge>
       </p>
+      <WorkIqSettings />
     </>
+  );
+}
+
+const WORKIQ_ERRORS = [
+  'invalidSettings', 'notConfigured', 'notSignedIn', 'signInNotStarted', 'signInExpired', 'signInDeclined', 'authFailed', 'workiqForbidden', 'workiqBusy',
+  'workiqTimeout', 'workiqUnavailable', 'badWorkiqResponse', 'workiqNoGrounding', 'outboundNotAllowed', 'relayUnreachable', 'workiqEulaRequired', 'workiqCliMissing',
+] as const;
+type WorkIqMessage = (typeof WORKIQ_ERRORS)[number] | 'failed';
+const workIqMessage = (code: string | undefined): WorkIqMessage => ((WORKIQ_ERRORS as readonly string[]).includes(code ?? '') ? (code as WorkIqMessage) : 'failed');
+export const WORKIQ_EULA_URL = 'https://github.com/microsoft/work-iq';
+
+/**
+ * D-14: Microsoft Work IQ for the customer pack, Microsoft Foundry only. Two routes, both run by the relay:
+ * Microsoft's Work IQ CLI on this PC (its own sign-in; no app registration or admin consent in BAS), or the user's own
+ * public-client app registration (delegated WorkIQAgent.Ask) signed in by device code. This screen never sees a token.
+ */
+export function WorkIqSettings() {
+  const { t } = useI18n();
+  const workiq = useAiSettings((s) => s.workiq);
+  const reachable = useAiSettings((s) => s.relayReachable);
+  const budget = useAiSettings((s) => s.monthlyBudgetJpy);
+  const { saveWorkIq, deleteWorkIq, refreshRelay } = useAiSettings.getState();
+  const [route, setRoute] = useState<'cli' | 'app'>(workiq?.method ?? 'cli');
+  const [tenantId, setTenantId] = useState(workiq?.tenantId ?? '');
+  const [clientId, setClientId] = useState(workiq?.clientId ?? '');
+  const [code, setCode] = useState<WorkIqDeviceCode | null>(null);
+  const [message, setMessage] = useState<'saved' | 'savedCli' | 'deleted' | 'signedIn' | 'verified' | 'eulaAccepted' | WorkIqMessage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [eulaConsent, setEulaConsent] = useState(false);
+  const polling = useRef(0);
+
+  useEffect(() => {
+    if (workiq) setRoute(workiq.method);
+    setTenantId((v) => v || workiq?.tenantId || '');
+    setClientId((v) => v || workiq?.clientId || '');
+  }, [workiq?.method, workiq?.tenantId, workiq?.clientId]);
+  useEffect(() => () => { polling.current++; }, []);
+  useEffect(() => { setConsent(false); setMessage(null); }, [tenantId, clientId, route]);
+
+  const appChanged = workiq?.method !== 'app' || workiq.tenantId !== tenantId.trim().toLowerCase() || workiq.clientId !== clientId.trim().toLowerCase();
+  const changed = route === 'cli' ? workiq?.method !== 'cli' : appChanged;
+  const save = async () => {
+    setBusy(true);
+    const r = await saveWorkIq(route === 'cli' ? { method: 'cli' } : { method: 'app', tenantId, clientId });
+    setBusy(false);
+    setCode(null);
+    setMessage(r.ok ? (route === 'cli' ? 'savedCli' : 'saved') : workIqMessage(r.error));
+  };
+  const acceptEula = async () => {
+    if (!eulaConsent) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await acceptWorkIqEula();
+      setMessage('eulaAccepted');
+    } catch (error) {
+      setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
+    } finally {
+      setBusy(false);
+      setEulaConsent(false);
+    }
+  };
+  const remove = async () => {
+    polling.current++;
+    setCode(null);
+    setMessage((await deleteWorkIq()) ? 'deleted' : 'failed');
+  };
+  const signIn = async () => {
+    const run = ++polling.current;
+    setMessage(null);
+    let started: WorkIqDeviceCode;
+    try {
+      started = await startWorkIqSignIn();
+    } catch (error) {
+      setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
+      return;
+    }
+    setCode(started);
+    let wait = started.interval;
+    while (polling.current === run) {
+      await new Promise((r) => setTimeout(r, wait * 1000));
+      if (polling.current !== run) return;
+      try {
+        const r = await pollWorkIqSignIn();
+        if (r.status === 'signedIn') {
+          setCode(null);
+          setMessage('signedIn');
+          await refreshRelay();
+          return;
+        }
+        wait = r.interval;
+      } catch (error) {
+        if (polling.current !== run) return;
+        setCode(null);
+        setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
+        return;
+      }
+    }
+  };
+
+  const check = async () => {
+    if (!consent || checking || budget <= 0) return;
+    setChecking(true);
+    setMessage(null);
+    try {
+      await verifyWorkIq();
+      setMessage('verified');
+    } catch (error) {
+      setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
+    } finally {
+      await refreshRelay();
+      setChecking(false);
+      setConsent(false);
+    }
+  };
+
+  const cliSaved = workiq?.method === 'cli';
+  const canVerify = cliSaved ? route === 'cli' : workiq?.signedIn === true;
+  return (
+    <section className="ai-stack" aria-labelledby="ai-workiq-title" data-testid="ai-workiq">
+      <h3 id="ai-workiq-title" className="ai-h3">{t('ai.workiq.title')}</h3>
+      <p className="muted">{t('ai.workiq.lead')}</p>
+      <p id="ai-workiq-lbl-route" className="ai-label">{t('ai.workiq.route')}</p>
+      <RadioGroup value={route} onChange={(_, d) => setRoute(d.value === 'app' ? 'app' : 'cli')} aria-labelledby="ai-workiq-lbl-route" disabled={!reachable || busy || checking} data-testid="ai-workiq-route">
+        <Radio value="cli" label={t('ai.workiq.route.cli')} data-testid="ai-workiq-route-cli" />
+        <Radio value="app" label={t('ai.workiq.route.app')} data-testid="ai-workiq-route-app" />
+      </RadioGroup>
+      <p className="ai-status" data-testid="ai-workiq-state">
+        <span>{t('ai.workiq.state')}</span>
+        <Badge appearance="tint" color={workiq?.signedIn ? 'success' : 'informative'}>
+          {workiq === null ? t('ai.conn.notSaved')
+            : cliSaved ? t(workiq.verifiedAt ? 'ai.workiq.cliReady' : 'ai.workiq.cliSaved')
+              : workiq.signedIn ? t('ai.workiq.signedIn', { account: workiq.account ?? '—' }) : t('ai.workiq.notSignedIn')}
+        </Badge>
+      </p>
+      {route === 'cli' ? (
+        <>
+          <p className="muted">{t('ai.workiq.cliInfo')}</p>
+          <div className="ai-row">
+            <Button appearance="primary" icon={<Save20Regular />} onClick={() => void save()} disabled={!reachable || busy || checking || !changed} data-testid="ai-workiq-save">
+              {t('ai.workiq.saveCli')}
+            </Button>
+            <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!reachable || busy || checking || workiq === null} data-testid="ai-workiq-delete">{t('ai.workiq.delete')}</Button>
+          </div>
+          {cliSaved && (
+            <div className="ai-stack" data-testid="ai-workiq-eula">
+              <p className="muted">
+                {t('ai.workiq.eulaInfo')}{' '}
+                <a href={WORKIQ_EULA_URL} target="_blank" rel="noopener noreferrer">{WORKIQ_EULA_URL}</a>
+              </p>
+              <Checkbox checked={eulaConsent} onChange={(_, d) => setEulaConsent(d.checked === true)} disabled={busy || checking} label={t('ai.workiq.eulaConsent')} data-testid="ai-workiq-eula-consent" />
+              <Button icon={busy ? <Spinner size="tiny" /> : undefined} onClick={() => void acceptEula()} disabled={!reachable || busy || checking || !eulaConsent} data-testid="ai-workiq-eula-accept">
+                {t('ai.workiq.eulaAccept')}
+              </Button>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="muted">{t('ai.workiq.appInfo')}</p>
+          <Field label={t('ai.workiq.tenantId')} hint={t('ai.workiq.tenantHint')}>
+            <Input value={tenantId} spellCheck={false} onChange={(_, d) => setTenantId(d.value)} disabled={!reachable || checking} data-testid="ai-workiq-tenant" />
+          </Field>
+          <Field label={t('ai.workiq.clientId')} hint={t('ai.workiq.clientHint')}>
+            <Input value={clientId} spellCheck={false} onChange={(_, d) => setClientId(d.value)} disabled={!reachable || checking} data-testid="ai-workiq-client" />
+          </Field>
+          <div className="ai-row">
+            <Button appearance="primary" icon={<Save20Regular />} onClick={() => void save()} disabled={!reachable || busy || checking || !changed || !tenantId.trim() || !clientId.trim()} data-testid="ai-workiq-save">
+              {t('ai.workiq.save')}
+            </Button>
+            <Button icon={<PersonKey20Regular />} onClick={() => void signIn()} disabled={!reachable || busy || checking || workiq?.method !== 'app' || changed || code !== null} data-testid="ai-workiq-signin">
+              {t(workiq?.signedIn ? 'ai.workiq.signInAgain' : 'ai.workiq.signIn')}
+            </Button>
+            <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!reachable || busy || checking || workiq === null} data-testid="ai-workiq-delete">{t('ai.workiq.delete')}</Button>
+          </div>
+        </>
+      )}
+      {code && (
+        <MessageBar intent="info" data-testid="ai-workiq-code">
+          <MessageBarBody>
+            {t('ai.workiq.codeIntro')}{' '}
+            <a href={code.verificationUri} target="_blank" rel="noopener noreferrer">{code.verificationUri}</a>{' '}
+            <strong data-testid="ai-workiq-usercode">{code.userCode}</strong>
+            <span className="muted"> {t('ai.workiq.codeWaiting')}</span>
+          </MessageBarBody>
+        </MessageBar>
+      )}
+      {message && (
+        <p role="status" className="muted" data-testid="ai-workiq-msg">{t(`ai.workiq.msg.${message}`)}</p>
+      )}
+      <p className="ai-status" data-testid="ai-workiq-verification">
+        <Badge appearance="tint" color={workiq?.signedIn && workiq.verifiedAt ? 'success' : 'warning'}>
+          {workiq?.signedIn && workiq.verifiedAt ? t('ai.workiq.verifiedAt', { at: workiq.verifiedAt }) : t('ai.workiq.unverified')}
+        </Badge>
+      </p>
+      <p className="muted">{t('ai.workiq.testInfo')}</p>
+      <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={checking} label={t('ai.workiq.testConsent')} data-testid="ai-workiq-consent" />
+      {budget <= 0 && <p role="alert">{t('ai.conn.msg.budget')}</p>}
+      <Button icon={checking ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void check()} disabled={!reachable || busy || checking || changed || !canVerify || !consent || budget <= 0 || code !== null} data-testid="ai-workiq-check">
+        {t(checking ? 'ai.workiq.testing' : 'ai.workiq.test')}
+      </Button>
+    </section>
   );
 }
 
@@ -327,12 +532,13 @@ export function PriceFields() {
 export function AiReadiness() {
   const { t } = useI18n();
   const s = useAiSettings();
-  const items: ['relay' | 'configured' | 'prices' | 'live', boolean][] = [
+  const items: ['relay' | 'configured' | 'prices' | 'live' | 'workiq', boolean][] = [
     ['relay', s.relayReachable],
     ['configured', isConfigured(s)],
     ['live', s.liveEnabled],
   ];
   if (s.provider === 'copilotSdk') items.splice(2, 0, ['prices', providerPrices(s) !== null]);
+  else items.splice(2, 0, ['workiq', workIqReady(s)]);
   return (
     <ul className="ai-readiness" data-testid="ai-readiness">
       {items.map(([key, ok]) => (

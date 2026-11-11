@@ -254,7 +254,7 @@ export interface Aggregation {
  * PARAM-077: when more than `limit` nodes would be drawn, collapse the largest groups into one cluster node each
  * until the drawn count fits.
  */
-export function aggregateNodes(ids: string[], groupOf: (id: string) => string, limit = MAX_NODES): Aggregation {
+export function aggregateNodes(ids: string[], groupOf: (id: string) => string, limit = MAX_NODES, collapseFirst?: string): Aggregation {
   const drawnAs = new Map(ids.map((id) => [id, id] as const));
   const clusters = new Map<string, string[]>();
   if (ids.length <= limit) return { nodes: [...ids], clusters, drawnAs };
@@ -263,7 +263,7 @@ export function aggregateNodes(ids: string[], groupOf: (id: string) => string, l
     const g = groupOf(id);
     groups.set(g, [...(groups.get(g) ?? []), id]);
   }
-  const order = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  const order = [...groups.entries()].sort((a, b) => Number(b[0] === collapseFirst) - Number(a[0] === collapseFirst) || b[1].length - a[1].length || a[0].localeCompare(b[0]));
   let count = ids.length;
   for (const [g, members] of order) {
     if (count <= limit) break;

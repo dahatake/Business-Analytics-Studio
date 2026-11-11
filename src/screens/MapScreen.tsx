@@ -25,17 +25,25 @@ const topo = countriesTopo as unknown as Topology<{ countries: GeometryCollectio
 const countries = feature(topo, topo.objects.countries) as FeatureCollection<Geometry, { name: string }>;
 const japan = countries.features.find((f) => String(f.id) === JAPAN_ID) as Feature<Geometry>;
 
-const projection = d3.geoMercator().fitExtent([[30, 20], [W - 30, H - 20]], {
-  type: 'Feature', properties: {}, geometry: { type: 'MultiPoint', coordinates: [[129.5, 31], [142.5, 41.5]] },
-} as Feature);
-const geoPath = d3.geoPath(projection);
-const visibleCountries = countries.features.filter((f) => {
-  const [[x0, y0], [x1, y1]] = geoPath.bounds(f);
-  return x1 > 0 && x0 < W && y1 > 0 && y0 < H && Number.isFinite(x0);
-});
+/** Japan-only packs keep the detailed national view; any site abroad switches to the world map. */
+export const inJapan = (s: { lat: number; lon: number }) => s.lat >= 20 && s.lat <= 46.5 && s.lon >= 122 && s.lon <= 154;
+
+function mapView(world: boolean) {
+  const projection = world
+    ? d3.geoNaturalEarth1().fitExtent([[10, 10], [W - 10, H - 10]], { type: 'Sphere' } as unknown as Feature)
+    : d3.geoMercator().fitExtent([[30, 20], [W - 30, H - 20]], {
+      type: 'Feature', properties: {}, geometry: { type: 'MultiPoint', coordinates: [[129.5, 31], [142.5, 41.5]] },
+    } as Feature);
+  const geoPath = d3.geoPath(projection);
+  const visibleCountries = world ? countries.features : countries.features.filter((f) => {
+    const [[x0, y0], [x1, y1]] = geoPath.bounds(f);
+    return x1 > 0 && x0 < W && y1 > 0 && y0 < H && Number.isFinite(x0);
+  });
+  return { projection, geoPath, visibleCountries };
+}
 
 type Site = EntityOf<'site'>;
-const ROLE_SHAPE: Record<Site['role'], d3.SymbolType> = { hq: d3.symbolStar, plant: d3.symbolSquare, dc: d3.symbolDiamond };
+const ROLE_SHAPE: Record<Site['role'], d3.SymbolType> = { hq: d3.symbolStar, plant: d3.symbolSquare, dc: d3.symbolDiamond, office: d3.symbolCircle };
 
 export function MapScreen() {
   const { t, tx, fmt } = useI18n();
@@ -49,15 +57,23 @@ export function MapScreen() {
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [k, setK] = useState(1);
   const labelsRef = useRef<Set<string>>(new Set());
-  const ROLE_PRIORITY = { hq: 3, plant: 2, dc: 1 } as const;
+  const ROLE_PRIORITY = { hq: 3, plant: 2, dc: 1, office: 1 } as const;
   const sites = entitiesOf('site');
+  const world = sites.some((s) => !inJapan(s));
+  const { projection, geoPath, visibleCountries } = useMemo(() => mapView(world), [world]);
+  // On the world map, countries with a site are highlighted (Japan on the national map).
+  const siteKey = sites.map((s) => `${s.lon},${s.lat}`).join(';');
+  const homeIds = useMemo(() => new Set(world
+    ? countries.features.filter((f) => sites.some((s) => d3.geoContains(f, [s.lon, s.lat]))).map((f) => String(f.id))
+    : [JAPAN_ID]), [world, siteKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const roles = [...new Set(sites.map((s) => s.role))];
 
   const flowLines = useMemo(() => loaded.pack.flows
     .filter((f) => getEntity(f.source)?.kind === 'site' && getEntity(f.target)?.kind === 'site')
     .map((f) => {
       const s = getEntity(f.source) as Site, tg = getEntity(f.target) as Site;
       return { key: `${f.source}-${f.target}`, value: f.valueT, a: projection([s.lon, s.lat])!, b: projection([tg.lon, tg.lat])! };
-    }), []);
+    }), [projection]);
 
   useEffect(() => {
     const svg = d3.select(svgRef.current!);
@@ -103,9 +119,9 @@ export function MapScreen() {
             <rect width={W} height={H} className="geo-sea" />
             <g ref={viewportRef}>
               {visibleCountries.map((f) => (
-                <path key={String(f.id)} d={geoPath(f) ?? ''} className={String(f.id) === JAPAN_ID ? 'geo-land home' : 'geo-land'} />
+                <path key={String(f.id)} d={geoPath(f) ?? ''} className={homeIds.has(String(f.id)) ? 'geo-land home' : 'geo-land'} />
               ))}
-              {japan && <path d={geoPath(japan) ?? ''} className="geo-outline" />}
+              {!world && japan && <path d={geoPath(japan) ?? ''} className="geo-outline" />}
               {showFlows && (
                 <g className="geo-flows" aria-hidden>
                   {flowLines.map((l) => {
@@ -145,10 +161,10 @@ export function MapScreen() {
             </g>
           </svg>
           <ul className="legend" aria-label={t('map.legend')}>
-            <li><svg width="14" height="14" aria-hidden><path transform="translate(7,7)" d={d3.symbol(d3.symbolStar, 60)() ?? ''} className="geo-site-mark" /></svg> {t('siteRole.hq')}</li>
-            <li><svg width="14" height="14" aria-hidden><path transform="translate(7,7)" d={d3.symbol(d3.symbolSquare, 60)() ?? ''} className="geo-site-mark" /></svg> {t('siteRole.plant')}</li>
-            <li><svg width="14" height="14" aria-hidden><path transform="translate(7,7)" d={d3.symbol(d3.symbolDiamond, 60)() ?? ''} className="geo-site-mark" /></svg> {t('siteRole.dc')}</li>
-            <li><span className="legend-line" aria-hidden /> {t('map.flowLegend')}</li>
+            {(roles.length ? roles : (['hq', 'plant', 'dc'] as const)).map((r) => (
+              <li key={r}><svg width="14" height="14" aria-hidden><path transform="translate(7,7)" d={d3.symbol(ROLE_SHAPE[r], 60)() ?? ''} className="geo-site-mark" /></svg> {t(`siteRole.${r}`)}</li>
+            ))}
+            {flowLines.length > 0 && <li><span className="legend-line" aria-hidden /> {t('map.flowLegend')}</li>}
           </ul>
         </Panel>
         <div className="stack">

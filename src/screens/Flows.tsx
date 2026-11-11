@@ -9,6 +9,8 @@ import { kindColor } from '../ui/icons.ts';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { hrefFor, navigate } from '../state/router.ts';
+import { WorkflowExtension } from '../data/extensionSchemas.ts';
+import { loc, type Localizable } from '../state/text.ts';
 
 interface N { id: string; label: string; color: string; isEntity: boolean }
 interface L { source: string; target: string; value: number }
@@ -93,10 +95,21 @@ export function Flows() {
   }, [hover]);
 
   const total = d3.sum(loaded.pack.flows.filter((f) => getEntity(f.source)?.kind === 'supplier'), (f) => f.valueT);
+  const workflow = useMemo(() => {
+    const r = WorkflowExtension.safeParse(loaded.pack.extensions?.workflow);
+    return r.success ? r.data : null;
+  }, []);
+  // A sales or service organisation has a work chain but no material flow; show only what the pack has.
+  const workOnly = workflow !== null && graph.nodes.length === 0;
 
   return (
     <div className="screen screen-flows">
-      <PageHeader title={t('flows.title')} subtitle={t('flows.subtitle', { total: fmt.integer(total) })} />
+      <PageHeader
+        title={workOnly ? t('flows.work.title') : t('flows.title')}
+        subtitle={workOnly ? t('flows.work.subtitle', { count: workflow.stages.length }) : t('flows.subtitle', { total: fmt.integer(total) })}
+      />
+      {workflow && <WorkflowPanel workflow={workflow} />}
+      {!workOnly && (<>
       <Panel title={t('flows.panel')} rationale="visual.sankey" testId="sankey-panel">
         {graph.nodes.length === 0 && <p className="muted" data-testid="flows-empty">{t('flows.empty')}</p>}
         <div className="chart-scroll" hidden={graph.nodes.length === 0}>
@@ -123,7 +136,45 @@ export function Flows() {
           </table>
         </div>
       </Panel>
+      </>)}
     </div>
+  );
+}
+
+function WorkflowPanel({ workflow }: { workflow: WorkflowExtension }) {
+  const { t, lang } = useI18n();
+  const tx = (x: Localizable) => loc(x, lang);
+  const nameOf = new Map(workflow.stages.map((s) => [s.id, tx(s.name)]));
+  const list = (label: string, items: readonly Localizable[] | undefined, testId: string) => (items && items.length > 0 ? (
+    <div className="workflow-part" data-testid={testId}>
+      <div className="muted workflow-label">{label}</div>
+      <ul>{items.map((x, i) => <li key={i}>{tx(x)}</li>)}</ul>
+    </div>
+  ) : null);
+  return (
+    <Panel title={t('flows.work.panel')} testId="workflow-panel">
+      <p className="muted">{t('flows.work.hint')}</p>
+      <ol className="workflow-stages" data-testid="workflow-stages">
+        {workflow.stages.map((s, i) => {
+          const next = [...s.next.map((id) => nameOf.get(id) ?? id), ...(s.handoffTo ?? []).map((h) => tx(h))];
+          return (
+            <li key={s.id} className="workflow-stage" data-testid={`workflow-stage-${s.id}`}>
+              <h3>{i + 1}. {tx(s.name)}{s.team && <span className="muted"> · {tx(s.team)}</span>}</h3>
+              <div className="workflow-grid">
+                {list(t('flows.work.inputs'), s.inputs, 'workflow-inputs')}
+                {list(t('flows.work.activities'), s.activities, 'workflow-activities')}
+                {list(t('flows.work.outputs'), s.outputs, 'workflow-outputs')}
+                {list(t('flows.work.data'), s.data, 'workflow-data')}
+              </div>
+              {next.length > 0 && <p data-testid="workflow-next"><strong>{t('flows.work.next')}</strong> → {next.join(' / ')}</p>}
+              {s.sourceIds && s.sourceIds.length > 0 && (
+                <p className="muted">{t('flows.work.sources')}: {s.sourceIds.map((id, k) => <span key={id}>{k > 0 && ', '}{getEntity(id) ? <EntityRef id={id} /> : id}</span>)}</p>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </Panel>
   );
 }
 

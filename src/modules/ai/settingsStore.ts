@@ -4,10 +4,10 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { checkBudget, parseRequestPrice, type UnitPrices } from '../../ai/budget.ts';
 import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
-import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY } from '../../ai/policy.ts';
+import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
 import {
-  deleteCopilotSettings, deleteRelayConnection, deleteSecret, fetchCopilotStatus, fetchRelayStatus, saveCopilotModel, saveRelayConnection, saveSecret,
-  type ConnectionSaveResult, type CopilotStatusInfo, type KeyProtection, type RelayConnectionInfo, type SecretName,
+  deleteCopilotSettings, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, saveCopilotModel, saveRelayConnection, saveSecret,
+  saveWorkIqSettings, type ConnectionSaveResult, type CopilotStatusInfo, type KeyProtection, type RelayConnectionInfo, type SecretName, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
@@ -55,8 +55,12 @@ export interface AiSettingsState {
   copilotModel: string | null;
   /** Last answer of POST /relay/copilot/status (sign-in and models); null until checked. */
   copilotStatus: CopilotStatusInfo | null;
+  /** D-14: Work IQ settings and sign-in held by the relay (Microsoft Foundry only). */
+  workiq: WorkIqStatus | null;
   update: (patch: Partial<Pick<AiSettingsState, Editable>>) => void;
   refreshRelay: () => Promise<void>;
+  saveWorkIq: (input: WorkIqSettingsInput) => Promise<{ ok: boolean; error?: string }>;
+  deleteWorkIq: () => Promise<boolean>;
   /** Asks the relay to start the Copilot runtime and report the CLI sign-in and its models (can take seconds). */
   checkCopilot: () => Promise<CopilotStatusInfo>;
   saveCopilotModel: (model: string) => Promise<boolean>;
@@ -92,13 +96,25 @@ export const useAiSettings = create<AiSettingsState>()(
       keyProtection: null,
       copilotModel: null,
       copilotStatus: null,
+      workiq: null,
       update: (patch) => set(patch),
       refreshRelay: async () => {
         const s = await fetchRelayStatus();
         set({
           relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, speechKeySaved: s.secrets.speechKey,
           relayConnection: s.connection, connectionVerifiedAt: s.connectionVerifiedAt, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
+          workiq: s.workiq,
         });
+      },
+      saveWorkIq: async (input) => {
+        const r = await saveWorkIqSettings(input.method === 'app' ? { method: 'app', tenantId: input.tenantId.trim(), clientId: input.clientId.trim() } : input);
+        await get().refreshRelay();
+        return r.ok ? { ok: true } : { ok: false, error: r.error };
+      },
+      deleteWorkIq: async () => {
+        const ok = await deleteWorkIqSettings();
+        await get().refreshRelay();
+        return ok;
       },
       checkCopilot: async () => {
         const status = await fetchCopilotStatus();
@@ -221,6 +237,11 @@ export function runtimeSettings(): AiRuntimeSettings {
 /** Whether an approved use is ready; only Copilot requires a manual price. */
 export function liveReady(s: AiSettingsState): boolean {
   return s.liveEnabled && isConfigured(s) && (s.provider === 'foundry' || providerPrices(s) !== null);
+}
+
+/** Work IQ requires a successful retrieval diagnostic, not just a saved refresh token. */
+export function workIqReady(s: Pick<AiSettingsState, 'provider' | 'workiq'>): boolean {
+  return workIqAllowedFor(s.provider) && s.workiq?.signedIn === true && !!s.workiq.verifiedAt;
 }
 
 setRuntimeSettingsProvider(runtimeSettings);

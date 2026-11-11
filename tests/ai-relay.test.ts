@@ -2,17 +2,19 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import * as fs from 'node:fs';
+import fs from 'node:fs';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { C03_TABLE, isApproved, type AiUse, type UseApproval } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loaded } from '../src/data/pack.ts';
 import { SecretVault, protectorWorks, windowsDpapi, type KeyProtector } from '../server/vault.ts';
+import { replaceFileSync } from '../server/files.ts';
 import {
   STRICT_RELAY_CONFIG, handleRelay, hostAllowed, isLoopback, loadConnection, newRelayToken, originAllowed, outboundAllowed, relayAiDecision,
-  relayConfigFromEnv, relayDir, validateConnection, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
+  relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
 } from '../server/relay.ts';
+import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, WorkIqCliService, workIqCliCommand } from '../server/workiqCli.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
@@ -86,6 +88,33 @@ describe('authenticated company news relay', () => {
 });
 
 describe('secret vault (AES-256-GCM)', () => {
+  it('retries transient Windows replacement locks without removing the old file and surfaces permanent errors', () => {
+    const source = join(dir, 'new.json');
+    const destination = join(dir, 'saved.json');
+    writeFileSync(source, 'new');
+    writeFileSync(destination, 'old');
+    const original = fs.renameSync;
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      expect(readFileSync(destination, 'utf8')).toBe('old');
+      throw Object.assign(new Error('locked'), { code: process.platform === 'win32' ? 'EPERM' : 'ENOENT' });
+    });
+    try {
+      if (process.platform === 'win32') {
+        spy.mockImplementationOnce(original);
+        replaceFileSync(source, destination);
+        expect(readFileSync(destination, 'utf8')).toBe('new');
+        expect(spy).toHaveBeenCalledTimes(2);
+      } else {
+        expect(() => replaceFileSync(source, destination)).toThrow('locked');
+      }
+      spy.mockReset().mockImplementation(() => { throw Object.assign(new Error('permanent'), { code: 'ENOENT' }); });
+      expect(() => replaceFileSync(source, destination)).toThrow('permanent');
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('round-trips a secret and creates a random 32-byte master key file on first use (no DPAPI)', () => {
     expect(existsSync(vault.keyPath)).toBe(false);
     vault.set('foundryKey', FAKE_KEY);
@@ -431,7 +460,7 @@ describe('relay secrets and connection', () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -758,5 +787,428 @@ describe('D-12 review fixes: Copilot and the outbound allowlist', () => {
     const withCopilot: RelayConfig = { ...foundryOnly, outboundHosts: ['res.openai.azure.com', 'api.githubcopilot.com', 'api.github.com', 'github.com'] };
     expect((await call(req('POST', '/relay/ai', body), { config: withCopilot, copilot })).status).toBe(200);
     expect(calls).toBe(1);
+  });
+});
+
+describe('D-14 Work IQ through the relay (Microsoft Foundry only)', () => {
+  const TENANT = '11111111-2222-3333-4444-555555555555';
+  const CLIENT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const REFRESH = 'rt-FAKE-REFRESH-0123456789';
+  const ACCESS = 'at-FAKE-ACCESS-0123456789';
+  const idToken = `x.${Buffer.from(JSON.stringify({ preferred_username: 'user@contoso.example' })).toString('base64url')}.y`;
+  const conn = { endpoint: 'https://res.services.ai.azure.com', deployment: 'gpt-test', apiVersion: '2024-10-21' };
+  const question = { provider: 'foundry', company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-11', lang: 'en', timeZone: 'Asia/Tokyo' };
+  const chatReply = (prompt: string) => ({
+    id: 'conv-1', turnCount: 1,
+    messages: [
+      { id: 'm1', text: prompt, attributions: [] },
+      {
+        id: 'm2', text: 'Contoso: on-time delivery 92% in FY26 (Ops review, 2026-10-01).',
+        attributions: [
+          { attributionType: 'citation', providerDisplayName: 'Ops review FY26.pptx', seeMoreWebUrl: 'https://contoso.sharepoint.com/ops.pptx' },
+          { attributionType: 'citation', providerDisplayName: 'dup', seeMoreWebUrl: 'https://contoso.sharepoint.com/ops.pptx' },
+          { attributionType: 'citation', providerDisplayName: 'insecure', seeMoreWebUrl: 'http://contoso.example/x' },
+          { attributionType: 'annotation', providerDisplayName: '', seeMoreWebUrl: 'https://www.office.com/search?q=x' },
+        ],
+        sensitivityLabel: { displayName: 'Confidential' },
+      },
+    ],
+  });
+
+  /** Stub of Microsoft Entra and Work IQ that records every request (the documented REST contract). */
+  function microsoft(opts: { pending?: number; createStatus?: number[]; chatStatus?: number; noCitations?: boolean } = {}) {
+    const calls: { url: string; init: RequestInit | undefined; form?: URLSearchParams; json?: Record<string, unknown> }[] = [];
+    let pending = opts.pending ?? 0;
+    const createStatus = [...(opts.createStatus ?? [])];
+    const doFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const entry: (typeof calls)[number] = { url, init };
+      calls.push(entry);
+      if (url.startsWith('https://login.microsoftonline.com/')) {
+        entry.form = new URLSearchParams(String(init?.body));
+        if (url.endsWith('/devicecode')) {
+          return Response.json({ device_code: 'dc-SECRET', user_code: 'ABCD-EFGH', verification_uri: 'https://microsoft.com/devicelogin', expires_in: 900, interval: 5 });
+        }
+        if (entry.form.get('grant_type') === 'urn:ietf:params:oauth:grant-type:device_code' && pending-- > 0) {
+          return Response.json({ error: 'authorization_pending' }, { status: 400 });
+        }
+        return Response.json({ access_token: ACCESS, refresh_token: REFRESH, expires_in: 3600, id_token: idToken });
+      }
+      entry.json = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (url === 'https://workiq.svc.cloud.microsoft/rest/conversations') {
+        const status = createStatus.shift() ?? 201;
+        return status === 201 ? Response.json({ id: 'conv-1', state: 'active', turnCount: 0 }, { status: 201 }) : new Response('', { status });
+      }
+      if (url === 'https://workiq.svc.cloud.microsoft/rest/conversations/conv-1/chat') {
+        if (opts.chatStatus) return new Response('private service error', { status: opts.chatStatus });
+        const reply = chatReply(String((entry.json.message as { text: string }).text));
+        if (opts.noCitations) reply.messages.forEach((m) => { m.attributions = []; });
+        return Response.json(reply);
+      }
+      return new Response('', { status: 404 });
+    };
+    return { calls, doFetch };
+  }
+
+  let clock: number;
+  const ctx = (doFetch: typeof fetch, extra: Partial<RelayContext> = {}): Partial<RelayContext> => ({ fetch: doFetch, now: () => clock, ...extra });
+
+  async function signIn(m: ReturnType<typeof microsoft>, workiq: NonNullable<RelayContext['workiq']>) {
+    expect((await call(req('PUT', '/relay/workiq', { tenantId: TENANT, clientId: CLIENT }), ctx(m.doFetch, { workiq }))).status).toBe(200);
+    const started = await call(req('POST', '/relay/workiq/signin', {}), ctx(m.doFetch, { workiq }));
+    expect(started).toEqual({ status: 200, body: { userCode: 'ABCD-EFGH', verificationUri: 'https://microsoft.com/devicelogin', expiresIn: 900, interval: 5 } });
+    for (;;) {
+      clock += 5_000;
+      const r = await call(req('POST', '/relay/workiq/signin/poll', {}), ctx(m.doFetch, { workiq }));
+      expect(r.status).toBe(200);
+      if ((r.body as { status: string }).status === 'signedIn') return r;
+    }
+  }
+
+  async function verifyFoundry() {
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+  }
+
+  beforeEach(() => { clock = Date.parse('2026-11-11T05:00:00Z'); });
+  afterEach(() => {
+    for (const a of answers) {
+      const text = JSON.stringify(a.body);
+      for (const secret of [REFRESH, ACCESS, 'dc-SECRET']) expect(text).not.toContain(secret);
+    }
+  });
+
+  it('signs in by device code with the delegated WorkIQAgent.Ask scope and keeps the refresh token only in the vault', async () => {
+    const m = microsoft({ pending: 1 });
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    expect((await call(req('PUT', '/relay/workiq', { tenantId: 'common', clientId: CLIENT }))).body).toEqual({ error: 'invalidSettings' });
+    expect((await call(req('PUT', '/relay/workiq', { tenantId: TENANT, clientId: CLIENT, secret: 'x' }))).body).toEqual({ error: 'invalidSettings' });
+    expect((await call(req('POST', '/relay/workiq/signin', {}), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'notConfigured' });
+
+    const done = await signIn(m, workiq);
+    expect(done.body).toEqual({ status: 'signedIn', account: 'user@contoso.example' });
+    const [code, poll1, poll2] = m.calls;
+    expect(code!.url).toBe(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/devicecode`);
+    expect(code!.form!.get('client_id')).toBe(CLIENT);
+    expect(code!.form!.get('scope')!.split(' ')).toEqual(expect.arrayContaining(['api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask', 'offline_access']));
+    expect(code!.form!.has('client_secret')).toBe(false);
+    expect(poll1!.form!.get('device_code')).toBe('dc-SECRET');
+    expect(poll2!.form!.get('grant_type')).toBe('urn:ietf:params:oauth:grant-type:device_code');
+
+    const status = await call(req('GET', '/relay/status'), { workiq });
+    expect((status.body as { workiq: unknown }).workiq).toEqual({ method: 'app', tenantId: TENANT, clientId: CLIENT, account: 'user@contoso.example', signedIn: true, verifiedAt: null });
+    expect((status.body as { secrets: Record<string, boolean> }).secrets).toEqual({ foundryKey: false, speechKey: false });
+    expect(readFileSync(vault.filePath, 'utf8')).not.toContain(REFRESH);
+    // The browser can neither write nor delete the internal token through the secrets route.
+    expect((await call(req('PUT', '/relay/secrets/workiqRefreshToken', { value: 'x' }))).status).toBe(404);
+
+    // Another tenant or app signs the user out.
+    await call(req('PUT', '/relay/workiq', { tenantId: TENANT, clientId: 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff' }), { workiq });
+    expect(vault.get('workiqRefreshToken')).toBeUndefined();
+    expect((await call(req('GET', '/relay/status'), { workiq })).body).toMatchObject({ workiq: { signedIn: false, account: null } });
+  });
+
+  it('asks with web grounding off and returns the answer, https citations and the sensitivity label', async () => {
+    const m = microsoft();
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    await signIn(m, workiq);
+    await verifyFoundry();
+    m.calls.length = 0;
+    const r = await call(req('POST', '/relay/workiq/ask', question), ctx(m.doFetch, { workiq }));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({
+      answer: 'Contoso: on-time delivery 92% in FY26 (Ops review, 2026-10-01).',
+      citations: [{ title: 'Ops review FY26.pptx', url: 'https://contoso.sharepoint.com/ops.pptx' }],
+      sensitivity: 'Confidential',
+      fetchedAt: new Date(clock).toISOString(),
+    });
+    const chat = m.calls.find((c) => c.url.endsWith('/chat'))!;
+    expect((chat.init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${ACCESS}`);
+    expect(chat.json).toMatchObject({ locationHint: { timeZone: 'Asia/Tokyo' }, contextualResources: { webContext: { isWebEnabled: false } } });
+    const text = (chat.json!.message as { text: string }).text;
+    expect(text).toContain('"Contoso"');
+    expect(text).toContain('Reduce late deliveries');
+    expect((r.body as { question: string }).question).toBe(text);
+    // The access token from the sign-in is reused: no Entra call for this question.
+    expect(m.calls.some((c) => c.url.includes('login.microsoftonline.com'))).toBe(false);
+  });
+
+  it('is refused for GitHub Copilot, without a verified Foundry connection, with an outbound allowlist lacking its hosts, and for free-form fields', async () => {
+    const m = microsoft();
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    await signIn(m, workiq);
+    m.calls.length = 0;
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'copilotSdk' }), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'foundryOnly' });
+    expect((await call(req('POST', '/relay/workiq/ask', question), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'foundryNotConfigured' });
+    await verifyFoundry();
+    const foundryOnly: RelayConfig = { ...STRICT_RELAY_CONFIG, outboundHosts: ['res.services.ai.azure.com'] };
+    expect((await call(req('POST', '/relay/workiq/ask', question), ctx(m.doFetch, { workiq, config: foundryOnly }))).body).toEqual({ error: 'outboundNotAllowed' });
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, prompt: 'anything' }), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'invalidQuestion' });
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, company: '' }), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'invalidQuestion' });
+    expect(m.calls).toEqual([]);
+  });
+
+  it('refreshes an expired access token once and signs out when the refresh token is rejected', async () => {
+    const m = microsoft({ createStatus: [401] });
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    await signIn(m, workiq);
+    await verifyFoundry();
+    m.calls.length = 0;
+    expect((await call(req('POST', '/relay/workiq/ask', question), ctx(m.doFetch, { workiq }))).status).toBe(200);
+    expect(m.calls.map((c) => new URL(c.url).pathname)).toEqual([
+      '/rest/conversations', `/${TENANT}/oauth2/v2.0/token`, '/rest/conversations', '/rest/conversations/conv-1/chat',
+    ]);
+    expect(m.calls[1]!.form!.get('grant_type')).toBe('refresh_token');
+
+    const rejecting: typeof fetch = async (input) => (String(input).includes('login.microsoftonline.com')
+      ? Response.json({ error: 'invalid_grant' }, { status: 400 })
+      : new Response('', { status: 401 }));
+    const fresh = workIqServiceFor(vault, { fetch: rejecting, now: () => clock });
+    expect(await call(req('POST', '/relay/workiq/ask', question), ctx(rejecting, { workiq: fresh }))).toEqual({ status: 401, body: { error: 'notSignedIn' } });
+    expect(vault.get('workiqRefreshToken')).toBeUndefined();
+  });
+
+  it('requires a real source citation to verify retrieval and persists only credential-bound evidence', async () => {
+    const m = microsoft();
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    await signIn(m, workiq);
+    const result = await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), ctx(m.doFetch, { workiq }));
+    expect(result).toMatchObject({ status: 200, body: { workiq: { signedIn: true, verifiedAt: new Date(clock).toISOString() } } });
+    const chat = m.calls.find((c) => c.url.endsWith('/chat'))!;
+    expect(chat.json).toMatchObject({ contextualResources: { webContext: { isWebEnabled: false } }, locationHint: { timeZone: 'UTC' } });
+    expect((chat.json!.message as { text: string }).text).toContain('Connection diagnostic');
+    const serialized = JSON.stringify(result.body) + readFileSync(join(vault.dir, 'workiq.json'), 'utf8');
+    expect(serialized).not.toContain('Contoso:');
+    expect(serialized).not.toContain('https://contoso.sharepoint.com/ops.pptx');
+    // A restart retains evidence; a changed credential cannot inherit it.
+    const fresh = workIqServiceFor(vault);
+    expect((await call(req('GET', '/relay/status'), { workiq: fresh })).body).toMatchObject({ workiq: { verifiedAt: new Date(clock).toISOString() } });
+    vault.delete('workiqRefreshToken');
+    expect((await call(req('GET', '/relay/status'), { workiq: fresh })).body).toMatchObject({ workiq: { verifiedAt: null, signedIn: false } });
+  });
+
+  it('clears successful evidence on a failed retest and does not treat an ungrounded answer as success', async () => {
+    const m = microsoft();
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    await signIn(m, workiq);
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), ctx(m.doFetch, { workiq }))).status).toBe(200);
+    const denied = microsoft({ chatStatus: 403 });
+    const fresh = workIqServiceFor(vault, { fetch: denied.doFetch, now: () => clock });
+    expect(await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), ctx(denied.doFetch, { workiq: fresh })))
+      .toEqual({ status: 403, body: { error: 'workiqForbidden' } });
+    expect((await call(req('GET', '/relay/status'), { workiq: fresh })).body).toMatchObject({ workiq: { signedIn: true, verifiedAt: null } });
+    const ungrounded = microsoft({ noCitations: true });
+    const other = workIqServiceFor(vault, { fetch: ungrounded.doFetch, now: () => clock });
+    expect(await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), ctx(ungrounded.doFetch, { workiq: other })))
+      .toEqual({ status: 502, body: { error: 'workiqNoGrounding' } });
+  });
+
+  it('refuses diagnostics without sign-in, for Copilot, arbitrary prompts, and restricted outbound hosts', async () => {
+    const m = microsoft();
+    const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiq })).body).toEqual({ error: 'notConfigured' });
+    await call(req('PUT', '/relay/workiq', { tenantId: TENANT, clientId: CLIENT }), { workiq });
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'copilotSdk' }), { workiq })).body).toEqual({ error: 'foundryOnly' });
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry', prompt: 'private' }), { workiq })).status).toBe(400);
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiq, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['example.com'] } })).body).toEqual({ error: 'outboundNotAllowed' });
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiq })).body).toEqual({ error: 'notSignedIn' });
+    expect(m.calls).toEqual([]);
+  });
+});
+
+describe('D-14 Work IQ through the Work IQ CLI (MCP stdio, Microsoft Foundry only)', () => {
+  const conn = { endpoint: 'https://res.services.ai.azure.com', deployment: 'gpt-test', apiVersion: '2024-10-21' };
+  const question = { provider: 'foundry', company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-11', lang: 'en', timeZone: 'Asia/Tokyo' };
+  /** A stand-in for `workiq mcp`: newline-delimited JSON-RPC, the documented retrieve payload, and the EULA gate. */
+  const FAKE = `
+const [mode, log] = process.argv.slice(2);
+const fs = require('node:fs');
+let buf = '';
+const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\\n');
+process.stdin.on('end', () => process.exit(0));
+process.stdin.on('data', (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf('\\n')) >= 0) {
+    const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+    if (m.method === 'initialize') {
+      process.stdout.write('not json from the CLI\\n');
+      send({ id: 99, method: 'roots/list' });
+      send({ id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'WorkIQ', version: '1.0.0' } } });
+    } else if (m.method === 'tools/call') {
+      fs.appendFileSync(log, JSON.stringify(m.params) + '\\n');
+      if (mode === 'crash') process.exit(3);
+      if (mode === 'hang') return;
+      if (mode === 'eula' && m.params.name !== 'accept_eula') {
+        send({ id: m.id, result: { content: [{ type: 'text', text: 'You must accept the EULA before using this tool. Use the accept_eula tool to continue.' }] } });
+      } else if (mode === 'denied') {
+        send({ id: m.id, result: { isError: true, content: [{ type: 'text', text: '403 Forbidden: consent required' }] } });
+      } else if (m.params.name === 'accept_eula') {
+        send({ id: m.id, result: { content: [{ type: 'text', text: 'EULA accepted' }] } });
+      } else if (mode === 'results') {
+        // The shape @microsoft/workiq 1.0.x returned on 2026-11-11: per-result markdown, no top-level markdown/retrievalHits.
+        const results = [
+          { markdown: 'Contoso on-time delivery was 92% in FY26.', id: 'r1', webUrl: 'https://contoso.sharepoint.com/ops.pptx', entityType: 'Files', contentProtection: 'allowed',
+            resourceMetadata: { document: { title: 'Ops review FY26.pptx' } }, sensitivityLabel: { displayName: 'Confidential' } },
+          { markdown: 'Delivery KPI review with Contoso.', id: 'r2', webUrl: 'https://teams.microsoft.com/l/meetup-join/1', entityType: 'Meetings', contentProtection: 'allowed',
+            resourceMetadata: { meeting: { title: 'Contoso KPI review', startTime: '2026-10-01T01:00:00Z' } } },
+          { markdown: 'PROTECTED BODY', id: 'r3', webUrl: 'https://outlook.office.com/mail/id/2', entityType: 'Emails', contentProtection: 'blocked',
+            resourceMetadata: { email: { subject: 'Contoso contract', sentTime: '2026-09-30T00:00:00Z' } } },
+        ];
+        send({ id: m.id, result: { content: [], isError: false, structuredContent: { 'application/vnd.ms-workiq.retrieval': {
+          results, resultCount: results.length, searchMetadata: { types: ['File', 'Event', 'Message'] }, stoppedReason: 'completed' } } } });
+      } else {
+        const hits = mode === 'nohits' ? [] : [
+          { id: 'h1', webUrl: 'https://contoso.sharepoint.com/ops.pptx', resourceMetadata: { document: { title: 'Ops review FY26.pptx' } }, sensitivityLabel: { displayName: 'Confidential' } },
+          { id: 'h2', webUrl: 'https://contoso.sharepoint.com/ops.pptx' },
+          { id: 'h3', webUrl: 'http://contoso.example/x' },
+          { id: 'h4', webUrl: 'https://outlook.office.com/mail/id/1', resourceMetadata: { email: { subject: 'Delivery KPI' } }, sensitivityLabel: { displayName: 'General' } },
+        ];
+        send({ id: m.id, result: { content: [{ type: 'text', text: 'see structured content' }], structuredContent: { 'application/vnd.ms-workiq.retrieval': {
+          markdown: 'Contoso: on-time delivery 92% in FY26 [^h1].', retrievalHits: hits, resultCount: hits.length, stoppedReason: 'completed' } } } });
+      }
+    }
+  }
+});
+`;
+  let script: string;
+  let log: string;
+  const cli = (mode: string, timeoutMs?: number, eulaAccepted = true) => new WorkIqCliService({
+    command: () => ({ command: process.execPath, args: [script, mode, log], shell: false }), now: () => Date.parse('2026-11-11T05:00:00Z'), timeoutMs,
+    config: async () => ({ account: 'user@contoso.example', eulaAccepted }),
+  });
+  const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { name: string; arguments: Record<string, unknown> }) : []);
+  const verify = (workiqCli: WorkIqCliService) => call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiqCli, now: () => Date.parse('2026-11-11T05:00:00Z') });
+
+  beforeEach(() => {
+    script = join(dir, 'fake-workiq.cjs');
+    log = join(dir, 'calls.jsonl');
+    writeFileSync(script, FAKE);
+  });
+
+  it('starts the pinned CLI as an MCP server with npm\'s npx, or the program in BAS_WORKIQ_CLI', () => {
+    expect(workIqCliCommand({ BAS_WORKIQ_CLI: 'C:\\tools\\workiq.exe' }, 'node')).toEqual({ command: 'C:\\tools\\workiq.exe', args: ['mcp'], shell: false });
+    expect(workIqCliCommand({ BAS_WORKIQ_CLI: '/opt/workiq/bin/workiq.js' }, '/usr/bin/node')).toEqual({ command: '/usr/bin/node', args: ['/opt/workiq/bin/workiq.js', 'mcp'], shell: false });
+    expect(workIqCliCommand({}, process.execPath).args.slice(-3)).toEqual(['-y', WORKIQ_CLI_PACKAGE, 'mcp']);
+    expect(workIqCliCommand({}, join(dir, 'no-node-here'), 'win32')).toEqual({ command: 'npx.cmd', args: ['-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: true });
+  });
+
+  it('verifies only with a Microsoft 365 source URL, seals the result in the vault, and saves no retrieved content', async () => {
+    expect((await call(req('PUT', '/relay/workiq', { method: 'cli', tenantId: 'x' }))).body).toEqual({ error: 'invalidSettings' });
+    expect((await call(req('PUT', '/relay/workiq', { method: 'cli' }))).body).toEqual({ workiq: { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: false, verifiedAt: null } });
+    // The CLI holds its own sign-in: no device code here.
+    expect((await call(req('POST', '/relay/workiq/signin', {}))).body).toEqual({ error: 'notConfigured' });
+
+    expect(await verify(cli('nohits'))).toEqual({ status: 502, body: { error: 'workiqNoGrounding' } });
+    const ok = await verify(cli('ok'));
+    expect(ok).toEqual({ status: 200, body: { workiq: { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: true, verifiedAt: '2026-11-11T05:00:00.000Z' } } });
+    const [first] = calls();
+    expect(first).toEqual({ name: 'retrieve', arguments: { query: expect.any(String), strategy: 'grounding', timeZone: 'UTC' } });
+    const saved = readFileSync(join(vault.dir, 'workiq.json'), 'utf8');
+    expect(saved).not.toContain('Contoso');
+    expect(saved).not.toContain('sharepoint');
+    expect(JSON.stringify(ok.body)).not.toContain('sharepoint');
+
+    // Editing workiq.json cannot forge the green check: the seal needs the relay-only key.
+    writeFileSync(join(vault.dir, 'workiq.json'), JSON.stringify({ method: 'cli', verifiedAt: '2026-11-12T00:00:00.000Z', verification: 'a'.repeat(64) }));
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ workiq: { signedIn: false, verifiedAt: null } });
+    expect((await call(req('PUT', '/relay/secrets/workiqCliKey', { value: 'x' }))).status).toBe(404);
+
+    // A failed retest clears the previous success.
+    expect((await verify(cli('ok'))).status).toBe(200);
+    expect(await verify(cli('denied'))).toEqual({ status: 403, body: { error: 'workiqForbidden' } });
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ workiq: { verifiedAt: null } });
+  });
+
+  it('reports the EULA gate, accepts the EULA only on an explicit request, and maps a missing or failing CLI', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    expect(await verify(cli('eula'))).toEqual({ status: 412, body: { error: 'workiqEulaRequired' } });
+    expect((await call(req('POST', '/relay/workiq/eula', { provider: 'foundry' }), { workiqCli: cli('eula') })).status).toBe(400);
+    expect((await call(req('POST', '/relay/workiq/eula', { provider: 'copilotSdk', accept: true }), { workiqCli: cli('eula') })).body).toEqual({ error: 'foundryOnly' });
+    expect(calls().map((c) => c.name)).toEqual(['retrieve']);
+    expect(await call(req('POST', '/relay/workiq/eula', { provider: 'foundry', accept: true }), { workiqCli: cli('eula') })).toEqual({ status: 200, body: { accepted: true } });
+    expect(calls().at(-1)).toEqual({ name: 'accept_eula', arguments: { eulaUrl: WORKIQ_EULA_URL } });
+    // The tool answering is not enough: the CLI must have persisted I-accept-EULA=true.
+    expect(await call(req('POST', '/relay/workiq/eula', { provider: 'foundry', accept: true }), { workiqCli: cli('eula', undefined, false) }))
+      .toEqual({ status: 412, body: { error: 'workiqEulaRequired' } });
+
+    const missing = new WorkIqCliService({ command: () => ({ command: join(dir, 'no-such-workiq.exe'), args: ['mcp'], shell: false }) });
+    expect(await verify(missing)).toEqual({ status: 503, body: { error: 'workiqCliMissing' } });
+    expect(await verify(cli('crash'))).toEqual({ status: 502, body: { error: 'workiqUnavailable' } });
+    expect(await verify(cli('hang', 1_500))).toEqual({ status: 504, body: { error: 'workiqTimeout' } });
+  });
+
+  it('reads the per-result payload the CLI actually returns: verifies, cites each source and withholds protected text', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    expect((await verify(cli('results'))).status).toBe(200);
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+    const r = await call(req('POST', '/relay/workiq/ask', question), { workiqCli: cli('results') });
+    expect(r.status).toBe(200);
+    const body = r.body as { answer: string; citations: { title: string; url: string }[]; sensitivity: string | null };
+    expect(body.citations).toEqual([
+      { title: 'Ops review FY26.pptx', url: 'https://contoso.sharepoint.com/ops.pptx' },
+      { title: 'Contoso KPI review', url: 'https://teams.microsoft.com/l/meetup-join/1' },
+      { title: 'Contoso contract', url: 'https://outlook.office.com/mail/id/2' },
+    ]);
+    expect(body.answer).toContain('[1] Ops review FY26.pptx (Files) <https://contoso.sharepoint.com/ops.pptx>\nContoso on-time delivery was 92% in FY26.');
+    expect(body.answer).toContain('[2] Contoso KPI review (Meetings, 2026-10-01)');
+    expect(body.answer).toContain('[3] Contoso contract (Emails, 2026-09-30)');
+    expect(body.answer).not.toContain('PROTECTED BODY');
+    expect(body.sensitivity).toBe('Confidential');
+  });
+
+  it('answers one section per aspect and follow-up topic in one CLI session, and rejects unknown aspects', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['payroll'] }), { workiqCli: cli('ok') })).body).toEqual({ error: 'invalidQuestion' });
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, aspects: [], topics: ['a', 'b', 'c', 'd', 'e'] }), { workiqCli: cli('ok') })).body).toEqual({ error: 'invalidQuestion' });
+
+    const r = await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['kpi', 'data'], topics: ['kpi: NSAT target'] }), { workiqCli: cli('ok') });
+    expect(r.status).toBe(200);
+    const sections = (r.body as { sections: { key: string; question: string; citations: unknown[] }[] }).sections;
+    expect(sections.map((s) => s.key)).toEqual(['kpi', 'data', 'topic-1']);
+    expect(sections.every((s) => s.citations.length === 2)).toBe(true);
+    const asked = calls().map((c) => String(c.arguments.query));
+    expect(asked).toHaveLength(3);
+    expect(asked[2]).toContain('NSAT target');
+    expect(new Set(asked).size).toBe(3);
+  });
+
+  it('retrieves customer evidence with citations and labels for a Foundry pack, and never for Copilot', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    expect((await call(req('POST', '/relay/workiq/ask', question), { workiqCli: cli('ok') })).body).toEqual({ error: 'foundryNotConfigured' });
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'copilotSdk' }), { workiqCli: cli('ok') })).body).toEqual({ error: 'foundryOnly' });
+    expect(calls()).toEqual([]);
+
+    const r = await call(req('POST', '/relay/workiq/ask', question), { workiqCli: cli('ok') });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({
+      answer: 'Contoso: on-time delivery 92% in FY26 [^h1].',
+      citations: [
+        { title: 'Ops review FY26.pptx', url: 'https://contoso.sharepoint.com/ops.pptx' },
+        { title: 'Delivery KPI', url: 'https://outlook.office.com/mail/id/1' },
+      ],
+      sensitivity: 'Confidential, General',
+      fetchedAt: '2026-11-11T05:00:00.000Z',
+    });
+    const [retrieve] = calls();
+    expect(retrieve!.arguments).toMatchObject({ strategy: 'grounding', timeZone: 'Asia/Tokyo' });
+    expect(String(retrieve!.arguments.query)).toContain('"Contoso"');
+    expect(String(retrieve!.arguments.query)).toContain('Reduce late deliveries');
+  });
+
+  it('switching to the app registration forgets the CLI verification', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    expect((await verify(cli('ok'))).status).toBe(200);
+    expect(vault.get('workiqCliKey')).toBeTruthy();
+    const r = await call(req('PUT', '/relay/workiq', { method: 'app', tenantId: '11111111-2222-3333-4444-555555555555', clientId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
+    expect(r.body).toMatchObject({ workiq: { method: 'app', signedIn: false, verifiedAt: null } });
+    expect(vault.get('workiqCliKey')).toBeUndefined();
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ workiq: { method: 'cli', verifiedAt: null } });
   });
 });

@@ -152,7 +152,7 @@ export function Diagram3D({ scene, zoom, pan, onZoomStep, highlight, centreReque
       radius = Math.max(radius, Math.hypot(p.x, p.y, p.z));
       lanesY.set(n.lane, p.y);
       const color = n.color.startsWith('#') ? n.color : FALLBACK_COLOR;
-      const mesh = new THREE.Mesh(geometryFor(n.shape, 0.3 * Math.min(2.2, Math.max(0.7, n.size))), new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 }));
+      const mesh = new THREE.Mesh(geometryFor(n.shape, 0.3 * Math.min(2.2, Math.max(0.7, n.size))), new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, transparent: !!n.peripheral, opacity: n.peripheral ? 0.4 : 1 }));
       mesh.position.set(p.x, p.y, p.z);
       mesh.userData = { nodeId: n.id };
       group.add(mesh);

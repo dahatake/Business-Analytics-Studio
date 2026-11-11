@@ -4,7 +4,7 @@ import {
   Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Textarea,
 } from '@fluentui/react-components';
 import {
-  ArrowDownload20Regular, ArrowUpload20Regular, Copy20Regular, Delete20Regular, Dismiss16Regular, DocumentCheckmark20Regular, Open20Regular,
+  ArrowDownload20Regular, ArrowUpload20Regular, BotSparkle20Regular, Copy20Regular, Delete20Regular, Dismiss16Regular, DocumentCheckmark20Regular, Open20Regular,
 } from '@fluentui/react-icons';
 import { basePack, loaded, packOrigin } from '../../data/pack.ts';
 import { CustomerPack, type EntityKind } from '../../data/schema.ts';
@@ -20,6 +20,11 @@ import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.
 import { copilotPrompt, copilotResearchPrompt, PROMPT_DOC } from './packPrompt.ts';
 import { isZipFile, readZipJson } from '../../data/zipRead.ts';
 import { yyyymmdd } from './exportFormat.ts';
+import { hrefFor, navigate } from '../../state/router.ts';
+import { readiness } from './analysisReadiness.ts';
+import { prefillFromPack, type GenerationReport } from './packGenerate.ts';
+import { PackGenerateDialog } from './PackGenerateDialog.tsx';
+import { ReadinessView } from './ReadinessView.tsx';
 import './project.css';
 
 /** Shown once after the reload that activates a newly imported pack. */
@@ -61,6 +66,7 @@ export function PackDataScreen() {
         </MessageBar>
       )}
       <CurrentPackPanel />
+      <ReadinessPanel />
       <PromptPanel />
       <ImportPanel />
     </div>
@@ -137,6 +143,51 @@ function CurrentPackPanel() {
         onCancel={() => setConfirm(false)}
         testId="pack-delete-confirm"
       />
+    </Panel>
+  );
+}
+
+function ReadinessPanel() {
+  const { t } = useI18n();
+  const target = useProjects((s) => s.target);
+  const setTarget = useProjects((s) => s.setTarget);
+  const { project } = useActiveProject();
+  const [open, setOpen] = useState(false);
+  const pack = loaded.pack as unknown as Record<string, unknown>;
+  const items = useMemo(() => readiness(pack), [pack]);
+  const gen = (loaded.pack.extensions as Record<string, unknown> | undefined)?.generation as Partial<GenerationReport> | undefined;
+  const prefill = useMemo(() => prefillFromPack(loaded.pack), []);
+  const canRefetch = target.kind === 'project' && !!project;
+  return (
+    <Panel
+      title={t('proj.ready.title')}
+      className="span-full"
+      testId="pack-readiness"
+      actions={canRefetch ? (
+        <Button size="small" icon={<BotSparkle20Regular />} onClick={() => setOpen(true)} data-testid="pack-refetch">{t('proj.ready.refetch')}</Button>
+      ) : undefined}
+    >
+      <p className="muted">{t('proj.ready.note')}</p>
+      <ReadinessView
+        items={items}
+        rounds={Array.isArray(gen?.collectionRounds) ? gen.collectionRounds : undefined}
+        stopReasons={gen?.stopReasons && typeof gen.stopReasons === 'object' ? gen.stopReasons : undefined}
+        testId="pack-ready"
+      />
+      {canRefetch && <p className="muted">{t('proj.ready.refetchHint')}</p>}
+      {open && canRefetch && (
+        <PackGenerateDialog
+          open
+          target={{ kind: 'project', projectId: project.id }}
+          prefill={prefill}
+          onClose={() => setOpen(false)}
+          onOpenProject={(projectId) => {
+            navigate(hrefFor('/home'));
+            setTarget({ kind: 'project', projectId });
+            reloadAfterDeviceSave();
+          }}
+        />
+      )}
     </Panel>
   );
 }

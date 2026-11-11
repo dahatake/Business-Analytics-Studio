@@ -30,6 +30,13 @@
 @keyframes ai-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
 
 .ai-live { border: 1px solid var(--colorPaletteGreenBorder2, var(--colorNeutralStroke1)); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ai-token-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.ai-token-table caption { text-align: start; font-weight: 600; padding-bottom: 4px; }
+.ai-token-table th, .ai-token-table td { padding: 4px 8px; border-bottom: 1px solid var(--colorNeutralStroke2); }
+.ai-token-table th[scope="col"] { color: var(--colorNeutralForeground3); font-weight: 400; text-align: end; }
+.ai-token-table th[scope="col"]:first-child, .ai-token-table th[scope="row"] { text-align: start; }
+.ai-token-table td { text-align: end; }
+.ai-token-table tfoot th, .ai-token-table tfoot td { font-weight: 600; border-bottom: none; border-top: 2px solid var(--colorNeutralStroke1); }
 .ai-float { position: fixed; left: 16px; bottom: 16px; max-width: min(460px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; }
 .ai-float:empty { display: none; }
 .ai-applied-notice { background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); border: 1px solid var(--colorBrandStroke1); border-radius: 8px; padding: 8px 12px; box-shadow: var(--shadow8); display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }

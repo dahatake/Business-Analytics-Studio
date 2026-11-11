@@ -98,6 +98,100 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
   });
 
   for (const lang of ['en', 'ja'] as const) {
+    test(`${lang}: Work IQ sign-in is not retrieval verification; consent, success and failed retest are separate`, async ({ page }) => {
+      let verifiedAt: string | null = null;
+      let checks = 0;
+      const state = () => ({
+        method: 'app',
+        tenantId: '11111111-2222-3333-4444-555555555555',
+        clientId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        account: 'user@contoso.example', signedIn: true, verifiedAt,
+      });
+      await page.route('**/relay/status', async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({ json: { ...await response.json(), workiq: state() } });
+      });
+      await page.route('**/relay/workiq/verify', async (route) => {
+        expect(route.request().postDataJSON()).toEqual({ provider: 'foundry' });
+        checks++;
+        verifiedAt = checks === 1 ? '2026-11-11T05:00:00.000Z' : null;
+        await route.fulfill({ status: checks === 1 ? 200 : 403, json: checks === 1 ? { workiq: state() } : { error: 'workiqForbidden' } });
+      });
+      await open(page, '/ai-settings', { lang });
+      await expect(page.getByTestId('ai-workiq-route-app')).toBeChecked();
+      await expect(page.getByTestId('ai-workiq-state')).toContainText('user@contoso.example');
+      await expect(page.getByTestId('ai-workiq-verification')).not.toContainText('2026-11-11');
+      await expect(page.getByTestId('ai-workiq-check')).toBeDisabled();
+      await page.getByTestId('ai-workiq-consent').check();
+      expect(checks).toBe(0);
+      await page.getByTestId('ai-workiq-check').click();
+      await expect(page.getByTestId('ai-workiq-verification')).toContainText('2026-11-11T05:00:00.000Z');
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'test passed' : '検証に成功');
+      await expect(page.getByTestId('ai-workiq-consent')).not.toBeChecked();
+      await page.reload();
+      await expect(page.getByTestId('ai-workiq-verification')).toContainText('2026-11-11T05:00:00.000Z');
+      await page.getByTestId('ai-workiq-consent').check();
+      await page.getByTestId('ai-workiq-check').click();
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'refused' : '拒否');
+      await expect(page.getByTestId('ai-workiq-verification')).not.toContainText('2026-11-11');
+      await expect(page.getByTestId('ai-readiness')).toContainText(lang === 'en' ? 'Verify Work IQ' : 'Work IQ の情報取得を検証');
+      expect(checks).toBe(2);
+      expect(await scan(page)).toEqual([]);
+      await page.getByTestId('ai-provider-copilot').check();
+      await expect(page.getByTestId('ai-workiq')).toHaveCount(0);
+      await expect(page.getByTestId('ai-readiness')).not.toContainText('Work IQ');
+    });
+
+    test(`${lang}: Work IQ CLI route needs no app registration; the user accepts the EULA and retrieval is still verified`, async ({ page }) => {
+      let saved = false;
+      let eula = 0;
+      let verifiedAt: string | null = null;
+      const state = () => (saved ? { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: verifiedAt !== null, verifiedAt } : null);
+      await page.route('**/relay/status', async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({ json: { ...await response.json(), workiq: state() } });
+      });
+      await page.route('**/relay/workiq', async (route) => {
+        expect(route.request().method()).toBe('PUT');
+        expect(route.request().postDataJSON()).toEqual({ method: 'cli' });
+        saved = true;
+        await route.fulfill({ json: { workiq: state() } });
+      });
+      await page.route('**/relay/workiq/eula', async (route) => {
+        expect(route.request().postDataJSON()).toEqual({ provider: 'foundry', accept: true });
+        eula++;
+        await route.fulfill({ json: { accepted: true } });
+      });
+      await page.route('**/relay/workiq/verify', async (route) => {
+        if (eula === 0) return route.fulfill({ status: 412, json: { error: 'workiqEulaRequired' } });
+        verifiedAt = '2026-11-11T06:00:00.000Z';
+        await route.fulfill({ json: { workiq: state() } });
+      });
+      await open(page, '/ai-settings', { lang });
+      await expect(page.getByTestId('ai-workiq-route-cli')).toBeChecked();
+      await expect(page.getByTestId('ai-workiq-tenant')).toHaveCount(0);
+      await expect(page.getByTestId('ai-workiq-eula')).toHaveCount(0);
+      await page.getByTestId('ai-workiq-save').click();
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'Work IQ CLI is selected' : 'Work IQ CLI を選びました');
+      await expect(page.getByTestId('ai-workiq-state')).toContainText(lang === 'en' ? 'not verified yet' : '未検証');
+      await page.getByTestId('ai-workiq-consent').check();
+      await page.getByTestId('ai-workiq-check').click();
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText('EULA');
+      await expect(page.getByTestId('ai-workiq-verification')).not.toContainText('2026-11-11');
+      await expect(page.getByTestId('ai-workiq-eula')).toContainText('https://github.com/microsoft/work-iq');
+      await expect(page.getByTestId('ai-workiq-eula-accept')).toBeDisabled();
+      expect(eula).toBe(0);
+      await page.getByTestId('ai-workiq-eula-consent').check();
+      await page.getByTestId('ai-workiq-eula-accept').click();
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'EULA was accepted' : 'EULA に同意しました');
+      expect(eula).toBe(1);
+      await page.getByTestId('ai-workiq-consent').check();
+      await page.getByTestId('ai-workiq-check').click();
+      await expect(page.getByTestId('ai-workiq-verification')).toContainText('2026-11-11T06:00:00.000Z');
+      await expect(page.getByTestId('ai-workiq-state')).toContainText(lang === 'en' ? 'Work IQ CLI ready' : 'Work IQ CLI を利用可能');
+      expect(await scan(page)).toEqual([]);
+    });
+
     test(`${lang}: launch settings explains blocked tests instead of disabling the action`, async ({ page }) => {
       await page.setViewportSize({ width: 768, height: 920 });
       await seedLaunch(page, lang);
@@ -548,6 +642,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(ledger[1]!.use).toBe('explain');
     expect(ledger[1]).toMatchObject({ costJpy: null, inputTokens: 2000, outputTokens: 300 });
     await expect(panel.getByTestId('ai-live-label')).toContainText('Unknown');
+    await expect(panel.getByTestId('ai-live-tokens')).toHaveText('Tokens used: 2,300 (input 2,000 / output 300)');
     expect(JSON.stringify(ledger)).not.toContain('Stub live');
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
@@ -661,6 +756,19 @@ async function seedLaunch(page: Page, lang: Lang) {
   });
 
   test('configure on the launch screen → generate → progress → verified pack saved with its record → open it', async ({ page }) => {
+    let workiqVerifiedAt: string | null = null;
+    const workiqState = () => ({
+      tenantId: '11111111-2222-3333-4444-555555555555', clientId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      account: 'user@contoso.example', signedIn: true, verifiedAt: workiqVerifiedAt,
+    });
+    await page.route('**/relay/status', async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ json: { ...await response.json(), workiq: workiqState() } });
+    });
+    await page.route('**/relay/workiq/verify', async (route) => {
+      workiqVerifiedAt = '2026-11-11T05:00:00.000Z';
+      await route.fulfill({ json: { workiq: workiqState() } });
+    });
     await seedLaunch(page, 'en');
     await page.getByTestId('launch-ai-settings').click();
     const settings = page.getByTestId('ai-settings-dialog');
@@ -692,6 +800,18 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(dialog.getByTestId('gen-start')).toBeDisabled();
     await dialog.getByTestId('gen-check-approved').check();
     await dialog.getByTestId('gen-check-cost').check();
+    await expect(dialog.getByTestId('gen-start')).toBeDisabled(); // a model response and sign-in alone are insufficient
+    await dialog.getByTestId('gen-open-settings').click();
+    await settings.getByTestId('ai-workiq-consent').check();
+    await settings.getByTestId('ai-workiq-check').click();
+    await expect(settings.getByTestId('ai-workiq-verification')).toContainText('2026-11-11');
+    await settings.getByTestId('ai-settings-dialog-close').click();
+    // D-14: how many follow-up rounds may run is the user's choice (1–4, default 3).
+    await expect(dialog.getByTestId('gen-workiq-rounds')).toHaveValue('3');
+    await dialog.getByTestId('gen-workiq-rounds').fill('9');
+    await expect(dialog.getByTestId('gen-workiq-rounds')).toHaveValue('4');
+    await dialog.getByTestId('gen-workiq').uncheck(); // this test's material is the attached synthetic CSV
+    await expect(dialog.getByTestId('gen-workiq-rounds')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
     await dialog.getByTestId('gen-start').click();
 
@@ -700,6 +820,10 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(dialog.getByTestId('gen-checks')).toHaveText('1 fix rounds, 0 items removed, 0 invented sources discarded');
     await expect(dialog.getByTestId('gen-cost')).toContainText('(3 sends)');
     await expect(dialog.getByTestId('gen-cost')).toContainText('Unknown');
+    // Tokens per step as the provider reported them (6,000 + 2,500 per call) and their total.
+    await expect(dialog.getByTestId('gen-tokens-row-total')).toHaveText(['8,500', '8,500', '8,500']);
+    await expect(dialog.getByTestId('gen-tokens-row')).toContainText(['Foundation', 'Business', 'Check and fix']);
+    await expect(dialog.getByTestId('gen-tokens-total-value')).toHaveText('25,500');
     await expect(dialog.getByTestId('gen-ungrounded')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
 
@@ -714,16 +838,45 @@ async function seedLaunch(page: Page, lang: Lang) {
 
     const stored = await page.evaluate(() => ({
       index: JSON.parse(localStorage.getItem('bas.packs.index') ?? '{}') as Record<string, { files: string[]; entities: number }>,
-      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number | null }[],
+      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number | null; scope?: string; stage?: string }[],
     }));
     expect(stored.index['pj-c']).toMatchObject({ files: ['generated:foundry', 'delivery-kpi.csv'] });
     expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(3);
+    expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'fix-1']]);
     expect(stored.ledger.every((r) => r.costJpy === null)).toBe(true);
 
     await dialog.getByTestId('gen-open').click();
     await expect(page.locator('main#main')).toBeVisible();
+
+    // The final export shows the same per-step tokens, the export itself as 0, and the total; internal Markdown only.
+    await page.goto('/#/discussion');
+    await page.getByTestId('proj-export').click();
+    const exportDialog = page.getByTestId('proj-export-dialog');
+    const tokens = exportDialog.getByTestId('proj-export-tokens-table');
+    await expect(tokens.getByTestId('proj-export-tokens-table-row-total')).toHaveText(['8,500', '8,500', '8,500', '0']);
+    await expect(tokens.getByTestId('proj-export-tokens-table-row').last()).toContainText('Export (uses no generative AI)');
+    await expect(tokens.getByTestId('proj-export-tokens-table-total-value')).toHaveText('25,500');
+    await exportDialog.getByRole('radio', { name: 'Internal' }).check();
+    await expect(exportDialog.getByTestId('proj-export-preview')).toContainText('| **Total** | 3 | 18,000 | 7,500 | 25,500 |');
+    await exportDialog.getByRole('radio', { name: 'External' }).check();
+    await expect(exportDialog.getByTestId('proj-export-preview')).not.toContainText('Generative AI token usage');
+    expect(await scan(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+
     await page.goto('/#/data');
     await expect(page.locator('main#main')).toContainText('Contoso Manufacturing');
+    // Re-fetching later starts from this run's inputs, and nothing runs before the user confirms again.
+    await expect(page.getByTestId('pack-ready')).toBeVisible();
+    await page.getByTestId('pack-refetch').click();
+    const again = page.getByTestId('gen-dialog');
+    await expect(again.getByTestId('gen-prefilled')).toBeVisible();
+    await expect(again.getByTestId('gen-purpose')).toHaveValue('Reduce late deliveries');
+    await expect(again.getByTestId('gen-file-list')).toContainText('delivery-kpi.csv');
+    await expect(again.getByTestId('gen-check-approved')).not.toBeChecked();
+    await expect(again.getByTestId('gen-start')).toBeDisabled();
+    expect(await scan(page)).toEqual([]);
+    await again.getByRole('button', { name: 'Cancel' }).click();
+    await expect(again).toHaveCount(0);
 
     // A generated pack is sparser than the sample (no customers, deals or invoices here): every screen must still render.
     const errors: string[] = [];

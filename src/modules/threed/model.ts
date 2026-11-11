@@ -15,6 +15,7 @@ export type Label =
 
 export type ObjectKind =
   | 'site' | 'line' | 'machine' | 'product' | 'country' | 'supplier' | 'region'
+  | 'team' | 'stage'
   | 'kpis' | 'kpi' | 'arch' | 'layer' | 'block';
 
 /**

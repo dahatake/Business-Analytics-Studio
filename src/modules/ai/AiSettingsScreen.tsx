@@ -9,7 +9,7 @@ import { AI_LIMITS, C03_TABLE, approvedProviders, isApproved, type AiUse } from 
 import { useI18n } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
-import { BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
+import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
@@ -134,6 +134,7 @@ export function AiSettingsScreen() {
           <div className="ai-stack">
             <ProviderChoice />
             {s.provider === 'copilotSdk' ? <CopilotSettings /> : <FoundryFields />}
+            <AiReadiness />
             <p className="ai-status" data-testid="ai-configured">
               <span>{t('ai.settings.configuredLabel')}</span>
               <Badge appearance="tint" color={configured ? 'success' : 'informative'}>{configured ? t('ai.settings.configured') : t('ai.settings.notConfigured')}</Badge>

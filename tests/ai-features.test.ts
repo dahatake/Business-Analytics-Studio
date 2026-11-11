@@ -198,10 +198,10 @@ describe('explain fallback (FR-274/277)', () => {
 
 
 const CONNECTION = { endpoint: 'https://res.openai.azure.com', deployment: 'gpt', apiVersion: '2024-10-21' };
-const READY = { liveEnabled: true, relayConnection: CONNECTION, connectionVerifiedAt: '2026-11-10T00:00:00Z', foundryKeySaved: true, priceInputPerM: '1000', priceOutputPerM: '4000' };
+const READY = { liveEnabled: true, relayConnection: CONNECTION, connectionVerifiedAt: '2026-11-10T00:00:00Z', foundryKeySaved: true };
 const OFF = {
   liveEnabled: false, endpoint: '', deployment: '', foundryKeySaved: false, relayConnection: null, connectionVerifiedAt: null, provider: 'foundry' as const, authMethod: 'apiKey' as const,
-  priceInputPerM: '', priceOutputPerM: '', monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+  monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
 };
 
 describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
@@ -217,20 +217,19 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
   });
   afterEach(() => setLiveTransport(null));
 
-  it('explains project URLs and v1 formats, and guards diagnostic costs before sending', () => {
-    expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/api/projects/project' })).toBe('projectEndpoint');
+  it('accepts project URLs and v1 formats, and guards diagnostic costs before sending', () => {
+    expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/api/projects/project' })).toBeNull();
     expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/openai/v1/' })).toBeNull();
     const state = useAiSettings.getState();
-    expect(connectionTestPreflight(state).prices).toBeNull();
+    expect(connectionTestPreflight(state).budget.allowed).toBe(true);
     const ready = { ...state, ...READY };
-    expect(connectionTestPreflight(ready).estimatedCostJpy).toBeCloseTo((200 * 1000 + 256 * 4000) / 1_000_000 * 1.2);
+    expect(connectionTestPreflight(ready).budget.allowed).toBe(true);
     expect(connectionTestPreflight({ ...ready, monthlyBudgetJpy: 0 }).budget.allowed).toBe(false);
   });
 
-  it('refuses an unpriced or over-budget diagnostic without network access', async () => {
+  it('refuses a diagnostic when the budget is explicitly disabled without network access', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
     try {
-      expect(await useAiSettings.getState().saveConnection()).toEqual({ ok: false, error: 'noUnitPrice' });
       useAiSettings.setState({ ...READY, monthlyBudgetJpy: 0 });
       expect(await useAiSettings.getState().saveConnection()).toEqual({ ok: false, error: 'budget' });
       expect(spy).not.toHaveBeenCalled();
@@ -249,7 +248,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
       useAiSettings.setState({ ...READY, ...CONNECTION });
       expect(await useAiSettings.getState().saveConnection()).toMatchObject({ ok: false, error });
       expect(readLedger()).toHaveLength(records);
-      if (records) expect(readLedger()[0]!.costJpy).toBeGreaterThan(0);
+      if (records) expect(readLedger()[0]!.costJpy).toBeNull();
       expect(isConfigured(useAiSettings.getState())).toBe(false);
     } finally { spy.mockRestore(); }
   });
@@ -268,7 +267,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
       expect(await useAiSettings.getState().saveConnection()).toMatchObject({ ok: true });
       expect(isConfigured(useAiSettings.getState())).toBe(true);
       expect(readLedger()).toHaveLength(1);
-      expect(readLedger()[0]).toMatchObject({ use: 'connectionTest', inputTokens: 30, outputTokens: 1, costJpy: 0.034 });
+      expect(readLedger()[0]).toMatchObject({ use: 'connectionTest', inputTokens: 30, outputTokens: 1, costJpy: null });
     } finally { spy.mockRestore(); }
   });
 
@@ -276,17 +275,17 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: 'x' });
     expect(r.mode).toBe('mock');
-    expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed', 'noUnitPrice']));
+    expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed']));
+    expect(r.blockedReasons).not.toContain('noUnitPrice');
     expect(r.blockedReasons).not.toContain('c03NotApproved'); // D-1: "explain" is approved
     expect(calls).toHaveLength(0);
   });
 
-  it('feeds the unit prices (PARAM-130) and the single budget to the core', () => {
+  it('keeps Foundry ready without manual pricing and reports unavailable prices to the core', () => {
     useAiSettings.setState({ ...READY, monthlyBudgetJpy: 5000 });
-    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, configured: true, monthlyBudgetJpy: 5000, prices: { inputPerM: 1000, outputPerM: 4000 } });
-    useAiSettings.setState({ priceOutputPerM: '0' });
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, configured: true, monthlyBudgetJpy: 5000, prices: null });
     expect(runtimeSettings().prices).toBeNull();
-    expect(liveReady(useAiSettings.getState())).toBe(false);
+    expect(liveReady(useAiSettings.getState())).toBe(true);
   });
 
   it('D-12: Copilot is priced per premium request × the model multiplier; token prices do not count for it', () => {
@@ -342,20 +341,20 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('"explain" goes live only after confirmation, sends internal items (D-2) and records the actual cost', async () => {
+  it('"explain" goes live without manual pricing, confirms content and records tokens with unknown cost', async () => {
     useAiSettings.setState(READY);
     const entities = entitiesOfComponents(componentsForRoute('/'));
     const req = { use: 'explain' as const, lang: 'en' as const, prompt: 'Explain', entities };
     const pf = preflight({ ...req, userConfirmed: true, personConfirmed: true });
     expect(pf.allowed).toBe(true);
     expect(pf.internalCount).toBeGreaterThan(0);
-    expect(pf.estimatedCostJpy).toBeCloseTo(((pf.estimatedInputTokens * 1000 + 1500 * 4000) / 1_000_000) * 1.2);
+    expect(pf.estimatedCostJpy).toBeNull();
     expect((await aiComplete(req)).blockedReasons).toEqual(['notConfirmed']);
     expect(calls).toHaveLength(0);
 
     const r = await aiComplete({ ...req, userConfirmed: true, personConfirmed: true });
     expect(r).toMatchObject({ mode: 'live', text: 'live answer', blockedReasons: [] });
-    expect(r.costJpy).toBeCloseTo((1000 * 1000 + 500 * 4000) / 1_000_000);
+    expect(r.costJpy).toBeNull();
     expect(calls).toHaveLength(1);
     expect(calls[0]!.context).toContain('Transferring expert skills');
     expect(calls[0]!.maxOutputTokens).toBe(1500);
@@ -364,12 +363,21 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(ledger[0]).toMatchObject({ use: 'explain', inputTokens: 1000, outputTokens: 500 });
     expect(JSON.stringify(ledger)).not.toContain('Explain'); // prompts and answers are never recorded
 
-    // D-3: a 1 JPY budget stops the next send before it reaches the transport.
-    useAiSettings.setState({ monthlyBudgetJpy: 1 });
+    // A zero budget still explicitly disables sending, including unpriced Foundry calls.
+    useAiSettings.setState({ monthlyBudgetJpy: 0 });
     const blocked = await aiComplete({ ...req, userConfirmed: true, personConfirmed: true });
     expect(blocked.mode).toBe('mock');
     expect(blocked.blockedReasons).toContain('budget');
     expect(calls).toHaveLength(1);
+  });
+
+  it('records an interrupted Foundry call as unknown, not free, and retains quota enforcement', async () => {
+    useAiSettings.setState(READY);
+    setLiveTransport(async () => { throw Object.assign(new Error('timed out'), { name: 'TimeoutError' }); });
+    await expect(aiLive({ use: 'explain', lang: 'en', prompt: 'x', userConfirmed: true, personConfirmed: true }))
+      .rejects.toMatchObject({ recordedCostJpy: null });
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'explain', costJpy: null })]);
+    expect(preflight({ use: 'explain', lang: 'en', prompt: 'x', userConfirmed: true }).budget.reasons).toContain('tooSoon');
   });
 
   it('falls back to the mock with "liveFailed" when the transport fails, and records nothing', async () => {
@@ -404,6 +412,21 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     await useAiSettings.persist.rehydrate();
     expect(useAiSettings.getState().endpoint).toBe('https://old');
     expect('reviewBudgetJpy' in useAiSettings.getState()).toBe(false);
+  });
+
+  it('migrates away previously entered Foundry prices without losing the connection or Copilot price', async () => {
+    localStorage.setItem('bas.ai.settings', JSON.stringify({
+      version: 2,
+      state: { ...CONNECTION, priceInputPerM: '1000', priceOutputPerM: '4000', copilotPricePerRequest: '6' },
+    }));
+    await useAiSettings.persist.rehydrate();
+    expect(useAiSettings.getState()).toMatchObject({ ...CONNECTION, copilotPricePerRequest: '6' });
+    expect(useAiSettings.getState()).not.toHaveProperty('priceInputPerM');
+    expect(useAiSettings.getState()).not.toHaveProperty('priceOutputPerM');
+    const saved = JSON.parse(localStorage.getItem('bas.ai.settings')!);
+    expect(saved.version).toBe(3);
+    expect(saved.state).not.toHaveProperty('priceInputPerM');
+    expect(saved.state).not.toHaveProperty('priceOutputPerM');
   });
 
   it('accepts only whole JPY ≥ 0 as the budget', () => {

@@ -24,10 +24,10 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 
 `PUT /relay/connection` accepts `{ endpoint, deployment, apiVersion }` and uses the **already saved API key** to send a
 fixed synthetic "Reply with OK only" prompt. No caller-supplied prompt, customer pack or project data is sent.
-The UI requires entered Foundry unit prices and explicit confirmation of the displayed destination/cost; it checks
-the daily quota, interval and shared monthly budget and records token usage/cost under `connectionTest`.
-Timeouts and uncertain failures are conservatively recorded at the estimated cap. DNS/authentication rejections incur
-no recorded inference cost. The relay enforces the outbound allowlist, a 30-second timeout, no redirects and a
+The UI requires explicit confirmation of the displayed destination and unknown-charge notice, not unit-price entry.
+It checks the daily quota, interval and known-cost monthly budget, and records token usage under `connectionTest`.
+Foundry monetary costs are `null` (unknown), never zero/free. This also applies to uncertain failures that may have
+been billed; DNS/authentication rejections create no inference usage record. The relay enforces the outbound allowlist, a 30-second timeout, no redirects and a
 5-second interval (including concurrent tests). Output is capped at 256 tokens; a rejected modern request may be
 retried once with the legacy token parameter.
 
@@ -38,9 +38,12 @@ Supported endpoint formats (HTTPS only, no credentials, query or fragment):
 - OpenAI v1 base: either resource host followed by `/openai/v1` (optional final slash).
   Calls `/openai/v1/chat/completions` with `model: <deployment>` and bearer API-key authentication; no dated API version.
   See [the official v1 API guide](https://learn.microsoft.com/azure/foundry/openai/api-version-lifecycle).
-- `/api/projects/<project>` is explicitly identified as a **project** URL and rejected with instructions to copy the
-  model's resource/v1 URL from its code sample. It is not silently stripped or treated as an API-key inference route.
-  Entra/project authentication remains outside this release.
+- Project URL: `https://<resource>.services.ai.azure.com/api/projects/<project>` (optional final slash).
+  Automatically builds `https://<resource>.services.ai.azure.com/openai/v1` without changing the host.
+  The UI previews the assembled Chat Completions destination and disables the unused dated API version.
+  Conversion does not prove availability: the same API-key connection test must succeed before the normalized
+  connection is saved. Project paths on unknown hosts, non-default ports or with extra path segments are refused;
+  no project API or Entra/project authentication is used.
 
 Only a nonempty model response with valid token usage permits saving. Failure leaves the previous connection intact.
 `connection.json` contains the normalized endpoint, deployment (1–64 letters, digits, dots, underscores or hyphens),
@@ -48,6 +51,14 @@ API version (legacy default `2024-10-21`), verification time and a verification 
 current key. The signature is never returned to the browser. `GET /relay/status` reports `connectionVerifiedAt`; old
 settings without valid verification remain visible but **unconfigured**, and changing the key invalidates verification.
 Verification survives relay restarts but is a historical check, not a guarantee of future reachability.
+
+Foundry manual token-price settings are removed, including persisted values migrated from older versions.
+Connection tests, explanations and pack generation do not require a price. Confirmation screens and saved generation
+reports distinguish unknown costs from free mock answers; usage summaries show the known-cost subtotal and the count
+of unpriced calls separately. The app cannot enforce a Foundry monetary billing cap without pricing; check Azure billing
+and configure Azure budget alerts. Token caps, per-use daily quotas, intervals, timeouts and consent still apply.
+A zero app budget blocks sends. Copilot premium-request pricing and known-cost budget enforcement are unchanged.
+Story video remains mock-only and needs no Foundry price.
 
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
 when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown on `/ai-settings`.

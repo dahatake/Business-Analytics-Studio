@@ -140,6 +140,19 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.report.removed).toEqual([]);
   });
 
+  it('preserves unknown call costs in the saved report and progress instead of reporting free generation', async () => {
+    const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }]);
+    const complete = d.complete;
+    let calls = 0;
+    d.complete = async (...args) => ({ ...await complete(...args), costJpy: ++calls === 1 ? null : 10 });
+    const events: ProgressEvent[] = [];
+    const r = await generatePack(input(), d, (event) => events.push(event), new AbortController().signal);
+    expect(r.report.costJpy).toBeNull();
+    expect(r.report.calls[0]!.costJpy).toBeNull();
+    expect(events.at(-1)!.costJpy).toBeNull();
+    expect((r.pack.extensions as { generation: { costJpy: number | null } }).generation.costJpy).toBeNull();
+  });
+
   it('reports numbers the cited text does not contain', async () => {
     const odd = { ...stageA, entities: [stageA.entities[0], { ...stageA.entities[1], unitPriceJpy: 34567 }] };
     const r = await generatePack(input(), deps([odd, { entities: [] }]), () => {}, new AbortController().signal);

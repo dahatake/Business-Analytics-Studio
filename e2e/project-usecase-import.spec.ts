@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { JAPANESE, open, type Lang } from './helpers.ts';
+import { JAPANESE, open, seedDeviceData, type Lang } from './helpers.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const UC_KEY = 'bas.scope.demo.usecases';
@@ -49,7 +49,7 @@ async function exportEditAndRestore(page: Page, info: TestInfo, lang: Lang) {
 
   // Edit after the export (as in the use case screen): same id, different name.
   const current = bundle.useCases.map((u) => (u.id === target.id ? { ...u, name: EDITED, updatedAt: new Date().toISOString() } : u));
-  await page.evaluate(({ k, v }) => localStorage.setItem(k, JSON.stringify(v)), { k: UC_KEY, v: current });
+  await seedDeviceData(page, { [UC_KEY]: JSON.stringify(current) });
   await page.reload();
   await expect(page.locator('main#main')).toBeVisible();
 

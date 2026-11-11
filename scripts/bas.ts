@@ -330,6 +330,9 @@ Start (no installation, no network; the app runs on http://127.0.0.1:4180/):
   Linux:    sh start.sh
 
 Requires Node.js 22.18 or later. The customer pack is app/data/pack.json; replace it to show another customer (no rebuild).
+Project data, imported packs and boards are saved in .bas-local/device.sqlite, shared across ports and browsers in this package.
+For legacy browser-only data, open the updated app once at its original URL and browser profile to migrate it.
+Stop all servers before backing up the whole .bas-local folder. Migration backups and original browser data are managed separately from project deletion.
 Do not share this folder outside the agreed audience: it contains customer information (C-02).
 `);
 }

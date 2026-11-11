@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, type Lang } from './helpers.ts';
+import { JAPANESE, open, seedDeviceData, type Lang } from './helpers.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
@@ -164,11 +164,12 @@ test.describe('Use cases (FR-158, FR-155〜157, FR-163〜167, FR-043)', () => {
     await page.getByRole('button', { name: 'Register', exact: true }).click();
     await expect(page.getByTestId('uc-list').getByRole('button', { name: /Project only case/ })).toBeVisible();
 
-    await page.evaluate(() => {
+    const projectRegistry = await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem('bas.projects')!);
       s.state.target = { kind: 'demo' };
-      localStorage.setItem('bas.projects', JSON.stringify(s));
+      return JSON.stringify(s);
     });
+    await seedDeviceData(page, { 'bas.projects': projectRegistry });
     await page.goto('/#/usecases');
     await page.reload();
     await expect(page.getByTestId('uc-list').getByRole('button', { name: new RegExp(SEED) })).toBeVisible();

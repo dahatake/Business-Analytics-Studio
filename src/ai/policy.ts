@@ -50,7 +50,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   explain: {
     provider: 'foundry',
     data: 'The current screen\'s entities (shareable and internal, D-2) and the user\'s request; person entities only after FR-219 confirmation',
-    enableCondition: 'Live switch on (FR-132) + Foundry endpoint, deployment and key saved in the relay + unit prices entered + per-send confirmation of content and estimated cost',
+    enableCondition: 'Live switch on (FR-132) + verified Foundry connection and saved API key + per-send confirmation of content and unknown-charge notice; Foundry billing is not capped by the app budget',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-1 (2026-11-09)',
@@ -63,7 +63,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   connectionTest: {
     provider: 'foundry',
     data: 'Fixed synthetic connection-test prompt only; no customer, project, material or person data',
-    enableCondition: 'Explicit test-and-save action, saved API key, entered unit prices and available monthly budget; only /relay/connection may run the fixed test',
+    enableCondition: 'Explicit test-and-save action, saved API key and confirmation of unknown charges; daily/interval/token limits and known-cost budget checks apply; only /relay/connection may run the fixed test',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-13 (2026-11-11)',
@@ -73,7 +73,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   packBuild: {
     provider: ['foundry', 'copilotSdk'],
     data: 'Company and project names, purpose, as-of date, the official site URL, pages the relay fetched from that site, news headlines, and the work material and research note the user attached (internal allowed, D-2); nothing else from the app',
-    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay (Foundry endpoint, deployment and key, or a signed-in GitHub Copilot CLI and a model) + unit prices entered + the user confirms content, data-owner approval and estimated cost before the run',
+    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + confirmation of content, data-owner approval and cost information (Foundry charges unknown, not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-12 (2026-11-10)',

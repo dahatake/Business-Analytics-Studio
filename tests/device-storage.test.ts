@@ -1,10 +1,12 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { DeviceConflict, DeviceDatabase, createDeviceService } from '../scripts/lib/device.ts';
+import { startServer } from '../scripts/lib/serve.ts';
 
 const dirs: string[] = [];
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -38,6 +40,20 @@ async function service(dir = temporary(), testMode = false) {
 }
 
 describe('device transactions and durability', () => {
+  it('keeps migration originals as a durable backup even when the working data changes', () => {
+    const dir = temporary();
+    const db = database(dir);
+    const original = { 'bas.projects': JSON.stringify({ state: { companies: ['legacy'], projects: [] }, version: 1 }) };
+    const id = db.archive('http://127.0.0.1:4173', original);
+    expect(db.archive('http://127.0.0.1:4173', original)).toBe(id);
+    db.commit([{ key: 'bas.projects', value: 'later working copy', expected: 0 }]);
+    const check = new DatabaseSync(join(dir, 'device.sqlite'));
+    try {
+      expect(check.prepare('SELECT data FROM legacy_backups WHERE id = ?').get(id)?.data).toBe(JSON.stringify(original));
+      expect(check.prepare('SELECT count(*) AS total FROM legacy_backups').get()?.total).toBe(1);
+    } finally { check.close(); }
+  });
+
   it('shares data with another process, survives reopen and never overwrites stale writes', () => {
     const dir = temporary();
     const db = database(dir);
@@ -71,6 +87,36 @@ describe('device transactions and durability', () => {
 });
 
 describe('device endpoint access and errors', () => {
+  it('also exposes shared persistence on the dependency-free static/offline server', async () => {
+    const dir = temporary();
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Offline app</title>');
+    const previous = process.env.BAS_DEVICE_DIR;
+    process.env.BAS_DEVICE_DIR = join(dir, 'data');
+    let first: Awaited<ReturnType<typeof startServer>>;
+    let second: Awaited<ReturnType<typeof startServer>>;
+    try {
+      first = await startServer(dir, 0);
+      cleanups.push(first.close);
+      second = await startServer(dir, 0);
+      cleanups.push(second.close);
+    } finally {
+      if (previous === undefined) delete process.env.BAS_DEVICE_DIR; else process.env.BAS_DEVICE_DIR = previous;
+    }
+    const headers = async (url: string) => {
+      const origin = new URL(url).origin;
+      const session = await (await fetch(`${origin}/device/session`, { method: 'POST', headers: { origin } })).json() as { token: string };
+      return { origin, 'content-type': 'application/json', 'x-bas-device': session.token };
+    };
+    expect((await fetch(first.url)).status).toBe(200);
+    const write = await fetch(`${first.url}device/state`, {
+      method: 'POST', headers: await headers(first.url),
+      body: JSON.stringify({ changes: [{ key: 'bas.scope.demo.test', value: JSON.stringify({ note: 'offline' }), expected: 0 }] }),
+    });
+    expect(write.status).toBe(200);
+    const read = await fetch(`${second.url}device/state`, { headers: await headers(second.url) });
+    expect(await read.json()).toMatchObject({ records: { 'bas.scope.demo.test': { value: JSON.stringify({ note: 'offline' }), revision: 1 } } });
+  });
+
   it('requires same-origin session acquisition and tokens, with no CORS permission', async () => {
     const { origin, headers } = await service();
     for (const attack of [
@@ -84,7 +130,15 @@ describe('device endpoint access and errors', () => {
     expect((await fetch(`${origin}/device/state`)).status).toBe(403);
     expect((await fetch(`${origin}/device/state`, { headers: { ...headers, 'x-bas-device': 'wrong' } })).status).toBe(403);
     expect((await fetch(`${origin}/device/state`, { headers: { ...headers, origin: 'http://127.0.0.1:9999' } })).status).toBe(403);
-    expect((await fetch(`${origin}/device/state`, { headers: { ...headers, host: 'attacker.example' } })).status).toBe(403);
+    const rebound = await new Promise<number | undefined>((resolve, reject) => {
+      const req = request(`${origin}/device/state`, { headers: { ...headers, host: 'attacker.example' } }, (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(rebound).toBe(403);
     expect((await fetch(`${origin}/device/state`, { headers: { ...headers, 'x-bas-device-test': 'unexpected' } })).status).toBe(403);
     expect((await fetch(`${origin}/device/state`, { headers })).status).toBe(200);
   });

@@ -112,6 +112,42 @@ test.describe('project module', () => {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
   });
 
+  test('app title returns to launch by click and keyboard without losing project work', async ({ page }) => {
+    await go(page, '/home');
+    await createCompanyAndProjects(page, 'Contoso', ['Alpha']);
+    await chooseTarget(page, 'Alpha');
+    await nav(page, '/discussion');
+    await page.getByTestId('proj-theme-title').fill('Keep this project work');
+    await page.getByTestId('proj-theme-add').click();
+    await expect(page.getByTestId('proj-canvas-title')).toHaveText('Keep this project work');
+
+    const title = page.getByRole('button', { name: 'Business Analytics Studio', exact: true });
+    const launch = page.getByTestId('launch-screen');
+    const reopenProject = async () => {
+      await page.getByRole('button', { name: 'Contoso-Alpha を開く', exact: true }).click();
+      await expect(page.getByTestId('proj-target-menu')).toContainText('Contoso-Alpha');
+    };
+    await title.click();
+    await expect(launch).toBeVisible();
+    await expect(launch).toBeFocused();
+    await expect(page.getByTestId('launch-company-Contoso')).toContainText('Alpha');
+    await page.reload();
+    await expect(launch).toBeVisible();
+    await reopenProject();
+    await nav(page, '/discussion');
+    await expect(page.getByTestId('proj-canvas-title')).toHaveText('Keep this project work');
+
+    for (const key of ['Enter', 'Space']) {
+      await title.focus();
+      await title.press(key);
+      await expect(launch).toBeVisible();
+      await expect(launch).toBeFocused();
+      await reopenProject();
+    }
+    await nav(page, '/discussion');
+    await expect(page.getByTestId('proj-canvas-title')).toHaveText('Keep this project work');
+  });
+
   test('stepper shows the current step and is operable by keyboard (FR-136, G-006, PARAM-086)', async ({ page }) => {
     await go(page, '/home');
     const stepper = page.getByTestId('proj-stepper');

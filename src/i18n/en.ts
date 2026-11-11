@@ -17,7 +17,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'topbar.commands': 'Commands',
   'retention.title': 'Data retention and deletion',
   'retention.why': 'Lists, per item, what is deleted, when, how long it is kept, and how budget accounting survives deletion (decision D-7).',
-  'retention.intro': 'Nothing is deleted automatically; every deletion is a user action. The usage record holds no content (prompts or answers) and keeps {months} months.',
+  'retention.intro': 'Nothing is deleted automatically; every deletion is a user action. The usage record holds no content (prompts or answers) and keeps {months} months. Legacy migration backups and the original browser storage are managed separately from normal project deletion.',
   'retention.col.target': 'Item',
   'retention.col.retention': 'Kept',
   'retention.col.deletion': 'How to delete',

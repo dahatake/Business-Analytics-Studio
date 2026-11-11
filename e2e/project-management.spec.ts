@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { setup } from './helpers.ts';
+import { deviceSnapshot, seedDeviceData, setup } from './helpers.ts';
 import { samplePack } from '../src/data/sample.ts';
 
 async function seed(page: Page, launch = true, lang: 'ja' | 'en' = 'ja') {
@@ -187,51 +187,31 @@ test('English launch management works on a narrow screen without horizontal over
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test('company deletion purges imported packs and IndexedDB boards only for its projects', async ({ page }) => {
+test('company deletion purges device packs and boards only for its projects', async ({ page }) => {
   await seed(page);
-  await page.evaluate(async (pack) => {
-    const index = Object.fromEntries(['pj-beta', 'pj-other'].map((projectId) => [projectId, {
-      projectId, packId: pack.packId, company: pack.company, isSample: pack.isSample,
-      entities: pack.entities.length, importedAt: '2026-11-10T00:00:00.000Z', files: ['sample.json'],
-    }]));
-    localStorage.setItem('bas.packs.index', JSON.stringify(index));
-    for (const [dbName, storeName] of [['bas-packs', 'packs'], ['bas-ink', 'boards']] as const) {
-      await new Promise<void>((resolve, reject) => {
-        const request = indexedDB.open(dbName, 1);
-        request.onupgradeneeded = () => request.result.createObjectStore(storeName);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const transaction = db.transaction(storeName, 'readwrite');
-          const store = transaction.objectStore(storeName);
-          for (const id of ['pj-beta', 'pj-other']) {
-            store.put(storeName === 'packs' ? pack : { strokes: [], notes: [], cards: [], links: [] }, storeName === 'packs' ? id : `${id}::board`);
-          }
-          transaction.oncomplete = () => { db.close(); resolve(); };
-          transaction.onerror = () => { db.close(); reject(transaction.error); };
-          transaction.onabort = () => { db.close(); reject(transaction.error); };
-        };
-      });
-    }
-  }, samplePack);
-  const keys = () => page.evaluate(async () => {
-    const result: Record<string, IDBValidKey[]> = {};
-    for (const [dbName, storeName] of [['bas-packs', 'packs'], ['bas-ink', 'boards']] as const) {
-      result[dbName] = await new Promise<IDBValidKey[]>((resolve, reject) => {
-        const request = indexedDB.open(dbName, 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const transaction = db.transaction(storeName, 'readonly');
-          const get = transaction.objectStore(storeName).getAllKeys();
-          transaction.oncomplete = () => { db.close(); resolve(get.result); };
-          transaction.onerror = () => { db.close(); reject(transaction.error); };
-          transaction.onabort = () => { db.close(); reject(transaction.error); };
-        };
-      });
-    }
-    return result;
+  const index = Object.fromEntries(['pj-beta', 'pj-other'].map((projectId) => [projectId, {
+    projectId, packId: samplePack.packId, company: samplePack.company, isSample: samplePack.isSample,
+    entities: samplePack.entities.length, importedAt: '2026-11-10T00:00:00.000Z', files: ['sample.json'],
+  }]));
+  await seedDeviceData(page, {
+    'bas.packs.index': JSON.stringify(index),
+    ...Object.fromEntries(['pj-beta', 'pj-other'].flatMap((id) => [
+      [`bas.binary.pack.${id}`, JSON.stringify(samplePack)],
+      [`bas.binary.ink.${id}::board`, JSON.stringify({ strokes: [], notes: [], cards: [], links: [] })],
+    ])),
   });
+  const keys = async () => {
+    const records = (await deviceSnapshot(page)).records;
+    const result = { 'bas-packs': [] as string[], 'bas-ink': [] as string[] };
+    for (const [key, record] of Object.entries(records)) {
+      if (record.value === null) continue;
+      if (key.startsWith('bas.binary.pack.')) result['bas-packs'].push(key.slice('bas.binary.pack.'.length));
+      if (key.startsWith('bas.binary.ink.')) result['bas-ink'].push(key.slice('bas.binary.ink.'.length));
+    }
+    result['bas-packs'].sort();
+    result['bas-ink'].sort();
+    return result;
+  };
   const before = await keys();
   await page.reload();
   await expect(page.getByTestId('launch-project-pj-beta')).toContainText('顧客パック取込済み');

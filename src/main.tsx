@@ -11,7 +11,8 @@ async function start(useDeviceCopy = false) {
   root.textContent = t('device.loading');
   try {
     await initializeDeviceStorage(useDeviceCopy);
-    await import('./bootstrap.tsx');
+    const { boot } = await import('./bootstrap.tsx');
+    await boot();
   } catch (error) {
     const section = document.createElement('section');
     section.className = 'device-startup-error';
@@ -29,7 +30,7 @@ async function start(useDeviceCopy = false) {
       el.addEventListener('click', action);
       section.append(el);
     };
-    button('device.retry', () => { void start(); });
+    button('device.retry', () => window.location.reload());
     button('device.recovery', () => {
       void recoveryDeviceData().then((data) => downloadBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), 'bas-recovery.json'))
         .catch(() => { message.textContent = t('device.recoveryError'); });

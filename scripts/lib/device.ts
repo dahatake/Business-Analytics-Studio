@@ -1,4 +1,4 @@
-import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -13,20 +13,29 @@ export class DeviceDatabase {
   constructor(dir: string) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(join(dir, 'device.sqlite'));
-    this.db.exec(`
+    try {
+      this.db.exec(`
       PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       CREATE TABLE IF NOT EXISTS metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT, revision INTEGER NOT NULL);
-    `);
-    this.db.prepare('INSERT OR IGNORE INTO metadata VALUES (?, ?)').run('id', randomUUID());
+      CREATE TABLE IF NOT EXISTS legacy_backups (id TEXT PRIMARY KEY, origin TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
+      `);
+      this.db.prepare('INSERT OR IGNORE INTO metadata VALUES (?, ?)').run('id', randomUUID());
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
-  snapshot(): DeviceSnapshot {
+  snapshot(keys?: string[]): DeviceSnapshot {
     const meta = this.db.prepare('SELECT value FROM metadata WHERE name = ?').get('id');
     if (typeof meta?.value !== 'string') throw new Error('Invalid device database identity');
     const records: DeviceSnapshot['records'] = {};
-    for (const row of this.db.prepare('SELECT key, value, revision FROM records').all()) {
+    const read = this.db.prepare('SELECT key, value, revision FROM records WHERE key = ?');
+    const rows = keys ? keys.flatMap((key) => { const row = read.get(key); return row ? [row] : []; }) :
+      this.db.prepare('SELECT key, value, revision FROM records').all();
+    for (const row of rows) {
       if (typeof row.key !== 'string' || (row.value !== null && typeof row.value !== 'string') || typeof row.revision !== 'number') {
         throw new Error('Invalid device database record');
       }
@@ -49,13 +58,19 @@ export class DeviceDatabase {
         if ((row?.revision ?? 0) !== change.expected) throw new DeviceConflict('Device data changed in another window');
         write.run(change.key, change.value);
       }
-      const snapshot = this.snapshot();
+      const snapshot = this.snapshot(changes.map((change) => change.key));
       this.db.exec('COMMIT');
       return snapshot;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+  archive(origin: string, records: Record<string, string>): string {
+    const data = JSON.stringify(records);
+    const id = createHash('sha256').update(origin).update(data).digest('hex');
+    this.db.prepare('INSERT OR IGNORE INTO legacy_backups VALUES (?, ?, ?, ?)').run(id, origin, new Date().toISOString(), data);
+    return id;
   }
   close() { this.db.close(); }
 }
@@ -113,8 +128,10 @@ export function createDeviceService(dir: string, testMode = false) {
     const sent = req.headers[DEVICE_HEADER];
     if (typeof sent !== 'string' || Buffer.byteLength(sent) !== Buffer.byteLength(token) ||
       !timingSafeEqual(Buffer.from(sent), Buffer.from(token))) return send(403, { error: 'deviceToken' });
-    if (req.url !== `${DEVICE_PREFIX}state`) return send(404, { error: 'notFound' });
+    const archive = req.url === `${DEVICE_PREFIX}archive`;
+    if (req.url !== `${DEVICE_PREFIX}state` && !archive) return send(404, { error: 'notFound' });
     if (req.method !== 'GET' && req.method !== 'POST') return send(405, { error: 'methodNotAllowed' });
+    if (archive && req.method !== 'POST') return send(405, { error: 'methodNotAllowed' });
     if (req.method === 'POST' && (req.headers.origin !== origin || !req.headers['content-type']?.startsWith('application/json'))) {
       return send(403, { error: 'deviceOrigin' });
     }
@@ -132,6 +149,13 @@ export function createDeviceService(dir: string, testMode = false) {
         }
         if (req.method === 'GET') return send(200, db.snapshot());
         const body = await readBody(req);
+        if (archive) {
+          if (!body || typeof body !== 'object' || !('records' in body) || !body.records || typeof body.records !== 'object' ||
+            Array.isArray(body.records) || Object.entries(body.records).some(([key, value]) => !isDeviceKey(key) || typeof value !== 'string')) {
+            return send(400, { error: 'invalidDeviceArchive' });
+          }
+          return send(200, { id: db.archive(origin, body.records as Record<string, string>) });
+        }
         if (!validChanges(body)) return send(400, { error: 'invalidDeviceChanges' });
         send(200, db.commit(body.changes));
       } catch (error) {

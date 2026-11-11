@@ -221,9 +221,28 @@ describe('FR-120 CLI end to end (in-process)', () => {
     expect(existsSync(join(TMP, 'work', 'contoso-robotics', 'index.html'))).toBe(true);
     expect(await run(['verify', packFile, ...dirs()], io)).toBe(0);
     expect(await run(['package', 'Contoso Robotics', ...dirs()], io)).toBe(0);
-    for (const f of ['app/index.html', 'app/data/pack.json', 'serve.ts', 'start.ps1', 'start.sh', 'start.command', 'README.txt']) {
+    for (const f of ['app/index.html', 'app/data/pack.json', 'serve.ts', 'device.ts', 'deviceProtocol.ts', 'start.ps1', 'start.sh', 'start.command', 'README.txt']) {
       expect(existsSync(join(TMP, 'work', 'contoso-robotics-package', f)), f).toBe(true);
     }
+    const offline = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { startServer } from './serve.ts';
+      const app = await startServer('app', 0);
+      try {
+        const origin = new URL(app.url).origin;
+        const session = await (await fetch(origin + '/device/session', {method:'POST', headers:{origin}})).json();
+        const headers = {origin, 'content-type':'application/json', 'x-bas-device':session.token};
+        const saved = await fetch(origin + '/device/state', {method:'POST', headers,
+          body:JSON.stringify({changes:[{key:'bas.scope.demo.offline',value:'"offline package"',expected:0}]})});
+        assert.equal(saved.status, 200);
+        const state = await (await fetch(origin + '/device/state', {headers})).json();
+        assert.equal(state.records['bas.scope.demo.offline'].value, '"offline package"');
+      } finally { await app.close(); }
+    `], {
+      cwd: join(TMP, 'work', 'contoso-robotics-package'), encoding: 'utf8', timeout: 15_000,
+      env: { ...process.env, BAS_DEVICE_DIR: join(TMP, 'offline-device') },
+    });
+    expect(offline.status, offline.stderr).toBe(0);
     expect(await run(['feedback', 'Map needs a legend', ...dirs()], io)).toBe(0);
     const fb = readFileSync(join(TMP, 'logs', 'improvements.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as J);
     expect(fb.at(-1)).toMatchObject({ text: 'Map needs a legend' });

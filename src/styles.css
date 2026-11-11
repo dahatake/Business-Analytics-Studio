@@ -57,6 +57,9 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
 .topbar-row { display: flex; align-items: center; gap: var(--spacingHorizontalL); min-width: 0; }
 .topbar-row > .lang-toggle { margin-left: auto; flex: none; }
 .brand { display: flex; align-items: center; gap: 10px; flex: none; }
+.brand-button { border: none; padding: 0; min-height: 44px; background: transparent; color: inherit; font: inherit; cursor: pointer; border-radius: var(--borderRadiusMedium); }
+.brand-button:hover { background: var(--colorSubtleBackgroundHover); }
+.brand-button:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 .brand-name { white-space: nowrap; }
 .topbar-work { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .commandbar { justify-content: space-between; flex-wrap: wrap; row-gap: 4px; }

@@ -62,10 +62,11 @@ export function materialChars(i: Pick<PackGenInput, 'materials' | 'researchNote'
 export interface SitePageLike { url: string; title: string; description: string; themeColor: string | null; text: string; fetchedAt: string }
 export interface NewsLike { title: string; url: string; source: string; publishedAt: string }
 
-export interface CallResult { text: string; costJpy: number; inputTokens: number; outputTokens: number }
+export interface CallResult { text: string; costJpy: number | null; inputTokens: number; outputTokens: number }
 
 export interface GenDeps {
-  complete: (prompt: string, signal: AbortSignal) => Promise<CallResult>;
+  /** `stage` lets the caller attribute the call's tokens to the generation step in the usage ledger. */
+  complete: (prompt: string, signal: AbortSignal, stage: GenerationReport['calls'][number]['stage']) => Promise<CallResult>;
   fetchSite?: (url: string, signal: AbortSignal) => Promise<{ pages: SitePageLike[]; failed: { url: string; error: string }[] }>;
   fetchNews?: (company: string, lang: Lang, signal: AbortSignal) => Promise<{ provider: string; fetchedAt: string; articles: NewsLike[] }>;
   now?: () => Date;
@@ -86,7 +87,9 @@ export interface ProgressEvent {
   round?: number;
   /** Problems still open (verify step). */
   errors?: number;
-  costJpy: number;
+  costJpy: number | null;
+  /** Input + output tokens the provider reported for the calls finished so far. */
+  tokens: number;
 }
 
 const STEP_SPAN: Record<StepId, [number, number]> = {
@@ -112,8 +115,8 @@ export interface GenerationReport {
   inputs: Omit<PackGenInput, 'materials'> & { materials: { name: string; chars: number; text: string }[] };
   retrieved: RetrievedItem[];
   retrievalErrors: { what: 'site' | 'news'; url?: string; error: string }[];
-  calls: { stage: 'foundation' | 'business' | `fix-${number}`; costJpy: number; inputTokens: number; outputTokens: number; ms: number }[];
-  costJpy: number;
+  calls: { stage: 'foundation' | 'business' | `fix-${number}`; costJpy: number | null; inputTokens: number; outputTokens: number; ms: number }[];
+  costJpy: number | null;
   fixRounds: number;
   /** Items removed because they still failed verification after the fix rounds (with what depended on them). */
   removed: { path: string; reason: string }[];
@@ -133,9 +136,9 @@ export interface GenResult {
 export class PackGenError extends Error {
   readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'callFailed' | 'collectFailed';
   readonly detail: string;
-  readonly costJpy: number;
+  readonly costJpy: number | null;
 
-  constructor(code: PackGenError['code'], detail: string, costJpy: number) {
+  constructor(code: PackGenError['code'], detail: string, costJpy: number | null) {
     super(`${code}: ${detail}`);
     this.code = code;
     this.detail = detail;
@@ -597,11 +600,11 @@ function parseAnswer(text: string): Pack | null {
 export async function generatePack(input: PackGenInput, deps: GenDeps, onProgress: (e: ProgressEvent) => void, signal: AbortSignal): Promise<GenResult> {
   const now = deps.now ?? (() => new Date());
   const startedAt = now().toISOString();
-  let costJpy = 0;
+  let costJpy: number | null = 0;
   const calls: GenerationReport['calls'] = [];
   const emit = (step: StepId, status: StepStatus, within = status === 'done' ? 1 : 0, extra: Partial<ProgressEvent> = {}) => {
     const [a, b] = STEP_SPAN[step];
-    onProgress({ step, status, ratio: a + (b - a) * within, costJpy, ...extra });
+    onProgress({ step, status, ratio: a + (b - a) * within, costJpy, tokens: calls.reduce((n, c) => n + c.inputTokens + c.outputTokens, 0), ...extra });
   };
   const cancelled = () => new PackGenError('cancelled', 'cancelled', costJpy);
   const call = async (stage: GenerationReport['calls'][number]['stage'], prompt: string): Promise<Pack> => {
@@ -609,14 +612,15 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     const t0 = Date.now();
     let r: CallResult;
     try {
-      r = await deps.complete(prompt, signal);
+      r = await deps.complete(prompt, signal, stage);
     } catch (err) {
       // A cancelled or timed-out call the ledger counted as possibly billed also counts here.
-      costJpy += (err as { recordedCostJpy?: number }).recordedCostJpy ?? 0;
+      const recorded = (err as { recordedCostJpy?: number | null }).recordedCostJpy;
+      costJpy = costJpy === null || recorded === null ? null : costJpy + (recorded ?? 0);
       if (signal.aborted) throw cancelled();
       throw new PackGenError('callFailed', (err as Error).message, costJpy);
     }
-    costJpy += r.costJpy;
+    costJpy = costJpy === null || r.costJpy === null ? null : costJpy + r.costJpy;
     calls.push({ stage, costJpy: r.costJpy, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ms: Date.now() - t0 });
     const parsed = parseAnswer(r.text);
     if (!parsed) throw new PackGenError('noAnswer', `${stage}: no JSON object in the answer`, costJpy);

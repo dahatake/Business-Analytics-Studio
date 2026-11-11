@@ -6,15 +6,16 @@ import {
 import {
   ArrowUpload20Regular, BotSparkle20Regular, CheckmarkCircle20Filled, Delete20Regular, DismissCircle20Filled, Open20Regular, Settings20Regular,
 } from '@fluentui/react-icons';
-import { AiLiveError, aiLive, preflight, readLedger } from '../../ai/client.ts';
+import { AiLiveError, aiLive, preflight, readLedger, rebindLedgerScope } from '../../ai/client.ts';
 import { jstDay, jstMonth } from '../../ai/budget.ts';
 import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
+import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
 import { isReadableFile } from '../../data/packImport.ts';
 import { saveImportedPack } from '../../data/packStore.ts';
 import { useI18n, type Lang } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
 import { AiReadiness, AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
-import { D4Warning, yenFine } from '../ai/AiCommon.tsx';
+import { D4Warning, TokenTable, yenFine } from '../ai/AiCommon.tsx';
 import { fetchNewsHeadlines, fetchSitePages } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
@@ -36,7 +37,7 @@ type Phase =
   | { kind: 'form' }
   | { kind: 'running'; startedAt: number }
   | { kind: 'saved'; result: GenResult; projectId: string }
-  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed'; detail: string; costJpy: number };
+  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed'; detail: string; costJpy: number | null; tokens: TokenTotals };
 
 function todayJst(): string {
   return jstDay(new Date());
@@ -123,7 +124,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
     const pf = preflight({ use: 'packBuild', lang, prompt, maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, userConfirmed: true, personConfirmed: true });
     const ledger = readLedger();
     const month = jstMonth(new Date());
-    const spent = ledger.filter((r) => jstMonth(new Date(r.at)) === month).reduce((a, r) => a + r.costJpy, 0);
+    const spent = ledger.filter((r) => jstMonth(new Date(r.at)) === month).reduce((a, r) => a + (r.costJpy ?? 0), 0);
     return {
       calls: plan.maxCalls,
       perCall: pf.estimatedCostJpy,
@@ -135,7 +136,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
     };
     // Recomputed when what is sent or the price settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, materials, researchNote, lang, ai.provider, ai.priceInputPerM, ai.priceOutputPerM, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, materials, researchNote, lang, ai.provider, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
   const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
   const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget;
@@ -182,6 +183,9 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
   const start = async () => {
     const controller = new AbortController();
     abortRef.current = controller;
+    // The run's ledger records stay under this scope until the project they were spent for is known.
+    const runScope = `gen-run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    const runTokens = () => summarizeTokens(recordsOfScope(readLedger(), runScope)).total;
     setSteps(Object.fromEntries(STEPS.map((s) => [s, 'pending'])) as Record<StepId, StepStatus>);
     setProgress(null);
     setElapsed(0);
@@ -192,9 +196,9 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
       result = await generatePack(input, {
         provider: settings.provider,
         ...(settings.provider === 'copilotSdk' ? (settings.copilotModel ? { model: settings.copilotModel } : {}) : { model: settings.relayConnection?.deployment ?? settings.deployment }),
-        complete: (prompt, signal) => aiLive({
+        complete: (prompt, signal, stage) => aiLive({
           use: 'packBuild', lang: lang as Lang, prompt, userConfirmed: true, personConfirmed: true,
-          maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: PACK_BUILD_TIMEOUT_MS,
+          maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: PACK_BUILD_TIMEOUT_MS, scope: runScope, stage,
         }, signal),
         fetchSite: (url, signal) => fetchSitePages(url, signal),
         fetchNews: (company, l, signal) => fetchNewsHeadlines(company, l, signal),
@@ -205,15 +209,17 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
     } catch (err) {
       const e = err instanceof PackGenError ? err : null;
       const reasons = err instanceof AiLiveError ? err.reasons.join(', ') : '';
+      const tokens = runTokens();
+      if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
       setSteps((s) => Object.fromEntries(STEPS.map((k) => [k, s[k] === 'running' ? 'failed' : s[k]])) as Record<StepId, StepStatus>);
-      setPhase({ kind: 'error', code: e?.code ?? 'callFailed', detail: e?.detail ?? (reasons || (err as Error).message), costJpy: e?.costJpy ?? 0 });
+      setPhase({ kind: 'error', code: e?.code ?? 'callFailed', detail: e?.detail ?? (reasons || (err as Error).message), costJpy: e ? e.costJpy : null, tokens });
       return;
     } finally {
       abortRef.current = null;
     }
     const resolved = resolveProject();
     if (!resolved) {
-      setPhase({ kind: 'error', code: 'saveFailed', detail: t('proj.err.duplicateProject'), costJpy: result.report.costJpy });
+      setPhase({ kind: 'error', code: 'saveFailed', detail: t('proj.err.duplicateProject'), costJpy: result.report.costJpy, tokens: runTokens() });
       return;
     }
     const { projectId, created } = resolved;
@@ -228,10 +234,13 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
         files: [`generated:${settings.provider}`, ...materials.map((m) => m.name)],
       }, result.pack);
     } catch (err) {
+      const tokens = runTokens();
       rollback(created);
-      setPhase({ kind: 'error', code: 'saveFailed', detail: (err as Error).message, costJpy: result.report.costJpy });
+      if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
+      setPhase({ kind: 'error', code: 'saveFailed', detail: (err as Error).message, costJpy: result.report.costJpy, tokens });
       return;
     }
+    rebindLedgerScope(runScope, projectId);
     setPhase({ kind: 'saved', result, projectId });
   };
 
@@ -242,7 +251,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
 
   const labelOf = (f: RequiredField) => t(`proj.gen.field.${f}`);
   const running = phase.kind === 'running';
-  const yen = (v: number) => yenFine(fmt.locale, v);
+  const yen = (v: number | null) => v === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, v);
   const stepIcon = (s: StepStatus) => (s === 'done' ? <CheckmarkCircle20Filled className="gen-ok" /> : s === 'failed' ? <DismissCircle20Filled className="gen-fail" /> : s === 'running' ? <Spinner size="extra-tiny" /> : <span className="gen-dot" aria-hidden />);
 
   return (
@@ -346,7 +355,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
                     <dl className="gen-estimate" data-testid="gen-estimate">
                       <dt>{t('proj.gen.calls')}</dt><dd>{t('proj.gen.callsValue', { min: 2, max: estimate.calls })}</dd>
                       <dt>{t('proj.gen.cost')}</dt>
-                      <dd>{estimate.max === null ? t('proj.gen.noPrice') : t('proj.gen.costValue', { min: yen(estimate.min!), max: yen(estimate.max) })}</dd>
+                      <dd>{estimate.max === null ? t(ai.provider === 'foundry' ? 'ai.cost.unknown' : 'proj.gen.noPrice') : t('proj.gen.costValue', { min: yen(estimate.min!), max: yen(estimate.max) })}</dd>
                       <dt>{t('proj.gen.month')}</dt><dd>{t('proj.gen.monthValue', { spent: yen(estimate.spent), budget: fmt.yen(ai.monthlyBudgetJpy) })}</dd>
                     </dl>
                     {overBudget && <MessageBar intent="error" data-testid="gen-over-budget"><MessageBarBody>{t('proj.gen.overBudget')}</MessageBarBody></MessageBar>}
@@ -363,7 +372,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
                 <div className="gen-progress" data-testid="gen-progress" aria-live="polite">
                   <ProgressBar value={progress?.ratio ?? 0} thickness="large" aria-label={t('proj.gen.progressLabel')} data-testid="gen-progress-bar" />
                   <p className="muted">
-                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, cost: yen(progress?.costJpy ?? 0) })}
+                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, cost: yen(progress ? progress.costJpy : 0), tokens: fmt.integer(progress?.tokens ?? 0) })}
                   </p>
                   <ol className="gen-steps">
                     {STEPS.map((s) => (
@@ -379,7 +388,7 @@ export function PackGenerateDialog({ open, target, onClose, onOpenProject }: {
                       <MessageBarBody>
                         {t(`proj.gen.error.${phase.code}`)}
                         <span className="gen-detail" lang="en">{phase.detail}</span>
-                        {t('proj.gen.errorCost', { cost: yen(phase.costJpy) })}
+                        {t('proj.gen.errorCost', { cost: yen(phase.costJpy), tokens: fmt.integer(phase.tokens.totalTokens) })}
                       </MessageBarBody>
                     </MessageBar>
                   )}
@@ -421,6 +430,7 @@ function SavedSummary({ result }: { result: GenResult }) {
   const { t, fmt } = useI18n();
   const { summary, report } = result;
   const kinds = Object.entries(summary.byKind).filter(([, n]) => (n ?? 0) > 0);
+  const tokens = summarizeTokens(report.calls.map((c) => ({ at: report.finishedAt, use: 'packBuild', stage: c.stage, inputTokens: c.inputTokens, outputTokens: c.outputTokens, costJpy: c.costJpy })));
   return (
     <div className="gen-saved" data-testid="gen-saved">
       <MessageBar intent="success"><MessageBarBody>{t('proj.gen.saved', { entities: summary.entities })}</MessageBarBody></MessageBar>
@@ -434,8 +444,9 @@ function SavedSummary({ result }: { result: GenResult }) {
         <dt>{t('proj.gen.sum.checks')}</dt>
         <dd data-testid="gen-checks">{t('proj.gen.sum.checksValue', { rounds: report.fixRounds, removed: report.removed.length, dropped: report.droppedSources.length })}</dd>
         <dt>{t('proj.gen.sum.cost')}</dt>
-        <dd data-testid="gen-cost">{t('proj.gen.sum.costValue', { cost: yenFine(fmt.locale, report.costJpy), calls: report.calls.length })}</dd>
+        <dd data-testid="gen-cost">{t('proj.gen.sum.costValue', { cost: report.costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, report.costJpy), calls: report.calls.length })}</dd>
       </dl>
+      <TokenTable summary={tokens} testId="gen-tokens" caption={t('proj.gen.sum.tokens')} />
       {report.ungrounded.length > 0 && (
         <MessageBar intent="warning" data-testid="gen-ungrounded">
           <MessageBarBody>

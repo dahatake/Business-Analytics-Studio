@@ -37,14 +37,20 @@ function useThemes(): { dark: Theme; light: Theme } {
 function TopBar() {
   const { t } = useI18n();
   const { muted, setMuted, setMotion, audience, setAudience } = useSettings();
+  const reopenLaunch = useLaunch((s) => s.reopen);
   const reduced = useReducedMotion();
   return (
     <header className="topbar">
       <div className="topbar-row">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden />
-          <Text weight="semibold" size={400} className="brand-name">{t('app.title')}</Text>
-        </div>
+        <Tooltip content={t('proj.target.launch')} relationship="description">
+          <button type="button" className="brand brand-button" onClick={() => {
+            reopenLaunch();
+            requestAnimationFrame(() => document.getElementById('main')?.focus());
+          }}>
+            <span className="brand-mark" aria-hidden />
+            <Text weight="semibold" size={400} className="brand-name">{t('app.title')}</Text>
+          </button>
+        </Tooltip>
         {loaded.pack.isSample && (
           <div className="topbar-context">
             <Badge appearance="tint" color="informative" data-testid="sample-pack-badge">{t('badge.samplePack')}</Badge>

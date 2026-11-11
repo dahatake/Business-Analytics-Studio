@@ -5,10 +5,10 @@ import {
 } from '@fluentui/react-components';
 import { ArrowSync20Regular, Delete20Regular, Key20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { D4Warning, yenFine } from './AiCommon.tsx';
+import { D4Warning } from './AiCommon.tsx';
 import { type ConnectionSaveError, type SecretName } from './relayClient.ts';
-import { connectionDraftProblem, connectionTestPreflight, isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, type AiProvider, type AuthMethod } from './settingsStore.ts';
-import { isFoundryV1 } from '../../ai/foundry.ts';
+import { connectionTestPreflight, isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
 
 /** API key entry: write-only. The value goes to the relay and is cleared; only "saved" is ever shown (NFR-SEC-001/005/012). */
@@ -64,7 +64,7 @@ export function KeyField({ name, label, testId }: { name: SecretName; label: str
 
 /** FR-275 common connection, saved in the relay (endpoint, deployment, API version). The browser keeps a copy for display. */
 export function ConnectionActions() {
-  const { t, fmt } = useI18n();
+  const { t } = useI18n();
   const s = useAiSettings();
   const [message, setMessage] = useState<'saved' | 'deleted' | ConnectionSaveError | null>(null);
   const [providerStatus, setProviderStatus] = useState<number | undefined>();
@@ -72,14 +72,16 @@ export function ConnectionActions() {
   const [consent, setConsent] = useState(false);
   const [validationRequested, setValidationRequested] = useState(false);
   const relay = s.relayConnection;
-  const problem = connectionDraftProblem(s);
+  const draft = parseFoundryConnection({
+    endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_FOUNDRY_API_VERSION,
+  }, true);
+  const problem = draft.ok ? null : draft.error;
   const precheck = connectionTestPreflight(s);
   const blockers = [
     problem ? t(`ai.conn.msg.${problem}`) : null,
     !s.relayReachable ? t('ai.relay.unreachable') : null,
     s.authMethod !== 'apiKey' ? t('ai.auth.entraIdNote') : null,
     !s.foundryKeySaved ? t('ai.conn.msg.keyMissing') : null,
-    !precheck.prices ? t('ai.conn.msg.noUnitPrice') : null,
     !precheck.budget.allowed ? t('ai.conn.msg.budget') : null,
     !consent ? t('ai.conn.msg.consentRequired') : null,
   ].filter((reason) => reason !== null);
@@ -90,12 +92,12 @@ export function ConnectionActions() {
     const timer = setTimeout(() => refreshBudget((v) => v + 1), 5_000);
     return () => clearTimeout(timer);
   }, [coolingDown]);
-  const differs = relay !== null && (relay.endpoint !== s.endpoint.trim() || relay.deployment !== s.deployment.trim() || relay.apiVersion !== s.apiVersion.trim());
+  const differs = relay !== null && (!draft.ok || relay.endpoint !== draft.value.endpoint || relay.deployment !== draft.value.deployment || relay.apiVersion !== draft.value.apiVersion);
   useEffect(() => {
     setMessage(null);
     setProviderStatus(undefined);
     setConsent(false);
-  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.priceInputPerM, s.priceOutputPerM, s.monthlyBudgetJpy]);
+  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.monthlyBudgetJpy]);
   const save = async () => {
     if (testing) return;
     setMessage(null);
@@ -127,8 +129,9 @@ export function ConnectionActions() {
       {s.connectionVerifiedAt && <p className="muted" data-testid="ai-connection-verified-at">{t('ai.conn.verifiedAt', { at: s.connectionVerifiedAt })}</p>}
       {differs && <p className="muted" data-testid="ai-relay-connection-differs">{t('ai.conn.differs', { endpoint: relay.endpoint, deployment: relay.deployment })}</p>}
       {problem && <p role="alert" data-testid="ai-connection-validation">{t(`ai.conn.msg.${problem}`)}</p>}
+      {draft.ok && <p className="muted" data-testid="ai-connection-destination">{t('ai.conn.destination', { url: foundryChatUrl(draft.value) })}</p>}
       <p className="muted" data-testid="ai-connection-test-info">{t('ai.conn.testInfo')}</p>
-      <p className="muted" data-testid="ai-connection-test-cost">{precheck.estimatedCostJpy === null ? t('ai.conn.msg.noUnitPrice') : t('ai.conn.testCost', { cost: yenFine(fmt.locale, precheck.estimatedCostJpy) })}</p>
+      <p className="muted" data-testid="ai-connection-test-cost">{t('ai.cost.unknown')}</p>
       {!s.foundryKeySaved && <p className="muted">{t('ai.conn.msg.keyMissing')}</p>}
       {!precheck.budget.allowed && <p role="alert">{t('ai.conn.msg.budget')}</p>}
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={testing} label={t('ai.conn.consent')} data-testid="ai-connection-consent" />
@@ -193,6 +196,8 @@ export function ProviderChoice() {
 export function FoundryFields() {
   const { t } = useI18n();
   const s = useAiSettings();
+  const endpoint = parseFoundryEndpoint(s.endpoint, true);
+  const v1 = endpoint.ok && isFoundryV1(endpoint.value);
   return (
     <>
       <Field label={t('ai.settings.endpoint')} hint={t('ai.settings.endpointHint')}>
@@ -201,8 +206,8 @@ export function FoundryFields() {
       <Field label={t('ai.settings.deployment')} hint={t('ai.settings.deploymentHint')}>
         <Input value={s.deployment} onChange={(_, d) => s.update({ deployment: d.value })} data-testid="ai-deployment" />
       </Field>
-      <Field label={t('ai.settings.apiVersion')} hint={isFoundryV1(s.endpoint.replace(/\/$/, '')) ? t('ai.settings.v1Hint') : undefined}>
-        <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={isFoundryV1(s.endpoint.replace(/\/$/, ''))} data-testid="ai-api-version" />
+      <Field label={t('ai.settings.apiVersion')} hint={v1 ? t('ai.settings.v1Hint') : undefined}>
+        <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={v1} data-testid="ai-api-version" />
       </Field>
       <RadioGroup value={s.authMethod} onChange={(_, d) => s.update({ authMethod: d.value as AuthMethod })} aria-labelledby="ai-lbl-auth">
         <span id="ai-lbl-auth" className="ai-label">{t('ai.settings.auth')}</span>
@@ -301,7 +306,7 @@ function copilotErrorKey(code: string | null): (typeof COPILOT_ERRORS)[number] {
   return (COPILOT_ERRORS as readonly string[]).includes(code ?? '') ? (code as (typeof COPILOT_ERRORS)[number]) : code === null ? 'notSignedIn' : 'providerError';
 }
 
-/** PARAM-130 token prices (Foundry) or JPY per premium request (Copilot, D-12). */
+/** Foundry cost notice or Copilot premium-request pricing (D-12). */
 export function PriceFields() {
   const { t } = useI18n();
   const s = useAiSettings();
@@ -312,17 +317,8 @@ export function PriceFields() {
         <Field label={t('ai.price.perRequest')} hint={t('ai.price.perRequestHint')}>
           <Input inputMode="decimal" value={s.copilotPricePerRequest} onChange={(_, d) => s.update({ copilotPricePerRequest: d.value })} data-testid="ai-price-request" />
         </Field>
-      ) : (
-        <>
-          <Field label={t('ai.price.input')}>
-            <Input inputMode="decimal" value={s.priceInputPerM} onChange={(_, d) => s.update({ priceInputPerM: d.value })} data-testid="ai-price-input" />
-          </Field>
-          <Field label={t('ai.price.output')}>
-            <Input inputMode="decimal" value={s.priceOutputPerM} onChange={(_, d) => s.update({ priceOutputPerM: d.value })} data-testid="ai-price-output" />
-          </Field>
-        </>
-      )}
-      {!ok && <p className="muted" data-testid="ai-price-missing">{t('ai.price.missing')}</p>}
+      ) : <p className="muted" data-testid="ai-foundry-cost-note">{t('ai.cost.unknown')}</p>}
+      {s.provider === 'copilotSdk' && !ok && <p className="muted" data-testid="ai-price-missing">{t('ai.price.missing')}</p>}
     </div>
   );
 }
@@ -334,9 +330,9 @@ export function AiReadiness() {
   const items: ['relay' | 'configured' | 'prices' | 'live', boolean][] = [
     ['relay', s.relayReachable],
     ['configured', isConfigured(s)],
-    ['prices', providerPrices(s) !== null],
     ['live', s.liveEnabled],
   ];
+  if (s.provider === 'copilotSdk') items.splice(2, 0, ['prices', providerPrices(s) !== null]);
   return (
     <ul className="ai-readiness" data-testid="ai-readiness">
       {items.map(([key, ok]) => (
@@ -365,8 +361,7 @@ export function AiQuickSettings() {
       )}
       <ProviderChoice />
       {s.provider === 'copilotSdk' ? <CopilotSettings /> : <FoundryFields />}
-      <h3 className="ai-h3">{s.provider === 'copilotSdk' ? t('ai.price.titleCopilot') : t('ai.price.title')}</h3>
-      <PriceFields />
+      {s.provider === 'copilotSdk' && <><h3 className="ai-h3">{t('ai.price.titleCopilot')}</h3><PriceFields /></>}
       <BudgetInput />
       <Switch checked={s.liveEnabled} onChange={(_, d) => s.update({ liveEnabled: d.checked })} label={t('ai.settings.liveSwitch')} data-testid="ai-live-switch" />
       <p className="muted">{t('ai.settings.liveNote')}</p>

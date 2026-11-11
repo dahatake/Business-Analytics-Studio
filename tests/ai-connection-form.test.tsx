@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeLedger } from '../src/ai/client.ts';
-import { ConnectionActions } from '../src/modules/ai/AiConnectionForm.tsx';
+import { ConnectionActions, FoundryFields, PriceFields } from '../src/modules/ai/AiConnectionForm.tsx';
 import type { ConnectionSaveResult } from '../src/modules/ai/relayClient.ts';
 import { useAiSettings, type AiSettingsState } from '../src/modules/ai/settingsStore.ts';
 import { useSettings } from '../src/state/settings.ts';
@@ -23,7 +23,7 @@ beforeEach(() => {
   save.mockReset().mockResolvedValue({ ok: false, error: 'unauthorized', providerStatus: 401 });
   useAiSettings.setState({
     ...initial, ...connection, relayReachable: true, foundryKeySaved: true,
-    priceInputPerM: '1000', priceOutputPerM: '4000', monthlyBudgetJpy: 100_000,
+    monthlyBudgetJpy: 100_000,
     relayConnection: connection, connectionVerifiedAt: '2026-11-10T00:00:00Z', saveConnection: save,
   });
 });
@@ -37,15 +37,13 @@ afterEach(() => {
 
 describe('connection test action', () => {
   it.each<{ patch: Partial<AiSettingsState>; reason: string }>([
-    { patch: { endpoint: 'https://resource.services.ai.azure.com/api/projects/project' }, reason: 'project URL' },
+    { patch: { endpoint: 'https://other.example/api/projects/project' }, reason: 'project URL' },
     { patch: { endpoint: '' }, reason: 'HTTPS resource URL' },
     { patch: { deployment: '' }, reason: 'deployment name' },
     { patch: { apiVersion: 'invalid' }, reason: 'API version' },
     { patch: { relayReachable: false }, reason: 'relay process cannot be reached' },
     { patch: { authMethod: 'entraId' }, reason: 'Entra ID sign-in' },
     { patch: { foundryKeySaved: false }, reason: 'First save the API key' },
-    { patch: { priceInputPerM: '' }, reason: 'input and output unit prices' },
-    { patch: { priceOutputPerM: '' }, reason: 'input and output unit prices' },
     { patch: { monthlyBudgetJpy: 0 }, reason: 'monthly budget' },
   ])('keeps the button usable but refuses sending for $reason', ({ patch, reason }) => {
     useAiSettings.setState(patch);
@@ -59,18 +57,28 @@ describe('connection test action', () => {
   });
 
   it('explains every missing prerequisite together, including consent, without sending', () => {
-    useAiSettings.setState({ foundryKeySaved: false, priceInputPerM: '' });
+    useAiSettings.setState({ foundryKeySaved: false });
     render(<ConnectionActions />);
     fireEvent.click(button());
     const text = screen.getByTestId('ai-connection-blockers').textContent;
-    for (const reason of ['No connection test was sent', 'API key', 'unit prices', 'consent checkbox']) {
+    for (const reason of ['No connection test was sent', 'API key', 'consent checkbox']) {
       expect(text).toContain(reason);
     }
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('removes Foundry price inputs and permits a test after acknowledging unknown charges', async () => {
+    render(<><FoundryFields /><PriceFields /></>);
+    expect(screen.queryByTestId('ai-price-input')).toBeNull();
+    expect(screen.queryByTestId('ai-price-output')).toBeNull();
+    expect(screen.getByTestId('ai-connection-test-cost').textContent).toContain('unknown charges are not free');
+    consent();
+    fireEvent.click(button());
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+
   it('allows a retry after correction, but requires fresh consent after editing the destination', async () => {
-    useAiSettings.setState({ endpoint: 'https://resource.services.ai.azure.com/api/projects/project' });
+    useAiSettings.setState({ endpoint: 'https://other.example/api/projects/project' });
     render(<ConnectionActions />);
     consent();
     fireEvent.click(button());
@@ -78,6 +86,29 @@ describe('connection test action', () => {
     fireEvent.click(button());
     expect(screen.getByTestId('ai-connection-blockers').textContent).toContain('consent checkbox');
     expect(save).not.toHaveBeenCalled();
+    consent();
+    fireEvent.click(button());
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('ai-connection-msg').textContent).toContain('HTTP 401');
+    expect(useAiSettings.getState().relayConnection).toEqual(connection);
+  });
+
+  it('previews the assembled project destination, uses v1 and requires fresh consent after editing', async () => {
+    useAiSettings.setState({
+      endpoint: ' https://resource.services.ai.azure.com/api/projects/GraphRecordingProject/ ',
+      apiVersion: 'invalid',
+    });
+    render(<FoundryFields />);
+    expect(screen.getByTestId('ai-connection-destination').textContent).toContain(
+      'https://resource.services.ai.azure.com/openai/v1/chat/completions',
+    );
+    expect(screen.queryByTestId('ai-connection-validation')).toBeNull();
+    expect(screen.getByTestId<HTMLInputElement>('ai-api-version').disabled).toBe(true);
+    consent();
+    fireEvent.change(screen.getByTestId('ai-deployment'), { target: { value: 'another-deployment' } });
+    fireEvent.click(button());
+    expect(save).not.toHaveBeenCalled();
+    expect(screen.getByTestId('ai-connection-blockers').textContent).toContain('consent checkbox');
     consent();
     fireEvent.click(button());
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
@@ -135,7 +166,7 @@ describe('connection test action', () => {
 
   it('shows Japanese guidance without sending an invalid destination', () => {
     useSettings.setState({ lang: 'ja' });
-    useAiSettings.setState({ endpoint: 'https://resource.services.ai.azure.com/api/projects/project' });
+    useAiSettings.setState({ endpoint: 'https://other.example/api/projects/project' });
     render(<ConnectionActions />);
     fireEvent.click(button());
     const text = screen.getByTestId('ai-connection-blockers').textContent;

@@ -20,12 +20,8 @@ export function isFoundryV1(endpoint: string): boolean {
   return endpoint.endsWith('/openai/v1');
 }
 
-export function parseFoundryConnection(input: unknown, allowTestHttp = false):
-  { ok: true; value: FoundryConnection } | { ok: false; error: ConnectionInputError } {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: 'invalidBody' };
-  const o = input as Record<string, unknown>;
-  if (Object.keys(o).some((k) => !['endpoint', 'deployment', 'apiVersion'].includes(k))) return { ok: false, error: 'invalidBody' };
-  const { endpoint, deployment, apiVersion = DEFAULT_FOUNDRY_API_VERSION } = o;
+export function parseFoundryEndpoint(endpoint: unknown, allowTestHttp = false):
+  { ok: true; value: string } | { ok: false; error: 'invalidEndpoint' | 'projectEndpoint' } {
   if (typeof endpoint !== 'string' || endpoint.length > 512) return { ok: false, error: 'invalidEndpoint' };
   let url: URL;
   try { url = new URL(endpoint.trim()); } catch { return { ok: false, error: 'invalidEndpoint' }; }
@@ -33,14 +29,31 @@ export function parseFoundryConnection(input: unknown, allowTestHttp = false):
   if ((!test && url.protocol !== 'https:') || url.username || url.password || url.search || url.hash) {
     return { ok: false, error: 'invalidEndpoint' };
   }
-  if (url.pathname.startsWith('/api/projects/')) return { ok: false, error: 'projectEndpoint' };
-  const path = url.pathname.replace(/\/$/, '');
+  let path = url.pathname.replace(/\/$/, '');
+  if (path === '/api/projects' || path.startsWith('/api/projects/')) {
+    if (!/^[a-z0-9-]+\.services\.ai\.azure\.com$/.test(url.hostname) || url.port || !/^\/api\/projects\/[^/]+$/.test(path)) {
+      return { ok: false, error: 'projectEndpoint' };
+    }
+    path = '/openai/v1';
+  }
   if (path !== '' && path !== '/openai/v1') return { ok: false, error: 'invalidEndpoint' };
+  return { ok: true, value: url.origin + path };
+}
+
+export function parseFoundryConnection(input: unknown, allowTestHttp = false):
+  { ok: true; value: FoundryConnection } | { ok: false; error: ConnectionInputError } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: 'invalidBody' };
+  const o = input as Record<string, unknown>;
+  if (Object.keys(o).some((k) => !['endpoint', 'deployment', 'apiVersion'].includes(k))) return { ok: false, error: 'invalidBody' };
+  const { endpoint, deployment, apiVersion = DEFAULT_FOUNDRY_API_VERSION } = o;
+  const parsed = parseFoundryEndpoint(endpoint, allowTestHttp);
+  if (!parsed.ok) return parsed;
+  const v1 = isFoundryV1(parsed.value);
   if (typeof deployment !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(deployment)) return { ok: false, error: 'invalidDeployment' };
-  if (typeof apiVersion !== 'string' || (path === '' && !/^\d{4}-\d{2}-\d{2}(-preview)?$/.test(apiVersion))) {
+  if (typeof apiVersion !== 'string' || (!v1 && !/^\d{4}-\d{2}-\d{2}(-preview)?$/.test(apiVersion))) {
     return { ok: false, error: 'invalidApiVersion' };
   }
-  return { ok: true, value: { endpoint: url.origin + path, deployment, apiVersion: path ? DEFAULT_FOUNDRY_API_VERSION : apiVersion } };
+  return { ok: true, value: { endpoint: parsed.value, deployment, apiVersion: v1 ? DEFAULT_FOUNDRY_API_VERSION : apiVersion } };
 }
 
 export function foundryChatUrl(c: FoundryConnection): string {

@@ -4,6 +4,8 @@ import {
 } from '@fluentui/react-components';
 import { selectOutbound } from '../../ai/redact.ts';
 import { AI_LIMITS } from '../../ai/policy.ts';
+import type { TokenCount } from '../../ai/client.ts';
+import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
@@ -56,17 +58,88 @@ export function MockNotice({ reasons, children }: { reasons: string[]; children?
   );
 }
 
-/** A real (live) answer: labelled "Live" with the recorded cost. */
-export function LiveNotice({ costJpy, children }: { costJpy: number; children?: ReactNode }) {
+/** A real (live) answer: labelled "Live" with the recorded cost and the tokens the provider reported. */
+export function LiveNotice({ costJpy, usage, children }: { costJpy: number | null; usage?: TokenCount; children?: ReactNode }) {
   const { t, fmt } = useI18n();
   return (
     <div className="ai-live" data-testid="ai-live-label">
       <div className="ai-mock-head">
         <Badge appearance="filled" color="success">{t('ai.live.badge')}</Badge>
-        <span>{t('ai.live.explain', { cost: yenFine(fmt.locale, costJpy) })}</span>
+        <span>{t('ai.live.explain', { cost: costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, costJpy) })}</span>
       </div>
+      {usage && (
+        <p className="muted" data-testid="ai-live-tokens">
+          {t('ai.tokens.call', {
+            total: fmt.integer(usage.inputTokens + usage.outputTokens), input: fmt.integer(usage.inputTokens), output: fmt.integer(usage.outputTokens),
+          })}
+        </p>
+      )}
       {children}
     </div>
+  );
+}
+
+/** Label of one token line: the pack-generation step when there is one, otherwise the use. */
+function tokenLineLabel(t: ReturnType<typeof useI18n>['t'], line: TokenLine): string {
+  return line.step ? t(`proj.gen.step.${line.step}` as MessageKey) : t(`ai.use.${line.use}` as MessageKey);
+}
+
+/**
+ * Tokens per step and their total, as the provider reported them (the usage ledger is the only source).
+ * `extraRows` are steps that used no generative AI (shown as 0 so the reader sees they were counted, not missed).
+ */
+export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', caption }: {
+  summary: TokenSummary;
+  extraRows?: string[];
+  testId?: string;
+  caption?: string;
+}) {
+  const { t, fmt } = useI18n();
+  const yen = (v: number | null) => (v === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, v));
+  return (
+    <table className="ai-token-table" data-testid={testId}>
+      {caption && <caption>{caption}</caption>}
+      <thead>
+        <tr>
+          <th scope="col">{t('ai.tokens.step')}</th>
+          <th scope="col">{t('ai.tokens.calls')}</th>
+          <th scope="col">{t('ai.tokens.input')}</th>
+          <th scope="col">{t('ai.tokens.output')}</th>
+          <th scope="col">{t('ai.tokens.total')}</th>
+          <th scope="col">{t('ai.tokens.cost')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {summary.lines.map((l) => (
+          <tr key={`${l.use}.${l.step ?? ''}`} data-testid={`${testId}-row`} data-use={l.use} data-step={l.step ?? ''}>
+            <th scope="row">{tokenLineLabel(t, l)}{l.estimatedCalls > 0 ? ` ${t('ai.tokens.estimatedMark')}` : ''}</th>
+            <td>{fmt.integer(l.calls)}</td>
+            <td>{fmt.integer(l.inputTokens)}</td>
+            <td>{fmt.integer(l.outputTokens)}</td>
+            <td data-testid={`${testId}-row-total`}>{fmt.integer(l.totalTokens)}</td>
+            <td>{yen(l.costJpy)}</td>
+          </tr>
+        ))}
+        {extraRows.map((label) => (
+          <tr key={`extra.${label}`} data-testid={`${testId}-row`} data-use="none">
+            <th scope="row">{label}</th>
+            <td>0</td><td>0</td><td>0</td>
+            <td data-testid={`${testId}-row-total`}>0</td>
+            <td>{yenFine(fmt.locale, 0)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr data-testid={`${testId}-total`}>
+          <th scope="row">{t('ai.tokens.sum')}</th>
+          <td>{fmt.integer(summary.total.calls)}</td>
+          <td>{fmt.integer(summary.total.inputTokens)}</td>
+          <td>{fmt.integer(summary.total.outputTokens)}</td>
+          <td data-testid={`${testId}-total-value`}>{fmt.integer(summary.total.totalTokens)}</td>
+          <td>{yen(summary.total.costJpy)}</td>
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
@@ -122,7 +195,7 @@ export interface LiveConfirmInfo {
   itemCount: number;
   internalCount: number;
   personCount: number;
-  estimatedCostJpy: number;
+  estimatedCostJpy: number | null;
   monthSpentJpy: number;
   monthBudgetJpy: number;
 }
@@ -168,7 +241,7 @@ export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmF
                   <li data-testid="ai-live-internal">{t('ai.live.internal', { count: p.internalCount })}</li>
                   <li data-testid="ai-live-persons">{t('ai.live.persons', { count: p.personCount })}</li>
                 </ul>
-                <p data-testid="ai-live-cost">{t('ai.live.cost', { cost: yenFine(fmt.locale, p.estimatedCostJpy), factor: AI_LIMITS.estimateSafetyFactor })}</p>
+                <p data-testid="ai-live-cost">{p.estimatedCostJpy === null ? t('ai.cost.unknown') : t('ai.live.cost', { cost: yenFine(fmt.locale, p.estimatedCostJpy), factor: AI_LIMITS.estimateSafetyFactor })}</p>
                 <p data-testid="ai-live-month">{t('ai.live.month', { spent: yenFine(fmt.locale, p.monthSpentJpy), budget: fmt.yen(p.monthBudgetJpy) })}</p>
                 {p.personCount > 0 && (
                   <Checkbox

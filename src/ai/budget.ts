@@ -6,14 +6,22 @@ export interface UsageRecord {
   use: string;
   inputTokens: number;
   outputTokens: number;
-  costJpy: number;
+  /** null means pricing is unavailable, not a free call. */
+  costJpy: number | null;
+  /** The work target the call was made for ('demo' or a project id); absent for app-level calls and old records. */
+  scope?: string;
+  /** Sub-step inside a use, e.g. pack generation 'foundation' | 'business' | 'fix-1'. */
+  stage?: string;
+  provider?: 'foundry' | 'copilotSdk';
+  /** The provider did not report usage (cancelled, timed out, failed test): the token counts are the app's estimate. */
+  estimated?: true;
 }
 
 export interface BudgetRequest {
   use: string;
   estimatedInputTokens: number;
   maxOutputTokens: number;
-  estimatedCostJpy: number;
+  estimatedCostJpy: number | null;
 }
 
 export type BudgetReason = 'dailyLimit' | 'tooSoon' | 'inputTooLarge' | 'outputTooLarge' | 'monthlyStop';
@@ -23,6 +31,7 @@ export interface BudgetDecision {
   level: 'ok' | 'warn' | 'stop';
   reasons: BudgetReason[];
   monthSpentJpy: number;
+  monthUnpricedCalls?: number;
   todayCalls: number;
 }
 
@@ -43,7 +52,9 @@ export function checkBudget(ledger: UsageRecord[], now: Date, req: BudgetRequest
   const reasons: BudgetReason[] = [];
   const month = jstMonth(now);
   const day = jstDay(now);
-  const monthSpentJpy = ledger.filter((r) => jstMonth(new Date(r.at)) === month).reduce((a, r) => a + r.costJpy, 0);
+  const monthRecords = ledger.filter((r) => jstMonth(new Date(r.at)) === month);
+  const monthSpentJpy = monthRecords.reduce((a, r) => a + (r.costJpy ?? 0), 0);
+  const monthUnpricedCalls = monthRecords.filter((r) => r.costJpy === null).length;
   const sameQuota = (u: string) => (DAILY_SHARED.has(req.use) ? DAILY_SHARED.has(u) : u === req.use);
   const todayCalls = ledger.filter((r) => jstDay(new Date(r.at)) === day && sameQuota(r.use)).length;
   const last = ledger.filter((r) => sameQuota(r.use)).map((r) => new Date(r.at).getTime()).sort((a, b) => b - a)[0];
@@ -52,11 +63,11 @@ export function checkBudget(ledger: UsageRecord[], now: Date, req: BudgetRequest
   if (perUse?.minIntervalMs !== undefined && last !== undefined && now.getTime() - last < perUse.minIntervalMs) reasons.push('tooSoon');
   if (perUse?.maxInputTokens !== undefined && req.estimatedInputTokens > perUse.maxInputTokens) reasons.push('inputTooLarge');
   if (perUse?.maxOutputTokens !== undefined && req.maxOutputTokens > perUse.maxOutputTokens) reasons.push('outputTooLarge');
-  const after = monthSpentJpy + req.estimatedCostJpy;
-  if (after > limits.monthlyBudgetJpy * limits.stopRatio) reasons.push('monthlyStop');
+  const after = monthSpentJpy + (req.estimatedCostJpy ?? 0);
+  if (limits.monthlyBudgetJpy <= 0 || after > limits.monthlyBudgetJpy * limits.stopRatio) reasons.push('monthlyStop');
 
   const level = reasons.includes('monthlyStop') ? 'stop' : after >= limits.monthlyBudgetJpy * limits.warnRatio ? 'warn' : 'ok';
-  return { allowed: reasons.length === 0, level, reasons, monthSpentJpy, todayCalls };
+  return { allowed: reasons.length === 0, level, reasons, monthSpentJpy, todayCalls, ...(monthUnpricedCalls ? { monthUnpricedCalls } : {}) };
 }
 
 /** Rough token estimate used before sending: ~1 token per CJK char, ~1 per 4 other chars. */

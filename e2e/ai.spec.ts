@@ -109,12 +109,16 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       });
       await settings.getByTestId('ai-endpoint').fill('https://resource.services.ai.azure.com/api/projects/project');
       await settings.getByTestId('ai-deployment').fill('gpt-deployed');
-      await settings.getByTestId('ai-price-input').fill('10000');
-      await settings.getByTestId('ai-price-output').fill('10000');
+      await expect(settings.getByTestId('ai-price-input')).toHaveCount(0);
+      await expect(settings.getByTestId('ai-price-output')).toHaveCount(0);
+      await expect(settings.getByTestId('ai-connection-test-cost')).toBeVisible();
+      await expect(settings.getByTestId('ai-connection-destination')).toContainText('https://resource.services.ai.azure.com/openai/v1/chat/completions');
+      await expect(settings.getByTestId('ai-api-version')).toBeDisabled();
+      await expect(settings.getByTestId('ai-connection-validation')).toHaveCount(0);
       await settings.getByTestId('ai-connection-consent').check();
       await expect(settings.getByTestId('ai-connection-save')).toBeEnabled();
       await settings.getByTestId('ai-connection-save').click();
-      await expect(settings.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
+      await expect(settings.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'First save the API key' : 'API キー');
       await expect(settings.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'No connection test was sent' : '接続テストは送信していません');
       expect(sends).toBe(0);
       expect(await scan(page)).toEqual([]);
@@ -198,16 +202,18 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       await open(page, '/ai-settings', { lang });
       await page.getByTestId('ai-endpoint').fill('https://resource.services.ai.azure.com/api/projects/project');
       await page.getByTestId('ai-deployment').fill('gpt-deployed');
-      await expect(page.getByTestId('ai-connection-validation')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
+      await expect(page.getByTestId('ai-connection-destination')).toContainText('https://resource.services.ai.azure.com/openai/v1/chat/completions');
+      await expect(page.getByTestId('ai-api-version')).toBeDisabled();
+      await expect(page.getByTestId('ai-connection-validation')).toHaveCount(0);
       await expect(page.getByTestId('ai-connection-save')).toBeEnabled();
       await page.getByTestId('ai-connection-save').click();
-      await expect(page.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'project URL' : 'プロジェクト用 URL');
+      await expect(page.getByTestId('ai-connection-blockers')).toContainText(lang === 'en' ? 'First save the API key' : 'API キー');
       expect(sent).toHaveLength(0);
       await page.getByTestId('ai-foundry-key-input').fill(FAKE_KEY);
       await page.getByTestId('ai-foundry-key-save').click();
       await expect(page.getByTestId('ai-foundry-key-state')).toHaveText(lang === 'en' ? 'Saved' : '保存済み');
-      await page.getByTestId('ai-price-input').fill('1000');
-      await page.getByTestId('ai-price-output').fill('4000');
+      await expect(page.getByTestId('ai-price-input')).toHaveCount(0);
+      await expect(page.getByTestId('ai-price-output')).toHaveCount(0);
       await page.getByTestId('ai-endpoint').fill('https://missing-foundry-resource.invalid');
       await page.getByTestId('ai-connection-consent').check();
       await page.getByTestId('ai-connection-save').click();
@@ -351,23 +357,11 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
     await expect(page.getByTestId('ai-import-reasons')).toContainText('C-03');
   });
 
-  test('story video: unpriced → blocked, above 1000 JPY → blocked, cheap → created as mock', async ({ page }) => {
+  test('story video creates a free mock without Foundry price input', async ({ page }) => {
     await open(page, '/assistant', { lang: 'en' });
     const story = page.getByTestId('ai-story');
-    await expect(story.getByTestId('ai-story-estimate')).toContainText('Unit prices are not entered');
-    await expect(story.getByTestId('ai-story-generate')).toBeDisabled();
-
-    await page.goto('/#/ai-settings');
-    await page.getByTestId('ai-price-input').fill('40000');
-    await page.getByTestId('ai-price-output').fill('400000');
-    await page.goto('/#/assistant');
-    await expect(story.getByTestId('ai-story-overcap')).toBeVisible();
-    await expect(story.getByTestId('ai-story-generate')).toBeDisabled();
-
-    await page.goto('/#/ai-settings');
-    await page.getByTestId('ai-price-input').fill('1');
-    await page.getByTestId('ai-price-output').fill('1');
-    await page.goto('/#/assistant');
+    await expect(story.getByTestId('ai-story-estimate')).toContainText('Mock answers cost nothing');
+    await expect(story.getByTestId('ai-story-generate')).toBeEnabled();
     await expect(story.getByTestId('ai-story-overcap')).toHaveCount(0);
     await story.getByTestId('ai-story-generate').click();
     await expect(story.getByTestId('ai-story-state')).toHaveText('Latest');
@@ -507,8 +501,8 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
       await page.getByTestId('ai-foundry-key-save').click();
     }
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText(saved);
-    await page.getByTestId('ai-price-input').fill('1000');
-    await page.getByTestId('ai-price-output').fill('4000');
+    await expect(page.getByTestId('ai-price-input')).toHaveCount(0);
+    await expect(page.getByTestId('ai-price-output')).toHaveCount(0);
     await page.getByTestId('ai-connection-consent').check();
     await page.getByTestId('ai-connection-save').click();
     await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
@@ -516,7 +510,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await page.getByTestId('ai-live-switch').check();
   }
 
-  test('confirm → one request with internal data, "Live" answer, cost recorded; a 1 JPY budget then stops sending', async ({ page }) => {
+  test('confirm unknown charges → live answer and token record without manual pricing; a zero budget stops sending', async ({ page }) => {
     await configure(page, 'en');
     await expect(page.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
     await expect(page.getByTestId('ai-configured')).toContainText('Saved');
@@ -531,7 +525,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     const dialog = page.getByTestId('ai-live-confirm');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('ai-live-internal')).not.toContainText(': 0');
-    await expect(dialog.getByTestId('ai-live-cost')).toContainText('¥');
+    await expect(dialog.getByTestId('ai-live-cost')).toContainText('unknown charges are not free');
     await expect(dialog.getByTestId('ai-d4-warning')).toBeVisible();
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
@@ -548,20 +542,22 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(received[0]!.apiKey).toBe(FAKE_KEY);
     expect(received[0]!.body).toContain('Transferring expert skills'); // internal entity (D-2)
     expect((JSON.parse(received[0]!.body) as { max_completion_tokens: number }).max_completion_tokens).toBeLessThanOrEqual(1500);
-    const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { costJpy: number; use: string }[];
+    const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { costJpy: number | null; use: string; inputTokens: number; outputTokens: number }[];
     expect(ledger).toHaveLength(2);
     expect(ledger[0]!.use).toBe('connectionTest');
     expect(ledger[1]!.use).toBe('explain');
-    expect(ledger[1]!.costJpy).toBeCloseTo((2000 * 1000 + 300 * 4000) / 1_000_000);
+    expect(ledger[1]).toMatchObject({ costJpy: null, inputTokens: 2000, outputTokens: 300 });
+    await expect(panel.getByTestId('ai-live-label')).toContainText('Unknown');
     expect(JSON.stringify(ledger)).not.toContain('Stub live');
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
     await panel.getByRole('button', { name: 'Close' }).click();
     await expect(panel).toBeHidden();
 
-    // D-3: with a 1 JPY budget the next request never reaches the provider.
+    // A zero budget still explicitly disables sending, including Foundry calls with unknown costs.
     await page.goto('/#/ai-settings');
-    await page.getByTestId('ai-budget-input').fill('1');
+    await expect(page.getByTestId('ai-usage-unpriced')).toContainText('2 calls');
+    await page.getByTestId('ai-budget-input').fill('0');
     await page.goto('/#/');
     await page.getByTestId('ai-explain-button').click();
     await expect(panel.getByTestId('ai-mock-label').locator('[data-reason="budget"]')).toBeVisible();
@@ -676,8 +672,8 @@ async function seedLaunch(page: Page, lang: Lang) {
       await settings.getByTestId('ai-foundry-key-save').click();
     }
     await expect(settings.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
-    await settings.getByTestId('ai-price-input').fill('400');
-    await settings.getByTestId('ai-price-output').fill('1600');
+    await expect(settings.getByTestId('ai-price-input')).toHaveCount(0);
+    await expect(settings.getByTestId('ai-price-output')).toHaveCount(0);
     await settings.getByTestId('ai-connection-consent').check();
     await settings.getByTestId('ai-connection-save').click();
     await expect(settings.getByTestId('ai-relay-connection')).toContainText('Verified and saved');
@@ -692,7 +688,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     await dialog.getByTestId('gen-news').uncheck(); // no internet in the test
     await dialog.getByTestId('gen-files').setInputFiles({ name: 'delivery-kpi.csv', mimeType: 'text/csv', buffer: Buffer.from('kpi,baseline,current,target\non-time delivery %,92,94,98\ngear unit price JPY,12000,,\n') });
     await expect(dialog.getByTestId('gen-file-list')).toContainText('delivery-kpi.csv');
-    await expect(dialog.getByTestId('gen-estimate')).toContainText('¥');
+    await expect(dialog.getByTestId('gen-estimate')).toContainText('unknown charges are not free');
     await expect(dialog.getByTestId('gen-start')).toBeDisabled();
     await dialog.getByTestId('gen-check-approved').check();
     await dialog.getByTestId('gen-check-cost').check();
@@ -703,6 +699,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(dialog.getByTestId('gen-progress')).toHaveCount(0);
     await expect(dialog.getByTestId('gen-checks')).toHaveText('1 fix rounds, 0 items removed, 0 invented sources discarded');
     await expect(dialog.getByTestId('gen-cost')).toContainText('(3 sends)');
+    await expect(dialog.getByTestId('gen-cost')).toContainText('Unknown');
     await expect(dialog.getByTestId('gen-ungrounded')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
 
@@ -717,11 +714,11 @@ async function seedLaunch(page: Page, lang: Lang) {
 
     const stored = await page.evaluate(() => ({
       index: JSON.parse(localStorage.getItem('bas.packs.index') ?? '{}') as Record<string, { files: string[]; entities: number }>,
-      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number }[],
+      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number | null }[],
     }));
     expect(stored.index['pj-c']).toMatchObject({ files: ['generated:foundry', 'delivery-kpi.csv'] });
     expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(3);
-    expect(stored.ledger.every((r) => r.costJpy > 0)).toBe(true);
+    expect(stored.ledger.every((r) => r.costJpy === null)).toBe(true);
 
     await dialog.getByTestId('gen-open').click();
     await expect(page.locator('main#main')).toBeVisible();

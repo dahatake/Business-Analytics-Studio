@@ -71,7 +71,7 @@ export function ExplainPanel() {
         if (!pf.allowed) return finish(await aiComplete(req));
         const decision = await confirmLive({
           use: 'ai.use.explain', scope, itemCount: ents.length, internalCount: pf.internalCount, personCount: pf.personCount,
-          estimatedCostJpy: pf.estimatedCostJpy ?? 0, monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
+          estimatedCostJpy: pf.estimatedCostJpy, monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
         });
         if (id !== runId.current) return;
         refocus();
@@ -115,7 +115,7 @@ export function ExplainPanel() {
             {state.status === 'loading' && <Spinner size="tiny" label={t('ai.loading')} />}
             {state.status === 'cancelled' && <p role="status">{t('ai.person.cancelled')}</p>}
             {state.status === 'done' && state.res.mode === 'live' && (
-              <LiveNotice costJpy={state.res.costJpy ?? 0}>
+              <LiveNotice costJpy={state.res.costJpy ?? null} usage={state.res.usage}>
                 <p className="ai-answer" data-testid="ai-explain-answer">{state.res.text}</p>
               </LiveNotice>
             )}

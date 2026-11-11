@@ -37,6 +37,8 @@ describe('C-03 table (D-1: staged approval)', () => {
     expect(evaluateGate({ use: 'explain', ...allTrue, userConfirmed: false }).reasons).toEqual(['notConfirmed']);
     expect(evaluateGate({ use: 'explain', ...allTrue, configured: false }).reasons).toEqual(['notConfigured']);
     expect(evaluateGate({ use: 'explain', ...allTrue, hasUnitPrices: false }).reasons).toEqual(['noUnitPrice']);
+    expect(evaluateGate({ use: 'explain', ...allTrue, provider: 'foundry', hasUnitPrices: false }).allowed).toBe(true);
+    expect(evaluateGate({ use: 'packBuild', ...allTrue, provider: 'copilotSdk', hasUnitPrices: false }).reasons).toEqual(['noUnitPrice']);
     expect(evaluateGate({ use: 'explain', ...allTrue, personCount: 2, personConfirmed: false }).reasons).toEqual(['personNotConfirmed']);
   });
 
@@ -80,6 +82,14 @@ describe('budget guard (PARAM-113〜119, D-3)', () => {
   it('honours a user-changed monthly budget (D-3: changeable later)', () => {
     const limits = { ...AI_LIMITS, monthlyBudgetJpy: 20_000 };
     expect(checkBudget([rec('2026-11-01T09:00:00+09:00', 'explain', 19_995)], new Date('2026-11-09T12:00:00+09:00'), req, limits).reasons).toEqual(['monthlyStop']);
+  });
+
+  it('separates unknown costs from known spend while counting them toward rate and daily limits', () => {
+    const now = new Date('2026-11-09T12:00:03+09:00');
+    const unknown: UsageRecord = { ...rec('2026-11-09T12:00:00+09:00'), costJpy: null };
+    const decision = checkBudget([rec('2026-11-01T09:00:00+09:00', 'packBuild', 500), unknown], now, { ...req, estimatedCostJpy: null });
+    expect(decision).toMatchObject({ monthSpentJpy: 500, monthUnpricedCalls: 1, todayCalls: 1, reasons: ['tooSoon'] });
+    expect(checkBudget(Array.from({ length: 30 }, () => unknown), now, { ...req, estimatedCostJpy: null }).reasons).toContain('dailyLimit');
   });
 
   it('applies PARAM-113〜116 only where decided, not to every use (§3.1)', () => {
@@ -154,9 +164,9 @@ describe('AI client', () => {
   it('falls back to a labelled mock without calling the transport when any condition fails', async () => {
     registerMock('explain', (q, ctx) => `mock:${q.lang}:${ctx.split('\n').length}`);
     setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: null }));
-    const noPrice = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis(), userConfirmed: true });
-    expect(noPrice.mode).toBe('mock');
-    expect(noPrice.blockedReasons).toEqual(['noUnitPrice']);
+    const noConfirmation = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis() });
+    expect(noConfirmation.mode).toBe('mock');
+    expect(noConfirmation.blockedReasons).toEqual(['notConfirmed']);
     setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
     const chat = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi', userConfirmed: true });
     expect(chat.blockedReasons).toContain('c03NotApproved');

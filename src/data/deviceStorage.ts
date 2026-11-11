@@ -9,7 +9,11 @@ let status: StorageStatus = 'saved';
 const listeners = new Set<() => void>();
 export const deviceStatus = () => status;
 export function subscribeDeviceStatus(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }
-function report(next: StorageStatus) { status = next; listeners.forEach((fn) => fn()); }
+function report(next: StorageStatus, reset = false) {
+  if (!reset && (status === 'error' || status === 'conflict') && (next === 'saving' || next === 'saved')) return;
+  status = next;
+  listeners.forEach((fn) => fn());
+}
 const MARKER = 'bas.device.migrated.';
 const OUTBOX = 'bas.device.pending.';
 const SAVED = 'bas.device.saved';
@@ -44,8 +48,38 @@ function snapshot(value: unknown): DeviceSnapshot {
       !('revision' in record) || typeof record.revision !== 'number' || !Number.isSafeInteger(record.revision) || record.revision < 1) {
       throw new DeviceStorageError(false);
     }
+    if (record.value !== null) {
+      try { JSON.parse(record.value); } catch { throw new DeviceStorageError(false); }
+    }
   }
   return value as DeviceSnapshot;
+}
+
+function validateApplicationData(records: DeviceSnapshot['records']) {
+  for (const record of Object.values(records)) if (record.value !== null) {
+    try { JSON.parse(record.value); } catch { throw new DeviceStorageError(false); }
+  }
+  for (const key of ['bas.projects', 'bas.settings', 'bas.ai.settings', 'bas.ops.brand', 'bas.proj.ui']) {
+    const raw = records[key]?.value;
+    if (!raw) continue;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !('version' in parsed) || typeof parsed.version !== 'number' ||
+      !(key === 'bas.ai.settings' ? [0, 1, 2, 3].includes(parsed.version) : parsed.version === 1) ||
+      !('state' in parsed) || !parsed.state || typeof parsed.state !== 'object') throw new DeviceStorageError(false);
+  }
+  const registry = records['bas.projects']?.value;
+  if (registry) {
+    const parsed: unknown = JSON.parse(registry);
+    if (!parsed || typeof parsed !== 'object' || !('state' in parsed) || !parsed.state || typeof parsed.state !== 'object' ||
+      !('companies' in parsed.state) || !Array.isArray(parsed.state.companies) ||
+      !('projects' in parsed.state) || !Array.isArray(parsed.state.projects)) throw new DeviceStorageError(false);
+  }
+  const index = records['bas.packs.index']?.value;
+  if (index) {
+    const parsed: unknown = JSON.parse(index);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new DeviceStorageError(false);
+    for (const id of Object.keys(parsed)) if (!records[`${BINARY_PREFIX}pack.${id}`]?.value) throw new DeviceStorageError(false);
+  }
 }
 
 /** Read the old databases without creating or changing them. Original records remain available for recovery. */
@@ -93,6 +127,7 @@ class DeviceStorage implements Storage {
   private stopped = false;
   private readonly failedBinary = new Map<string, unknown>();
   private binaryWrites = 0;
+  private readonly binaryTasks = new Set<Promise<void>>();
   constructor(private state: DeviceSnapshot, private readonly token: string) {
     for (const [key, record] of Object.entries(state.records)) if (record.value !== null) this.values.set(key, record.value);
     this.outbox = `${OUTBOX}${state.id}.${crypto.randomUUID()}`;
@@ -133,6 +168,7 @@ class DeviceStorage implements Storage {
     this.running = (async () => {
       try {
         while (this.pending.size) {
+          if (this.stopped) throw new DeviceStorageError(status === 'conflict');
           const batch = [...this.pending.values()];
           const next = snapshot(await request('state', this.token, { changes: batch }));
           for (const change of batch) {
@@ -151,9 +187,22 @@ class DeviceStorage implements Storage {
     })().finally(() => { this.running = null; });
     return this.running;
   }
-  async putBinary(key: string, value: unknown | null): Promise<void> {
+  async flushAll(): Promise<void> {
+    do {
+      await this.flush();
+      await Promise.all([...this.binaryTasks]);
+    } while (this.pending.size || this.binaryTasks.size);
+  }
+  writeBinary(key: string, value: unknown | null): Promise<void> {
+    const task = this.putBinary(key, value);
+    this.binaryTasks.add(task);
+    void task.then(() => this.binaryTasks.delete(task), () => this.binaryTasks.delete(task));
+    return task;
+  }
+  private async putBinary(key: string, value: unknown | null): Promise<void> {
     if (this.stopped) throw new DeviceStorageError(status === 'conflict');
     await this.flush();
+    if (this.stopped) throw new DeviceStorageError(status === 'conflict');
     const encoded = value === null ? null : JSON.stringify(value);
     this.binaryWrites++;
     report('saving');
@@ -166,17 +215,20 @@ class DeviceStorage implements Storage {
       this.state.records[key] = record;
       if (encoded === null) this.values.delete(key); else this.values.set(key, encoded);
       this.failedBinary.delete(key);
+      localStorage.setItem(SAVED, crypto.randomUUID());
       report(this.pending.size || this.binaryWrites > 1 ? 'saving' : 'saved');
     } catch (error) {
       this.failedBinary.set(key, value);
       this.fail(error);
     } finally { this.binaryWrites--; }
   }
-  recovery() { return { current: Object.fromEntries(this.values), failedBinary: Object.fromEntries(this.failedBinary) }; }
+  recovery() { return { current: Object.fromEntries(this.values), pendingChanges: [...this.pending.values()], failedBinary: Object.fromEntries(this.failedBinary) }; }
   async refresh(): Promise<void> {
-    if (this.stopped || this.pending.size || this.running) return;
+    if (this.stopped || this.pending.size || this.running || this.binaryWrites) return;
     try {
       const next = snapshot(await request('state', this.token));
+      if (this.stopped || this.pending.size || this.running || this.binaryWrites) return;
+      validateApplicationData(next.records);
       for (const [key, record] of Object.entries(next.records)) {
         if (record.revision === this.state.records[key]?.revision) continue;
         this.state.records[key] = record;
@@ -198,7 +250,7 @@ export const appStorage: Storage = {
 };
 
 export const hasDeviceStorage = () => active !== null;
-export const flushDeviceStorage = () => active?.flush() ?? Promise.resolve();
+export const flushDeviceStorage = () => active?.flushAll() ?? Promise.resolve();
 export function reloadAfterDeviceSave() {
   queueMicrotask(() => {
     void flushDeviceStorage().then(() => window.location.reload()).catch(() => {
@@ -217,7 +269,7 @@ export function binaryKeys(prefix: string): string[] {
 }
 export async function writeDeviceBinary(key: string, value: unknown | null) {
   if (!active) throw new DeviceStorageError(false);
-  return active.putBinary(key, value);
+  return active.writeBinary(key, value);
 }
 export function readDeviceBinary(key: string): unknown | null {
   const raw = appStorage.getItem(key);
@@ -241,22 +293,31 @@ export async function initializeDeviceStorage(useDeviceCopy = false): Promise<vo
   for (const key of outboxes) {
     const changes: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
     if (!Array.isArray(changes)) throw new DeviceStorageError(false);
-    state = snapshot(await request('state', session.token, { changes }));
+    const replay = snapshot(await request('state', session.token, { changes }));
+    state.records = { ...state.records, ...replay.records };
     localStorage.removeItem(key);
   }
   if (localStorage.getItem(`${MARKER}${state.id}`) !== '1') {
+    const legacy = await legacyDeviceData();
+    if (Object.keys(legacy).length) await request('archive', session.token, { records: legacy });
     if (!useDeviceCopy) {
-      const legacy = await legacyDeviceData();
       const changes: DeviceChange[] = [];
       for (const [key, value] of Object.entries(legacy)) {
         const record = state.records[key];
         if (record && record.value !== value) throw new DeviceStorageError(true, true);
         if (!record) changes.push({ key, value, expected: 0 });
       }
-      if (changes.length) state = snapshot(await request('state', session.token, { changes }));
+      validateApplicationData({
+        ...state.records, ...Object.fromEntries(changes.map((change) => [change.key, { value: change.value, revision: 0 }])),
+      });
+      if (changes.length) {
+        const migrated = snapshot(await request('state', session.token, { changes }));
+        state.records = { ...state.records, ...migrated.records };
+      }
     }
-    localStorage.setItem(`${MARKER}${state.id}`, '1');
   }
+  validateApplicationData(state.records);
+  localStorage.setItem(`${MARKER}${state.id}`, '1');
   active = new DeviceStorage(state, session.token);
   window.addEventListener('beforeunload', (event) => {
     if (status === 'saving' || status === 'error' || status === 'conflict') { event.preventDefault(); event.returnValue = ''; }
@@ -264,5 +325,5 @@ export async function initializeDeviceStorage(useDeviceCopy = false): Promise<vo
   window.addEventListener('storage', (event) => {
     if (event.key === SAVED) void active?.refresh().catch(() => { /* Status is visible in the storage guard. */ });
   });
-  report('saved');
+  report('saved', true);
 }

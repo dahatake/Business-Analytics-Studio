@@ -15,6 +15,7 @@ export interface UsageSummary {
   dailyLimit: number;
   /** Spend this JST month across every use and project (D-3: one budget). */
   monthSpentJpy: number;
+  monthUnpricedCalls?: number;
   monthBudgetJpy: number;
   monthLevel: BudgetLevel;
 }
@@ -26,6 +27,7 @@ export function usageSummary(ledger: UsageRecord[], now: Date, monthlyBudgetJpy:
     todayCalls: d.todayCalls,
     dailyLimit: AI_LIMITS.dailyCalls,
     monthSpentJpy: d.monthSpentJpy,
+    ...(d.monthUnpricedCalls ? { monthUnpricedCalls: d.monthUnpricedCalls } : {}),
     monthBudgetJpy: monthlyBudgetJpy,
     monthLevel: levelOf(d.monthSpentJpy, monthlyBudgetJpy),
   };

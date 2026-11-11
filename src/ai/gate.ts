@@ -6,7 +6,7 @@ export type GateReason =
   | 'liveDisabled' // FR-132: the user has not explicitly enabled real connections
   | 'notConfirmed' // the user has not confirmed purpose, content and cost for this send
   | 'notConfigured' // no connection settings (endpoint/deployment/key held by the relay)
-  | 'noUnitPrice' // D-3: without the user's unit prices the cost cannot be bounded, so nothing is sent
+  | 'noUnitPrice' // Copilot requires a premium-request price.
   | 'budget' // budget guard refused (see BudgetDecision.reasons)
   | 'personNotConfirmed' // FR-219: payload has "person" entities and the user did not confirm
   | 'liveFailed'; // the live call was attempted and failed (FR-283: fall back to the mock)
@@ -40,7 +40,7 @@ export function evaluateGate(i: GateInput, table = C03_TABLE): GateDecision {
   if (!i.liveEnabled) reasons.push('liveDisabled');
   if (!i.userConfirmed) reasons.push('notConfirmed');
   if (!i.configured) reasons.push('notConfigured');
-  if (!i.hasUnitPrices) reasons.push('noUnitPrice');
+  if (i.provider !== 'foundry' && !i.hasUnitPrices) reasons.push('noUnitPrice');
   if (!i.budget.allowed) reasons.push('budget');
   if (i.personCount > 0 && !i.personConfirmed) reasons.push('personNotConfirmed');
   return { allowed: reasons.length === 0, reasons };

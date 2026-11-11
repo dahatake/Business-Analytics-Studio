@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { actualCostJpy, checkBudget, estimateCostJpy, parseRequestPrice, parseUnitPrices, type UnitPrices } from '../../ai/budget.ts';
+import { checkBudget, parseRequestPrice, type UnitPrices } from '../../ai/budget.ts';
 import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY } from '../../ai/policy.ts';
@@ -24,7 +24,7 @@ export function parseBudget(raw: string): number | null {
 }
 
 type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'liveEnabled' | 'speechEndpoint' | 'speechRegion'
-  | 'priceInputPerM' | 'priceOutputPerM' | 'monthlyBudgetJpy' | 'copilotPricePerRequest';
+  | 'monthlyBudgetJpy' | 'copilotPricePerRequest';
 
 /**
  * Non-secret AI settings (FR-275/FR-282/FR-167). App-wide, not per project: the connection belongs to the PC.
@@ -41,9 +41,6 @@ export interface AiSettingsState {
   liveEnabled: boolean;
   speechEndpoint: string;
   speechRegion: string;
-  /** PARAM-130: user-entered Foundry unit prices (JPY per 1M tokens). Kept as typed; invalid values block every send. */
-  priceInputPerM: string;
-  priceOutputPerM: string;
   /** D-3: one monthly budget for the whole app (PARAM-117), default 100,000 JPY. */
   monthlyBudgetJpy: number;
   /** D-12: JPY per GitHub Copilot premium request (user-entered; invalid blocks every Copilot send). */
@@ -85,8 +82,6 @@ export const useAiSettings = create<AiSettingsState>()(
       liveEnabled: false,
       speechEndpoint: '',
       speechRegion: '',
-      priceInputPerM: '',
-      priceOutputPerM: '',
       monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
       copilotPricePerRequest: '',
       relayReachable: false,
@@ -133,14 +128,15 @@ export const useAiSettings = create<AiSettingsState>()(
       saveConnection: async () => {
         const s = get();
         const precheck = connectionTestPreflight(s);
-        if (!precheck.prices) return { ok: false, error: 'noUnitPrice' };
         if (!precheck.budget.allowed) return { ok: false, error: 'budget' };
         const r = await saveRelayConnection({ endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION });
         if (r.usage || (!r.ok && ['timeout', 'aborted', 'networkError', 'providerError', 'badProviderResponse', 'failed'].includes(r.error))) {
           appendLedger({
             at: new Date().toISOString(), use: 'connectionTest', inputTokens: r.usage?.inputTokens ?? 200,
             outputTokens: r.usage?.outputTokens ?? 0,
-            costJpy: r.usage ? actualCostJpy(r.usage.inputTokens, r.usage.outputTokens, precheck.prices) : precheck.estimatedCostJpy!,
+            costJpy: null,
+            provider: 'foundry',
+            ...(r.usage ? {} : { estimated: true as const }),
           });
         }
         const current = get();
@@ -159,17 +155,19 @@ export const useAiSettings = create<AiSettingsState>()(
     }),
     {
       name: AI_SETTINGS_KEY,
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, liveEnabled: s.liveEnabled,
-        speechEndpoint: s.speechEndpoint, speechRegion: s.speechRegion, priceInputPerM: s.priceInputPerM, priceOutputPerM: s.priceOutputPerM,
+        speechEndpoint: s.speechEndpoint, speechRegion: s.speechRegion,
         monthlyBudgetJpy: s.monthlyBudgetJpy, copilotPricePerRequest: s.copilotPricePerRequest,
       }),
       // v1 had a separate review budget (PARAM-120); D-3 merged it into the single monthly budget.
       migrate: (persisted, version) => {
         const p = { ...(persisted as Record<string, unknown>) };
         if (version < 2) delete p.reviewBudgetJpy;
+        delete p.priceInputPerM;
+        delete p.priceOutputPerM;
         return p as unknown as AiSettingsState;
       },
     },
@@ -193,22 +191,20 @@ export function connectionDraftProblem(s: Pick<AiSettingsState, 'endpoint' | 'de
   return parsed.ok ? null : parsed.error;
 }
 
-export function connectionTestPreflight(s: Pick<AiSettingsState, 'priceInputPerM' | 'priceOutputPerM' | 'monthlyBudgetJpy'>) {
-  const prices = parseUnitPrices(s.priceInputPerM, s.priceOutputPerM);
-  const estimatedCostJpy = prices ? estimateCostJpy(200, CONNECTION_TEST_MAX_TOKENS, prices) : null;
+export function connectionTestPreflight(s: Pick<AiSettingsState, 'monthlyBudgetJpy'>) {
   const budget = checkBudget(readLedger(), new Date(), {
-    use: 'connectionTest', estimatedInputTokens: 200, maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, estimatedCostJpy: estimatedCostJpy ?? 0,
+    use: 'connectionTest', estimatedInputTokens: 200, maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, estimatedCostJpy: null,
   }, { ...AI_LIMITS, monthlyBudgetJpy: s.monthlyBudgetJpy });
-  return { prices, estimatedCostJpy, budget };
+  return { budget };
 }
 
-/** Prices for the chosen provider: token prices for Foundry, JPY per premium request × model multiplier for Copilot. */
-export function providerPrices(s: Pick<AiSettingsState, 'provider' | 'priceInputPerM' | 'priceOutputPerM' | 'copilotPricePerRequest' | 'copilotModel' | 'copilotStatus'>): UnitPrices | null {
+/** Copilot premium-request price and multiplier; Foundry monetary pricing is unavailable. */
+export function providerPrices(s: Pick<AiSettingsState, 'provider' | 'copilotPricePerRequest' | 'copilotModel' | 'copilotStatus'>): UnitPrices | null {
   if (s.provider === 'copilotSdk') {
     const multiplier = s.copilotStatus?.models.find((m) => m.id === s.copilotModel)?.multiplier ?? 1;
     return parseRequestPrice(s.copilotPricePerRequest, multiplier);
   }
-  return parseUnitPrices(s.priceInputPerM, s.priceOutputPerM);
+  return null;
 }
 
 export function runtimeSettings(): AiRuntimeSettings {
@@ -222,9 +218,9 @@ export function runtimeSettings(): AiRuntimeSettings {
   };
 }
 
-/** Whether a send for an approved use could go live now (switch on, relay configured, prices entered). */
+/** Whether an approved use is ready; only Copilot requires a manual price. */
 export function liveReady(s: AiSettingsState): boolean {
-  return s.liveEnabled && isConfigured(s) && providerPrices(s) !== null;
+  return s.liveEnabled && isConfigured(s) && (s.provider === 'foundry' || providerPrices(s) !== null);
 }
 
 setRuntimeSettingsProvider(runtimeSettings);

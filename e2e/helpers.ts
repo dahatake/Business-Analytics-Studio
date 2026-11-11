@@ -1,5 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import type { DeviceSnapshot } from '../scripts/lib/deviceProtocol.ts';
 
 export type Lang = 'ja' | 'en';
 
@@ -39,6 +40,35 @@ export async function open(page: Page, route: string, opts: SetupOptions = {}) {
 }
 
 export const card = (page: Page) => page.locator('#bas-detail-card');
+
+/** Post-boot fixtures must update the canonical device store, not its legacy browser copy. Reload after seeding. */
+export async function seedDeviceData(page: Page, records: Record<string, string>) {
+  await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+  await page.evaluate(async (records) => {
+    const session = await (await fetch('/device/session', { method: 'POST' })).json();
+    const headers = { 'x-bas-device': session.token, 'x-bas-device-test': localStorage.getItem('bas.device.test')!, 'content-type': 'application/json' };
+    const stateResponse = await fetch('/device/state', { headers });
+    if (!stateResponse.ok) throw new Error('Device fixture read failed');
+    const state = await stateResponse.json() as DeviceSnapshot;
+    const response = await fetch('/device/state', {
+      method: 'POST', headers,
+      body: JSON.stringify({ changes: Object.entries(records).map(([key, value]) => ({ key, value, expected: state.records[key]?.revision ?? 0 })) }),
+    });
+    if (!response.ok) throw new Error('Device fixture write failed');
+    for (const [key, value] of Object.entries(records)) if (!key.startsWith('bas.binary.')) localStorage.setItem(key, value);
+  }, records);
+}
+
+export async function deviceSnapshot(page: Page): Promise<DeviceSnapshot> {
+  return page.evaluate(async () => {
+    const session = await (await fetch('/device/session', { method: 'POST' })).json();
+    const response = await fetch('/device/state', {
+      headers: { 'x-bas-device': session.token, 'x-bas-device-test': localStorage.getItem('bas.device.test')! },
+    });
+    if (!response.ok) throw new Error('Device fixture read failed');
+    return response.json();
+  });
+}
 
 /** Visible text of the page, excluding parts explicitly marked with another language (WCAG 3.1.2). */
 export async function visibleTextExcludingOtherLang(page: Page, pageLang: Lang): Promise<string> {

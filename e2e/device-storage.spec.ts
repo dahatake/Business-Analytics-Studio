@@ -3,9 +3,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { setup } from './helpers.ts';
+import { deviceSnapshot as state, seedDeviceData, setup } from './helpers.ts';
 import { samplePack } from '../src/data/sample.ts';
-import type { DeviceSnapshot } from '../scripts/lib/deviceProtocol.ts';
 
 test.describe.configure({ mode: 'serial' });
 let preview: ChildProcess | null = null;
@@ -38,16 +37,6 @@ test.afterAll(stopPreview);
 async function saved(page: Page) {
   await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
 }
-async function state(page: Page): Promise<DeviceSnapshot> {
-  return page.evaluate(async () => {
-    const testId = localStorage.getItem('bas.device.test')!;
-    const session = await (await fetch('/device/session', { method: 'POST' })).json();
-    const response = await fetch('/device/state', { headers: { 'x-bas-device': session.token, 'x-bas-device-test': testId } });
-    if (!response.ok) throw new Error('Device state unavailable');
-    return response.json();
-  });
-}
-
 test('legacy migration, different ports and browsers, restart, stale edits and failed saves', async ({ browser, page, baseURL }) => {
   test.setTimeout(120_000);
   expect(secondOrigin).not.toBe(baseURL);
@@ -133,4 +122,46 @@ test('legacy migration, different ports and browsers, restart, stale edits and f
   await expect(restarted.getByTestId('proj-company-Unsaved but recoverable')).toBeVisible();
   await saved(restarted);
   await restartedContext.close();
+});
+
+test('legacy conflicts require an explicit choice and startup failures never show an empty application', async ({ browser, page }) => {
+  const deviceId = randomUUID();
+  await setup(page, { lang: 'en', deviceId });
+  await page.goto('/#/projects');
+  await expect(page.getByTestId('proj-company-name')).toBeVisible();
+  await page.getByTestId('proj-company-name').fill('Canonical company');
+  await page.getByRole('button', { name: 'Register', exact: true }).click();
+  await saved(page);
+  const context = await browser.newContext();
+  const legacy = await context.newPage();
+  await setup(legacy, { lang: 'en', deviceId });
+  await legacy.addInitScript(() => localStorage.setItem('bas.projects', JSON.stringify({
+    version: 1, state: { companies: [{ id: 'legacy-only', name: 'Do not lose this company', createdAt: '2026-11-11' }], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' },
+  })));
+  await legacy.goto(`${secondOrigin}/#/projects`);
+  await expect(legacy.getByTestId('device-startup-error')).toBeVisible();
+  await expect(legacy.locator('main#main')).toHaveCount(0);
+  expect(await legacy.evaluate(() => localStorage.getItem('bas.projects'))).toContain('Do not lose this company');
+  expect((await state(page)).records['bas.projects']?.value).toContain('Canonical company');
+  // The explicit choice archives the original data on disk before enabling the canonical device copy.
+  await legacy.getByRole('button', { name: 'Use device data and keep legacy data' }).click();
+  await expect(legacy.getByTestId('proj-company-Canonical company')).toBeVisible();
+  await context.close();
+
+  const brokenContext = await browser.newContext();
+  const broken = await brokenContext.newPage();
+  await setup(broken, { lang: 'en', deviceId });
+  await broken.route('**/device/state', (route) => route.fulfill({ status: 503, json: { error: 'deviceUnavailable' } }));
+  await broken.goto(`${secondOrigin}/#/projects`);
+  await expect(broken.getByTestId('device-startup-error')).toBeVisible();
+  await expect(broken.locator('main#main')).toHaveCount(0);
+  await broken.unroute('**/device/state');
+  await broken.getByRole('button', { name: 'Reload / retry' }).click();
+  await expect(broken.getByTestId('proj-company-Canonical company')).toBeVisible();
+  // Corrupt persisted values must also stop initialization, rather than silently falling back to defaults.
+  await seedDeviceData(broken, { 'bas.projects': 'not JSON' });
+  await broken.reload();
+  await expect(broken.getByTestId('device-startup-error')).toBeVisible();
+  await expect(broken.locator('main#main')).toHaveCount(0);
+  await brokenContext.close();
 });

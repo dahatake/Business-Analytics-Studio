@@ -113,7 +113,7 @@ export async function deleteSecret(name: SecretName): Promise<boolean> {
   }
 }
 
-export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'c03NotApproved' | 'noUnitPrice' | 'budget' | 'failed';
+export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'c03NotApproved' | 'budget' | 'failed';
 export interface ConnectionUsage { inputTokens: number; outputTokens: number }
 export type ConnectionSaveResult =
   | { ok: true; connection: RelayConnectionInfo; connectionVerifiedAt: string; usage: ConnectionUsage }

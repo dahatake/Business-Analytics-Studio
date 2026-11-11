@@ -16,7 +16,7 @@ export const coreJa = {
   'topbar.commands': 'ツールバー',
   'retention.title': 'データの保持と削除',
   'retention.why': '削除の対象・時点・保持期間と、削除後も予算の集計を保つ方法を、対象ごとに一覧にしています（決定 D-7）。',
-  'retention.intro': '自動で削除するものはありません。削除はすべて利用者の操作で行います。利用量の記録は内容（質問・回答）を含まず、{months} か月分を保持します。',
+  'retention.intro': '自動で削除するものはありません。削除はすべて利用者の操作で行います。利用量の記録は内容（質問・回答）を含まず、{months} か月分を保持します。旧ブラウザーからの移行バックアップと元の保存領域は、通常のProject削除とは別管理です。',
   'retention.col.target': '対象',
   'retention.col.retention': '保持',
   'retention.col.deletion': '削除の方法',

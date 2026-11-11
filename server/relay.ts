@@ -178,7 +178,7 @@ function endpointHostAllowed(u: URL, config: RelayConfig): boolean {
   return config.outboundHosts === null || config.outboundHosts.includes(u.hostname.toLowerCase());
 }
 
-/** Accept a resource origin or an OpenAI v1 base URL, never silently strip a project path. */
+/** Normalize supported Foundry URLs before checking the outbound host. */
 export function validateConnection(input: unknown, config: RelayConfig = STRICT_RELAY_CONFIG): { ok: true; value: RelayConnection } | { ok: false; error: ConnectionError } {
   const result = parseFoundryConnection(input, config.testOutbound);
   if (!result.ok) return result;

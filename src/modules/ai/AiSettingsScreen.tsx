@@ -5,7 +5,7 @@ import {
 } from '@fluentui/react-components';
 import { Delete20Regular } from '@fluentui/react-icons';
 import { isUseApproved, readLedger } from '../../ai/client.ts';
-import { C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
+import { AI_LIMITS, C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
@@ -13,7 +13,6 @@ import { BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, Pro
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
-import { STORY_CAP_JPY, STORY_SAFETY_FACTOR } from './story.ts';
 import './mocks.ts';
 import './ai.css';
 
@@ -106,7 +105,7 @@ function LedgerPrune({ onChange }: { onChange: () => void }) {
   );
 }
 
-/** FR-275/FR-282 connection, FR-132 live switch, C-03 table, FR-276/NFR-COST-001 usage, PARAM-130 prices, FR-167/168 speech, FR-182. */
+/** Connection, live switch, C-03 table, usage, Copilot pricing, speech and media settings. */
 export function AiSettingsScreen() {
   const { t, fmt } = useI18n();
   const s = useAiSettings();
@@ -182,7 +181,7 @@ export function AiSettingsScreen() {
                     <td>{row.provider === 'TBD' ? t('ai.c03.tbd') : approvedProviders(row).map((p) => t(`ai.provider.${p}`)).join(t('ai.listSep'))}</td>
                     <td lang={row.data === 'TBD' ? undefined : 'en'}>{tbd(row.data)}</td>
                     <td lang={row.enableCondition === 'TBD' ? undefined : 'en'}>{tbd(row.enableCondition)}</td>
-                    <td>{row.costCapJpy === 'TBD' ? t('ai.c03.tbd') : fmt.yen(row.costCapJpy)}</td>
+                    <td>{row.costCapJpy === 'TBD' ? t('ai.c03.tbd') : approvedProviders(row).includes('foundry') ? t('ai.cost.capNote', { budget: fmt.yen(row.costCapJpy) }) : fmt.yen(row.costCapJpy)}</td>
                     <td lang="en">{row.openQuestions.join(', ')}</td>
                     <td><Badge appearance="tint" color={ok ? 'success' : 'danger'}>{ok ? t('ai.c03.approved') : t('ai.c03.blocked')}</Badge></td>
                   </tr>
@@ -199,6 +198,7 @@ export function AiSettingsScreen() {
             <p data-testid="ai-usage-daily">{t('ai.usage.daily', { used: usage.todayCalls, limit: usage.dailyLimit })}</p>
             <Meter label={t('ai.usage.month', { spent: fmt.yen(usage.monthSpentJpy), budget: fmt.yen(usage.monthBudgetJpy) })} ratio={usage.monthBudgetJpy > 0 ? usage.monthSpentJpy / usage.monthBudgetJpy : 1} level={usage.monthLevel} testId="ai-usage-month" />
             <p className="muted">{t('ai.usage.thresholds')}</p>
+            {usage.monthUnpricedCalls !== undefined && <p className="muted" data-testid="ai-usage-unpriced">{t('ai.usage.unpriced', { count: usage.monthUnpricedCalls })}</p>}
             <BudgetInput />
             <p className="muted">{t('ai.usage.mockFree')}</p>
             <p className="muted" data-testid="ai-usage-no-content">{t('ai.usage.noContent')}</p>
@@ -206,9 +206,9 @@ export function AiSettingsScreen() {
           </div>
         </Panel>
 
-        <Panel title={s.provider === 'copilotSdk' ? t('ai.price.titleCopilot') : t('ai.price.title')} testId="ai-prices">
+        <Panel title={s.provider === 'copilotSdk' ? t('ai.price.titleCopilot') : t('ai.cost.title')} testId="ai-prices">
           <div className="ai-stack">
-            <p className="muted">{t(s.provider === 'copilotSdk' ? 'ai.price.leadCopilot' : 'ai.price.lead', { cap: fmt.yen(STORY_CAP_JPY), factor: STORY_SAFETY_FACTOR })}</p>
+            {s.provider === 'copilotSdk' && <p className="muted">{t('ai.price.leadCopilot', { factor: AI_LIMITS.estimateSafetyFactor })}</p>}
             <PriceFields />
           </div>
         </Panel>

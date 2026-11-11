@@ -26,14 +26,10 @@ async function loadBasePack() {
 /** FR-302: a project with a pack imported in the app works on that pack; every other target uses the base pack. */
 async function loadProjectPack(target: WorkTarget) {
   if (target.kind !== 'project' || !importedPackMeta(target.projectId)) return;
-  try {
-    const raw = await loadImportedPack(target.projectId);
-    if (raw === null) return;
-    const result = activatePack(raw, { kind: 'imported', projectId: target.projectId });
-    if (result.issues.length) console.warn('Imported customer pack: disabled items', result.issues);
-  } catch (err) {
-    console.warn('Imported customer pack not loaded; using the base pack.', err);
-  }
+  const raw = await loadImportedPack(target.projectId);
+  if (raw === null) throw new Error('Imported customer pack is missing from device storage');
+  const result = activatePack(raw, { kind: 'imported', projectId: target.projectId });
+  if (result.issues.length) console.warn('Imported customer pack: disabled items', result.issues);
 }
 
 const neededKey = (target: WorkTarget) =>
@@ -42,16 +38,16 @@ const neededKey = (target: WorkTarget) =>
 // Deleting a project also deletes its imported pack (retention: removed with the project).
 onProjectDeleted((projectId) => { void deleteImportedPack(projectId); });
 
-void loadBasePack()
-  .then(() => loadProjectPack(useProjects.getState().target))
-  .finally(() => {
-    // Screens read the pack once at load, so switching to a target with another pack restarts the app at the same URL.
-    useProjects.subscribe((s, prev) => {
-      if (s.target !== prev.target && neededKey(s.target) !== packKey(packOrigin)) reloadAfterDeviceSave();
-    });
-    createRoot(document.getElementById('root')!).render(
-      <StrictMode>
-        <App />
-      </StrictMode>,
-    );
+export async function boot() {
+  await loadBasePack();
+  await loadProjectPack(useProjects.getState().target);
+  // Screens read the pack once at load, so switching to a target with another pack restarts the app at the same URL.
+  useProjects.subscribe((s, prev) => {
+    if (s.target !== prev.target && neededKey(s.target) !== packKey(packOrigin)) reloadAfterDeviceSave();
   });
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}

@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Field, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
+import { Badge, Button, Field, Select, Spinner } from '@fluentui/react-components';
 import { Pause20Regular, Play20Regular, Video20Regular } from '@fluentui/react-icons';
 import { aiComplete } from '../../ai/client.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useReducedMotion } from '../../state/motion.ts';
-import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import { useUseCases } from '../usecases/store.ts';
 import { MockNotice } from './AiCommon.tsx';
-import { useAiSettings } from './settingsStore.ts';
 import {
-  STORY_CAP_JPY, STORY_MAX_CALLS, STORY_SAFETY_FACTOR, estimateStory, runStoryGeneration, sourceFromUseCase, sourcesFromSolutions,
-  storyInputTokens, storyPrompt, storyState, useStories, type StoryScene, type StoryVideo,
+  runStoryGeneration, sourceFromUseCase, sourcesFromSolutions,
+  storyInputTokens, storyPrompt, storyState, useStories, type StoryEstimate, type StoryScene, type StoryVideo,
 } from './story.ts';
 
 /** HTML/CSS/SVG playback of a storyboard (no video file). Never autoplays; reduced motion shows all scenes statically. */
@@ -67,8 +65,6 @@ function StoryPlayer({ video }: { video: StoryVideo }) {
 export function StoryVideoSection() {
   const { t, lang, fmt } = useI18n();
   const audience = useSettings((s) => s.audience);
-  const priceIn = useAiSettings((s) => s.priceInputPerM);
-  const priceOut = useAiSettings((s) => s.priceOutputPerM);
   const useCases = useUseCases((s) => s.value);
   const stories = useStories((s) => s.value);
   const setStories = useStories((s) => s.set);
@@ -86,7 +82,8 @@ export function StoryVideoSection() {
   const cancelled = useRef(false);
 
   if (!source) return <p>{t('ai.story.noSource')}</p>;
-  const estimate = estimateStory(storyInputTokens(source, lang), { input: priceIn, output: priceOut });
+  // This use is mock-only under C-03 and does not incur provider charges.
+  const estimate: StoryEstimate = { ok: true, inputTokens: storyInputTokens(source, lang), perCallJpy: 0, totalJpy: 0 };
   const video = stories[source.id];
   const state = busy ? 'generating' : storyState(video, source);
 
@@ -97,7 +94,7 @@ export function StoryVideoSection() {
     const result = await runStoryGeneration(estimate, async (step) => {
       const res = await aiComplete({ use: 'storyVideo', lang, prompt: storyPrompt(source, lang, step) });
       setReasons(res.blockedReasons);
-      // Mock answers are free; the estimate per call is booked so the cap logic is exercised exactly as it would be live.
+      // Mock answers are free and do not enter the provider usage ledger.
       return res.text && res.text !== '[]' ? { text: res.text, costJpy: estimate.perCallJpy } : null;
     }, () => cancelled.current);
     let scenes: StoryScene[] = [];
@@ -121,7 +118,7 @@ export function StoryVideoSection() {
 
   return (
     <div className="ai-stack" data-testid="ai-story">
-      <p className="muted">{t('ai.story.lead', { cap: fmt.yen(STORY_CAP_JPY), factor: STORY_SAFETY_FACTOR, calls: STORY_MAX_CALLS })}</p>
+      <p className="muted">{t('ai.story.mockLead')}</p>
       {useCases.length === 0 && <p className="muted">{t('ai.story.fromSolutions')}</p>}
       <Field label={t('ai.story.source')}>
         <Select value={source.id} onChange={(_, d) => setSelected(d.value)} data-testid="ai-story-source">
@@ -129,18 +126,11 @@ export function StoryVideoSection() {
         </Select>
       </Field>
       <div className="ai-status" data-testid="ai-story-estimate">
-        {estimate.reason === 'noPrice' ? (
-          <span>{t('ai.story.noPrice')} <a href={hrefFor('/ai-settings')}>{t('ai.nav.settings')}</a></span>
-        ) : (
-          <span>{t('ai.story.estimate', { tokens: fmt.integer(estimate.inputTokens), total: fmt.yen(Math.ceil(estimate.totalJpy)), cap: fmt.yen(STORY_CAP_JPY) })}</span>
-        )}
+        <span>{t('ai.usage.mockFree')}</span>
       </div>
-      {estimate.reason === 'overCap' && (
-        <MessageBar intent="error" data-testid="ai-story-overcap"><MessageBarBody>{t('ai.story.overCap', { total: fmt.yen(Math.ceil(estimate.totalJpy)), cap: fmt.yen(STORY_CAP_JPY) })}</MessageBarBody></MessageBar>
-      )}
       <div className="ai-row">
         <Button appearance="primary" icon={<Video20Regular />} disabled={!estimate.ok || busy} onClick={() => void generate()} data-testid="ai-story-generate">
-          {t('ai.story.generate', { total: fmt.yen(Math.ceil(estimate.totalJpy)) })}
+          {t('ai.story.generateMock')}
         </Button>
         {busy && <Button onClick={() => { cancelled.current = true; }}>{t('ai.story.cancel')}</Button>}
         <Badge appearance="outline" data-testid="ai-story-state">{t(`ai.story.state.${state}`)}</Badge>

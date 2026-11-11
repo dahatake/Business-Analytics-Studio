@@ -265,13 +265,43 @@ describe('relay inbound protection (D-5)', () => {
 describe('relay secrets and connection', () => {
   const c = { endpoint: 'https://res.services.ai.azure.com', deployment: 'gpt-test', apiVersion: '2024-10-21' };
 
-  it('accepts OpenAI v1 URLs, but identifies project endpoints without changing their meaning', () => {
+  it('normalizes Foundry project URLs to the same resource v1 endpoint', () => {
     expect(validateConnection({ ...c, endpoint: `${c.endpoint}/openai/v1/`, apiVersion: '' })).toEqual({
       ok: true, value: { ...c, endpoint: `${c.endpoint}/openai/v1` },
     });
-    expect(validateConnection({ ...c, endpoint: `${c.endpoint}/api/projects/project` })).toEqual({ ok: false, error: 'projectEndpoint' });
+    for (const endpoint of [
+      `${c.endpoint}/api/projects/project`,
+      `  ${c.endpoint}/api/projects/GraphRecordingProject/  `,
+      'https://RES.services.ai.azure.com/api/projects/project',
+    ]) {
+      expect(validateConnection({ ...c, endpoint, apiVersion: '' })).toEqual({
+        ok: true, value: { ...c, endpoint: `${c.endpoint}/openai/v1` },
+      });
+    }
+    expect(validateConnection({ ...c, endpoint: `${c.endpoint}/api/projects/project` }, {
+      ...STRICT_RELAY_CONFIG, outboundHosts: ['other.services.ai.azure.com'],
+    })).toEqual({ ok: false, error: 'hostNotAllowed' });
     expect(validateConnection({ ...c, endpoint: `${c.endpoint}:8443` }).ok).toBe(true);
     expect(validateConnection({ ...c, endpoint: `${c.endpoint}/openai/v1?key=secret` })).toEqual({ ok: false, error: 'invalidEndpoint' });
+  });
+
+  it.each([
+    ['https://other.example/api/projects/project', 'projectEndpoint'],
+    ['https://res.services.ai.azure.com.other.example/api/projects/project', 'projectEndpoint'],
+    [`${c.endpoint}:8443/api/projects/project`, 'projectEndpoint'],
+    [`${c.endpoint}/api/projects/`, 'projectEndpoint'],
+    [`${c.endpoint}/api/projects/project/extra`, 'projectEndpoint'],
+    [`${c.endpoint}/api/projects/project?key=secret`, 'invalidEndpoint'],
+    [`${c.endpoint}/api/projects/project#fragment`, 'invalidEndpoint'],
+    ['https://user:secret@res.services.ai.azure.com/api/projects/project', 'invalidEndpoint'],
+    ['http://res.services.ai.azure.com/api/projects/project', 'invalidEndpoint'],
+  ])('refuses ambiguous or unsafe project URL %s without sending', async (endpoint, error) => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(await call(req('PUT', '/relay/connection', { ...c, endpoint }), { fetch })).toEqual({
+      status: 400, body: { error },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
   });
 
   it('does not send without a key; old saved settings are unverified, never configured', async () => {
@@ -297,7 +327,7 @@ describe('relay secrets and connection', () => {
     expect(sent[3]).toHaveProperty('max_tokens', 100);
   });
 
-  it('tests the exact v1 route/model, persists proof across restarts, invalidates it on edits and key changes', async () => {
+  it.each(['/openai/v1', '/api/projects/project'])('tests %s at the exact v1 route/model, persists proof and invalidates it on edits and key changes', async (path) => {
     vault.set('foundryKey', FAKE_KEY);
     const fetches: { url: string; body: Record<string, unknown> }[] = [];
     const fetch: typeof globalThis.fetch = async (url, init) => {
@@ -307,7 +337,7 @@ describe('relay secrets and connection', () => {
       return verifiedReply(url, init);
     };
     const v1 = { ...c, endpoint: `${c.endpoint}/openai/v1` };
-    const result = await call(req('PUT', '/relay/connection', v1), { fetch });
+    const result = await call(req('PUT', '/relay/connection', { ...c, endpoint: c.endpoint + path }), { fetch });
     expect(result.status).toBe(200);
     expect(result.body).toMatchObject({ connection: v1, usage: { inputTokens: 30, outputTokens: 1 } });
     expect(fetches).toHaveLength(1);
@@ -334,7 +364,7 @@ describe('relay secrets and connection', () => {
     vault.set('foundryKey', FAKE_KEY);
     await call(req('PUT', '/relay/connection', c), { fetch: verifiedReply });
     const before = readFileSync(join(vault.dir, 'connection.json'), 'utf8');
-    const result = await call(req('PUT', '/relay/connection', { ...c, deployment: 'bad' }), {
+    const result = await call(req('PUT', '/relay/connection', { ...c, endpoint: `${c.endpoint}/api/projects/project`, deployment: 'bad' }), {
       fetch: async () => new Response(`secret provider response ${FAKE_KEY}`, { status }),
     });
     expect(result).toEqual({ status: 502, body: { error, providerStatus: status } });

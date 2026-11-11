@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, open, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
@@ -268,16 +268,16 @@ test.describe('Ink board (FR-086〜FR-099)', () => {
     const demoNotes = await stage(page).getAttribute('data-note-count');
     expect(Number(demoNotes)).toBeGreaterThan(0);
 
-    const setTarget = (target: object) => page.evaluate((target) => {
-      localStorage.setItem('bas.projects', JSON.stringify({
+    const setTarget = (target: object) => seedDeviceData(page, {
+      'bas.projects': JSON.stringify({
         state: {
           companies: [{ id: 'co-e2e', name: 'E2E Co', createdAt: '2026-11-01T00:00:00.000Z' }],
           projects: [{ id: 'pj-e2e', companyId: 'co-e2e', name: 'E2E Project', createdAt: '2026-11-01T00:00:00.000Z', step: 'define' }],
           target, lastProjectId: 'pj-e2e', demoStep: 'define',
         },
         version: 1,
-      }));
-    }, target);
+      }),
+    });
     await setTarget({ kind: 'project', projectId: 'pj-e2e' });
     await page.reload();
     await expect(stage(page)).toHaveAttribute('data-ready', 'true');

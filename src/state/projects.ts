@@ -35,6 +35,18 @@ export interface ProjectBrief {
   materialNames?: string[];
 }
 
+/** A project folded into another after people agreed it is the same business issue; kept as the decision's trail. */
+export interface MergeRecord {
+  name: string;
+  createdAt: string;
+  mergedAt: string;
+  brief?: ProjectBrief;
+  /** The evidence shown when the merge was agreed (as displayed, in the user's language). */
+  reasons: string[];
+  score: number;
+  hadPack: boolean;
+}
+
 export interface Project {
   id: string;
   companyId: string;
@@ -42,6 +54,17 @@ export interface Project {
   createdAt: string;
   step: ImprovementStep;
   brief?: ProjectBrief;
+  mergedFrom?: MergeRecord[];
+}
+
+/** People judged a warned pair to be different issues; the warning returns only when the evidence grows (PARAM-153). */
+export interface MergeDismissal {
+  id: string;
+  companyId: string;
+  a: string;
+  b: string;
+  score: number;
+  at: string;
 }
 
 /**
@@ -67,10 +90,31 @@ export type WorkTarget = { kind: 'demo' } | { kind: 'project'; projectId: string
 export type AddProjectResult = { ok: true; id: string } | { ok: false; reason: 'limit' | 'noCompany' | 'emptyName' | 'duplicate' };
 export type RenameResult = { ok: true } | { ok: false; reason: 'emptyName' | 'duplicate' | 'notFound' };
 
+export type DroppedRelationReason = 'pair' | 'duplicate' | 'cycle';
+export interface RelationMergePlan {
+  /** Relations after the merge: the absorbed project's relations now point at the kept one. */
+  relations: ProjectRelation[];
+  moved: ProjectRelation[];
+  dropped: { relation: ProjectRelation; reason: DroppedRelationReason }[];
+}
+export type MergeResult =
+  | ({ ok: true } & Pick<RelationMergePlan, 'moved' | 'dropped'>)
+  | { ok: false; reason: 'self' | 'notFound' | 'otherCompany' | 'emptyName' | 'duplicate' };
+export interface MergeOptions {
+  /** Name of the merged project (default: the kept project's name; the absorbed one's name is allowed). */
+  name?: string;
+  /** The merged inputs, as the user confirmed them (replaces the kept project's brief). */
+  brief: ProjectBrief;
+  reasons: string[];
+  score: number;
+  hadPack: boolean;
+}
+
 interface ProjectsState {
   companies: Company[];
   projects: Project[];
   relations: ProjectRelation[];
+  mergeDismissals: MergeDismissal[];
   target: WorkTarget;
   /** The last project opened, used by the main screen title (FR-186). */
   lastProjectId: string | null;
@@ -87,6 +131,10 @@ interface ProjectsState {
   deleteProject: (id: string) => void;
   addRelation: (from: string, to: string, kind: RelationKind, note?: string) => AddRelationResult;
   removeRelation: (id: string) => void;
+  /** Folds `absorbId` into `keepId` (same company): inputs, relations and history move, the absorbed project's data is deleted. */
+  mergeProjects: (keepId: string, absorbId: string, options: MergeOptions) => MergeResult;
+  dismissMergeWarning: (a: string, b: string, score: number) => void;
+  restoreMergeWarning: (id: string) => void;
   setTarget: (target: WorkTarget) => void;
   setStep: (step: ImprovementStep) => void;
 }
@@ -145,12 +193,40 @@ export function closesCycle(relations: ProjectRelation[], from: string, to: stri
   return false;
 }
 
+const samePairOf = (x: string, y: string) => (r: { from: string; to: string }) => (r.from === x && r.to === y) || (r.from === y && r.to === x);
+
+/**
+ * What merging `absorbId` into `keepId` does to the relations: the pair's own relation goes, each other relation of
+ * the absorbed project is re-pointed at the kept one unless the kept one already has a relation with that project
+ * (one per pair) or the re-pointed dependency would close a loop.
+ */
+export function planRelationMerge(relations: ProjectRelation[], keepId: string, absorbId: string): RelationMergePlan {
+  const touches = (r: ProjectRelation) => r.from === absorbId || r.to === absorbId;
+  const out = relations.filter((r) => !touches(r));
+  const moved: ProjectRelation[] = [];
+  const dropped: RelationMergePlan['dropped'] = [];
+  for (const r of relations.filter(touches)) {
+    const from = r.from === absorbId ? keepId : r.from;
+    const to = r.to === absorbId ? keepId : r.to;
+    if (from === to) dropped.push({ relation: r, reason: 'pair' });
+    else if (out.some(samePairOf(from, to))) dropped.push({ relation: r, reason: 'duplicate' });
+    else if (r.kind === 'dependsOn' && closesCycle(out, from, to)) dropped.push({ relation: r, reason: 'cycle' });
+    else {
+      const next = { ...r, from, to };
+      out.push(next);
+      moved.push(next);
+    }
+  }
+  return { relations: out, moved, dropped };
+}
+
 export const useProjects = create<ProjectsState>()(
   persist(
     (set, get) => ({
       companies: [],
       projects: [],
       relations: [],
+      mergeDismissals: [],
       target: { kind: 'demo' },
       lastProjectId: null,
       demoStep: 'define',
@@ -182,7 +258,11 @@ export const useProjects = create<ProjectsState>()(
       },
       deleteCompany: (id) => {
         get().projects.filter((p) => p.companyId === id).forEach((p) => get().deleteProject(p.id));
-        set((s) => ({ companies: s.companies.filter((c) => c.id !== id), relations: s.relations.filter((r) => r.companyId !== id) }));
+        set((s) => ({
+          companies: s.companies.filter((c) => c.id !== id),
+          relations: s.relations.filter((r) => r.companyId !== id),
+          mergeDismissals: s.mergeDismissals.filter((d) => d.companyId !== id),
+        }));
       },
       addProject: (companyId, raw, brief) => {
         const name = raw.trim();
@@ -222,6 +302,7 @@ export const useProjects = create<ProjectsState>()(
         set((s) => ({
           projects: s.projects.filter((p) => p.id !== id),
           relations: s.relations.filter((r) => r.from !== id && r.to !== id),
+          mergeDismissals: s.mergeDismissals.filter((d) => d.a !== id && d.b !== id),
           target: s.target.kind === 'project' && s.target.projectId === id ? { kind: 'demo' } : s.target,
           lastProjectId: s.lastProjectId === id ? null : s.lastProjectId,
         }));
@@ -243,6 +324,51 @@ export const useProjects = create<ProjectsState>()(
         return { ok: true, id };
       },
       removeRelation: (id) => set((s) => ({ relations: s.relations.filter((r) => r.id !== id) })),
+      mergeProjects: (keepId, absorbId, options) => {
+        if (keepId === absorbId) return { ok: false, reason: 'self' };
+        const { projects, relations, target } = get();
+        const keep = projects.find((p) => p.id === keepId);
+        const absorb = projects.find((p) => p.id === absorbId);
+        if (!keep || !absorb) return { ok: false, reason: 'notFound' };
+        if (keep.companyId !== absorb.companyId) return { ok: false, reason: 'otherCompany' };
+        const name = (options.name ?? keep.name).trim();
+        if (!name) return { ok: false, reason: 'emptyName' };
+        if (projects.some((p) => p.id !== keepId && p.id !== absorbId && p.companyId === keep.companyId && p.name === name)) return { ok: false, reason: 'duplicate' };
+        const plan = planRelationMerge(relations, keepId, absorbId);
+        const record: MergeRecord = {
+          name: absorb.name, createdAt: absorb.createdAt, mergedAt: now(), reasons: options.reasons, score: options.score, hadPack: options.hadPack,
+          ...(absorb.brief ? { brief: absorb.brief } : {}),
+        };
+        const wasActive = target.kind === 'project' && target.projectId === absorbId;
+        // Re-point first, so deleting the absorbed project (its scoped data, pack and listeners) leaves the moved relations.
+        set({ relations: plan.relations });
+        get().deleteProject(absorbId);
+        const brief = mergeFields<ProjectBrief>({}, options.brief);
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== keepId) return p;
+            const { brief: _old, ...rest } = p;
+            return {
+              ...rest, name,
+              ...(Object.keys(brief).length ? { brief } : {}),
+              mergedFrom: [...(p.mergedFrom ?? []), ...(absorb.mergedFrom ?? []), record],
+            };
+          }),
+          ...(wasActive ? { target: { kind: 'project' as const, projectId: keepId }, lastProjectId: keepId } : {}),
+        }));
+        return { ok: true, moved: plan.moved, dropped: plan.dropped };
+      },
+      dismissMergeWarning: (a, b, score) => {
+        const pa = get().projects.find((p) => p.id === a);
+        if (!pa || !get().projects.some((p) => p.id === b)) return;
+        set((s) => ({
+          mergeDismissals: [
+            ...s.mergeDismissals.filter((d) => !samePairOf(a, b)({ from: d.a, to: d.b })),
+            { id: newId('mdis'), companyId: pa.companyId, a, b, score, at: now() },
+          ],
+        }));
+      },
+      restoreMergeWarning: (id) => set((s) => ({ mergeDismissals: s.mergeDismissals.filter((d) => d.id !== id) })),
       setTarget: (target) => set(target.kind === 'project' ? { target, lastProjectId: target.projectId } : { target }),
       setStep: (step) => {
         const t = get().target;
@@ -254,7 +380,7 @@ export const useProjects = create<ProjectsState>()(
       name: PROJECTS_STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ companies, projects, relations, target, lastProjectId, demoStep }) => ({ companies, projects, relations, target, lastProjectId, demoStep }),
+      partialize: ({ companies, projects, relations, mergeDismissals, target, lastProjectId, demoStep }) => ({ companies, projects, relations, mergeDismissals, target, lastProjectId, demoStep }),
     },
   ),
 );

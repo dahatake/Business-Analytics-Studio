@@ -252,6 +252,83 @@ test('company information comes first and is shared; project inputs are multi-li
   expect((await stored(page)).registry.relations).toHaveLength(1);
 });
 
+test('projects with the same business issue in other words are flagged with reasons and merged only after agreement', async ({ page }) => {
+  await seed(page, false);
+  const company = page.getByTestId('proj-company-Contoso');
+  const editPurpose = async (name: string, purpose: string) => {
+    await company.getByRole('button', { name: `${name} を編集`, exact: true }).click();
+    await page.getByTestId('proj-edit-purpose').fill(purpose);
+    await page.getByTestId('proj-edit-save').click();
+  };
+  // No shared wording (Japanese vs English), so only the business themes connect them.
+  await editPurpose('Alpha', '既存顧客の解約を減らす\n更新の売上を守る');
+  await expect(company.getByTestId('proj-merge-warning')).toHaveCount(0);
+  await editPurpose('Beta', 'Reduce churn and protect renewal revenue');
+  const warning = company.getByTestId('proj-merge-warning');
+  await expect(warning).toHaveCount(1);
+  await expect(warning).toHaveAttribute('data-pair', 'Alpha|Beta');
+  await expect(warning).toContainText('業務テーマが同じ');
+  await expect(warning).toContainText('顧客維持・解約');
+  await expect(warning).toContainText('売上・受注');
+
+  await warning.getByTestId('proj-merge-dismiss').click();
+  await expect(company.getByTestId('proj-merge-warning')).toHaveCount(0);
+  await expect(company.getByTestId('proj-merge-dismissed')).toContainText('Alpha と Beta');
+  await page.reload();
+  await expect(company.getByTestId('proj-merge-warning')).toHaveCount(0);
+  await company.getByTestId('proj-merge-restore').click();
+  await expect(warning).toHaveCount(1);
+
+  // A third project depends on Beta; the merge moves that dependency to the kept project.
+  await page.getByTestId('proj-project-name-Contoso').fill('Support');
+  await page.getByTestId('proj-project-purpose-Contoso').fill('オフィス移転の計画');
+  await company.getByRole('button', { name: 'Project を作成', exact: true }).click();
+  const form = company.getByTestId('proj-rel-form');
+  await form.getByTestId('proj-rel-from').selectOption({ label: 'Support' });
+  await form.getByTestId('proj-rel-kind').selectOption('dependsOn');
+  await form.getByTestId('proj-rel-to').selectOption({ label: 'Beta' });
+  await form.getByTestId('proj-rel-add').click();
+  await expect(warning).toHaveCount(1);
+
+  await warning.getByTestId('proj-merge-open').click();
+  const dialog = page.getByTestId('proj-merge-dialog');
+  await expect(dialog.getByTestId('proj-merge-dialog-reasons')).toContainText('顧客維持・解約');
+  await expect(dialog.getByTestId('proj-merge-compare')).toContainText('Reduce churn and protect renewal revenue');
+  await expect(dialog.getByRole('radio', { name: /^Alpha/ })).toBeChecked();
+  const purpose = dialog.getByTestId('proj-merge-purpose');
+  await expect(purpose).toHaveValue('既存顧客の解約を減らす\n更新の売上を守る\n\n【統合元: Beta】\nReduce churn and protect renewal revenue');
+  await expect(dialog.getByTestId('proj-merge-effects')).toContainText('関係 1 件を Alpha に移します');
+  await expect(dialog.getByTestId('proj-merge-effects')).toContainText('Beta の作業データは削除されます');
+  const submit = dialog.getByTestId('proj-merge-submit');
+  await expect(submit).toBeDisabled();
+  const accessibility = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).exclude('[data-tabster-dummy]').analyze();
+  expect(accessibility.violations).toEqual([]);
+  const before = await stored(page);
+  await dialog.getByTestId('proj-merge-name').fill('Retention');
+  await dialog.getByTestId('proj-merge-confirm').check();
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(company.getByTestId('proj-merge-done')).toContainText('Beta を Retention に統合しました。関係を 1 件移し、0 件を削除しました。');
+  await expect(company.getByRole('rowheader', { name: 'Beta' })).toHaveCount(0);
+  await expect(company.getByRole('rowheader', { name: /^Retention/ })).toBeVisible();
+  await expect(page.getByTestId('proj-brief-purpose-pj-alpha')).toContainText('Reduce churn and protect renewal revenue');
+  await expect(company.getByTestId('proj-rel-table')).toContainText('Support は Retention に依存する');
+  await expect(company.getByTestId('proj-merge-warning')).toHaveCount(0);
+  await page.reload();
+  const history = page.getByTestId('proj-merged-pj-alpha');
+  await expect(history).toContainText('Beta');
+  await history.locator('summary').click();
+  await expect(history).toContainText('業務テーマが同じ');
+  const after = await stored(page);
+  expect(after.registry.projects.map((p: { id: string }) => p.id)).not.toContain('pj-beta');
+  expect(after.alpha).toBe(before.alpha);
+  expect(after.beta).toBeNull();
+  expect(after.other).toBe(before.other);
+});
+
 test('English launch management works on a narrow screen without horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seed(page, true, 'en');

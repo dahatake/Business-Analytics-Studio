@@ -1,9 +1,14 @@
-import { useMemo, useState } from 'react';
-import { Badge, Button, Field, Input, MessageBar, MessageBarBody, Select } from '@fluentui/react-components';
-import { Add20Regular, Delete20Regular } from '@fluentui/react-icons';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Badge, Button, Field, Input, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle, Select,
+} from '@fluentui/react-components';
+import { Add20Regular, ArrowUndo20Regular, Delete20Regular, Merge20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
+import { loadImportedPack, type ImportedPackMeta } from '../../data/packStore.ts';
 import { RELATION_KINDS, useProjects, type Company, type Project, type ProjectRelation, type RelationKind } from '../../state/projects.ts';
 import { circleLayout, sameIssueGroups, suggestRelations } from './projectRelations.ts';
+import { mergeWarnings, packEvidence, type MergeAssessment, type PackEvidence } from './projectMerge.ts';
+import { ProjectMergeDialog, useReasonText } from './ProjectMergeDialog.tsx';
 
 const W = 640;
 const H = 400;
@@ -12,19 +17,52 @@ const CY = H / 2;
 
 const short = (s: string, max = 14) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
+type EvidenceMap = ReadonlyMap<string, PackEvidence>;
+type PackIndex = Record<string, ImportedPackMeta>;
+
+/** KPIs, issues, solutions and data of each project's stored customer pack, re-read when a pack is saved or replaced. */
+function usePackEvidence(projects: Project[], packs: PackIndex): EvidenceMap {
+  const [evidence, setEvidence] = useState<EvidenceMap>(new Map());
+  const withPack = projects.filter((p) => packs[p.id]);
+  const key = withPack.map((p) => `${p.id}@${packs[p.id]!.importedAt}`).join('|');
+  useEffect(() => {
+    let alive = true;
+    void Promise.all(withPack.map(async (p) => [p.id, packEvidence(await loadImportedPack(p.id).catch(() => null))] as const))
+      .then((list) => { if (alive) setEvidence(new Map(list)); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return evidence;
+}
+
 /**
  * How the projects of one company relate. The company stays its own node in the centre (it is shared context, not a
  * project), each project hangs off it, and the relations people confirmed connect the projects: the same issue told
- * twice, one that must be solved first, or two that move together. Overlapping wording is offered as a hint only.
+ * twice, one that must be solved first, or two that move together. Overlapping wording is offered as a hint only;
+ * pairs whose business evidence says they may be one issue are flagged with the reasons and can be merged once agreed.
  */
-export function ProjectRelationsPanel({ company, projects, relations }: { company: Company; projects: Project[]; relations: ProjectRelation[] }) {
+export function ProjectRelationsPanel({ company, projects, relations, packs }: {
+  company: Company;
+  projects: Project[];
+  relations: ProjectRelation[];
+  packs: PackIndex;
+}) {
   const { t, fmt } = useI18n();
+  const reasonText = useReasonText();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [kind, setKind] = useState<RelationKind>('same');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [merging, setMerging] = useState<MergeAssessment | null>(null);
+  const [merged, setMerged] = useState<string | null>(null);
+  const dismissals = useProjects((s) => s.mergeDismissals);
+  const evidence = usePackEvidence(projects, packs);
   const nameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
+  const flagged = useMemo(
+    () => mergeWarnings(projects, relations, evidence, dismissals.filter((d) => d.companyId === company.id)),
+    [projects, relations, evidence, dismissals, company.id],
+  );
   const suggestions = useMemo(() => suggestRelations(projects, relations), [projects, relations]);
   const groups = useMemo(() => sameIssueGroups(projects, relations), [projects, relations]);
   const grouped = new Map(groups.flatMap((g, i) => g.map((id) => [id, i] as const)));
@@ -113,6 +151,58 @@ export function ProjectRelationsPanel({ company, projects, relations }: { compan
             <ul>{groups.map((g) => <li key={g.join('|')}>{g.map(nameOf).join(t('ai.listSep'))}</li>)}</ul>
           </MessageBarBody>
         </MessageBar>
+      )}
+
+      {merged && <MessageBar intent="success" role="status" data-testid="proj-merge-done"><MessageBarBody>{merged}</MessageBarBody></MessageBar>}
+      {(flagged.warnings.length > 0 || flagged.dismissed.length > 0) && (
+        <section className="proj-merge" aria-labelledby={`proj-merge-h-${company.id}`} data-testid="proj-merge-warnings">
+          <h4 id={`proj-merge-h-${company.id}`} className="proj-h3">{t('proj.merge.warnTitle')}</h4>
+          <p className="muted">{t('proj.merge.warnLead')}</p>
+          {flagged.warnings.map((w) => (
+            <MessageBar key={`${w.a}|${w.b}`} intent="warning" layout="multiline" data-testid="proj-merge-warning" data-pair={`${nameOf(w.a)}|${nameOf(w.b)}`}>
+              <MessageBarBody>
+                <MessageBarTitle>{t('proj.merge.warning', { a: nameOf(w.a), b: nameOf(w.b), score: fmt.percent(w.score) })}</MessageBarTitle>
+                <ul className="proj-merge-reasons" aria-label={t('proj.merge.reasonsLabel')}>
+                  {w.reasons.map((r) => <li key={r.kind}>{reasonText(r)}</li>)}
+                </ul>
+              </MessageBarBody>
+              <MessageBarActions>
+                <Button size="small" appearance="primary" icon={<Merge20Regular />} onClick={() => { setMerged(null); setMerging(w); }} data-testid="proj-merge-open">
+                  {t('proj.merge.open')}
+                </Button>
+                <Button size="small" onClick={() => useProjects.getState().dismissMergeWarning(w.a, w.b, w.score)} data-testid="proj-merge-dismiss">
+                  {t('proj.merge.dismiss')}
+                </Button>
+              </MessageBarActions>
+            </MessageBar>
+          ))}
+          {flagged.dismissed.length > 0 && (
+            <div data-testid="proj-merge-dismissed">
+              <p className="muted">{t('proj.merge.dismissedLead')}</p>
+              <ul>
+                {flagged.dismissed.map(({ dismissal }) => (
+                  <li key={dismissal.id} className="proj-row">
+                    <span>{t('proj.merge.dismissedItem', { a: nameOf(dismissal.a), b: nameOf(dismissal.b), date: fmt.date(dismissal.at.slice(0, 10)) })}</span>
+                    <Button size="small" icon={<ArrowUndo20Regular />} onClick={() => useProjects.getState().restoreMergeWarning(dismissal.id)} data-testid="proj-merge-restore">
+                      {t('proj.merge.restore')}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+      {merging && (
+        <ProjectMergeDialog
+          key={`${merging.a}|${merging.b}`}
+          assessment={merging}
+          projects={projects}
+          relations={relations}
+          packs={packs}
+          onClose={() => setMerging(null)}
+          onMerged={setMerged}
+        />
       )}
 
       <table className="data-table" data-testid="proj-rel-table">

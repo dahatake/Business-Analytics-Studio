@@ -23,7 +23,12 @@ export const ProjectFileSchema = z.object({
     id: z.string().min(1), name: z.string().min(1), createdAt: z.string(),
     officialUrl: z.string().optional(), industry: z.string().optional(), notes: z.string().optional(),
   }),
-  project: z.object({ id: z.string().min(1), companyId: z.string().min(1), name: z.string().min(1), createdAt: z.string(), step: z.enum(IMPROVEMENT_STEPS), brief: Brief.optional() }),
+  project: z.object({
+    id: z.string().min(1), companyId: z.string().min(1), name: z.string().min(1), createdAt: z.string(), step: z.enum(IMPROVEMENT_STEPS), brief: Brief.optional(),
+    mergedFrom: z.array(z.object({
+      name: z.string(), createdAt: z.string(), mergedAt: z.string(), brief: Brief.optional(), reasons: z.array(z.string()), score: z.number(), hadPack: z.boolean(),
+    })).optional(),
+  }),
   /** Relations of this project to other projects of the company; restored only where the other project exists. */
   relations: z.array(z.object({
     id: z.string().min(1), companyId: z.string().min(1), from: z.string().min(1), to: z.string().min(1), kind: z.enum(RELATION_KINDS), note: z.string().optional(), createdAt: z.string(),

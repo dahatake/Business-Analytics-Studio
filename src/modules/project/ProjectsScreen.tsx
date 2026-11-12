@@ -7,14 +7,14 @@ import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { MAX_PROJECTS_PER_COMPANY, useProjects, type AddProjectResult, type Company, type Project, type ProjectRelation } from '../../state/projects.ts';
 import { hrefFor, navigate } from '../../state/router.ts';
 import { AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
-import { BackToHome, downloadText, ScrollRegion } from './common.tsx';
+import { BackToHome, ScrollRegion } from './common.tsx';
 import { generatePrefillFor, PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
 import type { PackGenInput } from './packGenerate.ts';
 import { importedPacks, type ImportedPackMeta } from '../../data/packStore.ts';
 import { CompanyEditDialog, ProjectEditDialog } from './ProjectEditDialogs.tsx';
 import { ProjectRelationsPanel } from './ProjectRelationsPanel.tsx';
-import { exportProject, importProject, type ProjectFile } from './projectFile.ts';
-import { yyyymmdd } from './exportFormat.ts';
+import { importProject } from './projectFile.ts';
+import { downloadProjectFile } from './ProjectMergeDialog.tsx';
 import { useProjectManagement } from './useProjectManagement.tsx';
 import './project.css';
 
@@ -53,10 +53,7 @@ export function ProjectsScreen() {
   };
 
   const onExport = (p: Project) => {
-    const file: ProjectFile | null = exportProject(p.id);
-    if (!file) return;
-    const c = companies.find((x) => x.id === p.companyId);
-    downloadText(`${c?.name ?? 'company'}-${p.name}-project-${yyyymmdd(new Date())}.json`.replace(/[\\/:*?"<>|\s]+/g, '_'), JSON.stringify(file, null, 2), 'application/json');
+    downloadProjectFile(p.id);
   };
 
   const onGenerate = async (p: Project) => {
@@ -268,14 +265,14 @@ function CompanyPanel({ company, projects, relations, packs, activeId, onAddProj
         </Field>
         <Button type="submit" appearance="primary" icon={<Add20Regular />} disabled={full}>{t('proj.projects.addProject')}</Button>
       </form>
-      <ProjectRelationsPanel company={company} projects={projects} relations={relations} />
+      <ProjectRelationsPanel company={company} projects={projects} relations={relations} packs={packs} />
     </Panel>
   );
 }
 
 /** Every input of the project, as entered; empty ones are named so it is clear what is still missing. */
 function BriefView({ project }: { project: Project }) {
-  const { t } = useI18n();
+  const { t, fmt } = useI18n();
   const b = project.brief ?? {};
   const unset = <span className="muted">{t('proj.company.unset')}</span>;
   return (
@@ -293,6 +290,24 @@ function BriefView({ project }: { project: Project }) {
         ].join(t('ai.listSep'))}
       </dd>
       <dt>{t('proj.gen.field.researchNote')}</dt><dd className="proj-prewrap">{b.researchNote || unset}</dd>
+      {project.mergedFrom?.length ? (
+        <>
+          <dt>{t('proj.merge.history')}</dt>
+          <dd data-testid={`proj-merged-${project.id}`}>
+            <ul className="proj-merge-history">
+              {project.mergedFrom.map((m) => (
+                <li key={`${m.name}@${m.mergedAt}`}>
+                  <details>
+                    <summary>{t('proj.merge.historyItem', { name: m.name, date: fmt.date(m.mergedAt.slice(0, 10)), score: fmt.percent(m.score) })}</summary>
+                    <ul>{m.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                    {m.brief?.purpose && <p className="proj-prewrap">{t('proj.merge.historyPurpose', { purpose: m.brief.purpose })}</p>}
+                  </details>
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </>
+      ) : null}
     </dl>
   );
 }

@@ -17,6 +17,81 @@ async function scan(page: Page) {
 const canvas = (page: Page) => page.getByTestId('td-canvas');
 const viewport = (page: Page) => page.getByTestId('td-viewport');
 
+test.describe('Contextual 2D / 3D views', () => {
+  test('removes standalone navigation and switches overview KPIs without replacing the summary', async ({ page }) => {
+    await open(page, '/', { lang: 'en' });
+    await expect(page.locator('.rail a[href="#/twin3d"]')).toHaveCount(0);
+    await expect(page.getByTestId('kpi-panel')).toBeVisible();
+    await expect(canvas(page)).toHaveCount(0);
+    const control = page.getByTestId('td-viewswitch');
+    await expect(control.getByRole('radio', { name: '2D', exact: true })).toBeChecked();
+    await control.getByRole('radio', { name: '3D', exact: true }).check();
+    await firstFrame(page);
+    await expect(page.getByTestId('executive-summary')).toBeVisible();
+    await expect(page.getByTestId('kpi-panel')).toBeHidden();
+    await control.getByRole('radio', { name: '2D', exact: true }).check();
+    await expect(page.getByTestId('kpi-panel')).toBeVisible();
+    await expect(canvas(page)).toHaveCount(0);
+  });
+
+  test('map switching preserves the entity selection, filters and original 2D map', async ({ page }) => {
+    await open(page, '/map?sel=site-nagoya&flows=0', { lang: 'en' });
+    const map = page.getByTestId('map-panel');
+    await expect(page.getByTestId('map-selection')).toContainText('Nagoya Plant');
+    await page.getByRole('radio', { name: '3D', exact: true }).check();
+    await firstFrame(page);
+    await expect(viewport(page)).toHaveAttribute('data-selected', 'map-site-nagoya');
+    await expect(page).toHaveURL(/sel=site-nagoya/);
+    await expect(page).toHaveURL(/flows=0/);
+    await page.getByTestId('td-quality').selectOption('low');
+    await page.locator('[data-td-select="map-site-sendai"]').click();
+    await page.getByRole('radio', { name: '2D', exact: true }).check();
+    await expect(map).toBeVisible();
+    await expect(page.getByTestId('map-selection')).toContainText('Sendai Plant');
+    await expect(map.getByRole('switch')).not.toBeChecked();
+    await page.getByRole('radio', { name: '3D', exact: true }).check();
+    await firstFrame(page);
+    await expect(page.getByTestId('td-quality')).toHaveValue('low');
+  });
+
+  test('twin and architecture are reachable from graph, also on a narrow screen', async ({ page }) => {
+    await open(page, '/graph', { lang: 'en' });
+    await page.getByRole('tab', { name: 'Digital twin', exact: true }).click();
+    await expect(page.getByTestId('td-2d')).toBeVisible();
+    await page.locator('[data-td-select="twin-m-1-3"]').click();
+    const control = page.getByTestId('td-viewswitch');
+    await control.getByRole('radio', { name: '2D', exact: true }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(control.getByRole('radio', { name: '3D', exact: true })).toBeChecked();
+    await firstFrame(page);
+    await expect(viewport(page)).toHaveAttribute('data-selected', 'twin-m-1-3');
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.getByRole('combobox', { name: 'View', exact: true }).selectOption('architecture');
+    await firstFrame(page);
+    await expect(page.getByTestId('td-arch-switch')).toBeVisible();
+    await page.getByRole('radio', { name: '2D', exact: true }).check();
+    await expect(page.getByTestId('td-2d')).toBeVisible();
+    await page.emulateMedia({ forcedColors: 'active' });
+    expect(await scan(page)).toEqual([]);
+  });
+
+  test('unavailable WebGL returns to the native map with an explained disabled 3D option', async ({ page }) => {
+    await page.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+        if (/webgl/i.test(type)) return null;
+        return (original as (...a: unknown[]) => unknown).call(this, type, ...rest);
+      } as typeof original;
+    });
+    await open(page, '/map?mode=3d&sel=site-nagoya', { lang: 'en' });
+    await expect(page.getByRole('radio', { name: '3D', exact: true })).toBeDisabled();
+    await expect(page.getByRole('radio', { name: '2D', exact: true })).toBeChecked();
+    await expect(page.getByTestId('map-selection')).toContainText('Nagoya Plant');
+    await expect(page.getByText('3D (WebGL) is not available in this environment, so the 2D view is shown.')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+  });
+});
+
 async function firstFrame(page: Page): Promise<number> {
   await expect(canvas(page)).toHaveAttribute('data-first-frame-ms', /^\d+$/, { timeout: 10_000 });
   return Number(await canvas(page).getAttribute('data-first-frame-ms'));

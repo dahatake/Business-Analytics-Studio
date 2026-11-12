@@ -13,6 +13,10 @@ import { PROMPT_DOC, promptSection } from './packPrompt.ts';
 import { placeSitesByCity } from './gazetteer.ts';
 import { readiness, readinessScore, requirementOf, type GenStageKey, type ReadinessItem, type ReadinessKey } from './analysisReadiness.ts';
 import { alignmentSnapshot, type Alignment } from './companyAlignment.ts';
+import { categoriesOf } from './analysis.ts';
+import { AnalysisDataSchema, METHODS, newId, type AnalysisData, type AnalysisItem, type MethodId } from './model.ts';
+import { methodKey } from './analysisText.ts';
+import { translate } from '../../i18n/core.ts';
 
 /**
  * FR-311 (D-12): build a customer pack in the app with the configured LLM.
@@ -134,9 +138,9 @@ export interface GenDeps {
   model?: string;
 }
 
-export type StepId = 'collect' | 'foundation' | 'business' | 'verify' | 'finalize';
+export type StepId = 'collect' | 'foundation' | 'business' | 'verify' | 'analysis' | 'finalize';
 /** A model call: the two stages, their re-runs after Work IQ follow-up rounds (foundation-2, -3 …), and the fix rounds. */
-export type GenStage = 'foundation' | 'business' | `foundation-${number}` | `business-${number}` | `fix-${number}`;
+export type GenStage = 'foundation' | 'business' | 'analysis' | `foundation-${number}` | `business-${number}` | `fix-${number}`;
 export type StepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed';
 
 export interface ProgressEvent {
@@ -157,7 +161,7 @@ export interface ProgressEvent {
 }
 
 const STEP_SPAN: Record<StepId, [number, number]> = {
-  collect: [0, 0.1], foundation: [0.1, 0.45], business: [0.45, 0.8], verify: [0.8, 0.95], finalize: [0.95, 1],
+  collect: [0, 0.1], foundation: [0.1, 0.45], business: [0.45, 0.8], verify: [0.8, 0.9], analysis: [0.9, 0.97], finalize: [0.97, 1],
 };
 
 export interface RetrievedItem {
@@ -218,12 +222,13 @@ export interface CollectionRound {
 export interface GenResult {
   pack: Record<string, unknown>;
   verify: VerifyResult;
+  analysis: AnalysisData;
   summary: PackSummary;
   report: GenerationReport;
 }
 
 export class PackGenError extends Error {
-  readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'callFailed' | 'collectFailed';
+  readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'invalidAnalysis' | 'callFailed' | 'collectFailed';
   readonly detail: string;
   readonly costJpy: number | null;
 
@@ -527,6 +532,100 @@ export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foun
     rules(input.lang),
     materialBlock(entries, input.lang),
   ].join('\n\n');
+}
+
+/** Create all five analysis methods from the verified pack, without sending unrelated application data. */
+export function analysisPrompt(pack: Record<string, unknown>, lang: Lang, entries: MaterialEntry[] = []): string {
+  const ja = lang === 'ja';
+  const extensions = pack.extensions && typeof pack.extensions === 'object' ? pack.extensions as Record<string, unknown> : {};
+  const context = {
+    company: pack.company,
+    regions: pack.regions,
+    entities: pack.entities,
+    flows: pack.flows,
+    extensions: Object.fromEntries(['okr', 'workflow', 'engagements', 'dataCatalog'].flatMap((key) =>
+      extensions[key] === undefined ? [] : [[key, extensions[key]]])),
+  };
+  const categories = Object.fromEntries(METHODS.map((method) => [method, categoriesOf(method)]));
+  return [
+    ja
+      ? '検査済みの顧客パックだけを根拠に、以下の5手法すべての分析結果を作成してください。パックにない事実や数値を作らず、不足は不足と明記してください。'
+      : 'Create analysis results for all five methods using only the verified customer pack below. Do not invent facts or numbers; state when evidence is missing.',
+    ja
+      ? '各手法について、指定された全カテゴリに少なくとも1項目を作成します。項目はパック内の具体的な事実に基づき、推定は推定と明記してください。'
+      : 'Create at least one item for every listed category in each method. Ground each item in specific pack facts and label any inference as an inference.',
+    ja
+      ? 'score は 1〜5 の数値です。SWOT の強み・機会は大きいほど高く、弱み・脅威は深刻なほど高くします。ファイブフォースは競争圧力が強いほど高くします。その他は評価が高いほど高くします。weight はアプリが 1 に設定するため出力不要です。'
+      : 'score is a number from 1 to 5. For SWOT, higher strengths/opportunities mean more positive and higher weaknesses/threats mean more severe. For Five Forces, higher means stronger pressure. For the other methods, higher means better performance. The app sets weight to 1; omit it.',
+    ja ? '# カテゴリ' : '# Categories',
+    JSON.stringify(categories),
+    ja ? '# 出力（JSON オブジェクトだけ）' : '# Output (one JSON object only)',
+    '{"analyses":[{"method":"swot","items":[{"category":"strengths","text":{"ja":"...","en":"..."},"score":3}]}]}',
+    ja ? '# 検査済み顧客パック' : '# Verified customer pack',
+    JSON.stringify(context),
+    materialBlock(entries, lang),
+  ].join('\n\n');
+}
+
+function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: number | null): AnalysisData {
+  const entries = Array.isArray(raw.analyses) ? raw.analyses : [];
+  const byMethod = new Map<MethodId, Record<string, unknown>>();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const candidate = entry as Record<string, unknown>;
+    if (typeof candidate.method === 'string' && METHODS.includes(candidate.method as MethodId)) {
+      const method = candidate.method as MethodId;
+      if (byMethod.has(method)) throw new PackGenError('invalidAnalysis', `duplicate method: ${method}`, costJpy);
+      byMethod.set(method, candidate);
+    }
+  }
+  if (entries.length !== METHODS.length || byMethod.size !== METHODS.length) {
+    throw new PackGenError('invalidAnalysis', 'Expected one result for each analysis method', costJpy);
+  }
+  const analyses = METHODS.map((method) => {
+    const source = byMethod.get(method)!;
+    const categories = categoriesOf(method);
+    const sourceItems = Array.isArray(source.items) ? source.items : [];
+    const items: AnalysisItem[] = sourceItems.map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new PackGenError('invalidAnalysis', `${method}: invalid item`, costJpy);
+      }
+      const value = item as Record<string, unknown>;
+      const category = value.category;
+      const text = value.text;
+      const jaText = text && typeof text === 'object' && !Array.isArray(text) ? (text as Record<string, unknown>).ja : undefined;
+      const enText = text && typeof text === 'object' && !Array.isArray(text) ? (text as Record<string, unknown>).en : undefined;
+      const score = value.score;
+      if (typeof category !== 'string' || !categories.some((id) => id === category) ||
+        typeof jaText !== 'string' || !jaText.trim() || typeof enText !== 'string' || !enText.trim() ||
+        typeof score !== 'number' || !Number.isFinite(score) || score < 1 || score > 5) {
+        throw new PackGenError('invalidAnalysis', `${method}: invalid analysis item`, costJpy);
+      }
+      return {
+        id: newId('ai'),
+        category,
+        text: { ja: jaText.trim(), en: enText.trim() },
+        score,
+        weight: 1,
+        author: 'ai',
+        mock: false,
+      };
+    });
+    const missing = categories.filter((category) => !items.some((item) => item.category === category));
+    if (missing.length) throw new PackGenError('invalidAnalysis', `${method}: missing categories ${missing.join(', ')}`, costJpy);
+    return {
+      id: newId('an'),
+      method,
+      title: { ja: translate('ja', methodKey(method)), en: translate('en', methodKey(method)) },
+      items,
+      weights: Object.fromEntries(categories.map((category) => [category, 1])),
+      createdAt: at,
+      updatedAt: at,
+    };
+  });
+  const result = AnalysisDataSchema.safeParse({ analyses, activeId: analyses[0]?.id ?? null });
+  if (!result.success) throw new PackGenError('invalidAnalysis', result.error.message, costJpy);
+  return result.data;
 }
 
 /** Only the failing items, the ids they may use, and the material: the model returns replacements, removals and section fixes. */
@@ -903,7 +1002,7 @@ export function buildCollection(pack: Pack, asOf: string, webSearched: boolean, 
  * retries of failed or unreadable answers. PACK_BUILD_MAX_CALLS (policy) is this with MAX_WORKIQ_ROUNDS.
  */
 export function maxCallsFor(rounds: number): number {
-  return 2 + 2 * rounds + MAX_FIX_ROUNDS + MAX_CALL_RETRIES;
+  return 3 + 2 * rounds + MAX_FIX_ROUNDS + MAX_CALL_RETRIES;
 }
 export const MAX_CALLS_PER_RUN = maxCallsFor(MAX_WORKIQ_ROUNDS);
 
@@ -1304,11 +1403,16 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     const first = blockingErrors(pruned.verify)[0];
     throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid', costJpy);
   }
+  const finalPack = pruned.pack;
   emit('verify', 'done', 1, { round: rounds, errors: 0 });
 
-  /* 5. Collection report, number check, generation record */
+  emit('analysis', 'running');
+  const analysisAnswer = await call('analysis', (material) => analysisPrompt(finalPack, input.lang, material));
+  const analysis = analysisDataFrom(analysisAnswer, now().toISOString(), costJpy);
+  emit('analysis', 'done');
+
+  /* 6. Collection report, number check, generation record */
   emit('finalize', 'running');
-  const finalPack = pruned.pack;
   const ext = { ...((finalPack.extensions as Record<string, unknown>) ?? {}) };
   ext.collection = buildCollection(finalPack, input.asOf.trim(), pages.length + news.length > 0, gaps, input.lang, entries.some((e) => e.item.kind === 'workiq'));
   if (input.companyAnchor) {
@@ -1346,11 +1450,11 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid', costJpy);
   }
   emit('finalize', 'done');
-  return { pack: final.pack, verify: final.verify, summary: summarize(final.pack), report };
+  return { pack: final.pack, verify: final.verify, analysis, summary: summarize(final.pack), report };
 }
 
 /** Upper bound of the work one run sends, for the confirmation before the run. */
-export function runPlan(input: PackGenInput): { maxCalls: number; promptChars: number } {
+export function runPlan(input: PackGenInput): { minCalls: number; maxCalls: number; promptChars: number } {
   const site = input.officialUrl.trim() ? 5 * 6_500 : 0;
   const news = input.useNews ? 10 * 200 : 0;
   // The merged readiness items (Work IQ CLI) plus the follow-up answers a run may keep; fitPrompt caps every call.
@@ -1360,7 +1464,11 @@ export function runPlan(input: PackGenInput): { maxCalls: number; promptChars: n
     ? materialSources({ ...input, materials: [], researchNote: '' }, [], [], '', new Date(), null)
       .reduce((sum, entry) => sum + entry.body.length + entry.item.title.length + 300, 0)
     : 0;
-  return { maxCalls: maxCallsFor(workIqRoundsOf(input)), promptChars: Math.min(PACK_BUILD_MAX_PROMPT_CHARS, base + site + news + workiq + anchor + materialChars(input)) };
+  return {
+    minCalls: 3,
+    maxCalls: maxCallsFor(workIqRoundsOf(input)),
+    promptChars: Math.min(PACK_BUILD_MAX_PROMPT_CHARS, base + site + news + workiq + anchor + materialChars(input)),
+  };
 }
 
 /** The inputs a previous run saved in the pack (extensions.generation), loosely read, to prefill a re-fetch. */

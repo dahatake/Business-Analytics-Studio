@@ -121,7 +121,7 @@ function NavRail({ current }: { current: string }) {
         <div key={group} className="rail-group">
           <h2 className="rail-group-title" id={`nav-${group}`}>{t(label)}</h2>
           <ul aria-labelledby={`nav-${group}`}>
-            {SCREENS.filter((s) => s.group === group).map(({ path, label: itemLabel, Icon }) => (
+            {SCREENS.filter((s) => s.group === group && !s.hiddenFromNav).map(({ path, label: itemLabel, Icon }) => (
               <li key={path}>
                 <a href={hrefFor(path)} className="rail-link" aria-current={isActive(path, current) ? 'page' : undefined} onClick={() => sound.play('tap')}>
                   <Icon aria-hidden />

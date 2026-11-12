@@ -80,6 +80,7 @@ export const AnalysisItemSchema = z.object({
   score: z.number(),
   weight: z.number(),
   author: z.enum(['human', 'ai', 'sample']),
+  mock: z.boolean().optional(),
 });
 export type AnalysisItem = z.infer<typeof AnalysisItemSchema>;
 

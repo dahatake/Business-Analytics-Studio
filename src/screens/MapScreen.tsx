@@ -17,6 +17,7 @@ import { SvgEntityNode } from '../ui/SvgEntityNode.tsx';
 import { labelWidthPx, visibleLabels } from './mapLabels.ts';
 import { useSettings } from '../state/settings.ts';
 import { isHidden } from '../ui/cardSpecs.ts';
+import { ContextualScene } from '../modules/threed/ContextualScene.tsx';
 
 const W = 760, H = 640;
 const JAPAN_ID = '392';
@@ -101,6 +102,18 @@ type Site = EntityOf<'site'>;
 const ROLE_SHAPE: Record<Site['role'], d3.SymbolType> = { hq: d3.symbolStar, plant: d3.symbolSquare, dc: d3.symbolDiamond, office: d3.symbolCircle };
 
 export function MapScreen() {
+  const { t } = useI18n();
+  return (
+    <div className="screen screen-map">
+      <PageHeader title={t('map.title')} subtitle={t('map.subtitle')} />
+      <ContextualScene tab="map">
+        <MapContents />
+      </ContextualScene>
+    </div>
+  );
+}
+
+function MapContents() {
   const { t, tx, fmt } = useI18n();
   const reduced = useReducedMotion();
   const route = useRoute();
@@ -154,8 +167,6 @@ export function MapScreen() {
   const selected = sel ? getEntity(sel) : undefined;
 
   return (
-    <div className="screen screen-map">
-      <PageHeader title={t('map.title')} subtitle={t('map.subtitle')} />
       <div className="split">
         <Panel
           title={t('map.panel')}
@@ -254,7 +265,6 @@ export function MapScreen() {
           </Panel>
         </div>
       </div>
-    </div>
   );
 }
 

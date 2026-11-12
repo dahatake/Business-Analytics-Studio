@@ -7,6 +7,7 @@ import { Delete20Regular } from '@fluentui/react-icons';
 import { isUseApproved, readLedger } from '../../ai/client.ts';
 import { AI_LIMITS, C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n } from '../../i18n/index.ts';
+import { hrefFor } from '../../state/router.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
@@ -125,6 +126,7 @@ export function AiSettingsScreen() {
   return (
     <div className="screen ai-screen" data-ledger={ledgerVersion}>
       <PageHeader title={t('ai.nav.settings')} subtitle={t('ai.settings.subtitle')} />
+      <p><a href={hrefFor('/ai-policy')}>{t('ai.policy.open')}</a></p>
       <D4Warning />
       {!s.relayReachable && (
         <MessageBar intent="warning" data-testid="ai-relay-unreachable"><MessageBarBody>{t('ai.relay.unreachable')}</MessageBarBody></MessageBar>

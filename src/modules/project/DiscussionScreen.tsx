@@ -28,7 +28,14 @@ import {
 import { applyUseCaseSelection, classifyUseCases, type UseCaseCandidate, type UseCaseChoices } from './useCaseImport.ts';
 import { UseCaseImportDialog } from './UseCaseImportDialog.tsx';
 import { useUseCases } from '../usecases/store.ts';
+import { usePackVersion } from '../../state/packEdits.ts';
+import { EntityEditorDialog } from '../../ui/entry/EntityEditorDialog.tsx';
+import { isEditableKind, type EditableKind } from '../../ui/entry/entitySpecs.ts';
 import './project.css';
+
+/** Pack items a theme can be related to; new ones can be entered from the canvas and are saved in the pack data. */
+const RELATABLE_KINDS = ['issue', 'solution', 'kpi', 'person'] as const satisfies readonly EditableKind[];
+type EntryTarget = { kind: EditableKind; id: string | null };
 
 /** FR-019: the pack's glossary (validated), or the bilingual demo glossary for the sample pack. */
 function useGlossary(): GlossaryEntry[] {
@@ -138,6 +145,14 @@ export function DiscussionScreen() {
           </>
         )}
       />
+      {!editMode && (
+        <MessageBar intent="info" className="span-full" data-testid="proj-edit-off">
+          <MessageBarBody>{t('entry.disc.editModeOff')}</MessageBarBody>
+          <MessageBarActions>
+            <Button icon={<Edit20Regular />} onClick={() => setEditMode(true)} data-testid="proj-edit-on">{t('entry.disc.turnOn')}</Button>
+          </MessageBarActions>
+        </MessageBar>
+      )}
       {importMsg && <MessageBar intent={importMsg.intent} className="span-full" data-testid="proj-import-msg"><MessageBarBody>{importMsg.text}</MessageBarBody></MessageBar>}
       {ucMsg && (
         <MessageBar intent="info" layout="multiline" className="span-full" data-testid="proj-uc-import-msg">
@@ -263,6 +278,8 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
   const [titleDraft, setTitleDraft] = useState('');
   const [titleError, setTitleError] = useState<FieldError | null>(null);
   const [busy, setBusy] = useState(false);
+  const [entry, setEntry] = useState<EntryTarget | null>(null);
+  usePackVersion((s) => s.version);
   const idx = theme ? ordered.findIndex((o) => o.theme.id === theme.id) : -1;
   useEffect(() => setEditingTitle(false), [theme?.id]);
 
@@ -294,6 +311,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
     }
   };
   const relatable = loaded.pack.entities.filter((e) => ['issue', 'solution', 'kpi', 'person'].includes(e.kind) && !theme.relatedIds.includes(e.id));
+  const relate = (id: string) => commitDiscussion(updateTheme(data, theme.id, { relatedIds: [...theme.relatedIds, id] }), 'update', 'theme', theme.title);
 
   return (
     <Panel title={t('proj.canvas.title')} rationale="proj.canvas.why" testId="proj-canvas" id="proj-canvas">
@@ -347,26 +365,51 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
           <div className="proj-related">
             <span className="muted">{t('proj.canvas.related')}</span>
             {theme.relatedIds.length === 0 && <span className="muted">{t('proj.canvas.noRelated')}</span>}
-            {theme.relatedIds.map((id) => (
-              <span key={id} className="proj-related-item">
-                <EntityRef id={id} />
-                {editMode && (
-                  <Button size="small" appearance="subtle" icon={<Delete20Regular />} aria-label={t('proj.canvas.unrelate', { name: loaded.byId.get(id)?.name[lang] ?? id })}
-                    onClick={() => commitDiscussion(updateTheme(data, theme.id, { relatedIds: theme.relatedIds.filter((x) => x !== id) }), 'update', 'theme', theme.title)} />
-                )}
-              </span>
-            ))}
+            {theme.relatedIds.map((id) => {
+              const entity = loaded.byId.get(id);
+              return (
+                <span key={id} className="proj-related-item">
+                  <EntityRef id={id} />
+                  {editMode && entity && isEditableKind(entity.kind) && (
+                    <Button size="small" appearance="subtle" icon={<Edit20Regular />} aria-label={t('entry.disc.editRelated', { name: entity.name[lang] })}
+                      onClick={() => setEntry({ kind: entity.kind as EditableKind, id })} data-testid={`proj-related-edit-${id}`} />
+                  )}
+                  {editMode && (
+                    <Button size="small" appearance="subtle" icon={<Delete20Regular />} aria-label={t('proj.canvas.unrelate', { name: entity?.name[lang] ?? id })}
+                      onClick={() => commitDiscussion(updateTheme(data, theme.id, { relatedIds: theme.relatedIds.filter((x) => x !== id) }), 'update', 'theme', theme.title)} />
+                  )}
+                </span>
+              );
+            })}
             {editMode && relatable.length > 0 && (
               <Select
                 aria-label={t('proj.canvas.relate')}
                 value=""
-                onChange={(_, d) => { if (d.value) commitDiscussion(updateTheme(data, theme.id, { relatedIds: [...theme.relatedIds, d.value] }), 'update', 'theme', theme.title); }}
+                onChange={(_, d) => { if (d.value) relate(d.value); }}
                 className="proj-relate-select"
               >
                 <option value="">{t('proj.canvas.relate')}</option>
                 {relatable.map((e) => <option key={e.id} value={e.id}>{`${t(`kind.${e.kind}`)}: ${e.name[lang]}`}</option>)}
               </Select>
             )}
+            {editMode && (
+              <Select
+                aria-label={t('entry.disc.createRelate')}
+                value=""
+                onChange={(_, d) => { if (isEditableKind(d.value)) setEntry({ kind: d.value, id: null }); }}
+                className="proj-relate-select"
+                data-testid="proj-create-relate"
+              >
+                <option value="">{t('entry.disc.createRelate')}</option>
+                {RELATABLE_KINDS.map((k) => <option key={k} value={k}>{t('entry.add', { kind: t(`kind.${k}`) })}</option>)}
+              </Select>
+            )}
+            <EntityEditorDialog
+              kind={entry?.kind ?? null}
+              id={entry?.id ?? null}
+              onClose={() => setEntry(null)}
+              onSaved={(id) => { if (!theme.relatedIds.includes(id)) relate(id); }}
+            />
           </div>
           <div className="proj-sections">
             {SECTIONS.map(({ kind, title }) => {

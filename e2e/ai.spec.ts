@@ -41,6 +41,18 @@ function recordResponses(page: Page): string[] {
 test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/012)', () => {
   test.describe.configure({ mode: 'serial' });
 
+  for (const lang of ['ja', 'en'] as const) {
+    test(`${lang}: AI sending rules explain approved and undecided uses`, async ({ page }) => {
+      await open(page, '/assistant', { lang });
+      await page.getByRole('link', { name: lang === 'ja' ? 'AI に送るデータと利用状況を確認' : 'Review data sent to AI and usage status' }).click();
+      await expect(page.getByTestId('ai-policy-screen')).toBeVisible();
+      await expect(page.getByTestId('ai-policy-rules').locator('[data-use="explain"]')).toHaveAttribute('data-approved', 'true');
+      await expect(page.getByTestId('ai-policy-rules').locator('[data-use="chat"]')).toHaveAttribute('data-approved', 'false');
+      await expect(page.getByTestId('ai-policy-rules').locator('[data-use="chat"]')).toContainText(lang === 'ja' ? '未決のため送信しません' : 'Undecided; nothing is sent');
+      await expect(page.getByTestId('ai-policy-intro')).toContainText(lang === 'ja' ? 'この画面で未決の用途を承認することはできません' : 'This screen cannot approve undecided uses');
+    });
+  }
+
   test('saves a key through the relay without ever showing or returning it, then deletes it', async ({ page }) => {
     const bodies = recordResponses(page);
     await open(page, '/ai-settings', { lang: 'en' });
@@ -467,7 +479,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
 
 test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => {
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of ['/assistant', '/ai-settings']) {
+    for (const route of ['/assistant', '/ai-settings', '/ai-policy']) {
       test(`${lang} ${route}`, async ({ page }) => {
         // D-6: a legacy Foundry record makes /ai-settings show the "move" candidate, which is scanned too.
         await page.addInitScript(() => localStorage.setItem('bas.foundry.settings', JSON.stringify({ endpoint: 'https://legacy.example.com', deployment: 'old', authMethod: 'apiKey' })));
@@ -724,6 +736,19 @@ async function seedLaunch(page: Page, lang: Lang) {
     ],
     gaps: [{ section: 'deal', missing: ['order ledger'], nextAction: 'Attach the order ledger' }],
   };
+  const analysisCategories = {
+    swot: ['strengths', 'weaknesses', 'opportunities', 'threats'],
+    fiveForces: ['rivalry', 'newEntrants', 'substitutes', 'buyerPower', 'supplierPower'],
+    valueChain: ['inbound', 'operations', 'outbound', 'marketing', 'service', 'infrastructure', 'hr', 'technology', 'procurement'],
+    threeC: ['customer', 'competitor', 'company'],
+    bsc: ['financial', 'customerView', 'process', 'learning'],
+  };
+  const analysisAnswer = {
+    analyses: Object.entries(analysisCategories).map(([method, categories]) => ({
+      method,
+      items: categories.map((category) => ({ category, text: { ja: `${method} ${category}`, en: `${method} ${category}` }, score: 3 })),
+    })),
+  };
 
   test.beforeAll(async () => {
     stub = createServer((req, res) => {
@@ -733,7 +758,9 @@ async function seedLaunch(page: Page, lang: Lang) {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages: { content: string }[] };
         const user = body.messages[1]!.content;
         received.push({ body, user });
-        const answer = user.startsWith('Build the foundation') ? stageA : user.startsWith('Build the business part') ? stageB : { remove: ['initiative-x'] };
+        const answer = user.includes('# Verified customer pack') ? analysisAnswer
+          : user.startsWith('Build the foundation') ? stageA
+            : user.startsWith('Build the business part') ? stageB : { remove: ['initiative-x'] };
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) } }], usage: { prompt_tokens: 6000, completion_tokens: 2500 } }));
       });
@@ -813,27 +840,32 @@ async function seedLaunch(page: Page, lang: Lang) {
     await dialog.getByTestId('gen-workiq').uncheck(); // this test's material is the attached synthetic CSV
     await expect(dialog.getByTestId('gen-workiq-rounds')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
+    // Verifying Work IQ and changing its inclusion alters the approved send scope, so reconfirm both approvals.
+    await dialog.getByTestId('gen-check-approved').check();
+    await dialog.getByTestId('gen-check-cost').check();
+    await expect(dialog.getByTestId('gen-start')).toBeEnabled();
     await dialog.getByTestId('gen-start').click();
 
     await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
     await expect(dialog.getByTestId('gen-progress')).toHaveCount(0);
     await expect(dialog.getByTestId('gen-checks')).toHaveText('1 fix rounds, 0 items removed, 0 invented sources discarded');
-    await expect(dialog.getByTestId('gen-cost')).toContainText('(3 sends)');
+    await expect(dialog.getByTestId('gen-cost')).toContainText('(4 sends)');
     await expect(dialog.getByTestId('gen-cost')).toContainText('Unknown');
     // Tokens per step as the provider reported them (6,000 + 2,500 per call) and their total.
-    await expect(dialog.getByTestId('gen-tokens-row-total')).toHaveText(['8,500', '8,500', '8,500']);
-    await expect(dialog.getByTestId('gen-tokens-row')).toContainText(['Foundation', 'Business', 'Check and fix']);
-    await expect(dialog.getByTestId('gen-tokens-total-value')).toHaveText('25,500');
+    await expect(dialog.getByTestId('gen-tokens-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500']);
+    await expect(dialog.getByTestId('gen-tokens-row')).toContainText(['Foundation', 'Business', 'Check and fix', 'Five analyses']);
+    await expect(dialog.getByTestId('gen-tokens-total-value')).toHaveText('34,000');
     await expect(dialog.getByTestId('gen-ungrounded')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
 
     // What went out: JSON mode, the attached file's text, the app-made source id; stage B saw the foundation ids.
-    expect(received).toHaveLength(3);
+    expect(received).toHaveLength(4);
     expect(received[0]!.body.response_format).toEqual({ type: 'json_object' });
     expect(received[0]!.user).toContain('on-time delivery %,92,94,98');
     expect(received[0]!.user).toContain('source-doc-1');
     expect(received[1]!.user).toContain('site-tokyo');
     expect(received[2]!.user).toContain('initiative-x');
+    expect(received[3]!.user).toContain('"fiveForces"');
     expect(received.map((r) => JSON.stringify(r.body)).join('')).not.toContain(FAKE_KEY);
 
     const stored = await page.evaluate(() => ({
@@ -841,23 +873,28 @@ async function seedLaunch(page: Page, lang: Lang) {
       ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number | null; scope?: string; stage?: string }[],
     }));
     expect(stored.index['pj-c']).toMatchObject({ files: ['generated:foundry', 'delivery-kpi.csv'] });
-    expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(3);
-    expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'fix-1']]);
+    expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(4);
+    expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'fix-1'], ['pj-c', 'analysis']]);
     expect(stored.ledger.every((r) => r.costJpy === null)).toBe(true);
 
     await dialog.getByTestId('gen-open').click();
     await expect(page.locator('main#main')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/analysis'; });
+    await expect(page.getByTestId('proj-analysis-select').locator('option')).toHaveCount(5);
+    await expect(page.getByTestId('proj-result-matrix')).toBeVisible();
+    await expect(page.getByTestId('proj-params').getByText('Mock', { exact: true })).toHaveCount(0);
+    expect(received).toHaveLength(4); // opening the screen only displays the saved analyses
 
     // The final export shows the same per-step tokens, the export itself as 0, and the total; internal Markdown only.
     await page.goto('/#/discussion');
     await page.getByTestId('proj-export').click();
     const exportDialog = page.getByTestId('proj-export-dialog');
     const tokens = exportDialog.getByTestId('proj-export-tokens-table');
-    await expect(tokens.getByTestId('proj-export-tokens-table-row-total')).toHaveText(['8,500', '8,500', '8,500', '0']);
+    await expect(tokens.getByTestId('proj-export-tokens-table-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500', '0']);
     await expect(tokens.getByTestId('proj-export-tokens-table-row').last()).toContainText('Export (uses no generative AI)');
-    await expect(tokens.getByTestId('proj-export-tokens-table-total-value')).toHaveText('25,500');
+    await expect(tokens.getByTestId('proj-export-tokens-table-total-value')).toHaveText('34,000');
     await exportDialog.getByRole('radio', { name: 'Internal' }).check();
-    await expect(exportDialog.getByTestId('proj-export-preview')).toContainText('| **Total** | 3 | 18,000 | 7,500 | 25,500 |');
+    await expect(exportDialog.getByTestId('proj-export-preview')).toContainText('| **Total** | 4 | 24,000 | 10,000 | 34,000 |');
     await exportDialog.getByRole('radio', { name: 'External' }).check();
     await expect(exportDialog.getByTestId('proj-export-preview')).not.toContainText('Generative AI token usage');
     expect(await scan(page)).toEqual([]);
@@ -882,7 +919,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(`${page.url()}: ${e.message}`));
     for (const route of ['/', '/home', '/analysis', '/assistant', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
-      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings']) {
+      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings', '/ai-policy']) {
       await page.goto(`/#${route}`);
       await expect(page.locator('main#main'), route).toBeVisible();
       await page.waitForTimeout(300);

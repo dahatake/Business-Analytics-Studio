@@ -5,6 +5,7 @@ import { entitiesOf, loaded } from '../data/pack.ts';
 import { useI18n } from '../i18n/index.ts';
 import { useSettings } from '../state/settings.ts';
 import { isHidden } from '../ui/cardSpecs.ts';
+import { usePackVersion } from '../state/packEdits.ts';
 import { kindColor } from '../ui/icons.ts';
 import { SvgEntityNode } from '../ui/SvgEntityNode.tsx';
 import { wrap } from '../ui/textWrap.ts';
@@ -37,6 +38,7 @@ export function chainOf(id: string): Set<string> {
 export function ChainDiagram({ selected, onSelect }: { selected: string | null; onSelect: (id: string) => void }) {
   const { t, tx } = useI18n();
   const audience = useSettings((s) => s.audience);
+  const version = usePackVersion((s) => s.version);
 
   const { nodes, links, height } = useMemo(() => {
     const visible = <T extends Entity>(xs: T[]) => xs.filter((x) => !isHidden(x, audience));
@@ -63,7 +65,7 @@ export function ChainDiagram({ selected, onSelect }: { selected: string | null; 
       .filter((e) => (e.type === 'places' || e.type === 'produces' || e.type === 'billedAs') && pos.has(e.source) && pos.has(e.target))
       .map((e) => ({ edge: e, s: pos.get(e.source)!, t: pos.get(e.target)! }));
     return { nodes: [...pos.values()], links, height };
-  }, [audience]);
+  }, [audience, version]);
 
   const highlight = selected ? chainOf(selected) : null;
   const link = d3.linkHorizontal<{ source: [number, number]; target: [number, number] }, [number, number]>();

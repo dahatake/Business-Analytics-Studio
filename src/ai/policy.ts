@@ -14,6 +14,8 @@
  * - D-13 (2026-11-11): fixed synthetic Foundry connection tests are approved through the settings route only.
  * - D-14 (user, 2026-11-11): "packBuild" may use Microsoft Work IQ as a material source, only when the provider is
  *   Microsoft Foundry (WORKIQ_SOURCE). With GitHub Copilot SDK the app neither shows nor calls Work IQ.
+ * - D-18 (user, 2026-11-12): "packBuild" also generates all five analysis methods from the verified pack and its
+ *   materials before saving; the call is included in the existing approval, cost estimate and per-run limit.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
@@ -74,11 +76,11 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   brandResearch: TBD_ROW(),
   packBuild: {
     provider: ['foundry', 'copilotSdk'],
-    data: 'Company and project names, purpose, as-of date, official site URL, fetched pages and news headlines, attached work material and research note, optional company anchor scope, stated objectives, KPIs, segments, issues, source metadata and supplied excerpts (internal allowed, D-2), and with Microsoft Foundry only the Work IQ answers and citation titles (D-14); no analyst hypotheses or other app data',
+    data: 'Company and project names, purpose, as-of date, official site URL, fetched pages and news headlines, attached work material and research note, optional company anchor scope, stated objectives, KPIs, segments, issues, source metadata and supplied excerpts (internal allowed, D-2), the verified customer pack and its retrieved materials for all five analysis methods (D-18), and with Microsoft Foundry only the Work IQ answers and citation titles (D-14); no analyst hypotheses or unrelated app data',
     enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + confirmation of content, data-owner approval and cost information (Foundry charges unknown, not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
-    decidedBy: 'docs/decision-guide.md D-12 (2026-11-10)',
+    decidedBy: 'docs/decision-guide.md D-12 and D-18 (2026-11-12)',
   },
   alignmentProposal: {
     provider: ['foundry', 'copilotSdk'],
@@ -152,11 +154,11 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
 };
 
 /**
- * PARAM-148: calls one pack generation may make (2 generation stages + up to 2×4 re-runs after Work IQ follow-up
- * rounds + up to 3 fix rounds + up to 2 retries of a failed or unreadable answer = 15, D-15). The dialog shows the run's
- * own bound (maxCallsFor) before it starts.
+ * PARAM-148: calls one pack generation may make (2 generation stages + 1 five-method analysis + up to 2×4 re-runs
+ * after Work IQ follow-up rounds + up to 3 fix rounds + up to 2 retries of a failed or unreadable answer = 16).
+ * The dialog shows the run's own bound (maxCallsFor) before it starts.
  */
-export const PACK_BUILD_MAX_CALLS = 15;
+export const PACK_BUILD_MAX_CALLS = 16;
 /** PARAM-149: per-call timeout for pack generation (long JSON output; D-15: 300 → 600 s for 32,000 output tokens at ~210 tokens/s). */
 export const PACK_BUILD_TIMEOUT_MS = 600_000;
 /** Characters of one packBuild prompt the relay accepts (server/relay.ts); the generator fits its material below it. */

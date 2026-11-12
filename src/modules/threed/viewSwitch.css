@@ -1,0 +1,35 @@
+.contextual-scene { display: grid; gap: 16px; min-width: 0; }
+.contextual-scene > * { min-width: 0; }
+.view-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.view-switch-label { font-weight: var(--fontWeightSemibold); color: var(--colorNeutralForeground2); }
+.view-switch-options {
+  display: inline-flex; gap: 2px; padding: 2px;
+  background: var(--colorNeutralBackground3);
+  border: 1px solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusLarge);
+}
+.view-switch-options .fui-Radio { border-radius: var(--borderRadiusMedium); }
+.view-switch-options .fui-Radio__indicator { display: none; }
+.view-switch-options .fui-Radio__input { width: 100%; z-index: 1; }
+.view-switch-options .fui-Radio__label {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 56px; min-height: 36px; box-sizing: border-box;
+  margin: 0; padding: 6px 16px;
+  border: 2px solid transparent; border-radius: var(--borderRadiusMedium);
+}
+.view-switch-options .fui-Radio__input:enabled:hover ~ .fui-Radio__label { background: var(--colorNeutralBackground1Hover); }
+.view-switch-options .fui-Radio__input:enabled:active ~ .fui-Radio__label { background: var(--colorNeutralBackground1Pressed); }
+.view-switch-options .fui-Radio__input:enabled:checked ~ .fui-Radio__label {
+  background: var(--colorNeutralBackground1); color: var(--colorBrandForeground1);
+  border-bottom-color: var(--colorCompoundBrandStroke);
+  box-shadow: var(--shadow2); font-weight: var(--fontWeightSemibold);
+}
+.view-switch-options .fui-Radio__input:focus-visible ~ .fui-Radio__label {
+  outline: 2px solid var(--colorStrokeFocus2); outline-offset: -2px;
+}
+@media (pointer: coarse) {
+  .view-switch-options .fui-Radio__label { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .view-switch-options .fui-Radio__input:enabled:checked ~ .fui-Radio__label { border-color: Highlight; color: Highlight; }
+  .view-switch-options .fui-Radio__input:disabled ~ .fui-Radio__label { color: GrayText; }
+}

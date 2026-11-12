@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, MessageBar, MessageBarBody, Radio, RadioGroup, Select, Switch, Tab, TabList } from '@fluentui/react-components';
 import { ArrowClockwise20Regular, ArrowCounterclockwise20Regular, Home20Regular, ZoomIn20Regular, ZoomOut20Regular } from '@fluentui/react-icons';
 import { getEntity } from '../../data/pack.ts';
@@ -20,6 +20,7 @@ import { SCENE_BUILDERS } from './scenes.ts';
 import { SceneView, type OverlayLabel, type SceneApi } from './SceneView.tsx';
 import { Arch2D, Kpi2D, Map2D, TwinPlan2D } from './views2d.tsx';
 import { ViewSwitch, type ViewMode } from './ViewSwitch.tsx';
+import type { UnavailableReason } from './ContextualScene.tsx';
 import './threed.css';
 
 type QualityChoice = 'auto' | Quality;
@@ -41,18 +42,25 @@ function labelPos(o: SceneObject, model: SceneModel): Vec3 {
 }
 
 /** /twin3d: digital twin, 3D map with flows, KPI towers and AsIs/ToBe architecture, each in 3D and 2D (FR-020/021/040/066/217). */
-export function ThreeDScreen() {
+export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
+  fixedTab?: TabKey;
+  embedded?: boolean;
+  onUnavailable?: (reason: UnavailableReason) => void;
+} = {}) {
   const { t, lang, fmt } = useI18n();
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
   const reducedMotion = useReducedMotion();
   const q = route.query;
-  const tab: TabKey = (TABS as string[]).includes(q.get('tab') ?? '') ? (q.get('tab') as TabKey) : 'twin';
+  const tab: TabKey = fixedTab ?? ((TABS as string[]).includes(q.get('tab') ?? '') ? (q.get('tab') as TabKey) : 'twin');
   const archMode: ArchMode = q.get('arch') === 'asis' ? 'asis' : 'tobe';
   const [webgl] = useState(() => detectWebGL());
   const [engineFailed, setEngineFailed] = useState(false);
   const can3d = webgl && !engineFailed;
-  const mode: ViewMode = can3d && q.get('mode') !== '2d' ? '3d' : '2d';
+  const mode: ViewMode = can3d && (embedded ? q.get('mode') === '3d' : q.get('mode') !== '2d') ? '3d' : '2d';
+  useEffect(() => {
+    if (!can3d) onUnavailable?.(webgl ? 'engineFailed' : 'webglUnavailable');
+  }, [can3d, webgl, onUnavailable]);
   const [qualityChoice, setQualityChoice] = useState<QualityChoice>('auto');
   const [currentQuality, setCurrentQuality] = useState<Quality>('high');
   const [autoNote, setAutoNote] = useState(false);
@@ -78,7 +86,9 @@ export function ThreeDScreen() {
     }
   }, [tab, audience, archMode, coreCandidate]);
 
-  const selected = objectById(model, q.get('sel'))?.id ?? null;
+  const selected = objectById(model, q.get('sel'))?.id
+    ?? (embedded ? model.objects.find((o) => o.entityId === q.get('sel'))?.id : undefined)
+    ?? null;
   const selectedObj = objectById(model, selected);
   const text = useCallback((o: SceneObject) => labelText(o.label, t, lang), [t, lang]);
   const labels: OverlayLabel[] = useMemo(
@@ -86,7 +96,10 @@ export function ThreeDScreen() {
     [model, text],
   );
 
-  const select = (id: string | null) => replaceQuery({ sel: id ?? undefined });
+  const select = (id: string | null) => {
+    const object = objectById(model, id);
+    replaceQuery({ sel: (embedded ? object?.entityId ?? id : id) ?? undefined });
+  };
   const onPick = (id: string | null, anchor: Element) => {
     select(id);
     const o = objectById(model, id);
@@ -120,20 +133,24 @@ export function ThreeDScreen() {
   const kindText = (o: SceneObject) => t(`td.kind.${o.kind}`);
 
   return (
-    <div className="screen screen-td">
-      <PageHeader title={t('td.title')} subtitle={t('td.subtitle')} />
-      <TabList selectedValue={tab} onTabSelect={(_, d) => replaceQuery({ tab: String(d.value), sel: undefined })} aria-label={t('td.tabs')}>
-        {TABS.map((k) => <Tab key={k} value={k} data-testid={`td-tab-${k}`}>{t(`td.tab.${k}`)}</Tab>)}
-      </TabList>
+    <div className={embedded ? 'screen-td td-embedded' : 'screen screen-td'}>
+      {!embedded && (
+        <>
+          <PageHeader title={t('td.title')} subtitle={t('td.subtitle')} />
+          <TabList selectedValue={tab} onTabSelect={(_, d) => replaceQuery({ tab: String(d.value), sel: undefined })} aria-label={t('td.tabs')}>
+            {TABS.map((k) => <Tab key={k} value={k} data-testid={`td-tab-${k}`}>{t(`td.tab.${k}`)}</Tab>)}
+          </TabList>
+        </>
+      )}
 
-      {!can3d && (
+      {!can3d && !onUnavailable && (
         <MessageBar intent="warning" data-testid="td-fallback">
           <MessageBarBody id={fallbackId}>{t(webgl ? 'td.engineFailed' : 'td.webglUnavailable')}</MessageBarBody>
         </MessageBar>
       )}
 
       <div className="td-toolbar" role="group" aria-label={t('td.toolbar')}>
-        <ViewSwitch mode={mode} onChange={(m) => replaceQuery({ mode: m === '2d' ? '2d' : undefined })} disabled3d={!can3d} reasonId={fallbackId} />
+        {!embedded && <ViewSwitch mode={mode} onChange={(m) => replaceQuery({ mode: m === '2d' ? '2d' : undefined })} disabled3d={!can3d} reasonId={fallbackId} />}
         {tab === 'arch' && (
           <ArchSwitch value={archMode} onChange={(v) => replaceQuery({ arch: v === 'tobe' ? undefined : v, sel: undefined })} />
         )}

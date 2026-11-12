@@ -6,7 +6,8 @@ import { preloadScreensWhenIdle } from './app/modules.ts';
 import { exposeFeedDiagnostics } from './state/feed.ts';
 import { activatePack, packKey, packOrigin } from './data/pack.ts';
 import { deleteImportedPack, importedPackMeta, loadImportedPack } from './data/packStore.ts';
-import { onProjectDeleted, useProjects, type WorkTarget } from './state/projects.ts';
+import { onProjectDeleted, scopeOf, useProjects, type WorkTarget } from './state/projects.ts';
+import { activateBaseWithEdits, hasPackEdits, setBasePackRaw } from './state/packEdits.ts';
 import './styles.css';
 
 window.history.scrollRestoration = 'manual';
@@ -17,7 +18,9 @@ async function loadBasePack() {
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}data/pack.json`, { cache: 'no-store' });
     if (!res.ok || !res.headers.get('content-type')?.includes('json')) return;
-    const result = activatePack(await res.json(), { kind: 'file' });
+    const raw = await res.json();
+    const result = activatePack(raw, { kind: 'file' });
+    setBasePackRaw(raw);
     if (result.issues.length) console.warn('Customer pack: disabled items', result.issues);
   } catch (err) {
     console.warn('Customer pack not loaded; using the built-in sample.', err);
@@ -26,7 +29,11 @@ async function loadBasePack() {
 
 /** FR-302: a project with a pack imported in the app works on that pack; every other target uses the base pack. */
 async function loadProjectPack(target: WorkTarget) {
-  if (target.kind !== 'project' || !importedPackMeta(target.projectId)) return;
+  if (target.kind !== 'project' || !importedPackMeta(target.projectId)) {
+    // Data entered in the app for this target (workspace, discussion) on top of the shared base pack.
+    if (hasPackEdits(scopeOf(target))) activateBaseWithEdits(scopeOf(target));
+    return;
+  }
   const raw = await loadImportedPack(target.projectId);
   if (raw === null) throw new Error('Imported customer pack is missing from device storage');
   const result = activatePack(raw, { kind: 'imported', projectId: target.projectId });
@@ -44,7 +51,9 @@ export async function boot() {
   await loadProjectPack(useProjects.getState().target);
   // Screens read the pack once at load, so switching to a target with another pack restarts the app at the same URL.
   useProjects.subscribe((s, prev) => {
-    if (s.target !== prev.target && neededKey(s.target) !== packKey(packOrigin)) reloadAfterDeviceSave();
+    if (s.target === prev.target) return;
+    const overlay = hasPackEdits(scopeOf(s.target)) || hasPackEdits(scopeOf(prev.target));
+    if (neededKey(s.target) !== packKey(packOrigin) || (neededKey(s.target) === 'base' && overlay)) reloadAfterDeviceSave();
   });
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

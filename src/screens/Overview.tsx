@@ -13,6 +13,7 @@ import { PriorityMatrix } from '../charts/PriorityMatrix.tsx';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { isHidden } from '../ui/cardSpecs.ts';
+import { ContextualScene } from '../modules/threed/ContextualScene.tsx';
 
 const ROW_KEY = 'ranking';
 
@@ -40,11 +41,13 @@ export function Overview() {
         </ol>
         <Badge appearance="outline" color="informative">{t('overview.summaryNote')}</Badge>
       </Panel>
-      <Panel title={t('overview.kpis')} rationale="visual.kpi" className="span-full" testId="kpi-panel">
-        <div className="kpi-grid">
-          {kpis.map((k) => <KpiGauge key={k.id} kpi={k} />)}
-        </div>
-      </Panel>
+      <ContextualScene tab="kpi">
+        <Panel title={t('overview.kpis')} rationale="visual.kpi" testId="kpi-panel">
+          <div className="kpi-grid">
+            {kpis.map((k) => <KpiGauge key={k.id} kpi={k} />)}
+          </div>
+        </Panel>
+      </ContextualScene>
       <Panel title={t('overview.priority')} rationale="visual.priority" testId="priority-panel">
         <PriorityMatrix ranked={ranked} />
         <div className="weights">

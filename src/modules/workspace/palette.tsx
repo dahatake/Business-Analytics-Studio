@@ -55,7 +55,7 @@ export function CommandPalette() {
   }, [open]);
 
   const commands = useMemo<Command[]>(() => [
-    ...SCREENS.map((s) => ({ id: `nav:${s.path}`, label: t('ws.cmd.goto', { name: t(s.label) }), run: () => navigate(hrefFor(s.path)) })),
+    ...SCREENS.filter((s) => !s.hiddenFromNav).map((s) => ({ id: `nav:${s.path}`, label: t('ws.cmd.goto', { name: t(s.label) }), run: () => navigate(hrefFor(s.path)) })),
     ...WS_PERSONAS.map((p) => ({
       id: `persona:${p}`,
       label: t('ws.cmd.persona', { name: t(personaLabel(p)) }),

@@ -31,6 +31,12 @@ export function useScopeKpis(): KpiData {
   return useMemo(() => kpisForScope(value, scope), [value, scope]);
 }
 export const useAnalyses = createScopedStore<AnalysisData>('proj.analysis', (scope) => (scope === 'demo' ? demoAnalyses(loaded.pack) : { analyses: [], activeId: null }));
+/** Save generated analysis results to their project even when the user has not opened that project yet. */
+export function saveAnalysisForProject(projectId: string, value: AnalysisData) {
+  const store = useAnalyses.getState();
+  if (store.scope === projectId) store.set(value);
+  else localStorage.setItem(scopedKey(projectId, 'proj.analysis'), JSON.stringify(value));
+}
 /** Step deliverables (fields added on top of the pack and project data) and sign-offs. Every scope starts empty. */
 export const useDeliverables = createScopedStore<DeliverableData>('proj.deliverables', () => emptyDeliverables());
 

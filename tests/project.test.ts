@@ -18,6 +18,7 @@ import {
 import { parseDraft } from '../src/modules/project/mocks.ts';
 import type { AnalysisItem, MethodId, ProjectData } from '../src/modules/project/model.ts';
 import { exportProject, importProject } from '../src/modules/project/projectFile.ts';
+import { saveAnalysisForProject } from '../src/modules/project/stores.ts';
 import { scopedKey } from '../src/state/projects.ts';
 
 const pack = loadPack(samplePack);
@@ -336,6 +337,13 @@ describe('project file with ids (FR-139)', () => {
   beforeEach(() => {
     localStorage.clear();
     useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+  });
+
+  it('saves generated analyses to their project without changing the currently open demo', () => {
+    const data = demoAnalyses(samplePack);
+    saveAnalysisForProject('pj-generated', data);
+    expect(JSON.parse(localStorage.getItem(scopedKey('pj-generated', 'proj.analysis'))!)).toEqual(data);
+    expect(useProjects.getState().target).toEqual({ kind: 'demo' });
   });
 
   it('exports and re-imports a project with the same ids and data', () => {

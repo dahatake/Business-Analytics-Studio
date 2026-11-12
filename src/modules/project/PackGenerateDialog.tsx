@@ -23,6 +23,7 @@ import { D4Warning, TokenTable, yenFine } from '../ai/AiCommon.tsx';
 import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
+import { saveAnalysisForProject } from './stores.ts';
 import {
   DEFAULT_WORKIQ_ROUNDS, generatePack, materialSources, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt,
   type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
@@ -35,7 +36,7 @@ export type PackGenTarget =
   | { kind: 'project'; projectId: string }
   | { kind: 'new'; companyName: string; projectName: string };
 
-const STEPS: StepId[] = ['collect', 'foundation', 'business', 'verify', 'finalize'];
+const STEPS: StepId[] = ['collect', 'foundation', 'business', 'verify', 'analysis', 'finalize'];
 /** PARAM-142 applies to each attached file, as for imports. */
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -43,7 +44,7 @@ type Phase =
   | { kind: 'form' }
   | { kind: 'running'; startedAt: number }
   | { kind: 'saved'; result: GenResult; projectId: string }
-  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed'; detail: string; costJpy: number | null; tokens: TokenTotals };
+  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed' | 'analysisSaveFailed'; detail: string; costJpy: number | null; tokens: TokenTotals };
 
 function todayJst(): string {
   return jstDay(new Date());
@@ -214,7 +215,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       calls: plan.maxCalls,
       perCall: pf.estimatedCostJpy,
       max: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * plan.maxCalls,
-      min: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * 2,
+      min: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * plan.minCalls,
       spent,
       tokens: pf.estimatedInputTokens,
       inputTooLarge: pf.budget.reasons.includes('inputTooLarge'),
@@ -341,6 +342,14 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       rollback(created);
       if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
       setPhase({ kind: 'error', code: 'saveFailed', detail: (err as Error).message, costJpy: result.report.costJpy, tokens });
+      return;
+    }
+    try {
+      saveAnalysisForProject(projectId, result.analysis);
+    } catch (err) {
+      const tokens = runTokens();
+      if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
+      setPhase({ kind: 'error', code: 'analysisSaveFailed', detail: (err as Error).message, costJpy: result.report.costJpy, tokens });
       return;
     }
     rebindLedgerScope(runScope, projectId);

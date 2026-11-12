@@ -19,59 +19,85 @@ import { EntityRef } from '../../ui/EntityRef.tsx';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import type { ComponentId } from './personas.ts';
 import { useHostState } from './store.ts';
+import { usePackVersion } from '../../state/packEdits.ts';
+import { EntryBar } from '../../ui/entry/EntryBar.tsx';
 
 function useRanked() {
   const audience = useSettings((s) => s.audience);
-  return useMemo(() => rankIssues(entitiesOf('issue').filter((i) => !isHidden(i, audience)), DEFAULT_WEIGHTS), [audience]);
+  const version = usePackVersion((s) => s.version);
+  // version: re-read the live pack after an entry is saved.
+  return useMemo(() => rankIssues(entitiesOf('issue').filter((i) => !isHidden(i, audience)), DEFAULT_WEIGHTS), [audience, version]);
 }
 
 function SummaryHost() {
-  const { lang } = useI18n();
+  const { lang, t } = useI18n();
   const audience = useSettings((s) => s.audience);
-  const summary = useMemo(() => executiveSummary(lang, audience), [lang, audience]);
+  const version = usePackVersion((s) => s.version);
+  const summary = useMemo(() => executiveSummary(lang, audience), [lang, audience, version]);
   return (
-    <ol className="summary-list">
-      {summary.map((s, i) => <li key={i}>{s}</li>)}
-    </ol>
+    <>
+      <EntryBar kinds={['issue', 'kpi', 'solution']} testId="entry-bar-summary" />
+      <p className="muted entry-note">{t('entry.summaryNote')}</p>
+      <ol className="summary-list">
+        {summary.map((s, i) => <li key={i}>{s}</li>)}
+      </ol>
+    </>
   );
 }
 
 function MatrixHost() {
-  return <PriorityMatrix ranked={useRanked()} />;
+  return (
+    <>
+      <EntryBar kinds={['issue']} testId="entry-bar-matrix" />
+      <PriorityMatrix ranked={useRanked()} />
+    </>
+  );
 }
 
 function RankingHost() {
   const { t } = useI18n();
   const ranked = useRanked();
   return (
-    <ol className="ranking" aria-label={t('ws.comp.ranking')}>
-      {ranked.map((r) => (
-        <li key={r.issue.id} className="ranking-row" data-rank={r.rank}>
-          <span className="ranking-rank" aria-hidden>{r.rank}</span>
-          <EntityRef id={r.issue.id} />
-          <span className="ranking-score">
-            <span className="ranking-bar" style={{ width: `${r.score}%` }} aria-hidden />
-            <span>{t('priority.score', { score: r.score })}</span>
-          </span>
-        </li>
-      ))}
-    </ol>
+    <>
+      <EntryBar kinds={['issue']} testId="entry-bar-ranking" />
+      <ol className="ranking" aria-label={t('ws.comp.ranking')}>
+        {ranked.map((r) => (
+          <li key={r.issue.id} className="ranking-row" data-rank={r.rank}>
+            <span className="ranking-rank" aria-hidden>{r.rank}</span>
+            <EntityRef id={r.issue.id} />
+            <span className="ranking-score">
+              <span className="ranking-bar" style={{ width: `${r.score}%` }} aria-hidden />
+              <span>{t('priority.score', { score: r.score })}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }
 
 function KpiHost() {
   const audience = useSettings((s) => s.audience);
+  usePackVersion((s) => s.version);
   const kpis = entitiesOf('kpi').filter((k) => !isHidden(k, audience));
   return (
-    <div className="kpi-grid">
-      {kpis.map((k) => <KpiGauge key={k.id} kpi={k} />)}
-    </div>
+    <>
+      <EntryBar kinds={['kpi']} testId="entry-bar-kpi" />
+      <div className="kpi-grid">
+        {kpis.map((k) => <KpiGauge key={k.id} kpi={k} />)}
+      </div>
+    </>
   );
 }
 
 function ChainHost() {
   const { chainSel, setChainSel } = useHostState();
-  return <ChainDiagram selected={chainSel} onSelect={(id) => setChainSel(chainSel === id ? null : id)} />;
+  return (
+    <>
+      <EntryBar kinds={['customer', 'deal', 'deliverable', 'invoice']} selectedId={chainSel} testId="entry-bar-chain" />
+      <ChainDiagram selected={chainSel} onSelect={(id) => setChainSel(chainSel === id ? null : id)} />
+    </>
+  );
 }
 
 export interface HostedComponent {
@@ -82,7 +108,7 @@ export interface HostedComponent {
   View: ComponentType;
 }
 
-/** Existing app views reused read-only as workspace components. */
+/** Existing app views reused as workspace components; the data views carry an entry bar to add and edit pack data. */
 export const COMPONENTS: Record<ComponentId, HostedComponent> = {
   summary: { label: 'ws.comp.summary', Icon: TextBulletListSquare16Regular, accent: '#4F9CF9', View: SummaryHost },
   matrix: { label: 'ws.comp.matrix', Icon: Grid16Regular, accent: '#B57BFF', View: MatrixHost },

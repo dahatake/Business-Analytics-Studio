@@ -18,6 +18,8 @@ import { opsJa } from './ops.ja.ts';
 import { opsEn } from './ops.en.ts';
 import { dlvJa } from './dlv.ja.ts';
 import { dlvEn } from './dlv.en.ts';
+import { entryJa } from './entry.ja.ts';
+import { entryEn } from './entry.en.ts';
 
 /** Feature-module dictionaries. Keys are prefixed with the module name, so modules never collide (checked by tests). */
 export const moduleDictionaries = {
@@ -31,7 +33,8 @@ export const moduleDictionaries = {
   ai: { ja: aiJa, en: aiEn },
   ops: { ja: opsJa, en: opsEn },
   dlv: { ja: dlvJa, en: dlvEn },
+  entry: { ja: entryJa, en: entryEn },
 } as const;
 
-export const modulesJa = { ...wsJa, ...showJa, ...inkJa, ...tdJa, ...graphJa, ...projJa, ...ucJa, ...aiJa, ...opsJa, ...dlvJa };
-export const modulesEn: Record<keyof typeof modulesJa, string> = { ...wsEn, ...showEn, ...inkEn, ...tdEn, ...graphEn, ...projEn, ...ucEn, ...aiEn, ...opsEn, ...dlvEn };
+export const modulesJa = { ...wsJa, ...showJa, ...inkJa, ...tdJa, ...graphJa, ...projJa, ...ucJa, ...aiJa, ...opsJa, ...dlvJa, ...entryJa };
+export const modulesEn: Record<keyof typeof modulesJa, string> = { ...wsEn, ...showEn, ...inkEn, ...tdEn, ...graphEn, ...projEn, ...ucEn, ...aiEn, ...opsEn, ...dlvEn, ...entryEn };

@@ -1,0 +1,11 @@
+.entry-surface { max-width: min(640px, 96vw); }
+.entry-form { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; overflow-y: auto; }
+.entry-ref { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.entry-ref > .fui-Field { align-self: stretch; }
+.entry-refs { border: 1px solid var(--colorNeutralStroke1, #666); border-radius: 6px; padding: 8px 12px; margin: 0; }
+.entry-refs legend { padding: 0 4px; font-weight: 600; }
+.entry-refs-list { display: flex; flex-direction: column; max-height: 180px; overflow-y: auto; }
+.entry-error { color: var(--colorPaletteRedForeground1, #d13438); margin: 4px 0; }
+.entry-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.entry-bar .fui-Select { min-width: 180px; max-width: 260px; }
+.entry-note { margin: 0 0 8px; font-size: 12px; }

@@ -18,6 +18,7 @@ export interface ScreenDef {
   label: MessageKey;
   Icon: FluentIcon;
   group: NavGroup;
+  hiddenFromNav?: boolean;
   component: ComponentType | LazyExoticComponent<ComponentType>;
 }
 
@@ -47,7 +48,7 @@ export const SCREENS: ScreenDef[] = [
   { path: '/analysis', label: 'proj.nav.analysis', Icon: DataPie24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/project/AnalysisScreen.tsx'), 'AnalysisScreen') },
   { path: '/relations', label: 'nav.relations', Icon: Diagram24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Relations.tsx'), 'Relations') },
   { path: '/graph', label: 'graph.title', Icon: Organization24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/graph/GraphScreen.tsx'), 'GraphScreen') },
-  { path: '/twin3d', label: 'td.title', Icon: Cube24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/threed/ThreeDScreen.tsx'), 'ThreeDScreen') },
+  { path: '/twin3d', label: 'td.title', Icon: Cube24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../modules/threed/ThreeDScreen.tsx'), 'ThreeDScreen') },
   { path: '/map', label: 'nav.map', Icon: Map24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/MapScreen.tsx'), 'MapScreen') },
   { path: '/flows', label: 'nav.flows', Icon: ArrowFlowDiagonalUpRight24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Flows.tsx'), 'Flows') },
   { path: '/plan', label: 'nav.plan', Icon: GanttChart24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Plan.tsx'), 'Plan') },
@@ -59,6 +60,7 @@ export const SCREENS: ScreenDef[] = [
   { path: '/board', label: 'ink.title', Icon: Board24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ink/BoardScreen.tsx'), 'BoardScreen') },
   { path: '/usecases', label: 'uc.title', Icon: BookOpen24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/usecases/UseCasesScreen.tsx'), 'UseCasesScreen') },
   { path: '/assistant', label: 'ai.title', Icon: Bot24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ai/AssistantScreen.tsx'), 'AssistantScreen') },
+  { path: '/ai-policy', label: 'ai.policy.nav', Icon: KeyMultiple24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ai/AiPolicyScreen.tsx'), 'AiPolicyScreen') },
   { path: '/show', label: 'show.title', Icon: SlideText24Regular, group: 'present', component: lazyNamed(() => import('../modules/show/ShowScreen.tsx'), 'ShowScreen') },
   { path: '/projects', label: 'proj.title', Icon: Briefcase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/ProjectsScreen.tsx'), 'ProjectsScreen') },
   { path: '/data', label: 'proj.nav.data', Icon: DocumentDatabase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/PackDataScreen.tsx'), 'PackDataScreen') },

@@ -217,6 +217,7 @@ export function AssistantScreen() {
   return (
     <div className="screen ai-screen">
       <PageHeader title={t('ai.title')} subtitle={t('ai.subtitle')} />
+      <p><a href={hrefFor('/ai-policy')}>{t('ai.policy.open')}</a></p>
       <SearchAndChat />
       <div className="grid-2">
         <UsageAnalysis />

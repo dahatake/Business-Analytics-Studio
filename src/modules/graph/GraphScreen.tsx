@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Field, Radio, RadioGroup, Switch, Tab, TabList, Toolbar, ToolbarButton, ToolbarDivider, Tooltip } from '@fluentui/react-components';
+import { Field, Radio, RadioGroup, Select, Switch, Tab, TabList, Toolbar, ToolbarButton, ToolbarDivider, Tooltip } from '@fluentui/react-components';
 import {
   ArrowDown16Regular, ArrowLeft16Regular, ArrowRight16Regular, ArrowUp16Regular, FullScreenMaximize16Regular,
   FullScreenMinimize16Regular, ZoomFit16Regular, ZoomIn16Regular, ZoomOut16Regular,
@@ -23,10 +23,16 @@ import { Diagram2D } from './Diagram2D.tsx';
 import { Diagram3D } from './Diagram3D.tsx';
 import { InfoCard, type InfoCardData } from './InfoCard.tsx';
 import { SuitabilityPanel } from './SuitabilityPanel.tsx';
+import { ContextualScene } from '../threed/ContextualScene.tsx';
+import { ViewSwitch } from '../threed/ViewSwitch.tsx';
 import './graph.css';
 
-type Tabs = GraphView | 'criteria';
-const TABS: Tabs[] = ['relations', 'twin', 'spatial', 'criteria'];
+type Tabs = GraphView | 'digitalTwin' | 'architecture' | 'criteria';
+const TABS: Tabs[] = ['relations', 'twin', 'spatial', 'digitalTwin', 'architecture', 'criteria'];
+const TAB_LABELS: Record<Tabs, MessageKey> = {
+  relations: 'graph.tab.relations', twin: 'graph.tab.twin', spatial: 'graph.tab.spatial',
+  digitalTwin: 'td.tab.twin', architecture: 'td.tab.arch', criteria: 'graph.tab.criteria',
+};
 const WORLDS: WorldFilter[] = ['both', 'real', 'digital'];
 const LEGEND_KINDS = ['site', 'person', 'customer', 'product', 'deal', 'deliverable', 'invoice', 'issue', 'cause', 'solution', 'kpi', 'initiative', 'supplier', 'source'] as const;
 
@@ -37,7 +43,8 @@ export function GraphScreen() {
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
   const tab = pick(route.query.get('view'), TABS, 'relations');
-  const view: GraphView = tab === 'criteria' ? 'relations' : tab;
+  const sceneTab = tab === 'digitalTwin' ? 'twin' : tab === 'architecture' ? 'arch' : null;
+  const view: GraphView = tab === 'twin' || tab === 'spatial' ? tab : 'relations';
   const format = pick(route.query.get('format'), FORMATS, 'graph');
   const level = pick(route.query.get('level'), LEVELS, 'element');
   const world = pick(route.query.get('world'), WORLDS, 'both');
@@ -161,18 +168,23 @@ export function GraphScreen() {
   return (
     <div className="screen screen-graph">
       <PageHeader title={t('graph.title')} subtitle={t('graph.subtitle')} />
-      <TabList selectedValue={tab} onTabSelect={(_, d) => { cardController.closeNow(); replaceQuery({ view: String(d.value) }); }} aria-label={t('graph.viewLabel')}>
-        {TABS.map((v) => <Tab key={v} value={v}>{t(`graph.tab.${v}`)}</Tab>)}
-      </TabList>
+      <div className="graph-tabs span-full">
+        <TabList selectedValue={tab} onTabSelect={(_, d) => { cardController.closeNow(); replaceQuery({ view: String(d.value) }); }} aria-label={t('graph.viewLabel')}>
+          {TABS.map((v) => <Tab key={v} value={v}>{t(TAB_LABELS[v])}</Tab>)}
+        </TabList>
+      </div>
+      <div className="graph-view-select span-full">
+        <Field label={t('graph.viewLabel')}>
+          <Select value={tab} onChange={(_, d) => { cardController.closeNow(); replaceQuery({ view: d.value }); }}>
+            {TABS.map((v) => <option key={v} value={v}>{t(TAB_LABELS[v])}</option>)}
+          </Select>
+        </Field>
+      </div>
 
-      {tab === 'criteria' ? <SuitabilityPanel ext={ext.ext} /> : (
+      {tab === 'criteria' ? <SuitabilityPanel ext={ext.ext} /> : sceneTab ? <ContextualScene key={sceneTab} tab={sceneTab} /> : (
         <>
           <div className="graph-controls-bar">
-            <Field label={t('graph.format')}>
-              <RadioGroup layout="horizontal" value={format} onChange={(_, d) => replaceQuery({ format: d.value })} data-testid="graph-format">
-                {FORMATS.map((f) => <Radio key={f} value={f} label={t(`graph.format.${f}`)} />)}
-              </RadioGroup>
-            </Field>
+            <ViewSwitch mode={format} onChange={(value) => replaceQuery({ format: value })} includeGraph testId="graph-format" />
             <Field label={t('graph.level')}>
               <RadioGroup layout="horizontal" value={level} onChange={(_, d) => replaceQuery({ level: d.value })} data-testid="graph-level">
                 {LEVELS.map((l) => <Radio key={l} value={l} label={t(`graph.level.${l}`)} />)}

@@ -120,7 +120,7 @@ function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'spl
     try {
       const ents = [...entitiesOf('issue'), ...entitiesOf('solution')];
       const { response, items } = await requestAnalysisDraft(analysis.method, lang, ents);
-      update((a) => ({ ...a, items: [...a.items, ...items.map((d) => ({ id: newId('item'), category: d.category, text: d.text, score: clampScore(d.score), weight: 1, author: 'ai' as const }))] }));
+      update((a) => ({ ...a, items: [...a.items, ...items.map((d) => ({ id: newId('item'), category: d.category, text: d.text, score: clampScore(d.score), weight: 1, author: 'ai' as const, mock: response.mode === 'mock' }))] }));
       setDraftNote({ count: items.length, mock: response.mode === 'mock' });
     } finally {
       setBusy(false);
@@ -199,7 +199,7 @@ function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'spl
                       onChange={(_, d) => { const n = num(d.value, WEIGHT_MIN, WEIGHT_MAX); if (n !== null) updateItem(i.id, { weight: n }); }}
                     />
                   </td>
-                  <td><AuthorBadge author={i.author} mock={i.author === 'ai'} /></td>
+                  <td><AuthorBadge author={i.author} mock={i.mock ?? i.author === 'ai'} /></td>
                   <td>
                     <Button size="small" appearance="subtle" icon={<Delete20Regular />} aria-label={t('proj.an.itemDelete', { n: idx + 1 })} onClick={() => update((a) => ({ ...a, items: a.items.filter((x) => x.id !== i.id) }))} />
                   </td>

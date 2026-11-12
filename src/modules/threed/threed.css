@@ -1,5 +1,7 @@
 /* threed module (/twin3d). Colours for text use Fluent tokens; the 3D stage itself is a fixed dark scene. */
 .screen-td > * { grid-column: 1 / -1; }
+.td-embedded { display: grid; gap: 16px; min-width: 0; }
+.td-embedded > * { min-width: 0; }
 
 .td-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
 .td-viewswitch, .td-control { display: flex; align-items: center; gap: 8px; }

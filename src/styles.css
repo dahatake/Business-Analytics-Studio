@@ -84,6 +84,16 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
 .lang-option[aria-pressed='true'] { background: var(--colorBrandBackground); color: var(--colorNeutralForegroundOnBrand); font-weight: var(--fontWeightSemibold); }
 .lang-option:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 
+@media (forced-colors: active) {
+  .topbar [data-testid='sample-pack-badge'] { color: CanvasText; background: Canvas; border-color: CanvasText; }
+  .topbar button:not(:disabled), .topbar .proj-target-prefix, .topbar .proj-target-name { color: ButtonText; }
+  .lang-option { border: 2px solid transparent; }
+  .lang-option[aria-pressed] { color: ButtonText; }
+  .lang-option[aria-pressed='true'] { border-color: Highlight; }
+  .brand-button:focus-visible, .lang-option:focus-visible { outline-color: Highlight; }
+  .commandbar button[aria-pressed='true']:not(:disabled) { border: 2px solid Highlight; }
+}
+
 /* ---------- Live feed ---------- */
 .live-feed {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

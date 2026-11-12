@@ -50,6 +50,65 @@ async function chooseTarget(page: Page, name: string | RegExp) {
 }
 
 test.describe('project module', () => {
+  for (const scheme of ['light', 'dark'] as const) {
+    test(`header preserves selected and focused states in ${scheme} forced colors`, async ({ page }) => {
+      await page.emulateMedia({ forcedColors: 'active', colorScheme: scheme });
+      await go(page, '/relations', 'en');
+      const current = page.locator('.proj-step[data-step="define"]');
+      const other = page.locator('.proj-step[data-step="asis"]');
+      const english = page.getByRole('button', { name: 'English', exact: true });
+      const japanese = page.getByRole('button', { name: '日本語', exact: true });
+      const motion = page.getByTestId('motion-toggle');
+      const systemColors = await page.evaluate(() => {
+        const probe = document.createElement('span');
+        document.body.append(probe);
+        const color = (value: string) => {
+          probe.style.color = value;
+          return getComputedStyle(probe).color;
+        };
+        const result = { highlight: color('Highlight'), buttonText: color('ButtonText'), canvasText: color('CanvasText') };
+        probe.remove();
+        return result;
+      });
+      const border = (selector: import('@playwright/test').Locator) => selector.evaluate((el) => getComputedStyle(el).borderTopColor);
+
+      await expect(english).toHaveAttribute('aria-pressed', 'true');
+      await expect(motion).toHaveAttribute('aria-pressed', 'true');
+      await expect(current).toHaveAttribute('aria-current', 'step');
+      expect(await border(current)).toBe(systemColors.highlight);
+      expect(await border(other)).not.toBe(systemColors.highlight);
+      expect(await border(english)).toBe(systemColors.highlight);
+      expect(await border(japanese)).not.toBe(systemColors.highlight);
+      expect(await border(motion)).toBe(systemColors.highlight);
+      await expect(motion).toHaveCSS('border-top-width', '2px');
+      for (const element of [page.getByTestId('sample-pack-badge'), page.locator('.proj-target-prefix'), page.locator('.proj-target-name')]) {
+        expect([systemColors.buttonText, systemColors.canvasText]).toContain(await element.evaluate((el) => getComputedStyle(el).color));
+      }
+
+      await english.focus();
+      const outline = await english.evaluate((el) => ({ style: getComputedStyle(el).outlineStyle, color: getComputedStyle(el).outlineColor }));
+      expect(outline.style).not.toBe('none');
+      expect(outline.color).toBe(systemColors.highlight);
+      await motion.click();
+      await expect(motion).toHaveAttribute('aria-pressed', 'false');
+      await expect(motion).toHaveCSS('border-top-width', '1px');
+      await page.mouse.move(0, 0);
+      await english.focus();
+      expect(await border(motion)).not.toBe(systemColors.highlight);
+      await other.click();
+      await expect(other).toHaveAttribute('aria-current', 'step');
+      expect(await border(other)).toBe(systemColors.highlight);
+      expect(await border(current)).not.toBe(systemColors.highlight);
+      await japanese.click();
+      await expect(japanese).toHaveAttribute('aria-pressed', 'true');
+      expect(await border(japanese)).toBe(systemColors.highlight);
+      expect(await border(english)).not.toBe(systemColors.highlight);
+      const accessibility = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+        .withTags(TAGS).include('header.topbar').analyze();
+      expect(accessibility.violations).toEqual([]);
+    });
+  }
+
   test('start-up: selection screen with the sample company and registered projects, then the project screen (FR-144, FR-267)', async ({ page }) => {
     await open(page, '/home', { skipLaunch: false });
     await expect(page.getByTestId('launch-screen')).toBeVisible();

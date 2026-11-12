@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
+import { feature } from 'topojson-client';
+import type { Topology, GeometryCollection } from 'topojson-specification';
+import type { FeatureCollection, Geometry } from 'geojson';
+import countriesTopo from 'world-atlas/countries-50m.json';
 import { visibleLabels, labelWidthPx, type LabelCandidate } from '../src/screens/mapLabels.ts';
+import { buildMapView, projectedVisible } from '../src/screens/MapScreen.tsx';
+
+describe('national map country culling', () => {
+  it('the lon/lat prefilter keeps exactly the countries the projected-bounds rule keeps', () => {
+    const topo = countriesTopo as unknown as Topology<{ countries: GeometryCollection }>;
+    const all = (feature(topo, topo.objects.countries) as FeatureCollection<Geometry, { name: string }>).features;
+    const view = buildMapView(false);
+    const exact = all.filter((f) => projectedVisible(view.geoPath, f));
+    expect(view.visibleCountries.map((f) => f.id)).toEqual(exact.map((f) => f.id));
+    expect(exact.length).toBeGreaterThan(3);
+    expect(view.paths).toEqual(exact.map((f) => view.geoPath(f) ?? ''));
+  });
+});
 
 const c = (id: string, x: number, y: number, priority: number, width = 100): LabelCandidate => ({ id, x, y, width, height: 16, priority });
 

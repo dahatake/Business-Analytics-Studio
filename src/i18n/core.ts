@@ -59,6 +59,13 @@ export function hasGaps(g: TranslationGaps): boolean {
 }
 
 export function makeFormatters(lang: Lang) {
+  // Intl constructors are costly and every useI18n() caller used to build its own set; the formatters are stateless.
+  let cached = formatterCache.get(lang);
+  if (!cached) formatterCache.set(lang, cached = buildFormatters(lang));
+  return cached;
+}
+
+function buildFormatters(lang: Lang) {
   const locale = lang === 'ja' ? 'ja-JP' : 'en-US';
   const nf = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
   const nf0 = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
@@ -81,4 +88,5 @@ export function makeFormatters(lang: Lang) {
     time: (d: Date) => tf.format(d),
   };
 }
-export type Formatters = ReturnType<typeof makeFormatters>;
+export type Formatters = ReturnType<typeof buildFormatters>;
+const formatterCache = new Map<Lang, Formatters>();

@@ -28,18 +28,73 @@ const japan = countries.features.find((f) => String(f.id) === JAPAN_ID) as Featu
 /** Japan-only packs keep the detailed national view; any site abroad switches to the world map. */
 export const inJapan = (s: { lat: number; lon: number }) => s.lat >= 20 && s.lat <= 46.5 && s.lon >= 122 && s.lon <= 154;
 
-function mapView(world: boolean) {
+export interface MapView {
+  projection: d3.GeoProjection;
+  geoPath: d3.GeoPath;
+  visibleCountries: Feature<Geometry, { name: string }>[];
+  /** Path data parallel to visibleCountries, built once: zooming re-renders the map and must not re-project 50m outlines. */
+  paths: string[];
+  japanOutline: string;
+}
+
+/** The exact rule: a country is drawn when its projected bounds overlap the map. */
+export function projectedVisible(geoPath: d3.GeoPath, f: Feature<Geometry>) {
+  const [[x0, y0], [x1, y1]] = geoPath.bounds(f);
+  return x1 > 0 && x0 < W && y1 > 0 && y0 < H && Number.isFinite(x0);
+}
+
+function lonLatBox(g: Geometry | null): [number, number, number, number] | null {
+  if (!g || (g.type !== 'Polygon' && g.type !== 'MultiPolygon')) return null;
+  const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+  let lon0 = Infinity, lat0 = Infinity, lon1 = -Infinity, lat1 = -Infinity;
+  for (const poly of polys) for (const ring of poly) for (const [lon, lat] of ring) {
+    if (lon! < lon0) lon0 = lon!;
+    if (lon! > lon1) lon1 = lon!;
+    if (lat! < lat0) lat0 = lat!;
+    if (lat! > lat1) lat1 = lat!;
+  }
+  return Number.isFinite(lon0) ? [lon0, lat0, lon1, lat1] : null;
+}
+
+/** Degrees added around the visible area so great-circle edges between vertices can never be cut off wrongly. */
+const PREFILTER_MARGIN_DEG = 2;
+
+/**
+ * Same result as filtering with projectedVisible, but Mercator maps longitude and latitude independently, so countries
+ * whose vertices all lie well outside the visible lon/lat rectangle are skipped without projecting their outlines.
+ */
+export function visibleOnMercator(projection: d3.GeoProjection, geoPath: d3.GeoPath, features: Feature<Geometry, { name: string }>[]) {
+  const [lonMin, latMax] = projection.invert!([0, 0])!;
+  const [lonMax, latMin] = projection.invert!([W, H])!;
+  return features.filter((f) => {
+    const box = lonLatBox(f.geometry);
+    if (box && box[2] - box[0] < 180) {
+      const [lon0, lat0, lon1, lat1] = box;
+      if (lon1 < lonMin - PREFILTER_MARGIN_DEG || lon0 > lonMax + PREFILTER_MARGIN_DEG
+        || lat1 < latMin - PREFILTER_MARGIN_DEG || lat0 > latMax + PREFILTER_MARGIN_DEG) return false;
+    }
+    return projectedVisible(geoPath, f);
+  });
+}
+
+export function buildMapView(world: boolean): MapView {
   const projection = world
     ? d3.geoNaturalEarth1().fitExtent([[10, 10], [W - 10, H - 10]], { type: 'Sphere' } as unknown as Feature)
     : d3.geoMercator().fitExtent([[30, 20], [W - 30, H - 20]], {
       type: 'Feature', properties: {}, geometry: { type: 'MultiPoint', coordinates: [[129.5, 31], [142.5, 41.5]] },
     } as Feature);
   const geoPath = d3.geoPath(projection);
-  const visibleCountries = world ? countries.features : countries.features.filter((f) => {
-    const [[x0, y0], [x1, y1]] = geoPath.bounds(f);
-    return x1 > 0 && x0 < W && y1 > 0 && y0 < H && Number.isFinite(x0);
-  });
-  return { projection, geoPath, visibleCountries };
+  const visibleCountries = world ? countries.features : visibleOnMercator(projection, geoPath, countries.features);
+  const paths = visibleCountries.map((f) => geoPath(f) ?? '');
+  return { projection, geoPath, visibleCountries, paths, japanOutline: !world && japan ? geoPath(japan) ?? '' : '' };
+}
+
+const mapViews = new Map<boolean, MapView>();
+/** The projection and outlines depend only on the static atlas and the view, so each view is built once per session. */
+function mapView(world: boolean): MapView {
+  let view = mapViews.get(world);
+  if (!view) mapViews.set(world, view = buildMapView(world));
+  return view;
 }
 
 type Site = EntityOf<'site'>;
@@ -60,7 +115,7 @@ export function MapScreen() {
   const ROLE_PRIORITY = { hq: 3, plant: 2, dc: 1, office: 1 } as const;
   const sites = entitiesOf('site');
   const world = sites.some((s) => !inJapan(s));
-  const { projection, geoPath, visibleCountries } = useMemo(() => mapView(world), [world]);
+  const { projection, visibleCountries, paths, japanOutline } = useMemo(() => mapView(world), [world]);
   // On the world map, countries with a site are highlighted (Japan on the national map).
   const siteKey = sites.map((s) => `${s.lon},${s.lat}`).join(';');
   const homeIds = useMemo(() => new Set(world
@@ -118,10 +173,10 @@ export function MapScreen() {
           <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="geo-map" role="group" aria-label={t('map.aria')}>
             <rect width={W} height={H} className="geo-sea" />
             <g ref={viewportRef}>
-              {visibleCountries.map((f) => (
-                <path key={String(f.id)} d={geoPath(f) ?? ''} className={homeIds.has(String(f.id)) ? 'geo-land home' : 'geo-land'} />
+              {visibleCountries.map((f, i) => (
+                <path key={String(f.id)} d={paths[i]} className={homeIds.has(String(f.id)) ? 'geo-land home' : 'geo-land'} />
               ))}
-              {!world && japan && <path d={geoPath(japan) ?? ''} className="geo-outline" />}
+              {!world && japan && <path d={japanOutline} className="geo-outline" />}
               {showFlows && (
                 <g className="geo-flows" aria-hidden>
                   {flowLines.map((l) => {

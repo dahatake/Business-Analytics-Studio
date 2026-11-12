@@ -10,6 +10,7 @@ import {
   semanticOf, topN, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP, zoomBy, defaultLayer,
 } from '../src/modules/graph/model.ts';
 import { buildScene, type SceneInput } from '../src/modules/graph/scene.ts';
+import { layoutForce } from '../src/modules/graph/layout.ts';
 
 const ALL_RELATION_TYPES: RelationType[] = [
   'places', 'includes', 'produces', 'billedAs', 'owns', 'causedBy', 'resolves', 'improves', 'measuredBy', 'implements',
@@ -216,6 +217,15 @@ describe('FR-237 semantic zoom', () => {
     expect(twinEl.edges.some((e) => e.flow === 'data')).toBe(true);
     expect(twinEl.edges.some((e) => e.flow === 'control')).toBe(true);
     expect(twinEl.lanes.map((l) => l.label)).toContain('Insights (analytics, KPIs, forecasts)');
+  });
+  it('force layout is reused for an equal scene without sharing mutable positions', () => {
+    const first = layoutForce(buildScene(inp('element')));
+    first.get('kpi-defect')!.x = 1e9;
+    first.delete('kpi-defect');
+    const again = layoutForce(buildScene(inp('element')));
+    expect(again.get('kpi-defect')!.x).not.toBe(1e9);
+    expect(layoutForce(buildScene(inp('element')))).toEqual(again);
+    expect(layoutForce(buildScene(inp('overview'))).has('kpi-defect')).toBe(false);
   });
 });
 

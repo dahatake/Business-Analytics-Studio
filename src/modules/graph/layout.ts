@@ -73,8 +73,26 @@ export function layout2D(scene: Scene): Map<string, Pos> {
 
 interface FNode extends d3.SimulationNodeDatum { id: string; lane: number }
 
+const FORCE_CACHE_SIZE = 8;
+const forceCache = new Map<string, Map<string, Pos>>();
+
 /** Node-link "Graph" format: a static force layout (computed synchronously, never animated). */
 export function layoutForce(scene: Scene): Map<string, Pos> {
+  // d3-force is deterministic (seeded random source), so the same input always settles to the same layout.
+  // Switching Graph ⇄ 3D or revisiting the screen reuses it instead of re-running a few hundred ticks.
+  const key = `${scene.level}|${scene.nodes.map((n) => `${n.id}:${n.lane}`).join(',')}|${scene.edges.map((e) => `${e.source}>${e.target}`).join(',')}`;
+  let cached = forceCache.get(key);
+  if (cached) {
+    forceCache.delete(key);
+  } else {
+    cached = computeForceLayout(scene);
+    if (forceCache.size >= FORCE_CACHE_SIZE) forceCache.delete(forceCache.keys().next().value!);
+  }
+  forceCache.set(key, cached);
+  return new Map([...cached].map(([id, p]) => [id, { ...p }]));
+}
+
+function computeForceLayout(scene: Scene): Map<string, Pos> {
   const nodes: FNode[] = scene.nodes.map((n) => ({ id: n.id, lane: n.lane }));
   const ids = new Set(nodes.map((n) => n.id));
   const links = scene.edges.filter((e) => ids.has(e.source) && ids.has(e.target) && e.source !== e.target).map((e) => ({ source: e.source, target: e.target }));

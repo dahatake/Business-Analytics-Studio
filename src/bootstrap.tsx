@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { reloadAfterDeviceSave } from './data/deviceStorage.ts';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
+import { preloadScreensWhenIdle } from './app/modules.ts';
 import { exposeFeedDiagnostics } from './state/feed.ts';
 import { activatePack, packKey, packOrigin } from './data/pack.ts';
 import { deleteImportedPack, importedPackMeta, loadImportedPack } from './data/packStore.ts';
@@ -50,4 +51,5 @@ export async function boot() {
       <App />
     </StrictMode>,
   );
+  preloadScreensWhenIdle();
 }

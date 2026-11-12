@@ -294,14 +294,31 @@
 /* FR-311: create the customer pack with Copilot */
 .launch-header > .launch-header-actions { margin-left: auto; }
 .gen-dialog { max-width: min(820px, calc(100vw - 32px)); }
-.gen-form { display: grid; gap: 16px; max-height: min(68vh, 820px); overflow-y: auto; padding-right: 4px; }
-.gen-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
+.gen-dialog.gen-resizable {
+  width: min(820px, calc(100vw - 32px));
+  height: min(850px, calc(100dvh - 32px));
+  min-width: min(320px, calc(100vw - 32px));
+  min-height: min(360px, calc(100dvh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  resize: both;
+}
+.gen-resizable .fui-DialogBody { height: 100%; min-width: 0; max-height: none; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); }
+.gen-resizable .fui-DialogTitle, .gen-resizable .fui-DialogContent, .gen-resizable .fui-DialogActions { grid-column: 1; min-width: 0; }
+.gen-resizable .fui-DialogContent { grid-row: 2; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.gen-resizable .fui-DialogActions { grid-row: 3; flex-wrap: wrap; }
+.gen-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding-right: 4px; overflow-wrap: anywhere; }
+.gen-form section, .gen-grid > *, .gen-llm > * { min-width: 0; }
+.gen-form .fui-Field, .gen-form .fui-Input, .gen-form .fui-Textarea { min-width: 0; max-width: 100%; }
+.gen-form .fui-Checkbox__label { white-space: normal; overflow-wrap: anywhere; }
+.gen-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px 16px; }
 .gen-wide { grid-column: 1 / -1; }
 .gen-files { display: grid; gap: 6px; }
 .gen-file-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.gen-file-list li { display: flex; align-items: center; gap: 8px; }
+.gen-file-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .gen-llm { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusLarge); background: var(--colorNeutralBackground2); }
-.gen-estimate { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+.gen-estimate { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 4px 16px; margin: 0; overflow-wrap: anywhere; }
 .gen-estimate dt { color: var(--colorNeutralForeground3); }
 .gen-estimate dd { margin: 0; }
 .gen-progress { display: grid; gap: 12px; }

@@ -365,7 +365,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   return (
     <>
       <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) close(); }} modalType={running ? 'alert' : 'modal'}>
-        <DialogSurface className="gen-dialog" data-testid="gen-dialog" aria-describedby="gen-lead">
+        <DialogSurface className="gen-dialog gen-resizable" data-testid="gen-dialog" aria-describedby="gen-lead">
           <DialogBody>
             <DialogTitle>{t('proj.gen.title')}</DialogTitle>
             <DialogContent tabIndex={phase.kind === 'saved' ? 0 : undefined}>

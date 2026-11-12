@@ -92,6 +92,56 @@ test('Japanese labels on the launch screen', async ({ page }) => {
   await expect(page.getByTestId('gen-missing')).toContainText('企業名');
 });
 
+test('generator fits narrow screens and can be resized in both directions', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await seed(page, 'ja');
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await dialog.getByTestId('gen-public-topic').fill('a'.repeat(80));
+  await dialog.getByTestId('gen-files').setInputFiles({
+    name: `${'longfilename'.repeat(12)}.txt`, mimeType: 'text/plain', buffer: Buffer.from('material'),
+  });
+
+  const assertFits = async () => {
+    const overflow = await dialog.evaluate((surface) => {
+      const elements = surface.querySelectorAll('.fui-DialogContent, .gen-form, .gen-grid, .gen-llm, .fui-Checkbox__label, .gen-file-list li');
+      return [...elements].filter((el) => el.scrollWidth > el.clientWidth + 1)
+        .map((el) => ({ className: el.className, width: el.clientWidth, scrollWidth: el.scrollWidth }));
+    });
+    expect(overflow).toEqual([]);
+    await expect(dialog.getByTestId('gen-start')).toBeInViewport();
+    await expect(dialog.getByRole('button', { name: 'キャンセル' })).toBeInViewport();
+  };
+
+  await assertFits();
+  const before = (await dialog.boundingBox())!;
+  await page.mouse.move(before.x + before.width - 3, before.y + before.height - 3);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width - 203, before.y + before.height - 203, { steps: 10 });
+  await page.mouse.up();
+  const after = (await dialog.boundingBox())!;
+  expect(after.width).toBeLessThan(before.width - 100);
+  expect(after.height).toBeLessThan(before.height - 100);
+  await assertFits();
+  await page.mouse.move(after.x + after.width - 3, after.y + after.height - 3);
+  await page.mouse.down();
+  await page.mouse.move(after.x + after.width + 147, after.y + after.height + 147, { steps: 10 });
+  await page.mouse.up();
+  const enlarged = (await dialog.boundingBox())!;
+  expect(enlarged.width).toBeGreaterThan(after.width + 100);
+  expect(enlarged.height).toBeGreaterThan(after.height + 100);
+  await assertFits();
+  await dialog.getByTestId('gen-purpose').fill('入力内容を保持する');
+
+  for (const viewport of [{ width: 768, height: 700 }, { width: 320, height: 700 }, { width: 320, height: 400 }]) {
+    await page.setViewportSize(viewport);
+    await assertFits();
+    await expect(dialog.getByTestId('gen-purpose')).toHaveValue('入力内容を保持する');
+    await dialog.getByTestId('gen-workiq-section').scrollIntoViewIfNeeded();
+    await expect(dialog.getByTestId('gen-workiq-note')).toBeVisible();
+  }
+});
+
 test('D-14: with GitHub Copilot as the provider the generator neither offers nor mentions Work IQ', async ({ page }) => {
   await seed(page, 'en');
   await page.getByTestId('launch-ai-settings').click();

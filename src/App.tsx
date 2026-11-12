@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
-  Badge, Button, FluentProvider, Spinner, Text, Tooltip, createDarkTheme, createLightTheme, type Theme,
+  Badge, Button, FluentProvider, MessageBar, MessageBarBody, Spinner, Text, Tooltip, createDarkTheme, createLightTheme, type Theme,
 } from '@fluentui/react-components';
 import {
   Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular,
@@ -12,6 +12,7 @@ import { useEffectiveDark, useReducedMotion } from './state/motion.ts';
 import { hrefFor, useRoute, useRouteTarget } from './state/router.ts';
 import { sound } from './audio/sound.ts';
 import { loaded } from './data/pack.ts';
+import { companyAnchorRequiresInternalView } from './data/companyAnchor.ts';
 import { LiveFeedBar } from './ui/LiveFeedBar.tsx';
 import { DetailCardHost } from './ui/DetailCardHost.tsx';
 import { Opening } from './ui/Opening.tsx';
@@ -34,7 +35,7 @@ function useThemes(): { dark: Theme; light: Theme } {
   }), [brand]);
 }
 
-function TopBar() {
+function TopBar({ restricted }: { restricted: boolean }) {
   const { t } = useI18n();
   const { muted, setMuted, setMotion, audience, setAudience } = useSettings();
   const reopenLaunch = useLaunch((s) => s.reopen);
@@ -57,13 +58,13 @@ function TopBar() {
           </div>
         )}
         <div className="topbar-work">
-          <ContextSlot />
+          <ContextSlot restricted={restricted} />
         </div>
         <LanguageToggle />
       </div>
       <div className="topbar-row commandbar" role="toolbar" aria-label={t('topbar.commands')}>
         <div className="commandbar-actions">
-          <ActionSlots />
+          {!restricted && <ActionSlots />}
         </div>
         <div className="commandbar-view">
           <Tooltip content={t('audience.help')} relationship="description">
@@ -162,7 +163,8 @@ export function App() {
   const dark = useEffectiveDark();
   const reduced = useReducedMotion();
   const route = useRoute();
-  const { muted, bgm, sfx, volume } = useSettings();
+  const { muted, bgm, sfx, volume, audience } = useSettings();
+  const restricted = audience === 'external' && companyAnchorRequiresInternalView(loaded.pack.extensions);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -215,18 +217,20 @@ export function App() {
         <>
           <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>{t('a11y.skip')}</button>
           <div className="chrome" ref={chromeRef}>
-            <TopBar />
-            <LiveFeedBar />
-            <StepBandSlot />
+            <TopBar restricted={restricted} />
+            {!restricted && <LiveFeedBar />}
+            {!restricted && <StepBandSlot />}
           </div>
           <div className="layout">
             <NavRail current={route.path} />
             <main id="main" tabIndex={-1} className="main" key={route.path}>
-              <Screen />
+              {restricted
+                ? <MessageBar intent="warning" data-testid="company-anchor-external-restricted"><MessageBarBody>{t('proj.anchor.externalRestricted')}</MessageBarBody></MessageBar>
+                : <Screen />}
             </main>
           </div>
-          <DetailCardHost />
-          <Overlays />
+          {!restricted && <DetailCardHost />}
+          {!restricted && <Overlays />}
         </>
       )}
       <Opening />

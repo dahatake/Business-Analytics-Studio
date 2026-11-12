@@ -328,8 +328,8 @@ export interface NewsHeadline {
 }
 
 /** Company news headlines (metadata only) through the relay's news route. */
-export async function fetchNewsHeadlines(company: string, lang: 'ja' | 'en', signal?: AbortSignal): Promise<{ provider: string; fetchedAt: string; articles: NewsHeadline[] }> {
-  const res = await relayFetch('/relay/news', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company, lang }), signal });
+export async function fetchNewsHeadlines(company: string, lang: 'ja' | 'en', signal?: AbortSignal, topic?: string): Promise<{ provider: string; fetchedAt: string; articles: NewsHeadline[] }> {
+  const res = await relayFetch('/relay/news', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company, lang, ...(topic ? { topic, topicConfirmed: true } : {}) }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as { provider: string; fetchedAt: string; articles: NewsHeadline[] };
 }
@@ -412,7 +412,7 @@ export interface WorkIqQuestionInput {
 export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
 
-export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string }) | { key: string; error: string };
+export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[] }) | { key: string; error: string };
 
 function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
   if (typeof b.answer !== 'string' || typeof b.question !== 'string' || typeof b.fetchedAt !== 'string' || !Array.isArray(b.citations)) return null;
@@ -423,10 +423,12 @@ function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
 }
 
 /**
- * One Work IQ search per section and per follow-up topic. A failed section comes back as `{ key, error }`; the call
- * itself fails only when none could run (sign-in, permission, EULA, CLI missing).
+ * One Work IQ search per section and per follow-up topic. With `expand` the relay (Work IQ CLI route) also searches
+ * every readiness ladder wording and answers one merged section per readiness item, listing those wordings in
+ * `searches`. A failed section comes back as `{ key, error }`; the call itself fails only when none could run (sign-in,
+ * permission, EULA, CLI missing).
  */
-export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: readonly WorkIqAspect[]; topics?: readonly string[] }, signal?: AbortSignal): Promise<WorkIqSectionInfo[]> {
+export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: readonly WorkIqAspect[]; topics?: readonly string[]; expand?: boolean }, signal?: AbortSignal): Promise<WorkIqSectionInfo[]> {
   const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { provider: 'foundry', ...q, aspects: q.aspects ?? [], topics: q.topics ?? [] }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const b = (await res.json()) as { sections?: unknown };
@@ -436,7 +438,9 @@ export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: rea
     const key = (s as { key: string }).key;
     if (typeof (s as { error?: unknown }).error === 'string') return [{ key, error: (s as { error: string }).error }];
     const a = answerInfo(s as Partial<WorkIqAnswerInfo>);
-    return a ? [{ key, ...a }] : [{ key, error: 'badRelayAnswer' }];
+    const searches = (s as { searches?: unknown }).searches;
+    const listed = Array.isArray(searches) ? searches.filter((w): w is string => typeof w === 'string') : [];
+    return a ? [{ key, ...a, ...(listed.length ? { searches: listed } : {}) }] : [{ key, error: 'badRelayAnswer' }];
   });
 }
 

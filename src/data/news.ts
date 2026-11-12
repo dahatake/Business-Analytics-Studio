@@ -7,7 +7,10 @@ export const NewsRequest = z.object({
   company: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/)
     .refine((value) => value.replaceAll('"', ' ').trim().length > 0),
   lang: z.enum(['ja', 'en']),
-}).strict();
+  topic: z.string().trim().min(1).max(100).regex(/^[^\u0000-\u001f\u007f]+$/)
+    .refine((value) => value.replaceAll('"', ' ').trim().length > 0).optional(),
+  topicConfirmed: z.literal(true).optional(),
+}).strict().refine((value) => !value.topic || value.topicConfirmed === true, { path: ['topicConfirmed'], message: 'Public topic must be confirmed before sending' });
 
 const ArticleUrl = z.url().refine((value) => {
   const url = new URL(value);
@@ -27,6 +30,7 @@ export const NewsFeed = z.object({
   provider: z.literal('Google News RSS'),
   fetchedAt: z.iso.datetime(),
   articles: z.array(NewsArticle).max(NEWS_MAX_ITEMS),
+  topic: z.string().optional(),
 });
 
 export type NewsArticle = z.infer<typeof NewsArticle>;

@@ -13,8 +13,8 @@ const MODULES = [project, workspace, show, ai, ink, threed, graph, usecases, ops
 const ACTION_MODULES = [workspace, show, ai, ink, threed, graph, usecases, ops];
 
 /** First row: where the user is working (work-target menu, stepper, export). */
-export function ContextSlot() {
-  return <project.TopBarSlot />;
+export function ContextSlot({ restricted = false }: { restricted?: boolean }) {
+  return <project.TopBarSlot restricted={restricted} />;
 }
 
 /** Full-width band under the live bar: the current step's to-do (exit criteria of its deliverable). */

@@ -3,9 +3,11 @@ import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
-import { ArchitectureExtension, CoreObjectExtension, GlossarySchema, OkrExtension, WorkflowExtension } from './extensionSchemas.ts';
+import { ArchitectureExtension, CoreObjectExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, WorkflowExtension } from './extensionSchemas.ts';
 import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
+import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } from './companyAnchor.ts';
+import { CompanyAlignmentSnapshotSchema, assessAlignment } from '../modules/project/companyAlignment.ts';
 
 /**
  * FR-127 / FR-303 verify: acceptance check of a customer pack. Pure (no file access) so the CLI, build's self-correction
@@ -197,7 +199,9 @@ export function verifyPack(raw: unknown): VerifyResult {
   const extensionSchemas = {
     glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
-    workflow: WorkflowExtension, okr: OkrExtension,
+    workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension,
+    companyAnchor: CompanyAnchorVersionSchema,
+    companyAlignment: CompanyAlignmentSnapshotSchema,
   };
   for (const [key, schema] of Object.entries(extensionSchemas)) {
     const raw = pack.extensions?.[key];
@@ -208,6 +212,48 @@ export function verifyPack(raw: unknown): VerifyResult {
   const sourceRefs = (ids: string[] | undefined, path: string) => ids?.forEach((id, i) => {
     if (byId.get(id)?.kind !== 'source') add({ severity: 'error', code: 'SOURCE_KIND', path: `${path}[${i}]`, cause: `"${id}" is not an existing source.`, action: 'Use an existing source entity id.' });
   });
+  const companyAnchor = CompanyAnchorVersionSchema.safeParse(pack.extensions?.companyAnchor);
+  const alignment = CompanyAlignmentSnapshotSchema.safeParse(pack.extensions?.companyAlignment);
+  if (alignment.success && !companyAnchor.success) add({
+    severity: 'error', code: 'EXTENSION_SCHEMA', path: 'extensions.companyAlignment',
+    cause: 'An alignment snapshot needs its company anchor snapshot.',
+    action: 'Include the company anchor used for the assessment.',
+  });
+  if (companyAnchor.success) {
+    const checks = anchorEvidenceChecks(companyAnchor.data.anchor);
+    for (const result of checks.filter((entry) => entry.missing.length)) add({
+      severity: 'warning', code: 'MISSING_SOURCE', path: `extensions.companyAnchor.anchor.${result.path}`,
+      cause: `The supplied excerpt does not contain: ${result.missing.join(', ')}.`,
+      action: 'Compare the value, metric, period, unit and scope against the original source; an excerpt match alone is not proof.',
+    });
+    const freshness = anchorFreshness(companyAnchor.data.anchor, new Date());
+    if (freshness.stale || freshness.future) add({
+      severity: 'warning', code: 'EXTENSION_SCHEMA', path: 'extensions.companyAnchor.anchor.asOf',
+      cause: 'The company analysis is in the future, older than 30 days, or has a later refresh event.',
+      action: 'Review the company analysis before relying on it.',
+    });
+    add({
+      severity: 'warning', code: 'INTERNAL', path: 'extensions.companyAnchor',
+      cause: 'The company analysis snapshot can contain internal sources, hypotheses and project records.',
+      action: 'Do not share this raw pack without reviewing the snapshot and obtaining the data owner’s permission.',
+    });
+  }
+  if (alignment.success && companyAnchor.success) {
+    const sourceIds = valid.filter((entity) => entity.kind === 'source').map((entity) => entity.id);
+    if (!alignment.data.alignments.length) add({
+      severity: 'warning', code: 'EXTENSION_SCHEMA', path: 'extensions.companyAlignment.alignments',
+      cause: 'The project has no alignment assessment.',
+      action: 'Ask the customer sponsor how the project supports an objective or obligation; generation is not blocked.',
+    });
+    alignment.data.alignments.forEach((item, index) => {
+      const result = assessAlignment(alignment.data.projectPurpose, companyAnchor.data, item, sourceIds);
+      if (result.issues.length || result.outdated || item.status === 'draft' || result.kind === 'unaligned') add({
+        severity: 'warning', code: 'EXTENSION_SCHEMA', path: `extensions.companyAlignment.alignments[${index}]`,
+        cause: `Alignment needs review: ${[...result.issues, ...(result.outdated ? ['outdated'] : []), ...(item.status === 'draft' ? ['draft'] : []), ...(result.kind === 'unaligned' ? ['unaligned'] : [])].join(', ')}.`,
+        action: 'Review the evidence and company version with the customer; this warning does not block the pack.',
+      });
+    });
+  }
   const workflow = WorkflowExtension.safeParse(pack.extensions?.workflow);
   if (workflow.success) {
     const stageIds = new Set(workflow.data.stages.map((s) => s.id));
@@ -222,6 +268,23 @@ export function verifyPack(raw: unknown): VerifyResult {
   if (okr.success) {
     okr.data.kpis.forEach((k, i) => sourceRefs(k.sourceIds, `extensions.okr.kpis[${i}].sourceIds`));
     okr.data.objectives.forEach((o, i) => sourceRefs(o.sourceIds, `extensions.okr.objectives[${i}].sourceIds`));
+  }
+  const engagements = EngagementsExtension.safeParse(pack.extensions?.engagements);
+  if (engagements.success) {
+    const ids = new Set<string>();
+    const names = valid.filter((e) => ['deal', 'deliverable', 'initiative'].includes(e.kind))
+      .flatMap((e) => [e.name.ja.trim().toLowerCase(), e.name.en.trim().toLowerCase()]);
+    engagements.data.items.forEach((item, i) => {
+      const path = `extensions.engagements.items[${i}]`;
+      if (ids.has(item.id) || byId.has(item.id)) add({ severity: 'error', code: 'DUPLICATE_ID', path: `${path}.id`, cause: `Engagement id "${item.id}" is not unique.`, action: 'Use a unique engagement id.' });
+      ids.add(item.id);
+      if (!hasEngagementContext(item)) add({ severity: 'error', code: 'EXTENSION_SCHEMA', path, cause: 'An engagement needs a period, customer or status as well as its name.', action: 'Use context stated in the material, or remove only this item. Do not invent values.' });
+      if (item.customerId && byId.get(item.customerId)?.kind !== 'customer') add({ severity: 'error', code: 'DANGLING_REF', path: `${path}.customerId`, cause: `"${item.customerId}" is not an existing customer.`, action: 'Use an existing customer id, or omit customerId and keep the customer text from the material.' });
+      sourceRefs(item.sourceIds, `${path}.sourceIds`);
+      const itemNames = typeof item.name === 'string' ? [item.name] : [item.name.ja, item.name.en];
+      if (itemNames.some((name) => names.includes(name.trim().toLowerCase()))) add({ severity: 'warning', code: 'EXTENSION_SCHEMA', path, cause: 'An engagement has the same name as a deal, deliverable or initiative.', action: 'Check the source and keep the same work in only one representation.' });
+    });
+    if (engagements.data.items.length) add({ severity: 'warning', code: 'INTERNAL', path: 'extensions.engagements', cause: 'Engagement records are internal.', action: 'Hidden for an external audience. Review sources before sharing the pack.' });
   }
   for (const issue of parseGraphExtension(pack.extensions?.graph, new Set(byId.keys())).issues) {
     add({ severity: 'error', code: 'EXTENSION_SCHEMA', path: 'extensions.graph', cause: issue, action: 'Fix the graph section and reference existing entities.' });

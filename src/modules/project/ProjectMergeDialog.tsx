@@ -8,6 +8,7 @@ import { rebindLedgerScope } from '../../ai/client.ts';
 import type { ImportedPackMeta } from '../../data/packStore.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { planRelationMerge, useProjects, type Project, type ProjectRelation } from '../../state/projects.ts';
+import { useSettings } from '../../state/settings.ts';
 import { downloadText } from './common.tsx';
 import { yyyymmdd } from './exportFormat.ts';
 import { exportProject } from './projectFile.ts';
@@ -17,6 +18,8 @@ import { mergeBriefs, type MergeAssessment, type MergeReason } from './projectMe
 export function downloadProjectFile(projectId: string): boolean {
   const file = exportProject(projectId);
   if (!file) return false;
+  if (useSettings.getState().audience === 'external' && (file.companyAnchor || file.project.alignments?.length
+    || file.project.mergedFrom?.some((entry) => entry.alignments?.length))) return false;
   downloadText(`${file.company.name}-${file.project.name}-project-${yyyymmdd(new Date())}.json`.replace(/[\\/:*?"<>|\s]+/g, '_'), JSON.stringify(file, null, 2), 'application/json');
   return true;
 }
@@ -58,6 +61,7 @@ export function ProjectMergeDialog({ assessment, projects, relations, packs, onC
   const [purpose, setPurpose] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState(false);
   const keep = keepId === pb?.id ? pb : pa;
   const absorb = keep === pa ? pb : pa;
   const proposed = useMemo(
@@ -169,9 +173,12 @@ export function ProjectMergeDialog({ assessment, projects, relations, packs, onC
                 <li>{t(packs[keep.id] ? 'proj.merge.effect.refetch' : 'proj.merge.effect.generate', { keep: keep.name })}</li>
               </ul>
               <div>
-                <Button icon={<ArrowDownload20Regular />} onClick={() => downloadProjectFile(absorb.id)} data-testid="proj-merge-backup">
+                <Button icon={<ArrowDownload20Regular />} onClick={() => {
+                  try { setBackupError(!downloadProjectFile(absorb.id)); } catch { setBackupError(true); }
+                }} data-testid="proj-merge-backup">
                   {t('proj.merge.backup', { name: absorb.name })}
                 </Button>
+                {backupError && <MessageBar intent="error"><MessageBarBody>{t('proj.anchor.exportFailed')}</MessageBarBody></MessageBar>}
               </div>
               <Checkbox checked={confirmed} onChange={(_, d) => setConfirmed(!!d.checked)} label={t('proj.merge.confirm')} data-testid="proj-merge-confirm" />
               {!confirmed && <MessageBar intent="info"><MessageBarBody>{t('proj.merge.confirmNeeded')}</MessageBarBody></MessageBar>}

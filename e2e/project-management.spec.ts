@@ -1,7 +1,18 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { deviceSnapshot, seedDeviceData, setup } from './helpers.ts';
 import { samplePack } from '../src/data/sample.ts';
+
+const analysis = {
+  asOf: '2026-11-10',
+  entityScope: { legalEntity: 'Contoso', figuresScope: ['legal entity'] },
+  statedObjectives: [{ id: 'O1', text: 'Reduce delivery delays', horizon: '2026', basis: 'customerStated', sourceIds: ['S1'] }],
+  companyKpis: [{ id: 'K1', name: 'On-time delivery', target: '95', unit: '%', period: '2026', scope: 'legal entity', objectiveIds: ['O1'], sourceIds: ['S1'] }],
+  segments: [], structuralIssues: [],
+  analystHypotheses: [{ text: 'Not for generation', type: 'strategy' }],
+  sources: [{ id: 'S1', title: 'Meeting notes', type: 'internal', accessedDate: '2026-11-10', locator: 'p. 2', excerpt: 'On-time delivery 95 % 2026 legal entity' }],
+};
 
 async function seed(page: Page, launch = true, lang: 'ja' | 'en' = 'ja') {
   await setup(page, { skipLaunch: !launch, lang });
@@ -386,4 +397,201 @@ test('company deletion purges device packs and boards only for its projects', as
   await expect(page.getByTestId('launch-company-Contoso')).toHaveCount(0);
   await expect(page.getByTestId('launch-project-pj-other')).toContainText('顧客パック取込済み');
   expect(await keys()).toEqual({ 'bas-packs': ['pj-other'], 'bas-ink': ['pj-other::board'] });
+});
+
+test('company analysis, alignment, independent evaluation and generation preview persist without external calls', async ({ page }) => {
+    await page.route('**/relay/news', (route) => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ company: 'Contoso', lang: 'ja', provider: 'Google News RSS', fetchedAt: '2026-11-10T00:00:00Z', articles: [] }),
+    }));
+    let aiCalls = 0;
+    await page.route('**/relay/ai', (route) => { aiCalls++; return route.abort(); });
+    await seed(page, false);
+    const company = page.getByTestId('proj-company-Contoso');
+    await page.getByTestId('proj-edit-pj-alpha').click();
+    await page.getByTestId('proj-edit-purpose').fill('Improve deliveries');
+    await page.getByTestId('proj-edit-save').click();
+    await company.getByTestId('company-anchor-edit').click();
+    await company.getByTestId('company-anchor-json').fill(JSON.stringify(analysis));
+    await company.getByTestId('company-anchor-save').click();
+    await expect(company.getByTestId('company-anchor-summary')).toContainText('Reduce delivery delays');
+
+    await page.getByTestId('project-alignment-pj-alpha').click();
+    const dialog = page.getByTestId('alignment-dialog');
+    await dialog.getByTestId('alignment-kind').selectOption('direct');
+    await dialog.getByRole('checkbox', { name: /O1: Reduce delivery delays/ }).check();
+    await dialog.getByLabel('企業・部門の KPI').selectOption('K1');
+    await dialog.getByLabel('Project の KPI').fill('Delay rate');
+    await dialog.getByLabel('寄与の道筋・因果関係').fill('Fewer delays improve delivery.');
+    await dialog.getByRole('checkbox', { name: /S1: Meeting notes/ }).check();
+    await dialog.getByText('AI に整合案と反証を作らせる').click();
+    await expect(dialog.getByTestId('alignment-ai-preview')).toContainText('Reduce delivery delays');
+    await expect(dialog.getByTestId('alignment-ai-preview')).not.toContainText('Not for generation');
+    await expect(dialog.getByTestId('alignment-ai-run')).toBeDisabled();
+    await dialog.getByLabel('確認者の役割（氏名は不要）').fill('Sponsor');
+    await dialog.getByLabel('確認日').fill('2026-11-10');
+    await dialog.getByTestId('alignment-confirm').check();
+    await dialog.getByTestId('alignment-save').click();
+    await expect(dialog).toContainText('整合記録を保存しました。');
+    await dialog.getByRole('button', { name: '閉じる' }).click();
+
+    const evaluation = company.getByTestId('alignment-evaluation-co-a');
+    await evaluation.locator('summary').click();
+    const cases = [
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, expected: 'unaligned', observed: i === 9 ? 'direct' : 'unaligned', negativeControl: true })),
+      { id: 'p1', expected: 'direct', observed: 'direct', negativeControl: false },
+      { id: 'p2', expected: 'indirect', observed: 'indirect', negativeControl: false },
+      { id: 'p3', expected: 'direct', observed: 'indirect', negativeControl: false },
+      { id: 'p4', expected: 'indirect', observed: 'direct', negativeControl: false },
+    ];
+    await evaluation.getByTestId('alignment-evaluation-json').fill(JSON.stringify(cases));
+    await expect(evaluation.getByTestId('alignment-evaluation-result')).toContainText('90%');
+    await expect(evaluation.getByTestId('alignment-evaluation-result')).toContainText('重大な誤判定: 1 件');
+    await expect(evaluation.getByTestId('alignment-evaluation-result')).toContainText('95% Wilson');
+    await expect(evaluation.getByTestId('alignment-evaluation-result')).toContainText('κ の 95% 信頼区間（漸近正規近似）: -0.98〜0.98');
+    await evaluation.getByTestId('alignment-evaluation-independent').check();
+    await evaluation.getByTestId('alignment-evaluation-save').click();
+    await expect(evaluation).toContainText('評価ケースを端末に保存しました。');
+    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await page.reload();
+    await expect(company.getByTestId('company-anchor-summary')).toContainText('Reduce delivery delays');
+    await evaluation.locator('summary').click();
+    await expect(evaluation.getByTestId('alignment-evaluation-result')).toContainText('90%');
+    await page.getByTestId('project-alignment-pj-alpha').click();
+    await expect(dialog.getByTestId('alignment-confirm')).toBeChecked();
+    await dialog.getByRole('button', { name: '閉じる' }).click();
+
+    const download = page.waitForEvent('download');
+    await company.getByRole('button', { name: 'Alpha を JSON で書き出す' }).click();
+    const exportedPath = await (await download).path();
+    expect(JSON.parse(readFileSync(exportedPath, 'utf8'))).toMatchObject({
+      companyAnchor: { versions: [{ anchor: { statedObjectives: [{ id: 'O1' }] } }] },
+      project: { alignments: [{ kind: 'direct', status: 'confirmed' }] },
+    });
+    await page.getByTestId('audience-toggle').click();
+    await expect(company.getByTestId('company-anchor-co-a')).toHaveCount(0);
+    await company.getByRole('button', { name: 'Alpha を JSON で書き出す' }).click();
+    await expect(page.getByRole('status').filter({ hasText: '社外表示では企業分析を含むバックアップを出力できません。' })).toBeVisible();
+    await page.getByTestId('audience-toggle').click();
+
+    await page.getByTestId('proj-generate-pj-alpha').click();
+    const gen = page.getByTestId('gen-dialog');
+    await gen.getByTestId('gen-anchor-preview').locator('summary').click();
+    await expect(gen.getByTestId('gen-anchor-preview')).toContainText('Reduce delivery delays');
+    await expect(gen.getByTestId('gen-anchor-preview')).not.toContainText('Not for generation');
+    await gen.getByTestId('gen-public-topic').fill('public logistics');
+    await expect(gen.getByTestId('gen-public-topic-consent')).not.toBeChecked();
+    await gen.getByTestId('gen-public-topic-consent').check();
+    await gen.getByTestId('gen-public-topic').fill('other public topic');
+    await expect(gen.getByTestId('gen-public-topic-consent')).not.toBeChecked();
+    expect(aiCalls).toBe(0);
+});
+
+test('company history can be reviewed and restored without changing the generation version until saved', async ({ page }) => {
+  await page.route('**/relay/news', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ company: 'Contoso', lang: 'ja', provider: 'Google News RSS', fetchedAt: '2026-11-10T00:00:00Z', articles: [] }),
+  }));
+  await seed(page, false);
+  const company = page.getByTestId('proj-company-Contoso');
+  await company.getByTestId('company-anchor-edit').click();
+  await company.getByTestId('company-anchor-json').fill(JSON.stringify(analysis));
+  await company.getByTestId('company-anchor-save').click();
+  const updated = { ...analysis, statedObjectives: [{ ...analysis.statedObjectives[0], text: 'Reduce delays further' }] };
+  await company.getByTestId('company-anchor-edit').click();
+  await company.getByTestId('company-anchor-json').fill(JSON.stringify(updated));
+  await company.getByTestId('company-anchor-save').click();
+  await expect(company.getByTestId('company-anchor-version')).toHaveValue('2');
+  await company.getByTestId('company-anchor-version').selectOption('1');
+  await expect(company.getByTestId('company-anchor-summary')).toContainText('Reduce delivery delays');
+
+  await page.getByTestId('proj-generate-pj-alpha').click();
+  const gen = page.getByTestId('gen-dialog');
+  await gen.getByTestId('gen-anchor-preview').locator('summary').click();
+  await expect(gen.getByTestId('gen-anchor-preview')).toContainText('Reduce delays further');
+  await gen.getByRole('button', { name: 'キャンセル' }).click();
+
+  await company.getByTestId('company-anchor-edit').click();
+  await expect(company.getByTestId('company-anchor-version')).toBeDisabled();
+  await company.getByTestId('company-anchor-save').click();
+  await expect(company.getByTestId('company-anchor-version')).toHaveValue('3');
+  await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+  await page.reload();
+  await expect(company.getByTestId('company-anchor-version')).toHaveValue('3');
+  await expect(company.getByTestId('company-anchor-summary')).toContainText('Reduce delivery delays');
+  await company.getByTestId('company-anchor-version').selectOption('2');
+  await expect(company.getByTestId('company-anchor-summary')).toContainText('Reduce delays further');
+});
+
+test('external view blocks unclassifiable content derived from internal company analysis', async ({ page }) => {
+    await page.route('**/relay/news', (route) => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ company: 'Contoso', lang: 'ja', provider: 'Google News RSS', fetchedAt: '2026-11-10T00:00:00Z', articles: [] }),
+    }));
+    await seed(page, false);
+    const internalPack = {
+      ...samplePack,
+      extensions: {
+        ...samplePack.extensions,
+        companyAnchor: { version: 1, savedAt: '2026-11-10T00:00:00.000Z', anchor: analysis },
+        workflow: { stages: [{ id: 'private-stage', name: 'Internal workflow detail', sourceIds: ['source-anchor-1'] }] },
+        okr: { kpis: [{ id: 'private-kpi', name: 'Internal KPI detail' }], objectives: [] },
+        dataCatalog: { items: [{ name: 'Internal catalog detail', description: 'Private' }] },
+      },
+    };
+    await seedDeviceData(page, {
+      'bas.packs.index': JSON.stringify({ 'pj-alpha': {
+        projectId: 'pj-alpha', packId: internalPack.packId, company: internalPack.company, isSample: false,
+        entities: internalPack.entities.length, importedAt: '2026-11-10T00:00:00.000Z', files: ['synthetic.json'],
+      } }),
+      'bas.binary.pack.pj-alpha': JSON.stringify(internalPack),
+    });
+    await page.reload();
+    await page.evaluate(() => { window.location.hash = '/flows'; });
+    await expect(page.getByText('Internal workflow detail')).toBeVisible();
+    await page.getByTestId('audience-toggle').click();
+    await expect(page.getByTestId('company-anchor-external-restricted')).toBeVisible();
+    await expect(page.locator('body')).not.toContainText('Internal workflow detail');
+    await expect(page.locator('body')).not.toContainText('Internal KPI detail');
+    await expect(page.locator('body')).not.toContainText('Internal catalog detail');
+    await page.evaluate(() => { window.location.hash = '/data'; });
+    await expect(page.getByTestId('company-anchor-external-restricted')).toBeVisible();
+    await expect(page.getByTestId('pack-export')).toHaveCount(0);
+    await page.getByTestId('audience-toggle').click();
+    await expect(page.getByTestId('pack-export')).toBeVisible();
+});
+
+test('external view hides company snapshots and disables their raw pack export', async ({ page }) => {
+  await page.route('**/relay/news', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ company: 'Contoso', lang: 'ja', provider: 'Google News RSS', fetchedAt: '2026-11-10T00:00:00Z', articles: [] }),
+  }));
+  await seed(page, false);
+  const publicAnalysis = {
+    ...analysis,
+    statedObjectives: [{ ...analysis.statedObjectives[0], basis: 'published' }],
+    sources: [{ ...analysis.sources[0], type: 'public', url: 'https://example.com/plan' }],
+  };
+  const pack = {
+    ...samplePack,
+    extensions: {
+      ...samplePack.extensions,
+      companyAnchor: { version: 1, savedAt: '2026-11-10T00:00:00.000Z', anchor: publicAnalysis },
+      companyAlignment: { projectPurpose: 'Improve deliveries', alignments: [] },
+    },
+  };
+  await seedDeviceData(page, {
+    'bas.packs.index': JSON.stringify({ 'pj-alpha': {
+      projectId: 'pj-alpha', packId: pack.packId, company: pack.company, isSample: false,
+      entities: pack.entities.length, importedAt: '2026-11-10T00:00:00.000Z', files: ['synthetic.json'],
+    } }),
+    'bas.binary.pack.pj-alpha': JSON.stringify(pack),
+  });
+  await page.reload();
+  await page.evaluate(() => { window.location.hash = '/data'; });
+  await expect(page.getByTestId('pack-alignment-snapshot')).toBeVisible();
+  await page.getByTestId('audience-toggle').click();
+  await expect(page.getByTestId('company-anchor-external-restricted')).toHaveCount(0);
+  await expect(page.getByTestId('pack-alignment-snapshot')).toHaveCount(0);
+  await expect(page.getByTestId('pack-export')).toBeDisabled();
 });

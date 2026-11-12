@@ -121,12 +121,12 @@ function ExportButton() {
   );
 }
 
-export function TopBarSlot() {
+export function TopBarSlot({ restricted = false }: { restricted?: boolean }) {
   return (
     <div className="proj-topbar">
       <WorkTargetMenu />
-      <Stepper />
-      <ExportButton />
+      {!restricted && <Stepper />}
+      {!restricted && <ExportButton />}
     </div>
   );
 }

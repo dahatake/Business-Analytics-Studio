@@ -4,7 +4,7 @@
 
 ## 0. 決定の記録（2026-11-09）
 
-利用者の決定と、利用者から「論理的に良いものを選んで完了させる」と任された事項の、選択と実装の場所です。**要求定義書の本文は rd-author だけが編集できる（G-1）ため、ここに記録し、要求定義書への反映は rd-author の作業として残します。**
+利用者の決定と、利用者から「論理的に良いものを選んで完了させる」と任された事項の、選択と実装の場所です。要求定義書の編集者は限定せず、承認条件と変更履歴を維持します。各決定の要求定義書への反映状況は下表に記載します。
 
 | ID | 決定 | 決めた人 | 既決事項への影響 | 実装 |
 |---|---|---|---|---|
@@ -17,12 +17,15 @@
 | D-7 | P-03（削除と保持）を承認。推奨の保持期間（利用量の記録 13 か月、削除は明示操作だけ） | 利用者 | — | 設定画面の「データの保持と削除」、AI の接続設定の画面の記録の削除 |
 | D-8 | P-04 と追加 2 点（操作ごとの判定の基準、測定中は他の負荷を流さない） | 利用者 | — | `src/config/measurement.ts`、`npm run measure`、`npm run kpi1`、[measurement-plan.md](measurement-plan.md)、性能試験の直列実行 |
 | I-1〜I-6 | 推奨の選択肢 | 利用者が AI に一任 | — | 下の §4 の各行 |
-| D-9 | **提案（未承認）。** 「Copilotでドラフト作成」は `structure` を借りず、専用の用途 `deliverableDraft` を C-03 の表に持つ。行は未承認のままにし、実接続はしない | 利用者が AI に一任（選択肢の比較は §0.1） | なし（許可行は増えない）。§3.1 への行の追加は rd-author の作業 | `src/ai/policy.ts` の `C03_TABLE.deliverableDraft`、`src/modules/project/deliverableDraft.ts` |
+| D-9 | **提案（未承認）。** 「Copilotでドラフト作成」は `structure` を借りず、専用の用途 `deliverableDraft` を C-03 の表に持つ。行は未承認のままにし、実接続はしない | 利用者が AI に一任（選択肢の比較は §0.1） | なし（許可行は増えない）。§3.1 への行は未追加 | `src/ai/policy.ts` の `C03_TABLE.deliverableDraft`、`src/modules/project/deliverableDraft.ts` |
 | D-10 | サンプルの数値の食い違いは、KPI（担当者・出典・期間がある値）を正として文章の側を直す。再発を防ぐため、現状分析の自動判定に「数値の照合」を加える | 利用者が AI に一任（§0.1） | なし | `src/data/sample.ts`（issue-cash）、`src/modules/project/discussion.ts`（rec-demo-1）、`deliverables.ts` の `asis-reconcile` |
 | D-11 | 投資回収の判定は構築期間を含め、上限は Project ごとに設定できる（既定 3 年はアプリの仮定と表示し、設定した人と日付を残す）。ToDo 帯を自動で開く条件は、画面の高さ 900px ではなく、固定の領域（開いた一覧を含む）が画面の高さの 35% 以内のとき | 利用者が AI に一任（§0.1） | なし | `deliverables.ts` の `paybackYears`・`paybackLimit`、`DeliverablesScreen.tsx` の「判定の基準」、`deliverablesUi.tsx` の `shouldAutoExpand` |
-| D-12 | **利用者の決定（2026-11-10）。** 顧客パックをアプリ内で生成AIに作らせる用途 `packBuild` を、設定済みの接続先（Azure の Microsoft Foundry、または GitHub Copilot）で許可する。費用は月 100,000 円まで（D-3 の 1 つの枠） | 利用者（依頼「設定済みのLLM(AzureもしくはGitHub Copilot)を使ってください」「予算は100,000円/月まで許可します」） | C-03 の許可行が 2 行になる（`explain`・`packBuild`）。`explain` は Foundry だけのまま。§3.1 への行・FR-311・PARAM-145〜149 の追加は rd-author の作業（下の §0.2） | `src/ai/policy.ts` の `C03_TABLE.packBuild`、`src/modules/project/packGenerate.ts`、`PackGenerateDialog.tsx`、中継（`server/relay.ts`・`copilot.ts`・`site.ts`） |
-| D-13 | **2026-11-11、利用者の接続設定改善依頼に基づく実装判断。** Foundry の `connectionTest` を固定の合成文だけで許可し、応答を検証してから保存する。顧客・Project・資料は送らない。API キー・単価・費用への同意を先に用意し、出力 256 トークン、30 秒、5 秒間隔、本日 30 回、D-3 の共通予算の範囲とする | 利用者の依頼「Microsoft Foundryに接続ができない設定を入力しても意味がないので、アプリケーションのLLM接続設定を変更してください」に対する実装判断 | C-03 の許可は `explain`・`connectionTest`・`packBuild` の 3 行。テストは設定の専用経路だけで行い、任意の文の送信には使えない。§3.1 への反映は rd-author の作業 | `src/ai/foundry.ts`、`settingsStore.ts`、`AiConnectionForm.tsx`、`server/relay.ts`。旧保存値は非破壊で「接続未確認」とし、キーまたは設定の変更で検証を無効にする |
-| D-14 | **利用者の決定（2026-11-11）。** 「Copilot で作成」（FR-311・`packBuild`）で、接続先が **Microsoft Foundry のときだけ** Microsoft Work IQ から社内情報を取得して資料に加える。BAS（中継プロセス）が Work IQ の REST API（`https://workiq.svc.cloud.microsoft/rest/conversations` → `/{id}/chat`、Web のグラウンディングは無効）を直接呼ぶ。認証は利用者のアプリの登録（パブリック クライアント、委任 `WorkIQAgent.Ask`）によるデバイス コードのサインインで、リフレッシュ トークンは中継の暗号化保管庫だけに置く。Work IQ へ送るのは企業名・Project 名・目的・重点・基準日から中継が作る固定の質問 1 回。回答と引用は `internal`・`origin: m365` の出典 `source-workiq-1` として Foundry に送る。GitHub Copilot SDK のときは画面に出さず、中継も拒否する（`foundryOnly`）。失敗は生成記録に残して作成を続ける。**追記（利用者、2026-11-11）:** テナントがカスタム アプリへの管理者の同意を出せない制約は変えられないため、既定の接続方法を **Microsoft の Work IQ CLI（`@microsoft/workiq`）をローカルの MCP stdio サーバーとして中継が起動する方式**にする。CLI 自身のサインイン（Microsoft 公開のクライアント、Windows の WAM）を使い、読み取り専用の `retrieve`（strategy `grounding`）だけを呼ぶ。EULA への同意は利用者が画面で行い、BAS は代行しない。REST のアプリ登録方式は選択肢として残す | 利用者（依頼「WorkIQを利用できるように実装をしてください」「Microsoft FoundryをLLMのプロバイダーとして選択した場合のみ有効」「直接なんらかのWorkIQのAPIやAgentを呼び出してもOK」「この制限は変えられません。他にBusiness Analytics Studioから、WorkIQを使う方法を調査して、実装をしてください」） | `packBuild` の送信データに Work IQ の回答（internal、D-2 の範囲）が加わる。Work IQ の費用（Copilot Credits または Microsoft 365 Copilot のライセンス）はアプリの予算に含まれない。CLI 方式では CLI 自身の外部接続を `BAS_RELAY_OUTBOUND_HOSTS` で強制できない。CLI の `research`（`scripts/lib/research.ts`）の WorkIQ は従来どおり BLOCKED。§3.1・FR-311 への反映は rd-author の作業 | `server/workiq.ts`、`server/workiqCli.ts`、`server/relay.ts`（`/relay/workiq*`）、`server/vault.ts`（`workiqRefreshToken`・`workiqCliKey`）、`src/ai/policy.ts` の `WORKIQ_SOURCE`、`packGenerate.ts`、`PackGenerateDialog.tsx`、`AiConnectionForm.tsx` の `WorkIqSettings` |
+| D-12 | **利用者の決定（2026-11-10）。** 顧客パックをアプリ内で生成AIに作らせる用途 `packBuild` を、設定済みの接続先（Azure の Microsoft Foundry、または GitHub Copilot）で許可する。費用は月 100,000 円まで（D-3 の 1 つの枠） | 利用者（依頼「設定済みのLLM(AzureもしくはGitHub Copilot)を使ってください」「予算は100,000円/月まで許可します」） | C-03 の許可行が 2 行になる（`explain`・`packBuild`）。`explain` は Foundry だけのまま。§3.1 への行・FR-311・PARAM-145〜149 の正式な反映は未完了（下の §0.2） | `src/ai/policy.ts` の `C03_TABLE.packBuild`、`src/modules/project/packGenerate.ts`、`PackGenerateDialog.tsx`、中継（`server/relay.ts`・`copilot.ts`・`site.ts`） |
+| D-13 | **2026-11-11、利用者の接続設定改善依頼に基づく実装判断。** Foundry の `connectionTest` を固定の合成文だけで許可し、応答を検証してから保存する。顧客・Project・資料は送らない。API キー・単価・費用への同意を先に用意し、出力 256 トークン、30 秒、5 秒間隔、本日 30 回、D-3 の共通予算の範囲とする | 利用者の依頼「Microsoft Foundryに接続ができない設定を入力しても意味がないので、アプリケーションのLLM接続設定を変更してください」に対する実装判断 | C-03 の許可は `explain`・`connectionTest`・`packBuild` の 3 行。テストは設定の専用経路だけで行い、任意の文の送信には使えない。§3.1 への反映は未完了 | `src/ai/foundry.ts`、`settingsStore.ts`、`AiConnectionForm.tsx`、`server/relay.ts`。旧保存値は非破壊で「接続未確認」とし、キーまたは設定の変更で検証を無効にする |
+| D-14 | **利用者の決定（2026-11-11）。** 「Copilot で作成」（FR-311・`packBuild`）で、接続先が **Microsoft Foundry のときだけ** Microsoft Work IQ から社内情報を取得して資料に加える。BAS（中継プロセス）が Work IQ の REST API（`https://workiq.svc.cloud.microsoft/rest/conversations` → `/{id}/chat`、Web のグラウンディングは無効）を直接呼ぶ。認証は利用者のアプリの登録（パブリック クライアント、委任 `WorkIQAgent.Ask`）によるデバイス コードのサインインで、リフレッシュ トークンは中継の暗号化保管庫だけに置く。Work IQ へ送るのは企業名・Project 名・目的・重点・基準日から中継が作る固定の質問 1 回。回答と引用は `internal`・`origin: m365` の出典 `source-workiq-1` として Foundry に送る。GitHub Copilot SDK のときは画面に出さず、中継も拒否する（`foundryOnly`）。失敗は生成記録に残して作成を続ける。**追記（利用者、2026-11-11）:** テナントがカスタム アプリへの管理者の同意を出せない制約は変えられないため、既定の接続方法を **Microsoft の Work IQ CLI（`@microsoft/workiq`）をローカルの MCP stdio サーバーとして中継が起動する方式**にする。CLI 自身のサインイン（Microsoft 公開のクライアント、Windows の WAM）を使い、読み取り専用の `retrieve`（strategy `grounding`）だけを呼ぶ。EULA への同意は利用者が画面で行い、BAS は代行しない。REST のアプリ登録方式は選択肢として残す | 利用者（依頼「WorkIQを利用できるように実装をしてください」「Microsoft FoundryをLLMのプロバイダーとして選択した場合のみ有効」「直接なんらかのWorkIQのAPIやAgentを呼び出してもOK」「この制限は変えられません。他にBusiness Analytics Studioから、WorkIQを使う方法を調査して、実装をしてください」） | `packBuild` の送信データに Work IQ の回答（internal、D-2 の範囲）が加わる。Work IQ の費用（Copilot Credits または Microsoft 365 Copilot のライセンス）はアプリの予算に含まれない。CLI 方式では CLI 自身の外部接続を `BAS_RELAY_OUTBOUND_HOSTS` で強制できない。CLI の `research`（`scripts/lib/research.ts`）の WorkIQ は従来どおり BLOCKED。§3.1・FR-311 への反映は未完了 | `server/workiq.ts`、`server/workiqCli.ts`、`server/relay.ts`（`/relay/workiq*`）、`server/vault.ts`（`workiqRefreshToken`・`workiqCliKey`）、`src/ai/policy.ts` の `WORKIQ_SOURCE`、`packGenerate.ts`、`PackGenerateDialog.tsx`、`AiConnectionForm.tsx` の `WorkIqSettings` |
+| D-15 | **利用者の決定（2026-11-12）。** 顧客パックの作成は、時間が多少伸びても、利用者の 1 回の操作で分析に必要なデータがそろって終わることを優先する。計測（[docs/workiq-agentic-retrieval-study.md](workiq-agentic-retrieval-study.md) §9）に基づき、`packBuild` の出力上限を 16,000 → 32,000 トークン（段階の回答が 15,525 トークンまで使っていた）、1 回の送信のタイムアウトを 300 → 600 秒、1 回の作成の送信回数の上限を 14 → 15（失敗または JSON のない回答の再送 2 回を含む）、Work IQ の追加取得の質問を 1 回 4 → 8 件、追加取得の資料を 36,000 → 48,000 文字、Work IQ CLI の項目ごとの資料を 6,000 → 9,000 文字、Work IQ の一時的なエラーの再試行を 1 → 2 回にする。どの送信も中継の文字数（200,000）とアプリの推定トークン（100,000）の上限に収まるよう、資料の本文を必要なときだけ比例して短くする | 利用者（依頼「顧客パックの作成の時間が多少伸びてもいいので、必要な情報を1度の私のアクションで、完了させることを優先します。クエリの回数やタイムアウトの待ち時間などを増やしてもいいです」） | 1 回の作成の最大費用の表示が増える（出力上限の 2 倍・送信 1 回分）。入力上限 100,000 トークン・1 日 64 回・月の予算（D-3）は変えない。1 日の残り回数がこの作成の最大回数に足りないときは作成画面に警告を出す。§3.1・PARAM-147〜149 への反映は未完了 | `src/ai/policy.ts`（`PER_USE_LIMITS.packBuild`・`PACK_BUILD_MAX_CALLS`・`PACK_BUILD_TIMEOUT_MS`・`PACK_BUILD_MAX_PROMPT_CHARS`・`WORKIQ_ITEM_MAX_CHARS`）、`packGenerate.ts`、`server/workiq.ts`（`MAX_WORKIQ_TOPICS`）、`server/workiqCli.ts`、`PackGenerateDialog.tsx` |
+| D-16 | **選択肢 E を実装（2026-11-12、利用者の実装依頼に基づく）。** 分析に必要なデータの「案件・成果物・取り組み」は、社内の資料に金額・進捗がない（Work IQ の実測 55 件で金額 20%・進捗 0%）ため、案件・成果物・施策のエンティティでは埋まらない。OKR（`OkrExtension`）と同じ形の任意の拡張 `extensions.engagements`（名前・種類・期間・顧客・状態・担当・回数・結果を原文どおりの文字列で持ち、数値を必須にしない。各項目に出典）を加え、充足はこの一覧と案件・成果物・施策の合計で数える。金額・進捗まで資料にあるものは従来どおりエンティティにする。比べた選択肢: 何もしない・数え方だけ変える・数値を任意にする・施策だけ緩める・新しいエンティティ種別・資料の添付。詳細と論理は [engagements-readiness-decision.md](engagements-readiness-decision.md) | 利用者の選択一任と、その後の実装依頼 | 過去の標本では 89% を数値を作らずに表せる見込み。既存の数値の必須条件と計算は変えない。合成データの日英生成テストで 8/8 を検証。実サービスでの再計測は未実施（同文書 §11）。要求・受入条件は [要求定義書 §3.11](requirements-definition.md#311-顧客パックの実施記録) に反映済み | `src/data/extensionSchemas.ts`、`src/data/verify.ts`、`packGenerate.ts`（生成規則・部分修正・項目ごとの除外）、`analysisReadiness.ts`、`EngagementsPanel.tsx`（社外表示では非表示）、`docs/pack.schema.json`、日英の取り込み用プロンプト |
+| D-17 | **利用者の決定（2026-11-12）。** [企業と Project の整合調査](company-project-alignment-study.md) の U-1〜U-7 を採用し、企業アンカーと整合案の C-03 用途追加を許可。既存の `packBuild` と同じ設定済み Foundry／Copilot SDK を使い、整合案は別行・別確認とする。Project の公開ニュース検索は既存の Google News RSS を使い、利用者が公開可能と確認した検索語だけを追加する | 利用者（「推奨案を採用」「C-03を許可」「全ての機能を実装」） | 企業データは版付きで共有、Project パックには写しを保存。Work IQ にアンカーを送らず、企業・部門の目標は人が出典付きで入力。負の対照 90% は評価目標であり、合成試験だけで実運用の精度を確定しない | `src/data/companyAnchor.ts`、`src/state/companyAnchors.ts`、`src/modules/project/companyAlignment.ts`、`src/ai/policy.ts` |
 | I-4 | 被写界深度は「見送り」を推奨していたが、既定で無効・High 品質と演出が有効なときだけ使え、FPS が下がると最初に切る形なら KPI-5 を損なわないため実装に変更 | 利用者が AI に一任 | — | 3D ビュー |
 
 ### 0.1 D-9〜D-11 の選択肢と選んだ理由（2026-11-09）
@@ -35,8 +38,8 @@
 | B | 現状のまま `structure` を借りる | 不採用。後で分析の下書きのために `structure` を承認すると、成果物のドラフトも気づかないうちに実接続になる |
 | **C（採用）** | 専用の用途 `deliverableDraft` を作り、未承認の行として表に載せる。承認の条件と行の案をここに残す | 承認の判断が用途ごとに独立し、AI の接続設定の画面にも未承認の行として見える |
 
-行の案（承認時に rd-author が §3.1 に書く下書き。**未承認**）: 接続先は Microsoft Foundry。送る情報は `explain` と同じ範囲（D-2 により internal を含む。人物は FR-219 の確認の後だけ。社外向けの表示では internal を除く）。有効の条件は `explain` と同じ（実接続の切替・中継の設定・単価・送信ごとの確認）。1 回の上限は、出力が 1 成果物で 5〜6 項目になるため出力 3,000 トークン程度を候補とする（PARAM は未決）。月の予算は D-3 の 1 つの枠。
-**昇格の条件:** (1) `explain` の実測（D-8）が済み、見直しが終わる (2) rd-author が §3.1 に行を追加する (3) 利用者が承認する。3 つがそろうまで、ドラフトは端末内のモックで作り「モック」と表示する。
+行の案（承認時に §3.1 に記載する下書き。**未承認**）: 接続先は Microsoft Foundry。送る情報は `explain` と同じ範囲（D-2 により internal を含む。人物は FR-219 の確認の後だけ。社外向けの表示では internal を除く）。有効の条件は `explain` と同じ（実接続の切替・中継の設定・単価・送信ごとの確認）。1 回の上限は、出力が 1 成果物で 5〜6 項目になるため出力 3,000 トークン程度を候補とする（PARAM は未決）。月の予算は D-3 の 1 つの枠。
+**昇格の条件:** (1) `explain` の実測（D-8）が済み、見直しが終わる (2) §3.1 に行を追加する (3) 利用者が承認する。3 つがそろうまで、ドラフトは端末内のモックで作り「モック」と表示する。
 
 **D-10 サンプルの数値の食い違い**
 
@@ -60,12 +63,12 @@
 
 ### 0.2 D-12 顧客パックの生成（2026-11-10）
 
-**rd-author への転記の下書き（実装済み。番号は空いている最小の値）**
+**要求定義書への反映の下書き（実装済み。FR・PARAM の番号は正本では未採番）**
 
 - **C-03 §3.1 の行** 用途「顧客パックの作成（`packBuild`）」: 接続先 = Microsoft Foundry または GitHub Copilot SDK（利用者が設定で選ぶ）。送る情報 = 企業名・Project 名・目的・基準日・公式サイトの URL、中継が公式サイトから取得したページ本文、ニュースの見出し、利用者が添付した資料と調査メモ（D-2 により internal を含む）。アプリ内のほかのデータは送らない。有効の条件 = 実接続の切替（FR-132）＋選んだ接続先が中継に保存済み（Foundry はエンドポイント・デプロイ・キー、Copilot は CLI のサインインとモデル）＋単価の入力＋開始前に送信内容・データの所有者の承認・概算費用を利用者が確認。費用の上限 = 月 100,000 円（D-3 の枠）。
 - **FR-311** 企業と Project の画面（起動時の選択画面・Project の管理）に「顧客パックを Copilot で作成」を置く。押すと必須（企業名・Project 名・目的・基準日）と任意（公式サイト・業種・重点・ニュースの利用・社内資料・調査メモ）の入力を出し、未入力の必須項目を最初から示す。開始すると、公開情報の取得 → 基盤 → 業務 → 検査と修正 → 取得報告と保存 を進捗バーと経過時間・費用とともに示し、中止できる。検査に通った顧客パックだけを、入力・取得した出典・生成記録・費用（`extensions.generation`）と取得報告（`extensions.collection`）とともに Project に保存する（取り込みと同じ全か無か）。同じ画面から AI の設定（接続先・キー・Copilot のモデル・単価・予算・実接続）を開ける。
 - **受け入れの基準（案）** ① 出典（`source`）はアプリが取得・添付したものだけで、モデルが作った出典は捨てる ② 検査（verify）の誤りは、問題のある項目だけを最大 3 回（PARAM-006）直させ、残りは依存するものごと除外して記録する ③ 出典の本文に見つからない数値を「要確認」として示す ④ 失敗・中止のときは何も保存しない ⑤ 公開情報の取得は https・公開アドレスだけ（社内のアドレスに接続しない）。
-- **PARAM** PARAM-145 公式サイトから読むページ数 = 6（試行 10）。PARAM-146 1 回に送る資料と調査メモの文字数 = 40,000。PARAM-147 1 段階のエンティティ数 = 40、`packBuild` の 1 日の送信回数 = 64・入力 100,000・出力 16,000 トークン。PARAM-148 1 回の作成の送信回数 = 最大 14（Work IQ なしは 5、Work IQ ありは追加取得の最大回数 r（1〜4。既定 3）に応じて 5＋2r。予備 1）。PARAM-149 1 回の送信のタイムアウト = 300 秒。
+- **PARAM** PARAM-145 公式サイトから読むページ数 = 6（試行 10）。PARAM-146 1 回に送る資料と調査メモの文字数 = 40,000。PARAM-147 1 段階のエンティティ数 = 40、`packBuild` の 1 日の送信回数 = 64・入力 100,000・出力 32,000 トークン（D-15。以前は 16,000）。PARAM-148 1 回の作成の送信回数 = 最大 15（Work IQ なしは 7、Work IQ ありは追加取得の最大回数 r（1〜4。既定 3）に応じて 7＋2r。いずれも失敗または JSON のない回答の再送 2 回を含む。D-15）。PARAM-149 1 回の送信のタイムアウト = 600 秒（D-15。以前は 300 秒）。
 
 **選択肢と選んだ理由**
 
@@ -81,7 +84,7 @@
 
 ### 0.3 企業情報と Project の入力・Project 同士の関係（2026-11-10）
 
-**rd-author への転記の下書き（実装済み）**
+**要求定義書への反映の下書き（実装済み）**
 
 - **FR-137〜139 の追記** 企業は「企業情報」（業種・公式サイト・企業メモ）を 1 社に 1 つ持ち、その企業のすべての Project で共通に使う。Project は顧客パック作成の入力（目的〈複数行〉・重点・基準日・調査メモ・情報源の設定・資料のファイル名）を持つ。管理画面は企業ごとに「企業情報 → Project の一覧（すべての入力を表示）→ Project 同士の関係」の順に表示し、企業情報と Project を編集・削除できる。Project のファイル（FR-139）には企業情報・入力・その Project にかかわる関係を含める。
 - **関係** 種類は「同じ課題」「依存（向きあり）」「相関」の 3 つ。同じ企業の Project どうしだけ、1 組に 1 つ。依存の循環は登録しない。「同じ課題」でつながる Project はまとまりとして警告し、統合するかを人が決める（自動で統合しない）。
@@ -195,7 +198,7 @@ C-03 の表の 1 行は「提供者・送信データ・有効化条件・費用
 **決定後に変更する場所**
 - `src/ai/policy.ts` の `C03_TABLE` の該当行と、`openQuestions` を空にすること。
 - 中継に転送処理を追加します（`server/relay.ts`。現在は承認された行でも `liveNotImplemented` で拒否）。
-- 要求定義書 §3.1 の表（rd-author が編集）。
+- 要求定義書 §3.1 の表。
 
 **受入テスト**（決定どおりであることを第三者が確かめる方法）
 - 許可した 1 行だけが `evaluateGate().allowed === true` になり、残り 14 行は `c03NotApproved` のままであること。

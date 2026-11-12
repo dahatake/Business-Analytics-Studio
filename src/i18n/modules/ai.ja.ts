@@ -202,6 +202,7 @@ export const aiJa = {
   'ai.use.brandResearch': 'ブランドの調査',
   'ai.use.deliverableDraft': '成果物のドラフト作成',
   'ai.use.packBuild': '顧客パックの作成',
+  'ai.use.alignmentProposal': '企業と Project の整合案',
   'ai.usage.title': '利用量と予算',
   'ai.usage.daily': '本日の「現状の説明」とチャットの生成 {used} / {limit} 回',
   'ai.usage.month': '今月の料金判明分 {spent} / 月の予算 {budget}（Foundry の料金不明分は含みません）',

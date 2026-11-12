@@ -203,6 +203,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.use.brandResearch': 'Brand research',
   'ai.use.deliverableDraft': 'Deliverable drafts',
   'ai.use.packBuild': 'Customer pack creation',
+  'ai.use.alignmentProposal': 'Company-project alignment proposal',
   'ai.usage.title': 'Usage and budget',
   'ai.usage.daily': 'Explanations and chat generated today: {used} / {limit}',
   'ai.usage.month': 'Known-cost subtotal this month: {spent} of the budget {budget} (unknown Foundry charges excluded)',

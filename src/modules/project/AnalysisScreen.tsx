@@ -14,6 +14,7 @@ import { categoryKey, describeInsight, fmtScore, methodDescKey, methodKey } from
 import { AnalysisViewer, type Viewer } from './AnalysisViewer.tsx';
 import { AuthorBadge, BackToHome, MockBadge, ScrollRegion } from './common.tsx';
 import { KpiOkrPanel } from './KpiOkrPanel.tsx';
+import { EngagementsPanel } from './EngagementsPanel.tsx';
 import { requestAnalysisDraft } from './mocks.ts';
 import { METHODS, newId, type Analysis, type AnalysisItem, type MethodId } from './model.ts';
 import { useAnalyses, useProjUi } from './stores.ts';
@@ -48,7 +49,7 @@ export function AnalysisScreen() {
         <Tab value="analysis">{t('proj.an.tab')}</Tab>
         <Tab value="kpi">{t('proj.kpi.tab')}</Tab>
       </TabList>
-      {tab === 'kpi' ? <KpiOkrPanel /> : <AnalysisTab layout={layout} />}
+      {tab === 'kpi' ? <KpiOkrPanel /> : <><AnalysisTab layout={layout} /><EngagementsPanel /></>}
     </div>
   );
 }

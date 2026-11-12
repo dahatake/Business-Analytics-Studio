@@ -70,6 +70,29 @@ describe('FR-127 verify', () => {
     expect(dep.length).toBeGreaterThan(0);
     expect(dep[0]!.cause).toMatch(/disabled by its own error/);
   });
+
+  it('D-16: verifies evidence, customer references and context without requiring amounts or progress', () => {
+    const p = validPack();
+    const sourceId = p.entities.find((e: J) => e.kind === 'source').id;
+    const item = { id: 'engagement-test', name: 'Workshop', status: 'Delivered', sourceIds: [sourceId] };
+    p.extensions.engagements = { items: [item] };
+    expect(verifyPack(p).ok).toBe(true);
+    for (const [bad, code] of [
+      [{ ...item, sourceIds: [] }, 'EXTENSION_SCHEMA'],
+      [{ ...item, sourceIds: ['site-nagoya'] }, 'SOURCE_KIND'],
+      [{ ...item, customerId: sourceId }, 'DANGLING_REF'],
+      [{ ...item, status: undefined }, 'EXTENSION_SCHEMA'],
+    ] as const) {
+      p.extensions.engagements = { items: [bad] };
+      expect(verifyPack(p).problems).toContainEqual(expect.objectContaining({ severity: 'error', code, path: expect.stringContaining('extensions.engagements') }));
+    }
+    p.extensions.engagements = { items: [item, item] };
+    expect(verifyPack(p).problems).toContainEqual(expect.objectContaining({ severity: 'error', code: 'DUPLICATE_ID' }));
+    p.extensions.engagements = { items: [{ ...item, name: p.entities.find((e: J) => e.kind === 'deal').name }] };
+    const duplicateName = verifyPack(p);
+    expect(duplicateName.ok).toBe(true);
+    expect(duplicateName.problems).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'EXTENSION_SCHEMA', cause: expect.stringContaining('same name') }));
+  });
 });
 
 describe('FR-126 self-correction', () => {
@@ -183,6 +206,18 @@ describe('FR-118 JSON Schema', () => {
     const file = readFileSync('docs/pack.schema.json', 'utf8').replace(/\r\n/g, '\n');
     const version = (JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }).version;
     expect(JSON.parse(file)).toEqual(packJsonSchema(version));
+  });
+
+  it('D-16: exports the optional engagement structure and requires a name and evidence', () => {
+    const p = validPack();
+    const sourceId = p.entities.find((e: J) => e.kind === 'source').id;
+    p.extensions.engagements = { items: [{ id: 'engagement-test', name: 'Workshop', status: 'Delivered', sourceIds: [sourceId] }] };
+    expect(validateJsonSchema(schema, p)).toEqual([]);
+    p.extensions.engagements.items[0].sourceIds = [];
+    expect(validateJsonSchema(schema, p).some((e) => e.includes('engagements.items[0].sourceIds'))).toBe(true);
+    p.extensions.engagements.items[0].sourceIds = [sourceId];
+    delete p.extensions.engagements.items[0].name;
+    expect(validateJsonSchema(schema, p).some((e) => e.includes('missing name'))).toBe(true);
   });
 
   it('accepts what zod accepts (sample and generated packs) and rejects what zod rejects', () => {

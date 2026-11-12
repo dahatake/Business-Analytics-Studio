@@ -40,6 +40,10 @@ function copilotParts(kpiSourceIds = ['src-plan']) {
         kpis: [{ id: 'okr-kpi-nps', name: '顧客推奨度', target: '前年比 +5 ポイント', sourceIds: ['src-plan'] }],
         objectives: [{ id: 'okr-delivery', objective: '納期で選ばれる', keyResults: [{ text: '納期遵守率を 95% にする', kpiId: 'kpi-otd' }], sourceIds: ['src-plan'] }],
       },
+      engagements: { items: [{
+        id: 'engagement-workshop', name: l('納期改善ワークショップ', 'Delivery workshop'), type: 'workshop',
+        customer: 'Fabrikam', status: '実施済み', outcome: '改善案を合意', sourceIds: ['src-plan'],
+      }] },
       glossary: [{ term: 'OTD', definition: 'On time delivery' }],
       graph: { relations: [{ source: 'site-gifu', target: 'kpi-otd', semantic: 'measurement' }] },
       architecture: { asIs: [{ layer: 'data', name: 'Fabrikam ERP' }] },
@@ -173,6 +177,7 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('pack-ready-dataCatalog')).toHaveAttribute('data-met', 'false');
     await expect(page.getByTestId('pack-ready-dataCatalog')).toContainText('不足');
     await expect(page.getByTestId('pack-ready-kpi')).toHaveAttribute('data-met', 'true');
+    await expect(page.getByTestId('pack-ready-engagements')).toHaveAttribute('data-met', 'true');
     await expect(page.getByTestId('pack-ready-summary')).toContainText('項目が基準を満たしています');
     expect(await scan(page)).toEqual([]);
     await page.getByTestId('pack-refetch').click();
@@ -194,6 +199,17 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('uc-catalog-items')).toContainText('Fabrikam Orders');
     await page.reload();
     await expect(page.getByTestId('uc-import')).toContainText('Fabrikam Orders');
+    await page.evaluate(() => { window.location.hash = '/analysis'; });
+    await expect(page.getByTestId('proj-engagements')).toContainText('納期改善ワークショップ');
+    await expect(page.getByTestId('proj-engagements')).toContainText('実施済み');
+    await expect(page.getByTestId('proj-engagements')).toContainText('中期経営計画 2026');
+    expect(await scan(page)).toEqual([]);
+    await page.reload();
+    await expect(page.getByTestId('proj-engagements')).toContainText('改善案を合意');
+    await page.getByTestId('audience-toggle').click();
+    await expect(page.getByTestId('proj-engagements')).toHaveCount(0);
+    await page.getByTestId('audience-toggle').click();
+    await expect(page.getByTestId('proj-engagements')).toBeVisible();
     // The project starts from its own pack's KPIs and internal OKRs.
     await page.evaluate(() => { window.location.hash = '/analysis?tab=kpi'; });
     await expect(page.getByTestId('proj-kpi-panel')).toContainText('納期遵守率');
@@ -206,9 +222,13 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await page.getByTestId('proj-target-menu').click();
     await page.getByRole('menuitemradio', { name: /^デモ/ }).click();
     await expect(page.getByTestId('sample-pack-badge')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/analysis'; });
+    await expect(page.getByTestId('proj-engagements')).toHaveCount(0);
     await page.getByTestId('proj-target-menu').click();
     await page.getByRole('menuitemradio', { name: '需要予測' }).click();
     await expect(page.getByTestId('sample-pack-badge')).toHaveCount(0);
+    await page.evaluate(() => { window.location.hash = '/analysis'; });
+    await expect(page.getByTestId('proj-engagements')).toBeVisible();
 
     // The launch screen marks the project; deleting the pack returns the project to the bundled pack.
     await page.evaluate(() => { window.location.hash = '/data'; });

@@ -2,6 +2,9 @@ import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { appStorage as localStorage, syncDeviceStore } from '../data/deviceStorage.ts';
+import type { CompanyAnchor } from '../data/companyAnchor.ts';
+import { companyAnchorKey, deleteCompanyAnchor, saveCompanyAnchor } from './companyAnchors.ts';
+import { AlignmentSchema, alignmentEvaluationKey, type Alignment } from '../modules/project/companyAlignment.ts';
 
 /** PARAM-031: projects per company. */
 export const MAX_PROJECTS_PER_COMPANY = 50;
@@ -14,6 +17,7 @@ export interface CompanyProfile {
   officialUrl?: string;
   industry?: string;
   notes?: string;
+  anchorRef?: { key: string; version: number; asOf: string };
 }
 
 export interface Company extends CompanyProfile {
@@ -29,6 +33,7 @@ export interface ProjectBrief {
   asOf?: string;
   researchNote?: string;
   useNews?: boolean;
+  publicWebTopic?: string;
   useWorkIq?: boolean;
   workIqRounds?: number;
   /** Names of the files attached at the last generation (their text lives in the pack). */
@@ -41,6 +46,7 @@ export interface MergeRecord {
   createdAt: string;
   mergedAt: string;
   brief?: ProjectBrief;
+  alignments?: Alignment[];
   /** The evidence shown when the merge was agreed (as displayed, in the user's language). */
   reasons: string[];
   score: number;
@@ -54,6 +60,7 @@ export interface Project {
   createdAt: string;
   step: ImprovementStep;
   brief?: ProjectBrief;
+  alignments?: Alignment[];
   mergedFrom?: MergeRecord[];
 }
 
@@ -123,11 +130,13 @@ interface ProjectsState {
   renameCompany: (id: string, name: string) => RenameResult;
   /** Merges the given fields into the company profile; empty strings clear a field. */
   updateCompanyProfile: (id: string, profile: CompanyProfile) => void;
+  setCompanyAnchor: (id: string, anchor: CompanyAnchor) => { ok: true; version: number } | { ok: false; reason: 'notFound' };
   deleteCompany: (id: string) => void;
   addProject: (companyId: string, name: string, brief?: ProjectBrief) => AddProjectResult;
   renameProject: (id: string, name: string) => RenameResult;
   /** Merges the given fields into the project brief; empty strings clear a field. */
   updateProjectBrief: (id: string, brief: ProjectBrief) => void;
+  setProjectAlignments: (id: string, alignments: Alignment[]) => { ok: true } | { ok: false; reason: 'notFound' };
   deleteProject: (id: string) => void;
   addRelation: (from: string, to: string, kind: RelationKind, note?: string) => AddRelationResult;
   removeRelation: (id: string) => void;
@@ -256,8 +265,20 @@ export const useProjects = create<ProjectsState>()(
           }),
         }));
       },
+      setCompanyAnchor: (id, anchor) => {
+        if (!get().companies.some((c) => c.id === id)) return { ok: false, reason: 'notFound' };
+        const saved = saveCompanyAnchor(id, anchor);
+        set((s) => ({
+          companies: s.companies.map((c) => c.id === id
+            ? { ...c, anchorRef: { key: companyAnchorKey(id), version: saved.version, asOf: saved.anchor.asOf } }
+            : c),
+        }));
+        return { ok: true, version: saved.version };
+      },
       deleteCompany: (id) => {
         get().projects.filter((p) => p.companyId === id).forEach((p) => get().deleteProject(p.id));
+        deleteCompanyAnchor(id);
+        localStorage.removeItem(alignmentEvaluationKey(id));
         set((s) => ({
           companies: s.companies.filter((c) => c.id !== id),
           relations: s.relations.filter((r) => r.companyId !== id),
@@ -295,6 +316,12 @@ export const useProjects = create<ProjectsState>()(
             return Object.keys(merged).length ? { ...rest, brief: merged } : rest;
           }),
         }));
+      },
+      setProjectAlignments: (id, alignments) => {
+        if (!get().projects.some((p) => p.id === id)) return { ok: false, reason: 'notFound' };
+        const parsed = alignments.map((entry) => AlignmentSchema.parse(entry));
+        set((s) => ({ projects: s.projects.map((p) => p.id === id ? { ...p, alignments: parsed } : p) }));
+        return { ok: true };
       },
       deleteProject: (id) => {
         purgeScope(id);
@@ -338,6 +365,7 @@ export const useProjects = create<ProjectsState>()(
         const record: MergeRecord = {
           name: absorb.name, createdAt: absorb.createdAt, mergedAt: now(), reasons: options.reasons, score: options.score, hadPack: options.hadPack,
           ...(absorb.brief ? { brief: absorb.brief } : {}),
+          ...(absorb.alignments ? { alignments: absorb.alignments } : {}),
         };
         const wasActive = target.kind === 'project' && target.projectId === absorbId;
         // Re-point first, so deleting the absorbed project (its scoped data, pack and listeners) leaves the moved relations.

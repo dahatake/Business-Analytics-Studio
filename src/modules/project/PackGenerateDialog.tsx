@@ -11,19 +11,24 @@ import { jstDay, jstMonth } from '../../ai/budget.ts';
 import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
 import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
 import { isReadableFile } from '../../data/packImport.ts';
+import { anchorFreshness } from '../../data/companyAnchor.ts';
+import { NewsRequest } from '../../data/news.ts';
 import { importedPackMeta, loadImportedPack, saveImportedPack } from '../../data/packStore.ts';
 import { useI18n, type Lang } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
+import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
+import { useSettings } from '../../state/settings.ts';
 import { AiReadiness, AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
 import { D4Warning, TokenTable, yenFine } from '../ai/AiCommon.tsx';
 import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import {
-  DEFAULT_WORKIQ_ROUNDS, generatePack, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt,
+  DEFAULT_WORKIQ_ROUNDS, generatePack, materialSources, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt,
   type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
 } from './packGenerate.ts';
 import { ReadinessView } from './ReadinessView.tsx';
+import { invalidateProjectEvidence } from './companyAlignment.ts';
 
 /** Where the generated pack goes: an existing project, or a company/project created when the pack is saved. */
 export type PackGenTarget =
@@ -81,6 +86,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const { t, lang, fmt } = useI18n();
   const companies = useProjects((s) => s.companies);
   const projects = useProjects((s) => s.projects);
+  const audience = useSettings((s) => s.audience);
   const ai = useAiSettings();
   const existing = target.kind === 'project' ? projects.find((p) => p.id === target.projectId) : undefined;
   const existingCompany = existing ? companies.find((c) => c.id === existing.companyId) : undefined;
@@ -93,6 +99,9 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const [officialUrl, setOfficialUrl] = useState('');
   const [focus, setFocus] = useState('');
   const [useNews, setUseNews] = useState(true);
+  const [publicWebTopic, setPublicWebTopic] = useState('');
+  const [publicTopicOk, setPublicTopicOk] = useState(false);
+  const [includeAnchor, setIncludeAnchor] = useState(true);
   const [useWorkIq, setUseWorkIq] = useState(true);
   const [workIqRounds, setWorkIqRounds] = useState(DEFAULT_WORKIQ_ROUNDS);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -115,6 +124,8 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     setPhase({ kind: 'form' });
     setApproved(false);
     setCostOk(false);
+    setPublicTopicOk(false);
+    setIncludeAnchor(true);
     // The pack's recorded inputs first, then what the user has since entered for the project, then the shared company profile.
     const brief = existing?.brief ?? {};
     const from = { ...(prefill ?? {}), ...brief };
@@ -124,6 +135,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       setResearchNote(from.researchNote ?? '');
       setMaterials(prefill?.materials ?? []);
       setUseNews(from.useNews ?? true);
+      setPublicWebTopic(from.publicWebTopic ?? '');
       setUseWorkIq(from.useWorkIq ?? true);
       setWorkIqRounds(from.workIqRounds ?? DEFAULT_WORKIQ_ROUNDS);
       // Re-fetching collects as of today; a first run keeps the date the user chose for the project.
@@ -140,6 +152,11 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
 
   // A company registered earlier brings its shared profile, so it is not entered again for every project.
   const knownCompany = existingCompany ?? companies.find((c) => c.name === companyName.trim());
+  const anchorLoad = useMemo(() => {
+    if (!knownCompany) return { value: null, error: false };
+    try { return { value: latestCompanyAnchor(knownCompany.id), error: false }; }
+    catch { return { value: null, error: true }; }
+  }, [knownCompany?.id, knownCompany?.anchorRef?.version]);
   useEffect(() => {
     if (!open || !knownCompany || target.kind === 'project') return;
     setIndustry((v) => v || knownCompany.industry || '');
@@ -158,7 +175,29 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   // D-14: Work IQ is part of the Microsoft Foundry path only; with GitHub Copilot it is neither shown nor sent.
   const workIqShown = ai.provider === 'foundry';
   const workIqOn = workIqShown && workIqReady(ai) && useWorkIq;
-  const input: PackGenInput = { companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, materials, researchNote, useNews, useWorkIq: workIqOn, ...(workIqOn ? { workIqRounds } : {}) };
+  const topic = useNews ? publicWebTopic.trim() : '';
+  const topicInvalid = !!topic && !NewsRequest.safeParse({ company: companyName, lang, topic, topicConfirmed: true }).success;
+  const anchorEnabled = audience === 'internal' && includeAnchor;
+  const input: PackGenInput = {
+    companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, materials, researchNote, useNews, useWorkIq: workIqOn,
+    ...(workIqOn ? { workIqRounds } : {}),
+    ...(topic ? { publicWebTopic: topic, webTopicConfirmed: publicTopicOk } : {}),
+    ...(anchorEnabled && anchorLoad.value ? { companyAnchor: anchorLoad.value, alignments: existing?.alignments ?? [] } : {}),
+  };
+  const freshness = input.companyAnchor ? anchorFreshness(input.companyAnchor.anchor, new Date()) : null;
+  const needsAlignmentReview = !input.companyAnchor || !input.alignments?.length || input.alignments.some((entry) =>
+    entry.status === 'draft' || entry.kind === 'unaligned' || entry.anchorVersion !== input.companyAnchor?.version
+    || entry.assessedPurpose.trim() !== purpose.trim()
+    || entry.sourceIds.some((id) => !input.companyAnchor?.anchor.sources.some((source) => source.id === id)));
+  const anchorPreview = input.companyAnchor
+    ? materialSources({ ...input, materials: [], researchNote: '' }, [], [], '', new Date(), null)
+      .filter((entry) => entry.item.kind === 'anchor').map((entry) => ({ source: entry.item, summary: entry.body }))
+    : [];
+  useEffect(() => {
+    setApproved(false);
+    setCostOk(false);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, materials, researchNote, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, ai.provider]);
+  useEffect(() => { setPublicTopicOk(false); }, [companyName, lang, useNews]);
   const missing = missingRequired(input);
   const targetProblem = target.kind === 'new' && companyName.trim() && projectName.trim() ? newTargetProblem(companyName, projectName) : null;
   const chars = materials.reduce((a, m) => a + m.text.length, 0) + researchNote.length;
@@ -179,13 +218,16 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       spent,
       tokens: pf.estimatedInputTokens,
       inputTooLarge: pf.budget.reasons.includes('inputTooLarge'),
+      // D-15: the daily count refuses a call partway through a run; warn before it starts.
+      callsLeft: Math.max(0, (PER_USE_LIMITS.packBuild?.dailyCalls ?? Infinity) - pf.budget.todayCalls),
     };
     // Recomputed when what is sent or the price settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
   const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
-  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget && (!workIqShown || workIqReady(ai));
+  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget
+    && (!workIqShown || workIqReady(ai)) && !topicInvalid && (!topic || publicTopicOk) && (!anchorEnabled || !anchorLoad.error);
 
   const addFiles = async (files: FileList) => {
     const notes: string[] = [];
@@ -233,7 +275,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     if (!project) return;
     s.updateCompanyProfile(project.companyId, { officialUrl, industry });
     s.updateProjectBrief(projectId, {
-      purpose, focus, asOf, researchNote, useNews, useWorkIq, workIqRounds, materialNames: materials.map((m) => m.name),
+      purpose, focus, asOf, researchNote, useNews, publicWebTopic, useWorkIq, workIqRounds, materialNames: materials.map((m) => m.name),
     });
   };
 
@@ -259,7 +301,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
           maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: PACK_BUILD_TIMEOUT_MS, scope: runScope, stage,
         }, signal),
         fetchSite: (url, signal) => fetchSitePages(url, signal),
-        fetchNews: (company, l, signal) => fetchNewsHeadlines(company, l, signal),
+        fetchNews: (company, l, signal, publicTopic) => fetchNewsHeadlines(company, l, signal, publicTopic),
         ...(settings.provider === 'foundry' && input.useWorkIq ? {
           fetchWorkIq: (q, signal) => askWorkIqSections({ ...q, aspects: (q.aspects ?? []) as WorkIqAspect[], topics: q.topics ?? [], timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }, signal),
         } : {}),
@@ -303,6 +345,10 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     }
     rebindLedgerScope(runScope, projectId);
     remember(projectId);
+    const savedProject = useProjects.getState().projects.find((project) => project.id === projectId);
+    if (savedProject?.alignments?.length) {
+      useProjects.getState().setProjectAlignments(projectId, invalidateProjectEvidence(savedProject.alignments, anchorLoad.value?.anchor ?? null));
+    }
     setPhase({ kind: 'saved', result, projectId });
   };
 
@@ -340,6 +386,24 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                   <section aria-labelledby="gen-company-h" data-testid="gen-company-section">
                     <h3 id="gen-company-h" className="proj-h2">{t('proj.gen.companySection')}</h3>
                     <p className="muted" data-testid="gen-company-note">{t(knownCompany ? 'proj.gen.companyKnown' : 'proj.gen.companyNew')}</p>
+                    {audience === 'internal' && anchorLoad.error && <MessageBar intent="error"><MessageBarBody>{t('proj.anchor.storageError')}</MessageBarBody></MessageBar>}
+                    {audience === 'internal' && (anchorLoad.value || anchorLoad.error) && (
+                      <div>
+                        <Checkbox checked={includeAnchor} onChange={(_, d) => setIncludeAnchor(d.checked === true)} label={t('proj.anchor.useInPack')} data-testid="gen-use-anchor" />
+                        {input.companyAnchor && (
+                          <details data-testid="gen-anchor-preview">
+                            <summary>{t('proj.anchor.sendPreview', { version: input.companyAnchor.version, date: input.companyAnchor.anchor.asOf })}</summary>
+                            <pre className="proj-prewrap">{JSON.stringify(anchorPreview, null, 2)}</pre>
+                          </details>
+                        )}
+                        {(freshness?.stale || freshness?.future) && <MessageBar intent="warning"><MessageBarBody>{t('proj.anchor.stale')}</MessageBarBody></MessageBar>}
+                        {audience === 'internal' && needsAlignmentReview && (
+                          <MessageBar intent="warning" data-testid="gen-alignment-warning">
+                            <MessageBarBody>{t('proj.align.generationWarning')} {t('proj.align.question', { project: projectName || 'Project' })}</MessageBarBody>
+                          </MessageBar>
+                        )}
+                      </div>
+                    )}
                     <div className="gen-grid">
                       <Field label={labelOf('companyName')} required validationState={missing.includes('companyName') ? 'warning' : 'none'}>
                         <Input value={companyName} onChange={(_, d) => setCompanyName(d.value)} readOnly={target.kind === 'project'} data-testid="gen-company" />
@@ -378,6 +442,14 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                     <h3 id="gen-optional" className="proj-h2">{t('proj.gen.optional')}</h3>
                     <div className="gen-grid">
                       <Checkbox className="gen-wide" checked={useNews} onChange={(_, d) => setUseNews(d.checked === true)} label={t('proj.gen.useNews')} data-testid="gen-news" />
+                      {useNews && (
+                        <div className="gen-wide">
+                          <Field label={t('proj.anchor.publicTopic')} hint={t('proj.anchor.publicTopicHint')} validationState={topicInvalid ? 'error' : 'none'} validationMessage={topicInvalid ? t('proj.anchor.publicTopicInvalid') : undefined}>
+                            <Input value={publicWebTopic} maxLength={100} onChange={(_, d) => { setPublicWebTopic(d.value); setPublicTopicOk(false); }} data-testid="gen-public-topic" />
+                          </Field>
+                          {!!topic && <Checkbox checked={publicTopicOk} onChange={(_, d) => setPublicTopicOk(d.checked === true)} label={t('proj.anchor.publicTopicConsent', { company: companyName, topic })} data-testid="gen-public-topic-consent" />}
+                        </div>
+                      )}
                       {workIqShown && (
                         <div className="gen-wide" data-testid="gen-workiq-section">
                           <Checkbox
@@ -463,7 +535,8 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                     </dl>
                     {overBudget && <MessageBar intent="error" data-testid="gen-over-budget"><MessageBarBody>{t('proj.gen.overBudget')}</MessageBarBody></MessageBar>}
                     {estimate.inputTooLarge && <MessageBar intent="error"><MessageBarBody>{t('proj.gen.inputTooLarge')}</MessageBarBody></MessageBar>}
-                    <p className="muted" data-testid="gen-sends">{t('proj.gen.sends')}{workIqOn ? ` ${t('proj.gen.sendsWorkIq')}` : ''}</p>
+                    {estimate.callsLeft < estimate.calls && <MessageBar intent="warning" data-testid="gen-daily-short"><MessageBarBody>{t('proj.gen.dailyShort', { left: estimate.callsLeft, max: estimate.calls })}</MessageBarBody></MessageBar>}
+                    <p className="muted" data-testid="gen-sends">{t('proj.gen.sends')}{workIqOn ? ` ${t('proj.gen.sendsWorkIq')}` : ''}{input.companyAnchor ? ` ${t('proj.anchor.sendNote')}` : ''}</p>
                     <D4Warning testId="gen-d4" />
                     <Checkbox checked={approved} onChange={(_, d) => setApproved(d.checked === true)} label={t('proj.gen.checkApproved')} data-testid="gen-check-approved" />
                     <Checkbox checked={costOk} onChange={(_, d) => setCostOk(d.checked === true)} label={t('proj.gen.checkCost')} data-testid="gen-check-cost" />

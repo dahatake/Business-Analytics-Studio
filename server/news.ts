@@ -70,15 +70,15 @@ export class NewsService {
     this.now = now;
   }
 
-  async get(company: string, lang: 'ja' | 'en'): Promise<NewsFeed> {
-    const input = NewsRequest.parse({ company, lang });
+  async get(company: string, lang: 'ja' | 'en', topic?: string): Promise<NewsFeed> {
+    const input = NewsRequest.parse({ company, lang, ...(topic ? { topic, topicConfirmed: true } : {}) });
     const key = JSON.stringify(input);
     const cached = this.cache.get(key);
     if (cached && this.now() - Date.parse(cached.fetchedAt) < NEWS_INTERVAL_MS) return cached;
     const pending = this.pending.get(key);
     if (pending) return pending;
     if (this.pending.size >= MAX_PENDING) throw new NewsError('newsBusy');
-    const request = this.retrieve(input.company, input.lang);
+    const request = this.retrieve(input.company, input.lang, input.topic);
     this.pending.set(key, request);
     try {
       const feed = await request;
@@ -91,10 +91,10 @@ export class NewsService {
     }
   }
 
-  private async retrieve(company: string, lang: 'ja' | 'en'): Promise<NewsFeed> {
+  private async retrieve(company: string, lang: 'ja' | 'en', topic?: string): Promise<NewsFeed> {
     const url = new URL(`https://${NEWS_HOST}/rss/search`);
     url.search = new URLSearchParams({
-      q: `"${company.replaceAll('"', ' ')}"`,
+      q: `"${company.replaceAll('"', ' ')}"${topic ? ` "${topic.replaceAll('"', ' ')}"` : ''}`,
       hl: lang === 'ja' ? 'ja' : 'en-US',
       gl: lang === 'ja' ? 'JP' : 'US',
       ceid: lang === 'ja' ? 'JP:ja' : 'US:en',
@@ -123,7 +123,7 @@ export class NewsService {
         reader.releaseLock();
       }
       const articles = parseNews(Buffer.concat(chunks).toString('utf8'));
-      return { company, lang, provider: 'Google News RSS', fetchedAt: new Date(this.now()).toISOString(), articles };
+      return { company, lang, provider: 'Google News RSS', fetchedAt: new Date(this.now()).toISOString(), articles, ...(topic ? { topic } : {}) };
     } catch (error) {
       if (controller.signal.aborted) throw new NewsError('newsTimeout');
       if (error instanceof NewsError) throw error;

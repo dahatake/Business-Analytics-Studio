@@ -5,9 +5,14 @@ import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, par
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import {
-  applyFix, generatePack, missingRequired, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, stageAPrompt, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
+  applyFix, fieldTopics, generatePack, missingRequired, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
 } from '../src/modules/project/packGenerate.ts';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
+import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
+import { EngagementsExtension } from '../src/data/extensionSchemas.ts';
+import { estimateTokens } from '../src/ai/budget.ts';
+import { PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS } from '../src/ai/policy.ts';
+import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 
 const NOW = new Date('2026-11-10T03:00:00Z');
 const lt = (s: string) => ({ ja: s, en: s });
@@ -54,6 +59,22 @@ const sitePage = {
   text: '主力製品 ギア 単価 12,000円', fetchedAt: '2026-11-10T02:59:00.000Z',
 };
 
+const companyAnchor = CompanyAnchorVersionSchema.parse({
+  version: 1, savedAt: '2026-11-09T00:00:00.000Z',
+  anchor: {
+    asOf: '2026-11-09',
+    entityScope: { legalEntity: 'Contoso 製作所', figuresScope: ['legal entity'] },
+    statedObjectives: [{ id: 'O1', text: 'Reduce delivery delays', horizon: '2026', basis: 'published', sourceIds: ['S1'] }],
+    companyKpis: [{ id: 'K1', name: 'On-time delivery', target: '95', unit: '%', period: '2026', scope: 'legal entity', objectiveIds: ['O1'], sourceIds: ['S1'] }],
+    segments: [], structuralIssues: [],
+    analystHypotheses: [{ text: 'Private hypothesis not approved for generation', type: 'strategy' }],
+    sources: [
+      { id: 'S1', title: 'Annual plan', type: 'public', url: 'https://example.com/plan', accessedDate: '2026-11-09', locator: 'p. 2', excerpt: 'On-time delivery 95 % 2026 legal entity' },
+      { id: 'S2', title: 'Internal meeting', type: 'internal', accessedDate: '2026-11-09', locator: 'meeting' },
+    ],
+  },
+});
+
 function deps(answers: unknown[], extra: Partial<GenDeps> = {}): GenDeps & { prompts: string[] } {
   const prompts: string[] = [];
   let i = 0;
@@ -62,6 +83,7 @@ function deps(answers: unknown[], extra: Partial<GenDeps> = {}): GenDeps & { pro
     provider: 'foundry',
     model: 'gpt-test',
     now: () => NOW,
+    retryDelayMs: 0,
     complete: async (prompt) => {
       prompts.push(prompt);
       const a = answers[Math.min(i++, answers.length - 1)];
@@ -167,6 +189,47 @@ describe('FR-311 pack generation (D-12)', () => {
     expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(['source-doc-1', 'cause-a']);
   });
 
+  it('uses a versioned company summary separately from project retrieval and preserves an immutable snapshot', async () => {
+    const queries: WorkIqQuery[] = [];
+    const anchor = structuredClone(companyAnchor);
+    const foundation = { ...stageA, entities: [base('cause-anchor', 'cause', 'real', 'event', ['source-anchor-2'])] };
+    const d = deps([foundation, { entities: [] }], {
+      fetchWorkIq: async (q) => { queries.push(q); return []; },
+    });
+    const r = await generatePack(input({
+      officialUrl: '', useNews: false, useWorkIq: true, workIqRounds: 1, companyAnchor: anchor,
+    }), d, () => {}, new AbortController().signal);
+    expect(verifyPack(r.pack).ok).toBe(true);
+    expect(queries[0]).toMatchObject({ company: 'Contoso 製作所', project: '納期改善', purpose: '納期遅延を減らす' });
+    expect(JSON.stringify(queries)).not.toContain('Reduce delivery delays');
+    expect(d.prompts[0]).toContain('Reduce delivery delays');
+    expect(d.prompts[0]).toContain('source-anchor-1');
+    expect(d.prompts[0]).not.toContain('Private hypothesis not approved for generation');
+    expect((r.pack.entities as { id: string; classification: string }[]).find((entity) => entity.id === 'cause-anchor')?.classification).toBe('internal');
+    expect(r.pack.extensions).toMatchObject({
+      companyAnchor: anchor,
+      companyAlignment: { projectPurpose: '納期遅延を減らす', alignments: [{ kind: 'unaligned', status: 'draft' }] },
+    });
+    expect(r.verify.problems).toContainEqual(expect.objectContaining({ severity: 'warning', path: 'extensions.companyAlignment.alignments[0]' }));
+    anchor.anchor.statedObjectives[0]!.text = 'Changed after generation';
+    expect(JSON.stringify(r.pack.extensions)).toContain('Reduce delivery delays');
+  });
+
+  it('never sends a project web topic without confirmation and sends the confirmed topic separately', async () => {
+    const searches: string[] = [];
+    const d = deps([{ ...stageA, entities: [] }, { entities: [] }], {
+      fetchNews: async (_company, _lang, _signal, topic) => {
+        searches.push(topic ?? '');
+        return { provider: 'Google News RSS', fetchedAt: NOW.toISOString(), articles: [] };
+      },
+    });
+    const params = input({ officialUrl: '', publicWebTopic: '公開物流情報', useNews: true });
+    await expect(generatePack(params, d, () => {}, new AbortController().signal)).rejects.toMatchObject({ code: 'collectFailed' });
+    expect(searches).toEqual([]);
+    await generatePack({ ...params, webTopicConfirmed: true }, d, () => {}, new AbortController().signal);
+    expect(searches).toEqual(['公開物流情報']);
+  });
+
   it('D-14: uses the Work IQ answer as an internal Microsoft 365 source the model may cite, and records what was asked and cited', async () => {
     const queries: unknown[] = [];
     const workiq = {
@@ -177,7 +240,7 @@ describe('FR-311 pack generation (D-12)', () => {
       fetchWorkIq: async (q) => { queries.push(q); return workiq; },
     });
     const r = await generatePack(input({ officialUrl: '', useNews: false, focus: '関東', useWorkIq: true }), d, () => {}, new AbortController().signal);
-    expect(queries[0]).toEqual({ company: 'Contoso 製作所', project: '納期改善', purpose: '納期遅延を減らす', focus: '関東', asOf: '2026-11-10', lang: 'ja', aspects: [...WORKIQ_GEN_ASPECTS] });
+    expect(queries[0]).toEqual({ company: 'Contoso 製作所', project: '納期改善', purpose: '納期遅延を減らす', focus: '関東', asOf: '2026-11-10', lang: 'ja', aspects: [...WORKIQ_GEN_ASPECTS], expand: true });
     const source = (r.pack.entities as Record<string, unknown>[]).find((e) => e.id === 'source-workiq-1')!;
     expect(source).toMatchObject({ kind: 'source', classification: 'internal', origin: 'm365', locator: 'Microsoft Work IQ', accessedDate: '2026-11-10' });
     expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toContain('cause-a'); // the model cited it and it verified
@@ -208,9 +271,10 @@ describe('FR-311 pack generation (D-12)', () => {
     const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true }), d, () => {}, new AbortController().signal);
 
     expect(queries[0]!.aspects).toHaveLength(8);
-    // Round 1 of stage A: the model's gap first, then the first wording for what the app found missing.
+    // Round 1 of stage A: the model's gap first, then the first wording for each item still missing (up to 8 searches).
     expect(queries[1]!.topics![0]).toBe('kpi: NSAT の目標値');
-    expect(queries[1]!.topics).toHaveLength(4);
+    expect(queries[1]!.topics!.length).toBeGreaterThan(4);
+    expect(queries[1]!.topics!.length).toBeLessThanOrEqual(MAX_GAP_TOPICS);
     expect(queries.some((q) => q.topics?.[0] === 'workflow: 次に引き継ぐチーム')).toBe(true);
     // Later rounds bring nothing new (the same file), so no further re-run happens.
     expect(r.report.calls.map((c) => c.stage)).toEqual(['foundation', 'foundation-2', 'business']);
@@ -238,7 +302,7 @@ describe('FR-311 pack generation (D-12)', () => {
         base('site-tokyo', 'site', 'real', 'site', src, { role: 'office', city: 'Tokyo', country: 'Japan', lat: 0, lon: 0, capacityTPerMonth: 0 }),
         base('person-lead', 'person', 'real', 'person', src, { role: lt('責任者'), siteId: 'site-tokyo' }),
         base('person-mgr', 'person', 'real', 'person', src, { role: lt('マネージャー'), siteId: 'site-tokyo' }),
-        base('customer-x', 'customer', 'real', 'customer', src, { industry: lt('小売'), regionId: 'region-kanto' }),
+        base('customer-x', 'customer', 'real', 'organization', src, { industry: lt('小売'), regionId: 'region-kanto' }),
       ],
       extensions: {
         workflow: { stages: [
@@ -249,8 +313,10 @@ describe('FR-311 pack generation (D-12)', () => {
         dataCatalog: { items: [{ name: 'Pipeline' }, { name: 'NSAT' }, { name: 'Events' }] },
       },
     };
+    // Stage A's answer cites the Work IQ section (this run fetched no web page), so its office and people survive.
+    const aCited = { ...stageA, entities: stageA.entities.map((e) => (e.sourceIds.includes('source-web-1') ? { ...e, sourceIds: src } : e)) };
     const byStage: Record<string, unknown> = {
-      foundation: stageA, 'foundation-2': { ...stageA, entities: [] }, 'foundation-3': aFull, business: { entities: [] },
+      foundation: aCited, 'foundation-2': { ...stageA, entities: [] }, 'foundation-3': aFull, business: { entities: [] },
     };
     const d = deps([], {
       complete: async (prompt, _signal, stage) => {
@@ -301,6 +367,218 @@ describe('FR-311 pack generation (D-12)', () => {
     // A later re-fetch starts from what this run used.
     expect(prefillFromPack(r.pack)).toMatchObject({ purpose: '納期遅延を減らす', useWorkIq: true, workIqRounds: 2, materials: [{ name: 'kpi.csv', text: expect.stringContaining('納期遵守率') }] });
     expect(prefillFromPack({ extensions: {} })).toBeNull();
+  });
+
+  it('D-14 planned fan-out: wordings the relay already searched are not asked again, and rounds stop after two re-runs in a row add nothing', async () => {
+    const queries: WorkIqQuery[] = [];
+    const fetchedAt = '2026-11-10T02:59:45.000Z';
+    // The relay's merged sections, one per readiness item, each listing the ladder wordings it searched.
+    const merged = REQUIREMENTS.map((r) => ({ key: r.key, question: `Q-${r.key}`, answer: `${r.key} の事実`, sensitivity: null, fetchedAt, citations: [{ title: r.key, url: `https://t.example/${r.key}` }], searches: r.ladder.ja }));
+    // Every answer names a new gap, so only the progress rule can end the rounds.
+    let n = 0;
+    const d = deps([], {
+      complete: async (prompt, _signal, stage) => {
+        d.prompts.push(prompt);
+        n++;
+        const answer = stage.startsWith('foundation') ? { ...stageA, gaps: [{ section: 'kpi', missing: [`NSAT の目標値 ${n}`] }] }
+          : stage.startsWith('business') ? { entities: [], gaps: [{ section: 'issue', missing: [`遅延の原因 ${n}`] }] } : { replace: [] };
+        return { text: JSON.stringify(answer), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+      },
+      fetchWorkIq: async (q) => {
+        queries.push(q);
+        if (q.expand) return merged;
+        return [{ key: 'topic-1', question: 'Q', answer: `回答 ${queries.length}`, sensitivity: null, fetchedAt, citations: [{ title: 't', url: `https://t.example/new-${queries.length}` }] }];
+      },
+    });
+    const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true, workIqRounds: 4 }), d, () => {}, new AbortController().signal);
+
+    expect(queries[0]).toMatchObject({ aspects: [...WORKIQ_GEN_ASPECTS], expand: true });
+    const ladder = new Set(REQUIREMENTS.flatMap((x) => x.ladder.ja));
+    expect(queries.slice(1).flatMap((q) => q.topics ?? []).filter((t) => ladder.has(t))).toEqual([]);
+    expect(queries.slice(1).map((q) => q.topics![0])).toEqual(['kpi: NSAT の目標値 1', 'kpi: NSAT の目標値 2', 'issue: 遅延の原因 4', 'issue: 遅延の原因 5']);
+    // Two re-runs in a row that did not raise the readiness count end each stage before its limit of 4.
+    expect(r.report.calls.map((c) => c.stage).filter((s) => !s.startsWith('fix-'))).toEqual(['foundation', 'foundation-2', 'foundation-3', 'business', 'business-2', 'business-3']);
+    expect(r.report.stopReasons).toEqual({ a: 'noProgress', b: 'noProgress' });
+    expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(expect.arrayContaining(['source-workiq-customers', 'source-workiq-workflow', 'source-workiq-data-catalog']));
+    expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-workflow')!.title).toContain('業務の流れ');
+    expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-data-catalog')!.title).toContain('データ資産');
+  });
+
+  it('D-15: OKR and workflow items survive mechanical slips, a fix answer cannot delete them, and only the failing item is pruned', () => {
+    const src = base('source-workiq-kpi', 'source', 'digital', 'data', [], { publisher: lt('Microsoft 365 (Work IQ)'), locator: 'Microsoft Work IQ', accessedDate: '2026-11-10', origin: 'm365' });
+    const pack = {
+      packId: 'contoso-x', company: { name: lt('Contoso'), industry: lt('製造') }, isSample: false, regions: [], flows: [], entities: [src],
+      extensions: {
+        // As the model wrote them on 2026-11-12: KPI without id, a single `next` as a string, a stage without id.
+        okr: { kpis: [{ name: lt('NSAT'), target: '4.5', sourceIds: ['source-workiq-kpi'] }, { id: 'kpi-wins', name: lt('Wins'), sourceIds: ['source-gone'] }, { id: 'kpi-broken' }], objectives: [] },
+        workflow: { stages: [{ id: 'st-in', name: lt('受付'), next: 'stage-2' }, { name: lt('実施') }] },
+        graph: { layers: [] },
+      },
+    };
+    const kept = applyFix(pack, { sections: { extensions: { okr: null, workflow: null, graph: null } } }, new Set());
+    expect(Object.keys(kept.extensions as object).sort()).toEqual(['okr', 'workflow']);
+
+    const pruned = pruneInvalid(kept, NOW);
+    expect(pruned.verify.ok).toBe(true);
+    const ext = pruned.pack.extensions as { okr: { kpis: { id: string; sourceIds: string[] }[] }; workflow: { stages: { id: string; next: string[] }[] } };
+    expect(ext.okr.kpis.map((k) => [k.id, k.sourceIds])).toEqual([['okr-kpi-1', ['source-workiq-kpi']], ['kpi-wins', []]]);
+    expect(ext.workflow.stages.map((s) => [s.id, s.next])).toEqual([['st-in', ['stage-2']], ['stage-2', undefined]]);
+    expect(pruned.removed).toEqual([{ path: 'extensions.okr.kpis[2]', reason: expect.any(String) }]);
+  });
+
+  it('D-16: keeps sourced records without money or progress, fixes references item by item and rejects unsupported records', () => {
+    const source = base('source-workiq-engagements', 'source', 'digital', 'data', [], { publisher: lt('Work IQ'), locator: 'Work IQ', accessedDate: '2026-11-10', origin: 'm365' });
+    const good = { id: 'engagement-good', name: 'Customer briefing', status: 'Delivered', count: '20 participants', sourceIds: [source.id] };
+    const raw = {
+      packId: 'engagements', company: { name: lt('Contoso'), industry: lt('Services') }, regions: [], flows: [], entities: [source, base('engagement-2', 'cause', 'real', 'event', [source.id])],
+      extensions: { engagements: { items: [
+        good,
+        { name: 'Pilot', period: 'FY27', customer: 'Contoso', customerId: source.id, sourceIds: [source.id, 'missing'] },
+        { id: good.id, name: 'Duplicate id', status: 'Delivered', sourceIds: [source.id] },
+        { id: 'engagement-no-source', name: 'Unsupported', status: 'Delivered', sourceIds: ['missing'] },
+        { id: 'engagement-no-context', name: 'Only a name', sourceIds: [source.id] },
+        { id: 'engagement-no-name', status: 'Delivered', sourceIds: [source.id] },
+      ] } },
+    };
+    expect(verifyPack(raw).ok).toBe(false);
+    const kept = applyFix(raw, { sections: { extensions: { engagements: null } } }, new Set());
+    const fixed = applyFix(kept, { sections: { extensions: { engagements: { items: [] } } } }, new Set());
+    expect(fixed.extensions).toEqual(raw.extensions);
+    const result = pruneInvalid(fixed, NOW);
+    expect(result.verify.ok).toBe(true);
+    const ext = EngagementsExtension.parse((result.pack.extensions as Record<string, unknown>).engagements);
+    expect(ext.items).toEqual([good, { id: 'engagement-3', name: 'Pilot', period: 'FY27', customer: 'Contoso', sourceIds: [source.id] }]);
+    expect(result.removed.map((p) => p.path)).toEqual(expect.arrayContaining([
+      'extensions.engagements.items[1].customerId',
+      'extensions.engagements.items[2]', 'extensions.engagements.items[3]', 'extensions.engagements.items[4]', 'extensions.engagements.items[5]',
+    ]));
+    expect(readiness(result.pack).find((r) => r.key === 'engagements')).toMatchObject({ have: 2, need: 1, met: true });
+    const correction = { ...good, outcome: 'Follow-up agreed' };
+    const corrected = applyFix(result.pack, { sections: { extensions: { engagements: { items: [correction] } } } }, new Set());
+    expect(EngagementsExtension.parse((corrected.extensions as Record<string, unknown>).engagements).items).toEqual([correction, ext.items[1]]);
+  });
+
+  it.each(['ja', 'en'] as const)('D-16: one generation action retains all eight readiness items through fixes (%s)', async (lang) => {
+    const src = ['source-workiq-engagements'];
+    const a = {
+      ...stageA,
+      entities: [
+        base('site-office', 'site', 'real', 'site', src, { role: 'office', city: 'Tokyo', country: 'Japan', capacityTPerMonth: 0, lat: 35.68, lon: 139.76 }),
+        base('person-lead', 'person', 'real', 'person', src, { role: lt('Lead'), siteId: 'site-office' }),
+        base('person-owner', 'person', 'real', 'person', src, { role: lt('Owner'), siteId: 'site-office' }),
+        base('customer-test', 'customer', 'real', 'organization', src, { industry: lt('Retail'), regionId: 'region-kanto' }),
+      ],
+      extensions: {
+        workflow: { stages: [
+          { id: 'in', name: 'Intake', next: ['prepare'], sourceIds: src },
+          { id: 'prepare', name: 'Prepare', next: ['deliver'], sourceIds: src },
+          { id: 'deliver', name: 'Deliver', handoffTo: ['Account team'], sourceIds: src },
+        ] },
+        dataCatalog: { items: [{ name: 'Pipeline' }, { name: 'Feedback' }, { name: 'Events' }] },
+      },
+    };
+    const b = {
+      entities: [base('issue-test', 'issue', 'real', 'event', src, { impact: 4, feasibility: 3, causeIds: [], kpiIds: [] })],
+      extensions: {
+        okr: { kpis: [{ id: 'okr-nsat', name: 'NSAT', sourceIds: src }, { id: 'okr-reach', name: 'Reach', sourceIds: src }] },
+        engagements: { items: [
+          { name: 'Workshop', type: 'workshop', status: 'Delivered', customerId: 'customer-test', sourceIds: src },
+          { id: 'broken', status: 'Delivered', sourceIds: src },
+        ] },
+      },
+    };
+    const d = deps([], {
+      complete: async (prompt, _signal, stage) => {
+        d.prompts.push(prompt);
+        return { text: JSON.stringify(stage.startsWith('foundation') ? a : stage.startsWith('business') ? b : { sections: { extensions: { engagements: null } } }), costJpy: 1, inputTokens: 100, outputTokens: 100 };
+      },
+      fetchWorkIq: async () => REQUIREMENTS.map((r) => ({
+        key: r.key, question: r.key, answer: 'Workshop delivered; customer and workflow documented.',
+        sensitivity: null, fetchedAt: NOW.toISOString(), citations: [{ title: r.key, url: `https://example.com/${r.key}` }], searches: r.ladder[lang],
+      })),
+    });
+    const result = await generatePack(input({ lang, useWorkIq: true, useNews: false, officialUrl: '', materials: [] }), d, () => {}, new AbortController().signal);
+    expect(result.report.readiness).toHaveLength(8);
+    expect(result.report.readiness!.every((r) => r.met)).toBe(true);
+    expect(result.verify.ok).toBe(true);
+    expect(result.report.ungrounded).toEqual([]);
+    const ext = EngagementsExtension.parse((result.pack.extensions as Record<string, unknown>).engagements);
+    expect(ext.items).toHaveLength(1);
+    expect(ext.items[0]).toMatchObject({ name: 'Workshop', status: 'Delivered', sourceIds: src });
+    expect(ext.items[0]).not.toHaveProperty('progress');
+    expect(ext.items[0]).not.toHaveProperty('valueJpy');
+    expect(d.prompts[1]).toContain('"engagements":{"items":[...]}');
+    expect(d.prompts[1]).toContain(lang === 'ja' ? '金額・進捗・日付を補わない' : 'Never fill in amounts, progress or dates');
+  });
+
+  it('D-15: an item the model built without a required fact sends that fact to Work IQ, and the stage is not "satisfied" by items that would be pruned', async () => {
+    const queries: WorkIqQuery[] = [];
+    const fetchedAt = '2026-11-10T02:59:45.000Z';
+    const src = ['source-workiq-engagements'];
+    const ans = (key: string) => ({ key, question: `Q-${key}`, answer: `${key} の事実`, sensitivity: null, fetchedAt, citations: [{ title: key, url: `https://t.example/${key}` }], searches: [] });
+    const b1 = {
+      entities: [
+        base('issue-reach', 'issue', 'real', 'event', src, { impact: 4, feasibility: 3, causeIds: [], kpiIds: [] }),
+        base('solution-hub', 'solution', 'real', 'operation', src, { name: lt('Hub の拡大'), issueIds: ['issue-reach'], kpiIds: [], msProducts: [] }),
+        base('initiative-hub', 'initiative', 'real', 'operation', src, { name: lt('Hub 拡大の実行'), solutionId: 'solution-hub', start: '2026-12-01', end: '2027-03-31', dependsOn: [], ownerId: 'person-ceo' }),
+      ],
+    };
+    const d = deps([], {
+      complete: async (prompt, _signal, stage) => {
+        d.prompts.push(prompt);
+        const answer = stage.startsWith('foundation') ? { ...stageA, entities: stageA.entities.map((e) => ({ ...e, sourceIds: src })) } : stage.startsWith('business') ? b1 : { replace: [] };
+        return { text: JSON.stringify(answer), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+      },
+      fetchWorkIq: async (q) => {
+        queries.push(q);
+        return q.expand ? REQUIREMENTS.map((r) => ans(r.key)) : [];
+      },
+    });
+    const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true, workIqRounds: 1 }), d, () => {}, new AbortController().signal);
+
+    const asked = queries.filter((q) => !q.expand).flatMap((q) => q.topics ?? []);
+    expect(asked).toEqual(expect.arrayContaining(['Hub 拡大の実行: 進捗率（%）', 'Hub の拡大: 費用（円）・年間の効果額（円）']));
+    expect(r.report.collectionRounds!.find((x) => x.stage === 'b')!.unmet).toContain('engagements');
+    expect(r.report.stopReasons!.b).not.toBe('satisfied');
+    expect(fieldTopics(b1, [], ['engagements'], 'ja')).toEqual([]);
+  });
+
+  it('D-15: every prompt fits the relay character limit and the app\'s token estimate; material is shortened only when needed', async () => {
+    const fetchedAt = '2026-11-10T02:59:45.000Z';
+    for (const filler of ['x', '経']) {
+      const big = REQUIREMENTS.map((r) => ({ key: r.key, question: 'Q', answer: filler.repeat(30_000), sensitivity: null, fetchedAt, citations: [{ title: r.key, url: `https://t.example/${r.key}` }], searches: [] }));
+      const d = deps([stageA, stageB, { replace: [] }], { fetchWorkIq: async (q) => (q.expand ? big : []) });
+      const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true, workIqRounds: 1 }), d, () => {}, new AbortController().signal);
+      for (const prompt of d.prompts) {
+        expect(prompt.length).toBeLessThanOrEqual(PACK_BUILD_MAX_PROMPT_CHARS);
+        expect(estimateTokens(prompt)).toBeLessThanOrEqual(PER_USE_LIMITS.packBuild!.maxInputTokens!);
+      }
+      expect(r.report.calls[0]!.trimmedChars).toBeGreaterThan(0);
+    }
+    const small = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }]);
+    const r = await generatePack(input(), small, () => {}, new AbortController().signal);
+    expect(r.report.calls.every((c) => c.trimmedChars === undefined)).toBe(true);
+  });
+
+  it('D-15: a failed or unreadable model answer is asked again (twice per run at most); a refusal by the app\'s own gate is not', async () => {
+    let n = 0;
+    const flaky = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }]);
+    const answer = flaky.complete;
+    flaky.complete = async (prompt, signal, stage) => {
+      n++;
+      if (n === 1) throw new Error('relay 502');
+      if (n === 2) return { text: 'すみません', costJpy: 10, inputTokens: 1, outputTokens: 1 };
+      return answer(prompt, signal, stage);
+    };
+    const r = await generatePack(input(), flaky, () => {}, new AbortController().signal);
+    expect(r.report.calls[0]).toMatchObject({ stage: 'foundation', retried: true });
+    expect(r.report.calls[1]).toMatchObject({ stage: 'foundation', retried: true });
+    expect(verifyPack(r.pack).ok).toBe(true);
+
+    let blockedCalls = 0;
+    const blocked = deps([stageA], { complete: async () => { blockedCalls++; throw Object.assign(new Error('blocked: dailyLimit'), { reasons: ['dailyLimit'] }); } });
+    await expect(generatePack(input(), blocked, () => {}, new AbortController().signal)).rejects.toMatchObject({ code: 'callFailed' });
+    expect(blockedCalls).toBe(1);
   });
 
   it('D-14: a Work IQ failure is recorded and the run continues; without the opt-in Work IQ is never asked', async () => {

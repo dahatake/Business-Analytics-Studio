@@ -14,7 +14,9 @@ import {
   STRICT_RELAY_CONFIG, handleRelay, hostAllowed, isLoopback, loadConnection, newRelayToken, originAllowed, outboundAllowed, relayAiDecision,
   relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
 } from '../server/relay.ts';
-import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, WorkIqCliService, workIqCliCommand } from '../server/workiqCli.ts';
+import { spawn } from 'node:child_process';
+import { WorkIqError, type WorkIqQuestion } from '../server/workiq.ts';
+import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, WorkIqCliService, mergeByItem, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
@@ -77,6 +79,15 @@ describe('authenticated company news relay', () => {
     expect((await call(req('POST', '/relay/news', { ...body, endpoint: 'https://example.com' }), { fetch: doFetch })).status).toBe(400);
     expect((await call(req('POST', '/relay/news', body), { fetch: doFetch, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['example.com'] } })).body).toEqual({ error: 'outboundNotAllowed' });
     expect(calls).toBe(0);
+  });
+
+  it('refuses a project topic without explicit confirmation before contacting Google News', async () => {
+    const doFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response('<rss><channel><title>News</title></channel></rss>'));
+    const body = { company: 'Acme', lang: 'en', topic: 'logistics' };
+    expect((await call(req('POST', '/relay/news', body), { fetch: doFetch })).status).toBe(400);
+    expect(doFetch).not.toHaveBeenCalled();
+    expect((await call(req('POST', '/relay/news', { ...body, topicConfirmed: true }), { fetch: doFetch })).status).toBe(200);
+    expect(new URL(String(doFetch.mock.calls[0]![0])).searchParams.get('q')).toBe('"Acme" "logistics"');
   });
 
   it('returns an explicit failure, never fabricated news or provider content', async () => {
@@ -735,8 +746,8 @@ describe('D-12 packBuild through the relay', () => {
     seen = [];
     expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(150_000) })), { config: testConfig })).status).toBe(200);
     expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(200_001) })), { config: testConfig })).status).toBe(400);
-    expect((await call(req('POST', '/relay/ai', packBody({ timeoutMs: 300_001 })), { config: testConfig })).status).toBe(400);
-    expect((await call(req('POST', '/relay/ai', packBody({ maxOutputTokens: 16_001 })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', packBody({ timeoutMs: 600_001 })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', packBody({ maxOutputTokens: 32_001 })), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', packBody({ provider: 'openai' })), { config: testConfig })).status).toBe(400);
   });
 
@@ -757,6 +768,30 @@ describe('D-12 packBuild through the relay', () => {
     const st = await call(req('POST', '/relay/copilot/status', {}), { copilot: service });
     expect(st.body).toMatchObject({ authenticated: true, login: 'octocat', settings: { model: 'gpt-5' } });
     expect((await call(req('DELETE', '/relay/copilot'))).body).toEqual({ copilot: null });
+  });
+
+  it('alignment proposals use the dedicated JSON instruction and C-03 gate for both providers', async () => {
+    const prompt = '{"purpose":"Synthetic delivery goal","projectSources":[{"id":"source-1","facts":[]}]}';
+    const body = packBody({ use: 'alignmentProposal', lang: 'en', prompt, maxOutputTokens: 3000, timeoutMs: 5000 });
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig })).status).toBe(200);
+    seen = [];
+    expect((await call(req('POST', '/relay/ai', body), { config: testConfig, table: { ...C03_TABLE, alignmentProposal: C03_TABLE.chat } })).status).toBe(403);
+    expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 3001 }), { config: testConfig })).status).toBe(400);
+    expect(seen).toHaveLength(0);
+    expect((await call(req('POST', '/relay/ai', body), { config: testConfig })).status).toBe(200);
+    const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[]; response_format: { type: string }; max_completion_tokens: number };
+    expect(sent.response_format).toEqual({ type: 'json_object' });
+    expect(sent.messages[0]!.content).toContain('human review');
+    expect(sent.messages[1]!.content).toBe(`${prompt}\n\n`);
+    expect(sent.max_completion_tokens).toBe(3000);
+
+    const { calls, service } = fakeCopilot('{"kind":"unaligned"}');
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    const result = await call(req('POST', '/relay/ai', { ...body, provider: 'copilotSdk' }), { copilot: service });
+    expect(result).toMatchObject({ status: 200, body: { text: '{"kind":"unaligned"}' } });
+    expect(calls[0]).toMatchObject({ prompt, system: expect.stringContaining('human review') });
+    expect(seen).toHaveLength(1);
   });
 
   it('official-site reader: token-protected, URL validated, outbound list honoured, errors mapped', async () => {
@@ -1024,6 +1059,7 @@ describe('D-14 Work IQ through the Work IQ CLI (MCP stdio, Microsoft Foundry onl
 const [mode, log] = process.argv.slice(2);
 const fs = require('node:fs');
 let buf = '';
+const tries = {};
 const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\\n');
 process.stdin.on('end', () => process.exit(0));
 process.stdin.on('data', (d) => {
@@ -1039,6 +1075,19 @@ process.stdin.on('data', (d) => {
       fs.appendFileSync(log, JSON.stringify(m.params) + '\\n');
       if (mode === 'crash') process.exit(3);
       if (mode === 'hang') return;
+      const q = String(m.params.arguments && m.params.arguments.query);
+      tries[q] = (tries[q] || 0) + 1;
+      if (mode === 'flaky' && /KPI/.test(q) && tries[q] <= 2) {
+        // Work IQ's generic failure (seen after ~30 s on 4 % of the searches, 2026-11-12), twice; the third try succeeds.
+        send({ id: m.id, result: { isError: true, content: [{ type: 'text', text: "An error occurred invoking 'retrieve'." }] } });
+        continue;
+      }
+      if (mode === 'byquery') {
+        const results = [{ markdown: 'Shared overview of the Contoso programme.', webUrl: 'https://contoso.sharepoint.com/common.docx', entityType: 'Files', resourceMetadata: { document: { title: 'Overview' } } }];
+        if (/KPI|scorecard/i.test(q)) results.unshift({ markdown: 'NSAT target 4.5 (FY27).', webUrl: 'https://contoso.sharepoint.com/kpi.xlsx', entityType: 'Files', resourceMetadata: { document: { title: 'KPI scorecard' } } });
+        send({ id: m.id, result: { content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': { results, resultCount: results.length, stoppedReason: 'completed' } } } });
+        continue;
+      }
       if (mode === 'eula' && m.params.name !== 'accept_eula') {
         send({ id: m.id, result: { content: [{ type: 'text', text: 'You must accept the EULA before using this tool. Use the accept_eula tool to continue.' }] } });
       } else if (mode === 'denied') {
@@ -1074,7 +1123,7 @@ process.stdin.on('data', (d) => {
   let script: string;
   let log: string;
   const cli = (mode: string, timeoutMs?: number, eulaAccepted = true) => new WorkIqCliService({
-    command: () => ({ command: process.execPath, args: [script, mode, log], shell: false }), now: () => Date.parse('2026-11-11T05:00:00Z'), timeoutMs,
+    command: () => ({ command: process.execPath, args: [script, mode, log], shell: false }), now: () => Date.parse('2026-11-11T05:00:00Z'), timeoutMs, sessionIdleMs: 0, retryDelayMs: 0,
     config: async () => ({ account: 'user@contoso.example', eulaAccepted }),
   });
   const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { name: string; arguments: Record<string, unknown> }) : []);
@@ -1163,7 +1212,7 @@ process.stdin.on('data', (d) => {
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
     expect((await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['payroll'] }), { workiqCli: cli('ok') })).body).toEqual({ error: 'invalidQuestion' });
-    expect((await call(req('POST', '/relay/workiq/ask', { ...question, aspects: [], topics: ['a', 'b', 'c', 'd', 'e'] }), { workiqCli: cli('ok') })).body).toEqual({ error: 'invalidQuestion' });
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, aspects: [], topics: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] }), { workiqCli: cli('ok') })).body).toEqual({ error: 'invalidQuestion' });
 
     const r = await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['kpi', 'data'], topics: ['kpi: NSAT target'] }), { workiqCli: cli('ok') });
     expect(r.status).toBe(200);
@@ -1174,6 +1223,77 @@ process.stdin.on('data', (d) => {
     expect(asked).toHaveLength(3);
     expect(asked[2]).toContain('NSAT target');
     expect(new Set(asked).size).toBe(3);
+  });
+
+  it('keeps one CLI session for the searches of a generation and retries a transient failure twice', async () => {
+    let spawned = 0;
+    const svc = new WorkIqCliService({
+      command: () => ({ command: process.execPath, args: [script, 'flaky', log], shell: false }), now: () => Date.parse('2026-11-11T05:00:00Z'), retryDelayMs: 0,
+      spawn: ((c, a, o) => { spawned++; return spawn(c, a, o); }) as SpawnLike,
+    });
+    const q: WorkIqQuestion = { company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-11', lang: 'en', timeZone: 'Asia/Tokyo', aspects: ['kpi', 'data'], topics: [], expand: false };
+    try {
+      const first = await svc.askSections(q);
+      expect(first.map((s) => ('error' in s ? s.error : s.citations.length))).toEqual([2, 2]);
+      const second = await svc.askSections({ ...q, aspects: [], topics: ['kpi: NSAT target'] });
+      expect(second.map((s) => s.key)).toEqual(['topic-1']);
+      expect(spawned).toBe(1);
+      // Two sections, two retries of the KPI search, and the follow-up.
+      expect(calls()).toHaveLength(5);
+    } finally {
+      svc.closeSession();
+    }
+  });
+
+  it('expand: plans every readiness ladder wording and answers one merged, de-duplicated section per readiness item', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, expand: 'yes' }), { workiqCli: cli('byquery') })).body).toEqual({ error: 'invalidQuestion' });
+
+    const r = await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['kpi'], expand: true }), { workiqCli: cli('byquery') });
+    expect(r.status).toBe(200);
+    const sections = (r.body as { sections: { key: string; question: string; answer: string; citations: { title: string }[]; searches: string[] }[] }).sections;
+    expect(sections.map((s) => s.key)).toEqual(['org', 'locations', 'customers', 'workflow', 'dataCatalog', 'kpi', 'engagements', 'issues']);
+    // 1 section search + 3 wordings × 8 items, built by the relay.
+    expect(calls()).toHaveLength(25);
+    const kpi = sections.find((s) => s.key === 'kpi')!;
+    expect(kpi.searches).toEqual(['KPI and OKR definitions with targets and actuals', 'metrics and attainment in scorecards, QBRs and business reviews', 'fiscal-year targets, commitments and success measures']);
+    expect(kpi.question.split('\n')).toHaveLength(4);
+    expect(kpi.citations.map((c) => c.title).sort()).toEqual(['KPI scorecard', 'Overview']);
+    // The overview every search returned is sent once, with the item that ranked it highest.
+    const all = sections.map((s) => s.answer).join('\n');
+    expect(all.split('Shared overview').length - 1).toBe(1);
+    expect(all.split('NSAT target 4.5').length - 1).toBe(1);
+    expect(sections.filter((s) => s.key !== 'kpi').every((s) => s.citations.length === 0)).toBe(true);
+  });
+
+  it('merges planned searches by fused rank: one item per source, the longest excerpt, protected text withheld, the budget, and failed items', () => {
+    const res = (...results: Record<string, unknown>[]) => ({ structuredContent: { 'application/vnd.ms-workiq.retrieval': { results, stoppedReason: 'completed' } } });
+    const hit = (name: string, markdown: string, extra: Record<string, unknown> = {}) => ({
+      webUrl: `https://contoso.sharepoint.com/${name}`, markdown, entityType: 'Files', resourceMetadata: { document: { title: name } }, ...extra,
+    });
+    const items = [
+      { key: 'kpi', queries: ['q1', 'q2'], wordings: ['w2'], results: [res(hit('a', 'A text'), hit('b', 'B short')), res(hit('b', 'B much longer excerpt'), hit('c', 'PROTECTED', { contentProtection: 'blocked' }))] },
+      { key: 'issues', queries: ['q3'], wordings: [], results: [res(hit('b', 'B'), hit('d', 'D text', { sensitivityLabel: { displayName: 'Confidential' } }))] },
+      { key: 'org', queries: ['q4'], wordings: [], results: [new WorkIqError('workiqTimeout')] },
+    ];
+    const out = mergeByItem(items, '2026-11-12T00:00:00.000Z');
+    const [kpi, issues, org] = out as { key: string; answer: string; question: string; searches: string[]; citations: { title: string }[]; sensitivity: string | null }[];
+    // b: found by both kpi searches (1/61 + 1/62) and once for issues (1/61) → kpi, first.
+    expect(kpi!.citations.map((c) => c.title)).toEqual(['b', 'a', 'c']);
+    expect(kpi).toMatchObject({ question: 'q1\nq2', searches: ['w2'] });
+    expect(kpi!.answer).toContain('[1] b (Files) <https://contoso.sharepoint.com/b>\nB much longer excerpt');
+    expect(kpi!.answer).not.toContain('B short');
+    expect(kpi!.answer).not.toContain('PROTECTED');
+    expect(issues!.citations.map((c) => c.title)).toEqual(['d']);
+    expect(issues!.sensitivity).toBe('Confidential');
+    expect(org).toEqual({ key: 'org', error: 'workiqTimeout' });
+
+    const small = mergeByItem(items.slice(0, 1), '2026-11-12T00:00:00.000Z', 40)[0] as { answer: string; citations: unknown[] };
+    expect(small.citations).toHaveLength(1);
+    expect(small.answer.endsWith('…')).toBe(true);
+    expect(small.answer.length).toBe(41);
   });
 
   it('retrieves customer evidence with citations and labels for a Foundry pack, and never for Copilot', async () => {

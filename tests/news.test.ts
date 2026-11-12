@@ -48,12 +48,15 @@ describe('news normalization', () => {
     expect(NewsRequest.safeParse({ company: 'Acme\ninjected', lang: 'en' }).success).toBe(false);
     expect(NewsRequest.safeParse({ company: 'Acme', lang: 'fr' }).success).toBe(false);
     expect(NewsRequest.safeParse({ company: 'Acme', lang: 'en', endpoint: 'https://example.com' }).success).toBe(false);
+    expect(NewsRequest.safeParse({ company: 'Acme', lang: 'en', topic: 'logistics' }).success).toBe(false);
+    expect(NewsRequest.safeParse({ company: 'Acme', lang: 'en', topic: 'logistics', topicConfirmed: true }).success).toBe(true);
+    expect(NewsRequest.safeParse({ company: 'Acme', lang: 'en', topic: 'secret\ntext', topicConfirmed: true }).success).toBe(false);
   });
 });
 
 describe('news retrieval', () => {
   it('uses only the fixed HTTPS host and quoted company search, without project data or redirects', async () => {
-    const doFetch = vi.fn<typeof fetch>().mockResolvedValue(response());
+    const doFetch = vi.fn<typeof fetch>().mockImplementation(async () => response());
     const service = new NewsService(doFetch, () => Date.parse('2026-11-10T12:00:00Z'));
     const feed = await service.get(' Acme & Sons ', 'ja');
     const [target, init] = doFetch.mock.calls[0]!;
@@ -79,6 +82,17 @@ describe('news retrieval', () => {
     await service.get('Other', 'en');
     await service.get('Acme', 'ja');
     expect(doFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('quotes an explicitly provided topic and isolates topic-specific cached results', async () => {
+    const doFetch = vi.fn<typeof fetch>().mockImplementation(async () => response());
+    const service = new NewsService(doFetch);
+    await service.get('Acme', 'en', 'supply "chain"');
+    await service.get('Acme', 'en', 'supply "chain"');
+    await service.get('Acme', 'en', 'other');
+    expect(doFetch).toHaveBeenCalledTimes(2);
+    expect(new URL(String(doFetch.mock.calls[0]![0])).searchParams.get('q')).toBe('"Acme" "supply  chain "');
+    expect(new URL(String(doFetch.mock.calls[1]![0])).searchParams.get('q')).toBe('"Acme" "other"');
   });
 
   it('evicts old cache entries at the bounded capacity', async () => {

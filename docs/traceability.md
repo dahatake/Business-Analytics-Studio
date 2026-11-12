@@ -49,6 +49,7 @@
 | 登録済み企業（顧客）・Project の名前変更と削除 | FR-137・FR-138・FR-139・FR-306 の追加仕様（[要求定義書 §3.9](requirements-definition.md#39-登録済み企業顧客とprojectの名前変更削除)）。両画面の操作、空名・重複名の拒否、確認・取消、識別子の維持、削除範囲、選択状態と再読み込み後の整合性 | `src/state/projects.ts`、`src/modules/project/useProjectManagement.tsx`（共通ダイアログ）、`LaunchScreen.tsx`、`ProjectsScreen.tsx`、`src/data/packStore.ts`、`src/modules/ink/storage.ts` | `tests/projects.test.ts`（名前・識別子・分離・削除）、`e2e/project-management.spec.ts`（両画面・取消・永続化・日英・狭い画面・axe・パックと手書きボードの IndexedDB 削除）、既存の `e2e/project.spec.ts`・`e2e/pack-import.spec.ts` |
 | 企業・Project・分析・議論 | FR-012、FR-019、FR-042、FR-044〜057、FR-133〜140、FR-144、FR-148〜149、FR-153〜154、FR-176、FR-186〜187、FR-219、FR-266〜268 | `src/modules/project/`（/home、/projects、/analysis、/discussion、作業先メニュー、ステッパー、全量エクスポート） | `tests/project.test.ts`（Markdown の往復など）、`e2e/project.spec.ts` |
 | 起動の流れ・データ管理（顧客パックの取り込み） | FR-076（オープニングはアプリ名だけ）、FR-144・FR-267（起動時の選択画面）、FR-302〜304（アップロード・ブラウザー内の検証・人の確認・全か無かの取り込み）、FR-306〜307（2026-11-10 改訂: 2 段目の顧客パック作成が `<packId>.zip` を返し、そのまま取り込む。AC-898）、FR-308〜310（公開 Web 調査の指示と送信前の分離〈1 段目は Web モードで公開の入力だけ、2 段目は Web 検索をオフ〉・全区分の取得指示・出典の URL/確認日・取得報告・取り込みの厳格化・拡張の検査・`dataCatalog` の Project での利用。AC-888〜AC-898 は要求定義書 §3.8）、FR-241（任意項目）、PARAM-142 | `src/state/launch.ts`・`src/ui/Opening.tsx`・`src/modules/project/LaunchScreen.tsx`（スプラッシュ→企業と Project の選択→Project 画面）、`src/data/packImport.ts`（```json の抽出・PART の結合・形の整形・`verifyPack`）、`src/data/zipRead.ts`（Copilot の zip から JSON を読む。無圧縮・deflate、サイズ上限）、`src/data/verify.ts`（CLI と共有する唯一の検証）、`src/data/collection.ts`（取得報告の 24 区分）、`src/data/extensionSchemas.ts`・`src/modules/usecases/catalogSchema.ts`（拡張のスキーマ）、`src/data/packStore.ts`（Project ごとの IndexedDB）、`src/main.tsx`（作業先のパックで起動）、`src/modules/project/PackDataScreen.tsx`（/data）、`docs/copilot-customer-pack-prompt.md`（Microsoft 365 Copilot 用の 2 つのプロンプトの原本） | `tests/pack-import.test.ts`（PART に分けたお手本パックの往復が CLI の verify に合格・出典のない数値はエラー・修正用プロンプト・保存の全か無か・プロンプトとスキーマの食い違いの検出・`docs/pack.schema.json` の全プロパティとプロンプトの照合・調査プロンプトの入力が公開の 3 つだけ・取得報告・PART の欠落/矛盾の拒否・拡張と最適化の検査）、`tests/zip-read.test.ts`（zip の読み取り・上限・PART の結合）、`e2e/pack-import.spec.ts`（2 つのプロンプトの表示→修正用プロンプト→貼り付け＋ファイル→確認→取り込み→画面に反映→デモへの切り替え→削除。英語 UI で zip を選んで取り込み。axe・日英）、`e2e/project.spec.ts`（起動の選択画面）、`e2e/motion-feed.spec.ts`（オープニングに顧客名が出ない） |
+| 顧客パックの実施記録 | FR-133・FR-135・FR-303・FR-308・FR-310 の補足（[要求定義書 §3.11](requirements-definition.md#311-顧客パックの実施記録)、D-16） | `src/data/extensionSchemas.ts`・`verify.ts`、`src/modules/project/packGenerate.ts`・`analysisReadiness.ts`・`EngagementsPanel.tsx`、`docs/pack.schema.json`・`copilot-customer-pack-prompt.md` | `tests/ops-pipeline.test.ts`・`pack-generate.test.ts`・`engagements-panel.test.tsx`・`pack-import.test.ts`、`e2e/pack-import.spec.ts`。実サービスの再計測は未実施 |
 | ステップの成果物・ToDo | FR-136（5 ステップ）、FR-050（人の決定と AI の提案の区別）、FR-011（モックの表示）、C-03 | `src/modules/project/deliverables.ts`（成果物の定義・完了条件・決定的な妥当性チェック）、`deliverableDraft.ts`（「Copilotでドラフト作成」。専用の用途 `deliverableDraft` で `aiComplete` を通り、未承認の間は顧客パックから作るモック。D-9）、`deliverablesUi.tsx`（ライブの下の ToDo 帯。自動で開くのは固定の領域が画面の高さの 35% 以内のとき）、`DeliverablesScreen.tsx`（/deliverables。施策計画の投資回収の上限を Project ごとに設定）。数値の照合（`asis-reconcile`）は KPI を正とする | `tests/project-deliverables.test.ts`（空の Project は失敗・デモ＋ドラフト＋確認で全ステップ完了・壊したデータの反例・数値の不一致の反例・構築期間を含む回収と上限の変更・自動で開く規則・専用の用途が未承認）、`e2e/project-deliverables.spec.ts`（axe・日英） |
 | ワークスペース | FR-013〜015、FR-109〜113、FR-142〜143、FR-150〜152、FR-173〜175、FR-183〜185、FR-215〜216、FR-295〜300、FR-305、NFR-UX-001・006〜008 | `src/modules/workspace/`（純粋なレイアウトエンジン、ペルソナ別レイアウト、コマンドパレット） | `tests/workspace-*.test.ts`、`e2e/workspace.spec.ts` |
 | ショー・プレゼンテーション | FR-016、FR-057、FR-063、FR-076〜085、FR-177〜179、FR-290、NFR-A11Y-008 | `src/modules/show/` | `tests/show.test.ts`、`e2e/show.spec.ts`（最初のシーン 2 秒以内など） |
@@ -68,7 +69,7 @@
 
 | 項目 | 状態 | 実装と検証 |
 |---|---|---|
-| C-03 の基準表（D-1） | 第 1 行「現状の説明 × Foundry」を許可。他の 15 行（D-9 の `deliverableDraft` を含む）は第 1 行の実測後に見直し | `src/ai/policy.ts`、中継の転送。スタブの「Foundry」相手の E2E で、送信の本文・API キーのヘッダー・費用の記録・予算超過後の送信 0 件を確認 |
+| C-03 の基準表（D-1・D-12・D-13） | 実装では「現状の説明 × Foundry」に加えて `packBuild` と固定の合成文による `connectionTest` を許可。他の用途（D-9 の `deliverableDraft` を含む）は未承認。要求定義書 §3.1 はこれらの決定を未反映 | `src/ai/policy.ts`、中継の転送。スタブの「Foundry」相手の E2E で、送信の本文・API キーのヘッダー・費用の記録・予算超過後の送信 0 件を確認 |
 | internal の外部送信（D-2） | 許可（Q-055 を改める） | 送信前の確認に internal と人物の件数を表示。社外向け表示の非表示と FR-219 は維持 |
 | 予算（D-3） | 月 100,000 円の 1 つの枠。設定画面で変更可 | `tests/ai-core.test.ts`、AI の接続設定の画面 |
 | 権利処理（D-4） | 起動前に済んでいる前提。警告を表示 | AI の接続設定・送信前の確認・実接続中のバナー |
@@ -89,9 +90,9 @@
 
 | 項目 | 状態 | 理由と次の手順 |
 |---|---|---|
-| KPI-1（実 LLM での生成時間） | 測定待ち | C-03 の `packBuild` の行が未許可（段階的な許可）。許可後に [measurement-plan.md](measurement-plan.md) M-1 |
+| KPI-1（実 LLM での生成時間） | 測定待ち | `packBuild` は D-12 で許可済みだが、要求定義書 §3.1 への反映と [measurement-plan.md](measurement-plan.md) M-1 の実測は未完了 |
 | 4K・60 fps（KPI-5）、移動中の 30 fps（PARAM-065） | 測定待ち | GPU と 4K の表示装置を持つ基準端末で M-2。ヘッドレスの結果は証拠にしない |
 | 実機のペンと複数指のタッチ | 確認待ち | M-3 |
 | 利用テスト（F-3.4.2） | 実施待ち | M-4 |
 | Safari・Firefox での動画の保存 | 未確認 | この環境には Chromium しかない。未対応のときは案内を表示する作り |
-| 要求定義書への反映 | rd-author の作業 | 要求定義書は rd-author だけが編集できる（G-1）。決定は decision-guide.md §0 に記録 |
+| 要求定義書への反映（D-12〜D-15） | 未反映 | 決定と実装は [decision-guide.md](decision-guide.md) §0 に記録。要求定義書 §3.1・生成の正式な要求 ID と PARAM への反映が残る。D-16 は §3.11 に反映済み。編集者の限定は廃止し、承認条件・ID 管理は維持 |

@@ -1,8 +1,9 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
-import { WORKIQ_TIMEOUT_MS, WorkIqError, workIqSearches, type WorkIqAnswer, type WorkIqCitation, type WorkIqQuestion, type WorkIqSectionAnswer } from './workiq.ts';
+import { WORKIQ_ITEM_MAX_CHARS, WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
+import { REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
+import { WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer } from './workiq.ts';
 
 /**
  * D-14 (user, 2026-11-11), second route: Microsoft's own Work IQ CLI (`@microsoft/workiq`) as a local MCP stdio server.
@@ -133,50 +134,152 @@ function httpsUrl(v: unknown): URL | null {
  * A result whose `contentProtection` is not "allowed" keeps its citation but its text is not passed on.
  */
 export function parseRetrieveResult(result: unknown, question: string, fetchedAt: string, maxChars = WORKIQ_MAX_ANSWER_CHARS): WorkIqAnswer {
+  const { markdown: top, entries } = readRetrieve(result);
+  const seen = new Set<string>();
+  const citations: WorkIqCitation[] = [];
+  const labels: string[] = [];
+  const sections: string[] = [];
+  if (top) sections.push(top);
+  for (const e of entries) {
+    if (e.label && !labels.includes(e.label)) labels.push(e.label);
+    if (!e.url || seen.has(e.url.href) || citations.length >= MAX_CITATIONS) continue;
+    seen.add(e.url.href);
+    citations.push({ title: e.title, url: e.url.href });
+    if (!e.result) continue;
+    const head = heading(citations.length, e, e.url.href);
+    sections.push(e.body ? `${head}\n${e.body}` : head);
+  }
+  const markdown = sections.join('\n\n');
+  const answer = markdown.length > maxChars ? `${markdown.slice(0, maxChars)}…` : markdown;
+  return { question, answer, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt };
+}
+
+interface RetrieveEntry {
+  url: URL | null;
+  title: string;
+  kind: string;
+  date: string | null;
+  label: string | null;
+  /** Text passed on (empty when contentProtection is not "allowed", and for documented `retrievalHits`). */
+  body: string;
+  /** From `results[]` (has its own text and heading) rather than citation-only `retrievalHits[]`. */
+  result: boolean;
+}
+
+/** The `retrieve` payload as entries in Work IQ's order; tool errors and the EULA gate are thrown as WorkIqError. */
+function readRetrieve(result: unknown): { markdown: string; entries: RetrieveEntry[] } {
   if (!isObj(result)) throw new WorkIqError('badWorkiqResponse');
   const payload = retrievalPayload(result);
   if (!payload && needsEula(result)) throw new WorkIqError('workiqEulaRequired');
   if (result.isError === true) throw errorFromText([...texts(result), payload ? String(payload.error ?? payload.errorCode ?? '') : ''].join('\n'));
   if (!payload) throw new WorkIqError('badWorkiqResponse');
   if (payload.stoppedReason === 'error') throw errorFromText(`${String(payload.errorCode ?? '')} ${String(payload.error ?? '')}`);
-  const seen = new Set<string>();
-  const citations: WorkIqCitation[] = [];
-  const labels: string[] = [];
-  const sections: string[] = [];
-  const addLabel = (hit: Json) => {
-    const label = isObj(hit.sensitivityLabel) && typeof hit.sensitivityLabel.displayName === 'string' ? hit.sensitivityLabel.displayName.trim() : '';
-    if (label && !labels.includes(label)) labels.push(label);
-  };
-  const cite = (hit: Json): WorkIqCitation | null => {
+  const entry = (hit: Json, isResult: boolean): RetrieveEntry => {
     const url = httpsUrl(hit.webUrl);
-    if (!url || seen.has(url.href) || citations.length >= MAX_CITATIONS) return null;
-    seen.add(url.href);
-    const c = { title: hitMeta(hit).title ?? url.hostname, url: url.href };
-    citations.push(c);
-    return c;
-  };
-
-  if (typeof payload.markdown === 'string' && payload.markdown.trim()) sections.push(payload.markdown.trim());
-  for (const hit of Array.isArray(payload.retrievalHits) ? payload.retrievalHits : []) {
-    if (!isObj(hit)) continue;
-    addLabel(hit);
-    cite(hit);
-  }
-  for (const hit of Array.isArray(payload.results) ? payload.results : []) {
-    if (!isObj(hit)) continue;
-    addLabel(hit);
-    const c = cite(hit);
-    if (!c) continue;
-    const { date } = hitMeta(hit);
-    const kind = typeof hit.entityType === 'string' ? hit.entityType.slice(0, 40) : '';
-    const head = `[${citations.length}] ${c.title}${kind ? ` (${kind}${date ? `, ${date}` : ''})` : date ? ` (${date})` : ''} <${c.url}>`;
+    const { title, date } = hitMeta(hit);
+    const label = isObj(hit.sensitivityLabel) && typeof hit.sensitivityLabel.displayName === 'string' ? hit.sensitivityLabel.displayName.trim() : '';
     const allowed = hit.contentProtection === undefined || hit.contentProtection === 'allowed';
-    const body = allowed && typeof hit.markdown === 'string' ? hit.markdown.trim() : '';
-    sections.push(body ? `${head}\n${body}` : head);
+    return {
+      url, title: title ?? url?.hostname ?? '', kind: typeof hit.entityType === 'string' ? hit.entityType.slice(0, 40) : '', date, label: label || null,
+      body: isResult && allowed && typeof hit.markdown === 'string' ? hit.markdown.trim() : '', result: isResult,
+    };
+  };
+  return {
+    markdown: typeof payload.markdown === 'string' ? payload.markdown.trim() : '',
+    entries: [
+      ...(Array.isArray(payload.retrievalHits) ? payload.retrievalHits : []).filter(isObj).map((h) => entry(h, false)),
+      ...(Array.isArray(payload.results) ? payload.results : []).filter(isObj).map((h) => entry(h, true)),
+    ],
+  };
+}
+
+function heading(n: number, e: Pick<RetrieveEntry, 'title' | 'kind' | 'date'>, url: string): string {
+  return `[${n}] ${e.title}${e.kind ? ` (${e.kind}${e.date ? `, ${e.date}` : ''})` : e.date ? ` (${e.date})` : ''} <${url}>`;
+}
+
+/** The error a `tools/call` answer stands for, or null when it carries a usable payload. */
+function retrieveError(r: Json | WorkIqError): WorkIqErrorCode | null {
+  if (r instanceof WorkIqError) return r.code;
+  try {
+    readRetrieve(r);
+    return null;
+  } catch (error) {
+    return error instanceof WorkIqError ? error.code : 'badWorkiqResponse';
   }
-  const markdown = sections.join('\n\n');
-  const answer = markdown.length > maxChars ? `${markdown.slice(0, maxChars)}…` : markdown;
-  return { question, answer, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt };
+}
+
+/** The searches that feed one readiness item: their `retrieve` answers in plan order, and the ladder wordings among them. */
+export interface ItemSearches {
+  key: string;
+  queries: string[];
+  wordings: string[];
+  results: (Json | WorkIqError)[];
+}
+
+const RRF_K = 60;
+
+/**
+ * Foundry IQ–style merge of a planned fan-out (docs/workiq-agentic-retrieval-study.md). Work IQ returns no relevance
+ * score, so the searches of each readiness item are fused by reciprocal rank; a source found for several items goes to
+ * the one where it ranks highest, and is sent once (59 % of the hits of the 32 planned searches were duplicates in the
+ * study). Each item keeps its best sources within `maxChars`, in the same "[n] title (kind, date) <url>" form as a
+ * single search. An item whose searches all failed is reported as `{ key, error }`.
+ */
+export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars = WORKIQ_SECTION_MAX_CHARS): WorkIqSectionAnswer[] {
+  type Candidate = RetrieveEntry & { id: string };
+  const best = new Map<string, Candidate>();
+  const scores = new Map<string, number[]>();
+  const answered = items.map(() => 0);
+  const firstError = items.map((): WorkIqErrorCode | null => null);
+  items.forEach((item, i) => item.results.forEach((r) => {
+    const code = retrieveError(r);
+    if (code) {
+      firstError[i] ??= code;
+      return;
+    }
+    answered[i]!++;
+    const read = readRetrieve(r);
+    const list: Candidate[] = read.markdown ? [{ id: `md:${read.markdown}`, url: null, title: '', kind: '', date: null, label: null, body: read.markdown, result: true }] : [];
+    for (const e of read.entries) if (e.url && !list.some((c) => c.id === e.url!.href)) list.push({ ...e, id: e.url.href });
+    list.forEach((c, rank) => {
+      const sc = scores.get(c.id) ?? items.map(() => 0);
+      sc[i]! += 1 / (RRF_K + rank + 1);
+      scores.set(c.id, sc);
+      const prev = best.get(c.id);
+      // Each search returns its own excerpt of a source: keep the longest, and any sensitivity label seen.
+      if (!prev) best.set(c.id, c);
+      else if (c.body.length > prev.body.length) best.set(c.id, { ...c, label: c.label ?? prev.label });
+      else if (!prev.label && c.label) prev.label = c.label;
+    });
+  }));
+  const owner = new Map([...scores].map(([id, sc]) => [id, sc.indexOf(Math.max(...sc))]));
+  return items.map((item, i): WorkIqSectionAnswer => {
+    if (answered[i] === 0) return { key: item.key, error: firstError[i] ?? 'workiqUnavailable' };
+    const mine = [...scores].filter(([id]) => owner.get(id) === i).sort((a, b) => b[1][i]! - a[1][i]!).map(([id]) => best.get(id)!);
+    const parts: string[] = [];
+    const citations: WorkIqCitation[] = [];
+    const labels: string[] = [];
+    let used = 0;
+    for (const c of mine) {
+      if (used >= maxChars) break;
+      let part = c.body;
+      if (c.url) {
+        if (citations.length >= MAX_CITATIONS) continue;
+        citations.push({ title: c.title, url: c.url.href });
+        part = c.result ? (c.body ? `${heading(citations.length, c, c.url.href)}\n${c.body}` : heading(citations.length, c, c.url.href)) : '';
+      }
+      if (c.label && !labels.includes(c.label)) labels.push(c.label);
+      if (part) {
+        parts.push(part);
+        used += part.length + 2;
+      }
+    }
+    const text = parts.join('\n\n');
+    return {
+      key: item.key, question: item.queries.join('\n').slice(0, 2_000), searches: item.wordings,
+      answer: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt,
+    };
+  });
 }
 
 /* ---------- A minimal MCP stdio client (newline-delimited JSON-RPC 2.0) ---------- */
@@ -234,107 +337,183 @@ async function mcpRequest(cmd: WorkIqCliCommand, method: string, params: Json, s
   return first!;
 }
 
+/** Live sessions, ended with the relay process (npx → node → workiq would otherwise outlive it on Windows). */
+const liveSessions = new Set<McpSession>();
+let exitHookInstalled = false;
+function endSessionsOnExit() {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.once('exit', () => {
+    for (const s of liveSessions) s.kill();
+  });
+}
+
 /**
- * Starts the server once, initializes, sends the requests (ids 2…n+1, at most `concurrency` in flight) and stops it.
- * Each request settles on its own: an error answer or a request still open at the timeout becomes a WorkIqError in its
- * place. Start-up failures (missing CLI, failed initialize, abort before any answer) reject the whole call.
+ * One running `workiq mcp` process: initialized once, then any number of requests (ids 2, 3 …). Starting the CLI and
+ * signing in costs about 10 s every time (docs/workiq-agentic-retrieval-study.md), so the pack searches of one
+ * generation share a session. Requests never reject: an error answer, a timeout, an abort or the process ending becomes
+ * a WorkIqError in its place.
  */
-export async function mcpRequests(cmd: WorkIqCliCommand, requests: { method: string; params: Json }[], signal: AbortSignal | undefined, timeoutMs: number, doSpawn: SpawnLike, concurrency = 2, onInit?: (result: Json) => void): Promise<(Json | WorkIqError)[]> {
-  if (signal?.aborted) throw new WorkIqError('workiqUnavailable');
-  if (requests.length === 0) return [];
-  let child: ChildProcessWithoutNullStreams;
-  try {
-    child = doSpawn(cmd.command, cmd.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: cmd.shell });
-  } catch {
-    throw new WorkIqError('workiqCliMissing');
-  }
-  const results: (Json | WorkIqError | undefined)[] = requests.map(() => undefined);
-  return await new Promise<(Json | WorkIqError)[]>((resolve, reject) => {
-    let settled = false;
-    let initialized = false;
-    let buffer = '';
-    let size = 0;
-    let nextIndex = 0;
-    let done = 0;
-    const finish = (error: WorkIqError | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      stopProcess(child);
-      // Before any answer arrived, the failure belongs to the whole call (as with one request).
-      if (error && done === 0) return reject(error);
-      resolve(results.map((r) => r ?? error ?? new WorkIqError('workiqUnavailable')));
-    };
-    const timer = setTimeout(() => finish(new WorkIqError('workiqTimeout')), timeoutMs);
-    const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      stopProcess(child);
-      reject(new WorkIqError('workiqUnavailable'));
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    const send = (m: Json) => {
-      if (!settled) child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...m })}\n`);
-    };
-    const sendNext = () => {
-      if (nextIndex >= requests.length) return;
-      const i = nextIndex++;
-      send({ id: i + 2, method: requests[i]!.method, params: requests[i]!.params });
-    };
-    const settle = (i: number, value: Json | WorkIqError) => {
-      if (results[i] !== undefined) return;
-      results[i] = value;
-      done++;
-      if (done === requests.length) return finish(null);
-      sendNext();
-    };
-    child.on('error', (e: NodeJS.ErrnoException) => finish(new WorkIqError(e.code === 'ENOENT' ? 'workiqCliMissing' : 'workiqUnavailable')));
-    child.on('exit', (code) => finish(new WorkIqError(code === 9009 || code === 127 ? 'workiqCliMissing' : 'workiqUnavailable')));
+export class McpSession {
+  initResult: Json = {};
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly pending = new Map<number, (value: Json | WorkIqError) => void>();
+  private nextId = 2;
+  private buffer = '';
+  private ended: WorkIqError | null = null;
+  private stopped = false;
+
+  private constructor(child: ChildProcessWithoutNullStreams) {
+    this.child = child;
+    child.on('error', (e: NodeJS.ErrnoException) => this.end(new WorkIqError(e.code === 'ENOENT' ? 'workiqCliMissing' : 'workiqUnavailable')));
+    child.on('exit', (code) => this.end(new WorkIqError(code === 9009 || code === 127 ? 'workiqCliMissing' : 'workiqUnavailable')));
     child.stdin.on('error', () => {});
     // stderr can carry account names and request IDs: read and drop it (NFR-SEC-012).
     child.stderr.on('data', () => {});
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      size += Buffer.byteLength(chunk);
-      if (size > MAX_STDOUT_BYTES * Math.max(1, requests.length)) return finish(new WorkIqError('badWorkiqResponse'));
-      buffer += chunk;
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        let msg: Json;
-        try {
-          const v = JSON.parse(line) as unknown;
-          if (!isObj(v)) continue;
-          msg = v;
-        } catch {
-          continue; // a stray non-protocol line
-        }
-        if (typeof msg.method === 'string') {
-          // Server → client requests (elicitation, roots, sampling): this client offers none of them.
-          if (msg.id !== undefined) send({ id: msg.id, error: { code: -32601, message: 'Method not found' } });
-          continue;
-        }
-        if (msg.id === 1 && !initialized) {
-          if (msg.error) return finish(new WorkIqError('workiqUnavailable'));
-          initialized = true;
-          if (isObj(msg.result)) onInit?.(msg.result);
-          send({ method: 'notifications/initialized' });
-          for (let k = 0; k < Math.max(1, concurrency); k++) sendNext();
-        } else if (typeof msg.id === 'number' && msg.id >= 2 && msg.id < requests.length + 2) {
-          const i = msg.id - 2;
-          if (isObj(msg.error)) settle(i, errorFromText(String(msg.error.message ?? '')));
-          else if (!isObj(msg.result)) settle(i, new WorkIqError('badWorkiqResponse'));
-          else settle(i, msg.result);
-          if (settled) return;
-        }
-      }
+    child.stdout.on('data', (chunk: string) => this.read(chunk));
+    liveSessions.add(this);
+    endSessionsOnExit();
+  }
+
+  /** Starts the server and initializes it. Start-up failures (missing CLI, failed initialize, timeout, abort) reject. */
+  static async open(cmd: WorkIqCliCommand, doSpawn: SpawnLike, timeoutMs: number, signal?: AbortSignal): Promise<McpSession> {
+    if (signal?.aborted) throw new WorkIqError('workiqUnavailable');
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = doSpawn(cmd.command, cmd.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: cmd.shell });
+    } catch {
+      throw new WorkIqError('workiqCliMissing');
+    }
+    const session = new McpSession(child);
+    const init = await session.send(1, 'initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'business-analytics-studio', version: '0.1.0' } }, timeoutMs, signal);
+    if (init instanceof WorkIqError) {
+      session.close();
+      throw init.code === 'workiqCliMissing' || init.code === 'workiqTimeout' ? init : new WorkIqError('workiqUnavailable');
+    }
+    session.initResult = init;
+    session.write({ method: 'notifications/initialized' });
+    return session;
+  }
+
+  get alive(): boolean {
+    return this.ended === null;
+  }
+
+  request(method: string, params: Json, timeoutMs: number, signal?: AbortSignal): Promise<Json | WorkIqError> {
+    return this.send(this.nextId++, method, params, timeoutMs, signal);
+  }
+
+  close() {
+    this.end(new WorkIqError('workiqUnavailable'));
+  }
+
+  /** Synchronous stop for process exit. */
+  kill() {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+    try {
+      if (process.platform === 'win32' && this.child.pid) execFileSync('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      else this.child.kill();
+    } catch {
+      // already gone
+    }
+  }
+
+  private end(error: WorkIqError) {
+    if (this.ended === null) this.ended = error;
+    for (const settle of [...this.pending.values()]) settle(this.ended);
+    this.pending.clear();
+    if (!this.stopped) {
+      this.stopped = true;
+      liveSessions.delete(this);
+      stopProcess(this.child);
+    }
+  }
+
+  private write(m: Json) {
+    if (this.ended === null) this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...m })}\n`);
+  }
+
+  private send(id: number, method: string, params: Json, timeoutMs: number, signal?: AbortSignal): Promise<Json | WorkIqError> {
+    if (this.ended) return Promise.resolve(this.ended);
+    if (signal?.aborted) return Promise.resolve(new WorkIqError('workiqUnavailable'));
+    return new Promise((resolve) => {
+      const settle = (value: Json | WorkIqError) => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        this.pending.delete(id);
+        resolve(value);
+      };
+      const timer = setTimeout(() => settle(new WorkIqError('workiqTimeout')), timeoutMs);
+      const onAbort = () => settle(new WorkIqError('workiqUnavailable'));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.pending.set(id, settle);
+      this.write({ id, method, params });
     });
-    send({ id: 1, method: 'initialize', params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'business-analytics-studio', version: '0.1.0' } } });
-  });
+  }
+
+  private read(chunk: string) {
+    this.buffer += chunk;
+    let nl: number;
+    while ((nl = this.buffer.indexOf('\n')) >= 0) {
+      const line = this.buffer.slice(0, nl).trim();
+      this.buffer = this.buffer.slice(nl + 1);
+      if (!line) continue;
+      let msg: Json;
+      try {
+        const v = JSON.parse(line) as unknown;
+        if (!isObj(v)) continue;
+        msg = v;
+      } catch {
+        continue; // a stray non-protocol line
+      }
+      if (typeof msg.method === 'string') {
+        // Server → client requests (elicitation, roots, sampling): this client offers none of them.
+        if (msg.id !== undefined) this.write({ id: msg.id, error: { code: -32601, message: 'Method not found' } });
+        continue;
+      }
+      if (typeof msg.id !== 'number') continue;
+      const settle = this.pending.get(msg.id);
+      if (!settle) continue;
+      if (isObj(msg.error)) settle(errorFromText(String(msg.error.message ?? '')));
+      else settle(isObj(msg.result) ? msg.result : new WorkIqError('badWorkiqResponse'));
+    }
+    if (this.buffer.length > MAX_STDOUT_BYTES) this.end(new WorkIqError('badWorkiqResponse'));
+  }
+}
+
+/** Runs `fn` over the items with at most `n` in flight; results keep the input order. */
+async function inPool<T, R>(items: readonly T[], n: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(n, items.length)) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!, i);
+    }
+  }));
+  return out;
+}
+
+/**
+ * Starts the server once, initializes, sends the requests (at most `concurrency` in flight) and stops it. Each request
+ * settles on its own: an error answer or a request still open at the timeout becomes a WorkIqError in its place.
+ * Start-up failures reject the whole call, and so does a call in which no request was answered.
+ */
+export async function mcpRequests(cmd: WorkIqCliCommand, requests: { method: string; params: Json }[], signal: AbortSignal | undefined, timeoutMs: number, doSpawn: SpawnLike, concurrency = 2, onInit?: (result: Json) => void): Promise<(Json | WorkIqError)[]> {
+  if (signal?.aborted) throw new WorkIqError('workiqUnavailable');
+  if (requests.length === 0) return [];
+  const deadline = Date.now() + timeoutMs;
+  const session = await McpSession.open(cmd, doSpawn, timeoutMs, signal);
+  try {
+    onInit?.(session.initResult);
+    const results = await inPool(requests, concurrency, (r) => session.request(r.method, r.params, Math.max(1, deadline - Date.now()), signal));
+    if (signal?.aborted) throw new WorkIqError('workiqUnavailable');
+    if (results.every((r) => r instanceof WorkIqError)) throw results[0];
+    return results;
+  } finally {
+    session.close();
+  }
 }
 
 /* ---------- Service ---------- */
@@ -364,7 +543,27 @@ export interface WorkIqCliServiceOptions {
   timeoutMs?: number;
   /** Reads the CLI's persisted config (tests inject one). */
   config?: (cmd: WorkIqCliCommand) => Promise<WorkIqCliConfig | null>;
+  /** How long the pack-search session stays open after its last search (follow-up rounds come after a model call). */
+  sessionIdleMs?: number;
+  /** Base pause before a retry of a transient search failure (the second retry waits 4×). */
+  retryDelayMs?: number;
 }
+
+/**
+ * Searches in flight in the pack-search session. Measured 2026-11-12 (docs/workiq-agentic-retrieval-study.md): four at a
+ * time kept the per-search latency of two (median 12 s) and halved the wall time.
+ */
+export const WORKIQ_CLI_CONCURRENCY = 4;
+export const WORKIQ_SESSION_IDLE_MS = 300_000;
+/**
+ * Failures worth trying again in the same session: Work IQ's generic "An error occurred invoking 'retrieve'" (seen after
+ * about 30 s on 4 % of the searches in the study, the same search succeeding later), throttling and a search still open
+ * at the timeout. D-15: two more tries, after 1× and 4× the retry delay, because one follow-up search still failed after
+ * a single retry. Sign-in, policy and EULA failures are never retried (learn.microsoft.com …/work-iq/mcp/retrieve).
+ */
+const RETRIED: ReadonlySet<WorkIqErrorCode> = new Set(['workiqUnavailable', 'workiqBusy', 'workiqTimeout']);
+const RETRY_BACKOFF = [1, 4] as const;
+const FATAL: ReadonlySet<WorkIqErrorCode> = new Set(['notSignedIn', 'workiqForbidden', 'workiqEulaRequired', 'workiqCliMissing']);
 
 /** One Work IQ CLI call at a time per relay, like the REST route. */
 export class WorkIqCliService {
@@ -373,8 +572,13 @@ export class WorkIqCliService {
   private readonly now: () => number;
   private readonly timeoutMs: number;
   private readonly readConfig: (cmd: WorkIqCliCommand) => Promise<WorkIqCliConfig | null>;
+  private readonly sessionIdleMs: number;
+  private readonly retryDelayMs: number;
   private busy = false;
   private lastVerification = -Infinity;
+  private session: McpSession | null = null;
+  private opening: Promise<McpSession> | null = null;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: WorkIqCliServiceOptions = {}) {
     this.readConfig = opts.config ?? ((cmd) => workIqCliConfig(cmd));
@@ -382,6 +586,8 @@ export class WorkIqCliService {
     this.doSpawn = opts.spawn;
     this.now = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? WORKIQ_TIMEOUT_MS;
+    this.sessionIdleMs = opts.sessionIdleMs ?? WORKIQ_SESSION_IDLE_MS;
+    this.retryDelayMs = opts.retryDelayMs ?? 2_000;
   }
 
   private async run<T>(fn: () => Promise<T>): Promise<T> {
@@ -408,31 +614,89 @@ export class WorkIqCliService {
     return this.run(() => this.retrieve(workIqRetrieveQuery(question), question.timeZone, signal));
   }
 
+  /** The pack-search session: reused while alive, started once when several searches need it at the same moment. */
+  private openSession(signal?: AbortSignal): Promise<McpSession> {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+    if (this.session?.alive) return Promise.resolve(this.session);
+    this.opening ??= McpSession.open(this.command(), this.doSpawn ?? (spawn as unknown as SpawnLike), this.timeoutMs, signal)
+      .then((s) => (this.session = s))
+      .finally(() => { this.opening = null; });
+    return this.opening;
+  }
+
+  /** Ends the pack-search session now (settings changed, a fatal failure, or the caller is done). */
+  closeSession() {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    this.session?.close();
+    this.session = null;
+  }
+
+  private keepSessionIdle() {
+    if (!this.session) return;
+    this.idleTimer = setTimeout(() => this.closeSession(), this.sessionIdleMs);
+    this.idleTimer.unref?.();
+  }
+
+  /** One `retrieve` in the session, tried up to twice more after a transient failure (a dead session is restarted). */
+  private async retrieveInSession(query: string, timeZone: string, signal?: AbortSignal): Promise<Json | WorkIqError> {
+    for (let attempt = 0; ; attempt++) {
+      let r: Json | WorkIqError;
+      try {
+        const s = await this.openSession(signal);
+        r = await s.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding', timeZone } }, this.timeoutMs, signal);
+      } catch (error) {
+        r = error instanceof WorkIqError ? error : new WorkIqError('workiqUnavailable');
+      }
+      const code = retrieveError(r);
+      if (attempt >= RETRY_BACKOFF.length || !code || !RETRIED.has(code) || signal?.aborted) return r;
+      await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs * RETRY_BACKOFF[attempt]!));
+    }
+  }
+
   /**
-   * One `retrieve` per section and follow-up topic in a single MCP session (sign-in and EULA checks happen once).
-   * Two searches run at a time; the timeout grows with the number of searches. A section that fails is reported in
-   * its place; sign-in, permission and EULA failures stop the run because every other section would fail the same way.
+   * The pack searches (server/workiq.ts workIqPlan): the requested sections, with `expand` every readiness ladder
+   * wording as well, and the follow-up topics. They run four at a time in one MCP session that stays open between the
+   * calls of a generation. Without `expand` each search is its own section, as before; with it, the searches of each
+   * readiness item are merged into one section (mergeByItem). A section that fails is reported in its place; sign-in,
+   * permission and EULA failures stop the run because every other section would fail the same way.
    */
   askSections(question: WorkIqQuestion, signal?: AbortSignal): Promise<WorkIqSectionAnswer[]> {
     return this.run(async () => {
-      const searches = workIqSearches(question);
-      const timeout = this.timeoutMs * Math.max(1, Math.ceil(searches.length / 2));
-      const raw = await mcpRequests(this.command(), searches.map((s) => ({ method: 'tools/call', params: { name: 'retrieve', arguments: { query: s.query, strategy: 'grounding', timeZone: question.timeZone } } })),
-        signal, timeout, this.doSpawn ?? (spawn as unknown as SpawnLike), 2);
+      const plan = workIqPlan(question);
+      let raw: (Json | WorkIqError)[];
+      try {
+        raw = await inPool(plan, WORKIQ_CLI_CONCURRENCY, (p) => this.retrieveInSession(p.query, question.timeZone, signal));
+      } finally {
+        this.keepSessionIdle();
+      }
+      if (signal?.aborted) {
+        this.closeSession();
+        throw new WorkIqError('workiqUnavailable');
+      }
+      const codes = raw.map(retrieveError);
+      const fatal = codes.find((c) => c !== null && FATAL.has(c));
+      if (fatal) {
+        this.closeSession();
+        throw new WorkIqError(fatal);
+      }
+      if (codes.every((c) => c !== null)) throw new WorkIqError(codes[0]!);
       const fetchedAt = new Date(this.now()).toISOString();
-      const out: WorkIqSectionAnswer[] = searches.map((s, i) => {
+      const single = (i: number): WorkIqSectionAnswer => {
         const r = raw[i]!;
-        if (r instanceof WorkIqError) return { key: s.key, error: r.code };
-        try {
-          return { key: s.key, ...parseRetrieveResult(r, s.query, fetchedAt, WORKIQ_SECTION_MAX_CHARS) };
-        } catch (error) {
-          return { key: s.key, error: error instanceof WorkIqError ? error.code : 'badWorkiqResponse' };
-        }
+        const key = plan[i]!.key;
+        if (codes[i]) return { key, error: codes[i]! };
+        return { key, ...parseRetrieveResult(r, plan[i]!.query, fetchedAt, WORKIQ_SECTION_MAX_CHARS) };
+      };
+      if (!question.expand) return plan.map((_, i) => single(i));
+      const items: ItemSearches[] = REQUIREMENTS.map((req) => {
+        const idx = plan.flatMap((p, i) => (p.items.includes(req.key) ? [i] : []));
+        return { key: req.key, queries: idx.map((i) => plan[i]!.query), wordings: idx.flatMap((i) => (plan[i]!.wording ? [plan[i]!.wording!] : [])), results: idx.map((i) => raw[i]!) };
       });
-      const fatal = out.find((s): s is { key: string; error: string } => 'error' in s && ['notSignedIn', 'workiqForbidden', 'workiqEulaRequired', 'workiqCliMissing'].includes(s.error));
-      if (fatal) throw new WorkIqError(fatal.error as WorkIqError['code']);
-      if (out.every((s) => 'error' in s)) throw new WorkIqError((out[0] as { error: string }).error as WorkIqError['code']);
-      return out;
+      return [...mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS), ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
     });
   }
 

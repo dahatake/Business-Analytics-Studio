@@ -21,8 +21,9 @@
 企業ごとの枠は、上から次の順に並びます。
 
 1. **企業情報**（業種・公式サイト・企業メモ）: その企業のすべての Project で共通に使います。
-2. **Project の一覧**: 各 Project の入力情報（目的・重点・基準日・社内資料・情報源・調査メモ）と、顧客パックの有無を表示します。
-3. **Project 同士の関係**: 関係の図と表、関係の登録、関係がありそうな Project の候補、**同じ業務課題かもしれない Project の警告と統合** を表示します。
+2. **企業分析と第三者評価**: 企業・部門が表明した目標と KPI、出典、評価結果を企業単位で管理します。
+3. **Project の一覧**: 各 Project の入力情報（目的・重点・基準日・社内資料・情報源・調査メモ）と、顧客パックの有無を表示します。
+4. **Project 同士の関係**: 関係の図と表、関係の登録、関係がありそうな Project の候補、**同じ業務課題かもしれない Project の警告と統合** を表示します。
 
 ### 画面項目
 
@@ -48,6 +49,33 @@
 3. 企業の枠のいちばん上の「企業情報」に表示されます。
 
 顧客パックの作成画面でも、企業情報は最初の欄（「企業情報（企業ごとに 1 回）」）に表示されます。登録済みの企業なら、業種と公式サイトが自動で入ります。作成画面で業種や公式サイトを直すと、企業情報も更新され、その企業のすべての Project に使われます。
+
+## 企業分析と Project の整合を確認する
+
+1. 企業枠の **企業分析用の Copilot プロンプト** を開き、公開 Web だけを使うモードで実行します。回答末尾の JSON 付録、またはその回答全体を **企業分析を入力・編集** に貼るか、ファイルから読み込みます。人が確認した顧客の発言や部門の目標も出典付きで入力できます。公開出典には URL が必要です。
+2. 法人・親会社・事業・部門、期間、数値、出典の原文を確認して保存します。保存のたびに企業単位で版が増え、全 Project で共有されます。過去の版も表示して検査でき、編集して保存すると新しい最新版になります。整合と生成には常に最新版を使います。30 日超・未来日・更新事象、項目の欠落、抜粋と一致しない数値は警告します。**URL の到達性、原文の正確さ、因果関係は自動検証しません。** 抜粋の文字一致も証明ではありません。
+3. Project の目的を入力し、行の **企業との整合** を開きます。当該法人の目的を先に確認し、直接寄与・間接寄与・基盤・守り／義務・未整合から選び、必要な目的、出典、両方の KPI と寄与の道筋、反証または紐付かない理由を記録します。直接寄与には、選択した目的に結び付いた企業 KPI、Project KPI、道筋、出典が必要です。親会社の目的を使った場合は警告します。
+4. 必要に応じて **AI に整合案と反証を作らせる** を開き、送信先・送信内容・所有者と人物情報の承認・費用を確認します。選んだ Project 出典に紐付く Web／Work IQ 由来の要約は原資料ではなく、AI が生成した可能性や個人情報を含む可能性があります。AI の案は必ず未確定です。実際の出典と反証を顧客側のスポンサーが確認し、役割と確認日を入力してから確認済みとして保存します。
+5. 企業分析の版や Project の目的が変わった場合は再確認します。パックの再生成では Project 出典 ID が別の資料に再利用されうるため、その出典に依存する確認済み記録は未確定に戻ります。**未整合でも Project の作成は止まりません。** 顧客に「会社のどの目的・義務に、どう役立つか」を確認します。
+
+### 独立した評価を記録する
+
+企業枠の **第三者の判定との比較・負の対照** に、正解を仕組みの結果を見ずに付けた評価者の分類と、仕組みの分類を匿名 ID で入力します。氏名・企業名・案件名は書きません。
+
+```json
+[
+  { "id": "control-01", "expected": "unaligned", "observed": "direct", "negativeControl": true },
+  { "id": "project-01", "expected": "direct", "observed": "indirect", "negativeControl": false }
+]
+```
+
+分類は `direct`、`indirect`、`enabler`、`defensive`、`unaligned` です。負の対照は `expected: "unaligned"` にします。90% は負の対照を未整合と判定する割合の目安であり、全 Project の 90% を整合させる目標ではありません。直接寄与への誤判定は別に数えます。通常案件の一致率・Cohen の κ・直接寄与の割合には負の対照を含めません。割合には 95% Wilson 信頼区間、κ には独立した案件を仮定した 95% 漸近正規近似区間を表示します。完全一致など変動がない場合は κ の区間を算出できません。少数例や偏った標本では近似が不安定なため、標本・方法・評価者の独立性を第三者が別途確認してください。
+
+評価は端末内の企業単位で保存され、外部へ送信されません。Project JSON には含まれないため、必要なら同画面の **評価ケースを JSON で出力** で別に保管します。実際の独立評価がなければ 90% 達成は未検証です。
+
+### English quick reference
+
+In **Companies and projects**, import the company-analysis JSON under **Company analysis**, then open **Company alignment** for each project. Record the stated objective, evidence, project KPI, pathway and counterarguments; an AI proposal remains a draft until a customer sponsor confirms it. **Unaligned** does not block generation. In **Independent comparison and negative controls**, enter anonymous independently labelled cases. The 90% target applies only to negative controls; project agreement excludes them. Rates use 95% Wilson intervals; the κ interval is an asymptotic approximation assuming independent cases and may be unreliable for small or skewed samples. An independent reviewer must assess the sample, method and independence of labels.
 
 ## Project の入力情報を変更する
 

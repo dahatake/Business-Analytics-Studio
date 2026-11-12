@@ -18,7 +18,7 @@
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
   | 'explain' | 'presentation' | 'aiUsageAnalysis' | 'review' | 'import' | 'storyVideo' | 'connectionTest'
-  | 'research' | 'brandResearch' | 'packBuild' | 'deliverableDraft';
+  | 'research' | 'brandResearch' | 'packBuild' | 'alignmentProposal' | 'deliverableDraft';
 
 export type Provider = 'foundry' | 'copilotSdk';
 
@@ -74,13 +74,21 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   brandResearch: TBD_ROW(),
   packBuild: {
     provider: ['foundry', 'copilotSdk'],
-    data: 'Company and project names, purpose, as-of date, the official site URL, pages the relay fetched from that site, news headlines, the work material and research note the user attached (internal allowed, D-2), and with Microsoft Foundry only the Work IQ answer and its citation titles (internal, D-14); nothing else from the app',
+    data: 'Company and project names, purpose, as-of date, official site URL, fetched pages and news headlines, attached work material and research note, optional company anchor scope, stated objectives, KPIs, segments, issues, source metadata and supplied excerpts (internal allowed, D-2), and with Microsoft Foundry only the Work IQ answers and citation titles (D-14); no analyst hypotheses or other app data',
     enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + confirmation of content, data-owner approval and cost information (Foundry charges unknown, not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-12 (2026-11-10)',
   },
-  deliverableDraft: TBD_ROW(['§3.1 has no row for deliverable drafts yet (FR-136; rd-author adds it)', 'D-9 proposal awaiting user approval (docs/decision-guide.md)']),
+  alignmentProposal: {
+    provider: ['foundry', 'copilotSdk'],
+    data: 'Project purpose and user-entered project KPI, company-stated objectives and KPIs, company source metadata, and selected project source metadata and up to eight source-linked issue, cause, solution, initiative, KPI or OKR summaries per source; summaries can be AI-generated, not original evidence. No source excerpts, person entities, analyst hypotheses, full pack or other app data; free text can still contain personal information',
+    enableCondition: 'Live switch on + configured provider + Copilot premium-request price when applicable + separate per-send confirmation of the displayed content, data-owner and personal-data approval, and cost information (Foundry charges unknown and not capped by the app budget)',
+    costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+    openQuestions: [],
+    decidedBy: 'docs/company-project-alignment-study.md §9 (2026-11-12)',
+  },
+  deliverableDraft: TBD_ROW(['§3.1 has no row for deliverable drafts yet (FR-136)', 'D-9 proposal awaiting user approval (docs/decision-guide.md)']),
 };
 
 export function isApproved(row: UseApproval): boolean {
@@ -136,17 +144,23 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   },
   chat: { dailyCalls: AI_LIMITS.dailyCalls },
   presentation: { maxOutputTokens: 4000 }, // PARAM-132
-  // PARAM-145〜147 (D-12): one run makes at most PACK_BUILD_MAX_CALLS calls; about 5 full-depth runs a day fit the cap.
-  packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 16_000 },
+  // PARAM-145〜147 (D-12, D-15): one run makes at most PACK_BUILD_MAX_CALLS calls; about 4 full-depth runs a day fit the cap.
+  // D-15 (2026-11-12): output 16,000 → 32,000 tokens (stage answers used up to 15,525 of 16,000; a cut-off answer has no
+  // JSON and stops the run). The Foundry deployment accepted max_completion_tokens up to 128,000.
+  packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
+  alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
 };
 
 /**
  * PARAM-148: calls one pack generation may make (2 generation stages + up to 2×4 re-runs after Work IQ follow-up
- * rounds + up to 3 fix rounds = 13, plus 1 spare). The dialog shows the run's own bound (maxCallsFor) before it starts.
+ * rounds + up to 3 fix rounds + up to 2 retries of a failed or unreadable answer = 15, D-15). The dialog shows the run's
+ * own bound (maxCallsFor) before it starts.
  */
-export const PACK_BUILD_MAX_CALLS = 14;
-/** PARAM-149: per-call timeout for pack generation (long JSON output). */
-export const PACK_BUILD_TIMEOUT_MS = 300_000;
+export const PACK_BUILD_MAX_CALLS = 15;
+/** PARAM-149: per-call timeout for pack generation (long JSON output; D-15: 300 → 600 s for 32,000 output tokens at ~210 tokens/s). */
+export const PACK_BUILD_TIMEOUT_MS = 600_000;
+/** Characters of one packBuild prompt the relay accepts (server/relay.ts); the generator fits its material below it. */
+export const PACK_BUILD_MAX_PROMPT_CHARS = 200_000;
 
 /**
  * D-14 (user, 2026-11-11): Work IQ (Microsoft 365 work data) as material for "packBuild". Not a C-03 LLM row of its
@@ -170,3 +184,8 @@ export function workIqAllowedFor(provider: Provider): boolean {
 export const WORKIQ_MAX_ANSWER_CHARS = 12_000;
 /** D-14: characters of one section search (org, KPI, process, data …); eight sections stay within the input budget. */
 export const WORKIQ_SECTION_MAX_CHARS = 6_000;
+/**
+ * D-15: characters of one merged readiness item (Work IQ CLI `expand`). Measured 2026-11-12: at 9,000 characters 7 of 8
+ * items had enough relevant sources against 6 of 8 at 6,000 (docs/workiq-agentic-retrieval-study.md §5.6).
+ */
+export const WORKIQ_ITEM_MAX_CHARS = 9_000;

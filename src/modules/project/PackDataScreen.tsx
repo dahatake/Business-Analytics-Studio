@@ -7,6 +7,7 @@ import {
   ArrowDownload20Regular, ArrowUpload20Regular, BotSparkle20Regular, Copy20Regular, Delete20Regular, Dismiss16Regular, DocumentCheckmark20Regular, Open20Regular,
 } from '@fluentui/react-icons';
 import { basePack, loaded, packOrigin } from '../../data/pack.ts';
+import { CompanyAnchorVersionSchema } from '../../data/companyAnchor.ts';
 import { CustomerPack, type EntityKind } from '../../data/schema.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from '../../data/collection.ts';
 import {
@@ -15,6 +16,7 @@ import {
 import { deleteImportedPack, importedPackMeta, saveImportedPack } from '../../data/packStore.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useActiveProject, useProjects } from '../../state/projects.ts';
+import { useSettings } from '../../state/settings.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.tsx';
 import { copilotPrompt, copilotResearchPrompt, PROMPT_DOC } from './packPrompt.ts';
@@ -25,6 +27,7 @@ import { readiness } from './analysisReadiness.ts';
 import { prefillFromPack, type GenerationReport } from './packGenerate.ts';
 import { PackGenerateDialog } from './PackGenerateDialog.tsx';
 import { ReadinessView } from './ReadinessView.tsx';
+import { CompanyAlignmentSnapshotSchema, assessAlignment } from './companyAlignment.ts';
 import './project.css';
 
 /** Shown once after the reload that activates a newly imported pack. */
@@ -75,6 +78,7 @@ export function PackDataScreen() {
 
 function CurrentPackPanel() {
   const { t, tx, fmt } = useI18n();
+  const audience = useSettings((s) => s.audience);
   const target = useProjects((s) => s.target);
   const { project, company } = useActiveProject();
   const [confirm, setConfirm] = useState(false);
@@ -85,6 +89,9 @@ function CurrentPackPanel() {
     return KIND_ORDER.filter((k) => c.has(k)).map((k) => [k, c.get(k)!] as const);
   }, []);
   const targetName = target.kind === 'demo' || !project ? t('proj.pack.demoTarget') : `${company?.name ?? ''}-${project.name}`;
+  const extensions = loaded.pack.extensions;
+  const generated = extensions?.generation as { inputs?: { companyAnchor?: unknown } } | undefined;
+  const hasCompanySnapshot = !!(extensions?.companyAnchor || extensions?.companyAlignment || generated?.inputs?.companyAnchor);
   const origin = packOrigin.kind === 'imported'
     ? t('proj.pack.origin.imported', { date: meta ? fmt.date(meta.importedAt.slice(0, 10)) : '—', files: meta?.files.join(', ') || '—' })
     : t(packOrigin.kind === 'file' ? 'proj.pack.origin.file' : 'proj.pack.origin.sample');
@@ -105,7 +112,7 @@ function CurrentPackPanel() {
       testId="pack-current"
       actions={(
         <>
-          <Button size="small" icon={<ArrowDownload20Regular />} onClick={onExport} data-testid="pack-export">{t('proj.pack.export')}</Button>
+          <Button size="small" icon={<ArrowDownload20Regular />} onClick={onExport} disabled={audience === 'external' && hasCompanySnapshot} data-testid="pack-export">{t('proj.pack.export')}</Button>
           {packOrigin.kind === 'imported' && (
             <Button size="small" icon={<Delete20Regular />} onClick={() => setConfirm(true)} data-testid="pack-delete">{t('proj.pack.delete')}</Button>
           )}
@@ -133,6 +140,8 @@ function CurrentPackPanel() {
         )}
       </dl>
       {target.kind === 'demo' && <p className="muted">{t('proj.pack.demoNote')}</p>}
+      {hasCompanySnapshot && <MessageBar intent="warning"><MessageBarBody>{t('proj.anchor.exportWarning')}</MessageBarBody></MessageBar>}
+      <CompanyAlignmentSnapshot />
       <CollectionCoverage raw={loaded.pack} />
       <ConfirmDialog
         open={confirm}
@@ -144,6 +153,40 @@ function CurrentPackPanel() {
         testId="pack-delete-confirm"
       />
     </Panel>
+  );
+}
+
+function CompanyAlignmentSnapshot() {
+  const { t } = useI18n();
+  const audience = useSettings((s) => s.audience);
+  if (audience === 'external') return null;
+  const anchor = CompanyAnchorVersionSchema.safeParse(loaded.pack.extensions?.companyAnchor);
+  const alignment = CompanyAlignmentSnapshotSchema.safeParse(loaded.pack.extensions?.companyAlignment);
+  if (!anchor.success || !alignment.success) return null;
+  const sourceIds = loaded.pack.entities.filter((entity) => entity.kind === 'source').map((source) => source.id);
+  return (
+    <details className="pack-details" data-testid="pack-alignment-snapshot">
+      <summary>{t('proj.align.snapshotTitle', { version: anchor.data.version, date: anchor.data.anchor.asOf })}</summary>
+      <p>{t('proj.align.snapshotPurpose', { purpose: alignment.data.projectPurpose })}</p>
+      {!alignment.data.alignments.length && <p>{t('proj.align.noAssessment')}</p>}
+      <ul>{alignment.data.alignments.map((entry) => {
+        const result = assessAlignment(alignment.data.projectPurpose, anchor.data, entry, sourceIds);
+        const objectives = entry.objectiveIds.map((id) => anchor.data.anchor.statedObjectives.find((objective) => objective.id === id)?.text ?? id);
+        return (
+          <li key={entry.id}>
+            <strong>{t(`proj.align.kind.${result.kind}`)}</strong>{` — ${t(`proj.align.status.${entry.status}`)}`}
+            {objectives.length > 0 && <p>{t('proj.align.snapshotObjectives', { objectives: objectives.join(t('ai.listSep')) })}</p>}
+            {entry.pathway && <p>{entry.pathway}</p>}
+            {entry.reason && <p>{entry.reason}</p>}
+            {entry.counterArguments.filter((argument) => argument.trim()).map((argument, index) => <p key={index}>{argument}</p>)}
+            {result.issues.length > 0 && <ul>{result.issues.map((issue) => <li key={issue}>{t(`proj.align.issue.${issue}`)}</li>)}</ul>}
+            {result.outdated && <p>{t('proj.align.outdated')}</p>}
+            {result.kind === 'unaligned' && <p>{t('proj.align.question', { project: alignment.data.projectPurpose })}</p>}
+          </li>
+        );
+      })}</ul>
+      <p className="muted">{t('proj.align.checkLimit')}</p>
+    </details>
   );
 }
 

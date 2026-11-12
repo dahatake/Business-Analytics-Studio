@@ -1,8 +1,8 @@
 # 要求定義書
 
 <!--
-この文書| 2026-11-03 | メイン画面の大見出しを「企業名-Project名」にし、「はじめての方へ」「顧客パックとは」を右側の開閉できる補足パネルへ移す依頼（run 202611031703） | 変更: FR-186（h1 を開いている／最後に開いた Project の「企業名-Project名」、なければ「メイン画面」。AC-819 追加）、FR-266（常時表示→右側の補足パネルの開閉・既定は閉じる・開閉ボタンは常に見える・アニメーションと動きの軽減・aria-expanded・狭い画面は下へ縮退。AC-675 改訂、AC-820・AC-821 追加。参照に PARAM-029・PARAM-074）、FR-268（AC-682・本文を補足パネル内に）。FR-267 は変更なし（初回ダイアログ）。既存で充足し新規にしない: NFR-UX-017・PARAM-074（動き）、PARAM-029（縮退幅）、NFR-A11Y-001。新規 FR・NFR・PARAM なし。包括承認なし（依頼で承認）。影響: AC-675・AC-682 の台帳のケース（E2E-359・E2E-363 ほか）の見直し、AC-819〜AC-821 のケース追加（test-designer）。統合・廃止はなし | なし | なし |
-は、このアプリの要求の唯一の正本です。編集できるのは rd-author だけです（hook G-1）。
+| 2026-11-03 | メイン画面の大見出しを「企業名-Project名」にし、「はじめての方へ」「顧客パックとは」を右側の開閉できる補足パネルへ移す依頼（run 202611031703） | 変更: FR-186（h1 を開いている／最後に開いた Project の「企業名-Project名」、なければ「メイン画面」。AC-819 追加）、FR-266（常時表示→右側の補足パネルの開閉・既定は閉じる・開閉ボタンは常に見える・アニメーションと動きの軽減・aria-expanded・狭い画面は下へ縮退。AC-675 改訂、AC-820・AC-821 追加。参照に PARAM-029・PARAM-074）、FR-268（AC-682・本文を補足パネル内に）。FR-267 は変更なし（初回ダイアログ）。既存で充足し新規にしない: NFR-UX-017・PARAM-074（動き）、PARAM-029（縮退幅）、NFR-A11Y-001。新規 FR・NFR・PARAM なし。包括承認なし（依頼で承認）。影響: AC-675・AC-682 の台帳のケース（E2E-359・E2E-363 ほか）の見直し、AC-819〜AC-821 のケース追加（test-designer）。統合・廃止はなし | なし | なし |
+この文書は、このアプリの要求の唯一の正本です。編集者の役割は限定しません。承認条件、変更履歴と ID の管理は維持します。過去の履歴にある担当者名は当時の作業分担です。
 書式の規則は .github/skills/requirement-definition/SKILL.md を参照します。
 ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだけ採番します（G-3）。
 要求の本文は業務の境界ごとに docs/requirements/ に分けています（構成要素が A・B・C の 3 つで、要求が 150 件を超えるため）。
@@ -12,7 +12,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 |---|---|
 | 文書名 | Envisioning Dashboard Builder（高速生成版）要求定義書 |
 | 版 | 1.0（2026-10-09、run 202610090557 で初版を作成） |
-| 最終更新 | 2026-11-10 |
+| 最終更新 | 2026-11-12 |
 | 元の資料 | リポジトリ直下の `要求定義書.md`（ドラフト v1.0、SRC-001）。原本は変更しない |
 | 本文の分割 | [A 共通アプリ本体（分析・UI・連動・保存）](requirements/app-core.md)、[A 共通アプリ本体（ブランド・演出・インク・雛形・ワークスペース）](requirements/app-experience.md)、[B 顧客パック](requirements/customer-pack.md)、[C 生成パイプライン](requirements/pipeline.md)、[非機能要求](requirements/quality.md)、[A データカタログ](requirements/data-catalog.md)、[外部連携カタログ](requirements/integration.md)、[A 関係グラフ・Twin ビュー・意味的ズーム](requirements/graph-twin.md) |
 
@@ -20,6 +20,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 
 | 日付 | 依頼の要約 | 行き先（要求 ID・Q・不採用の理由） | 反映した回答 | 監査で直した不整合 |
 |---|---|---|---|---|
+| 2026-11-12 | 要求定義書の編集者限定を見直し、出典付きの実施記録を要求に反映 | 編集者を rd-author に限定する G-1 を廃止。FR-133・FR-135・FR-303・FR-308・FR-310 の補足として [§3.11](#311-顧客パックの実施記録) に仕様・受入条件・検証先を追加し、§3.8・AC-889・AC-895 と索引を更新。新規 ID の採番なし | 本会話の利用者の明示依頼と D-16 | 実施記録は 24 区分の取得報告に新しい区分を追加しない。既存の承認条件と変更履歴は維持し、実サービスの再計測を完了扱いにしない |
 | 2026-11-11 | Foundry の単価はモデルごとに異なるため、利用者の手入力機能を削除 | PARAM-130 の手入力と単価未入力による停止を廃止。接続テスト・現状の説明・顧客パック生成は単価入力を不要にし、費用は不明（null）、トークン利用量を記録。月予算は料金判明分に適用し、Foundry の請求上限を保証しないと明示。回数・間隔・トークン上限・確認は維持。ストーリー動画は無料モック。Copilot の単価設定は変更しない | 本会話の利用者の明示依頼 | 不明な費用を 0 円として扱わない。旧単価設定は移行時に削除し、過去の記録は保持 |
 | 2026-11-10 | 依頼: 顧客パックを作る 2 つのプロンプトを、Microsoft 365 Copilot に 1 回貼り付けて実行する 1 つのプロンプトにし（できなければ 2 回でよい）、結果を（少量なら）Markdown のスニペットで表示し、量にかかわらず zip でダウンロードできるようにする。プロンプトは Claude Opus 5.5 の公式ガイドに従って書き直す | 変更: FR-307（2 段のまま、2 段目が `<packId>.zip`〈pack.json・README.md〉と 40 エンティティ以下の ```json を返し、BAS が zip をそのまま取り込む）、FR-308（2 段の分離を送信前の境界として明確化: 1 段目は社内データを使わない Web モードで公開の入力だけ、2 段目は Web 検索をオフにして送り、公開の事実は 1 段目の結果だけから取る）、AC-888（2 つのプロンプトの内容と境界、各 8,000 文字未満）、TODO-010（実テナントでの確認項目に zip と、2 段目で Web 検索クエリが出ないこと）。新規: AC-898（zip の取り込みと安全上の上限）。両プロンプトを書き直し | 利用者の明示した依頼を承認として反映（AI 提案・包括承認なし）。根拠: Microsoft Learn「Data, privacy, and security for web search」（Web 検索語はプロンプトから作られ、明示的に参照した資料や Copilot が社内データから見つけた名前〈例: 上司の名前〉にも影響される。検索語の引用表示と Purview の記録は送信後。利用者の Web 検索トグル、管理者の「Work モードで無効・Web モードで有効」）、「Code Interpreter」（ファイルを作って渡せる。zip は明記なし → ```json の代替を残す） | 1 つに統合する案も検討したが、社内データを扱うチャットで Web 検索を有効にすると、社内の語が Bing に送られることをプロンプトの指示でも事後の確認でも防げない（送った後に取り消せない）ため、2 回とした。Web モードを選べない環境では 1 段目でも Copilot が社内データを使う可能性が残り、管理者設定での強制を推奨する |
 | 2026-11-10 | 依頼: 既存の顧客名と、その配下の Project 名の編集、および企業・Project 自体の削除を実装し、要求定義書に記載する | 既存 FR-137・FR-138・FR-139・FR-306 の追記として [§3.9](#39-登録済み企業顧客とprojectの名前変更削除) に操作・入力制約・削除範囲・受入条件・検証先を記載。新規 ID の採番、既存 AC の変更はなし | 本会話の利用者の明示依頼と「要求定義書に記載をしてください」 | 起動時の選択画面に編集・削除の入口がなかった。管理画面と選択画面を共通ダイアログに統一し、名前変更時の空名・重複名の拒否を明確化 |
@@ -223,7 +224,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 
 #### C-03 用途別の基準表
 
-各行は既存要求・入口から洗い出した**候補**であり、用途・提供者・送信データ・有効化条件・費用上限のいずれも個別に承認したものではない。提供者を複数列挙した行でも組合せごとに判断し、将来許可を記録するときは提供者ごとに行を分ける。各欄の確定・承認と利用者による用途・送信内容・費用の確認がそろわない、または行がない場合は送信を許可せず、設定済み・認証済み・共通スイッチ有効だけでは接続しない。接続テストも例外ではない。顧客データを扱う実接続には、契約条件の担当者による確認・記録と TBD の解消も必要である（Q-027・Q-054）。中継の許可対象・例外は Q-122 で未決。
+以下の TBD 行は既存要求・入口から洗い出した**候補**である。下部の明示的な許可行は別に扱う。提供者ごとに判断し、各欄の確定・承認と利用者による用途・送信内容・費用の確認がそろわない、または行がない場合は送信を許可せず、設定済み・認証済み・共通スイッチ有効だけでは接続しない。接続テストも例外ではない。顧客データを扱う実接続には、契約条件の担当者による確認・記録と TBD の解消も必要である（Q-027・Q-054）。中継の許可対象・例外は Q-122 で未決。
 
 | 用途（候補・既存入口） | 提供者 | 送信データ | 有効化条件 | 費用上限 |
 |---|---|---|---|---|
@@ -243,6 +244,11 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | 顧客調査の LLM 利用（FR-121、`research`） | TBD（Q-118。旧候補: Copilot SDK） | TBD（Q-118・Q-119） | TBD（Q-118） | TBD（Q-118・Q-051） |
 | ブランド調査の LLM 利用（FR-121・FR-122、`research`） | TBD（Q-118。旧候補: Copilot SDK） | TBD（Q-118・Q-119） | TBD（Q-118） | TBD（Q-118・Q-051） |
 | 顧客パック生成の LLM 利用（FR-125、`build`） | TBD（Q-118。旧候補: Copilot SDK） | TBD（Q-118・Q-119） | TBD（Q-118） | TBD（Q-118・Q-051） |
+| 顧客パックの作成 `packBuild`（D-12・D-14・D-17） | Microsoft Foundry | 企業・Project 名、目的、基準日、公式 URL・取得本文、ニュース見出し、添付資料・メモ、選択された企業アンカーの範囲・表明目的・KPI・セグメント・課題・出典情報と入力された抜粋、Work IQ の回答と引用。分析者の仮説やその他のアプリ内データは送らない | 実接続 ON、設定済みの接続、送信内容・所有者・費用の実行前確認。Work IQ は追加の選択と既存の Foundry 専用条件が必要 | D-3 の共通月額予算。Foundry の実請求は不明で予算により制限されない |
+| 顧客パックの作成 `packBuild`（D-12・D-17） | GitHub Copilot SDK | 上の項目のうち Work IQ を除く | 実接続 ON、設定済みの接続と単価、送信内容・所有者・費用の実行前確認 | D-3 の共通月額予算 |
+| 企業と Project の整合案 `alignmentProposal`（D-17） | Microsoft Foundry | Project の目的と入力された Project KPI、企業が表明した目的・KPI と企業出典の情報、選択した Project 出典の情報と、その出典に紐付く課題・原因・施策・KPI・OKR の要約（出典ごとに最大 8 件）。要約は AI 生成を含み原資料そのものではない。出典抜粋・人物エンティティ・分析者の仮説・パック全体は送らないが、自由文に個人情報が含まれる場合はある | 実接続 ON、設定済みの接続、実際に送る内容のプレビュー・所有者と人物情報・費用について用途専用の確認 | D-3 の共通月額予算。Foundry の実請求は不明で予算により制限されない |
+| 企業と Project の整合案 `alignmentProposal`（D-17） | GitHub Copilot SDK | 上の整合案と同じ項目 | 実接続 ON、設定済みの接続と単価、画面に示した送信内容・所有者と人物情報・費用について用途専用の確認 | D-3 の共通月額予算 |
+| Project 領域の公開ニュース検索（D-17、非 LLM） | Google News RSS | 企業名と、利用者が公開可能と確認した任意の検索語のみ。Project 名・目的・企業アンカーを自動では送らない | ニュース取得 ON、公開検索語を入力した場合は検索先と送信語を実行ごとに確認 | RSS 自体の料金はアプリでは把握しない。AI の月額予算には含まれない |
 
 既決の数値は、1 日の回数 {PARAM-113}、1 回の入力 {PARAM-114}・出力 {PARAM-115}、間隔 {PARAM-116}、月の総予算 {PARAM-117}、警告 {PARAM-118}・停止 {PARAM-119} と、チャット費用の月額への合算である（Q-050・Q-051、SRC-060）。これらを表の全用途に適用すると推定しない。月額は日本時間の暦月で、本アプリに帰属する費用を Project 横断で合算し、円・税込で表示する（Q-051 2026-11-09、SRC-062）。月額の対象サービス・固定費・共有費の按分・為替換算・確認後の実単価は Q-051 の未回答部分である。チャットの日次回数は「現状の説明」と共通の {PARAM-113} の枠に合算する（Q-059 2026-11-09、SRC-062）。既存の別の予算 PARAM も、それだけで個別行の承認にはならない。
 
@@ -720,7 +726,7 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 
 ### 3.8 顧客パックの取得範囲・出典・取得報告（FR-308〜FR-310）
 
-分割した本文（`requirements/customer-pack.md`）はこのリポジトリにないため、FR-308〜FR-310 の受入基準はここに置く。根拠は [取得範囲の監査](customer-pack-coverage-audit.md)（2026-11-10）。取得の対象は、BAS の画面が読むパックの 24 区分（`company`・`regions`・エンティティ 16 種類・`flows`・`optimization`・任意拡張 6 種類〈`brand`・`dataCatalog`・`glossary`・`graph`・`architecture`・`coreObject`〉）。Project の作業データ（分析・OKR・決定・レイアウト・接続設定など）はパックの対象外で、取り込みで上書きしない。
+分割した本文（`requirements/customer-pack.md`）はこのリポジトリにないため、FR-308〜FR-310 の受入基準はここに置く。根拠は [取得範囲の監査](customer-pack-coverage-audit.md)（2026-11-10）。取得報告の対象は、BAS の画面が読むパックの 24 区分（`company`・`regions`・エンティティ 16 種類・`flows`・`optimization`・任意拡張 6 種類〈`brand`・`dataCatalog`・`glossary`・`graph`・`architecture`・`coreObject`〉）。このほか、出典付きの実施記録を任意拡張として扱う（[§3.11](#311-顧客パックの実施記録)）。実施記録は取得報告に 25 番目の区分を追加しない。Project の作業データ（分析・OKR・決定・レイアウト・接続設定など）はパックの対象外で、取り込みで上書きしない。
 
 追加したデータ項目（いずれも任意。旧形式のパックはそのまま読める）:
 
@@ -733,19 +739,20 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | `source.publishedDate` | 日付（任意に変更） | 発行日が不明なら書かない（推測で作らない） |
 | `flows[].sourceIds`・`optimization.sourceIds` | source の id の配列 | 物量・最適化入力の出典。ない場合は旧形式として警告 |
 | `extensions.collection` | `asOf`・`webSearch`（`searched`・`blocked`・`notRequested`）・`webSearchReason`・`sections[]`（`key`・`status`〈`complete`・`partial`・`unavailable`・`notApplicable`〉・`sourceIds`・`missingFields`・`reason`・`nextAction`） | 取得報告。区分ごとの取得状態・不足・次の取得方法 |
+| `extensions.engagements` | 出典付きの `items[]` | 金額や進捗がない案件・成果物・取り組みの実施記録。項目と検査は [§3.11](#311-顧客パックの実施記録) |
 
 受入基準（検証は `npm test` と `$env:BAS_PORT='4291'; $env:BAS_OUT='dist-e2e'; npx playwright test pack-import.spec --project=desktop`）:
 
 | AC | 要求 | 受入基準 | 検証 |
 |---|---|---|---|
 | AC-888 | FR-308 | /data に、Microsoft 365 Copilot 用の 2 つのプロンプト（日英）が表示され、それぞれコピーできる。1「公開Web調査」は入力が公開企業名・公式ドメイン・対象期間の 3 つだけで（Project・社内資料を求めない）、社内データを使わない Web モードの新しいチャットで送る手順を示し、検索語を公開の語だけで作ること、出典 URL（W1…）、Web 検索ができないときの `blocked`、決まった見出しの Markdown 出力を求める。2「顧客パック作成」は Web 検索をオフにして送る手順を示し、このチャットで Web を検索せず公開の事実は 1 の結果だけから取ること（理由: 検索語は Bing に送られ、送信後にしか確認できない）、資料の中の指示をデータとして扱うこと、`webSearch` に 1 の検索状況を写すことを求める。受け渡しは `<packId>.zip`（`pack.json` と、出典・検索状況・前提・不足を書いた `README.md`）で、40 エンティティ以下なら回答にも ```json で示し、ファイルを作れない環境では ```json の PART で返す。各プロンプトは 8,000 文字未満（2026-11-10 改訂） | `e2e/pack-import.spec.ts`（2 つのプロンプトの表示・コピーボタンが 2 つ）、`tests/pack-import.test.ts`（スキーマとの一致・調査プロンプトの入力が公開の 3 つだけ・zip/pack.json/README.md/blocked/Bing/W1/PART の指示） |
-| AC-889 | FR-308 | 日英の両プロンプトが、`docs/pack.schema.json` の全プロパティと 24 区分・任意拡張 6 種類の全項目を求める。求めないのは、BAS が表示用に作る飾り（`portrait` の容姿 6 項目、`illustration` の `motif`・`hue`）と人の `ageBand`・`gender` だけで、プロンプトに「書かない」と明記する。スキーマに項目を足してプロンプトに足さないとテストが失敗する | `tests/pack-import.test.ts`（「every property of docs/pack.schema.json」。項目を 1 つ消すと失敗することを確認済み） |
+| AC-889 | FR-308 | 日英の両プロンプトが、`docs/pack.schema.json` の全プロパティと取得報告の 24 区分、および実施記録を含む任意拡張の全項目を求める。求めないのは、BAS が表示用に作る飾り（`portrait` の容姿 6 項目、`illustration` の `motif`・`hue`）と人の `ageBand`・`gender` だけで、プロンプトに「書かない」と明記する。スキーマに項目を足してプロンプトに足さないとテストが失敗する | `tests/pack-import.test.ts`（「every property of docs/pack.schema.json」。項目を 1 つ消すと失敗することを確認済み） |
 | AC-890 | FR-308 | `origin` を持つ出典は `accessedDate` と、`web` なら `url`・`m365` なら `locator` がないとエラー。`url`・`accessedDate`・`locator`・`origin` は整形・保存・再読み込み・書き出しで失われず、発行日が不明な出典は発行日なしのまま読める | `tests/pack-import.test.ts`（「keeps URL, locator and access date」） |
 | AC-891 | FR-309 | 取得報告は 24 区分をちょうど 1 回ずつ含む。区分の欠落・重複、存在しない出典 id はエラー。取得報告のないパックはエラーにせず「未報告」と表示する | `tests/pack-import.test.ts`（「distinguishes no report」）、`e2e/pack-import.spec.ts`（英語 UI の「No collection report」） |
 | AC-892 | FR-309 | `complete` はデータがあり、出典が 1 件以上、`missingFields` が空のときだけ通る。そうでなければエラーにし、`partial`・`unavailable`・`notApplicable` を使うよう対処を示す。データがあることを完了の証明として扱わない | `tests/pack-import.test.ts`（「distinguishes no report」） |
 | AC-893 | FR-309 | 取り込み前の確認と現在のパックの表示に、区分ごとの状態・不足項目・理由・次の取得方法と、Web 検索の実施状況（実施できなかった理由を含む）が出る | `e2e/pack-import.spec.ts`（取得報告・Web 検索不能の表示） |
 | AC-894 | FR-310 | PART の欠落・番号や値の矛盾・使う回答の中の壊れた JSON ブロックがあると、残りがスキーマに合っても取り込めない（エラー） | `tests/pack-import.test.ts`（「rejects conflicting/missing parts」） |
-| AC-895 | FR-310 | 任意拡張 6 種類を、各画面と同じスキーマで検査し、形の誤り・グラフの未知の id への参照はエラーになる。拡張は PART をまたいで結合でき、PART 間で値が食い違うとエラー | `tests/pack-import.test.ts`（「all six extensions」） |
+| AC-895 | FR-310 | 任意拡張 6 種類に加え、実施記録を各画面と同じスキーマで検査し、形の誤り・グラフの未知の id への参照はエラーになる。実施記録の出典・顧客参照・文脈・ID は [§3.11](#311-顧客パックの実施記録) のとおり検査する。拡張は PART をまたいで結合でき、PART 間で値が食い違うとエラー | `tests/pack-import.test.ts`（「all six extensions」）、`tests/ops-pipeline.test.ts`（実施記録の参照・文脈・重複） |
 | AC-896 | FR-310 | 最適化の行列が工場数 × 地域数と一致しない、工場が生産拠点でない、地域 id がエンティティや他の地域と重複する、物の流れの端が仕入先・拠点・顧客・地域でない、出典 id が source でないときはエラー | `tests/pack-import.test.ts`（「rejects conflicting region ids」） |
 | AC-897 | FR-310 | 取り込んだパックの `dataCatalog` を、再読み込みの後、その Project のデータカタログとして表示する。カタログを別途取り込んだ・削除したときはそちらを優先し、ほかの Project のカタログと混ぜない | `e2e/pack-import.spec.ts`（取り込み → 再読み込み → /catalog）、`tests/pack-import.test.ts`（Project のカタログの分離） |
 | AC-898 | FR-307 | 「取り込む」で Copilot の zip（無圧縮・deflate）を選ぶと、中の `.json` だけを `<zip名>/<項目名>` として読み、テキストの回答と同じ検査に掛ける（`README.md` は読まない）。zip 自体と展開後の各 JSON は 1 ファイル 5 MB（PARAM-142）まで。宣言サイズの超過・宣言より大きく展開されるもの・暗号化・Zip64・JSON が 21 個以上の zip は読まずに理由を示し、JSON のない zip は「認識できない」と表示する | `tests/zip-read.test.ts`、`e2e/pack-import.spec.ts`（英語 UI で zip を選んで検査に合格） |
@@ -804,6 +811,36 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | 別プロセスの更新・削除を古い画面で上書きせず、バッチ失敗時は全変更をロールバック | `tests/device-storage.test.ts` |
 | 移行競合・読込失敗・保存失敗・不正な保存値を明示し、空のアプリや保存成功として扱わない | `e2e/device-storage.spec.ts` |
 | 名前変更・削除・パック取込・手書き保存・ポップアウトの従来動作を維持 | `e2e/project-management.spec.ts`、`e2e/pack-import.spec.ts`、`e2e/ink.spec.ts`、`e2e/workspace-popout.spec.ts` |
+
+### 3.11 顧客パックの実施記録
+
+**要求の根拠・状態:** 利用者の選択一任と実装依頼に基づく [D-16](decision-guide.md) の追加仕様。FR-133・FR-135・FR-303・FR-308・FR-310 の補足として承認済み・MUST。既存の要求 ID と AC を使い、新たな ID は採番しない。選択肢・計測の根拠は [実施記録の判断](engagements-readiness-decision.md)。
+
+#### 記録と生成
+
+- 顧客パックは、金額や進捗のない案件・成果物・取り組みを、任意の `extensions.engagements.items` に出典付きの実施記録として保持できる。拡張がない従来のパックも読める。
+- 各項目は `id`・`name`・1 件以上の `sourceIds` と、`period`・`customer`・`customerId`・`status` のいずれかを持つ。`id` は実施記録同士およびエンティティと重複しない。`sourceIds` は既存の `source` を参照し、`customerId` がある場合は既存の `customer` を参照する。
+- `name` は文字列または日英の値とし、任意の `type` は `workshop`・`briefing`・`poc`・`programme`・`deliverable`・`deal`・`other` のいずれかとする。期間・顧客名・状態・担当・回数・結果は資料にある文字列を使い、生成時の人物情報は氏名と役職に限る。資料にない金額・進捗・日付を作らない。
+- 生成規則では、根拠と必須項目がそろう案件・施策は既存の `deal`・`initiative` を使い、同じ実施情報を実施記録とエンティティの両方に生成しないよう指示する。両者の名前が同じ場合、検査は重複を警告し、人が出典を確認できるようにする。
+- 日英の顧客パック生成規則と手動取り込み用プロンプトは、上記の実施記録と出典を求める。生成後の検査・修正では、不正な参照を取り除き、なお不正な項目だけを除外して生成記録に残す。修正回答が一覧の削除・空一覧を返しても元の一覧を消さず、一部の項目だけを修正した回答では他の項目を残す。手動取り込みでは検査エラーのあるパックを保存しない。
+
+#### 充足と表示
+
+- 分析に必要なデータの「案件・成果物・取り組み」は、`deal`・`deliverable`・`initiative` と実施記録の件数を合計し、1 件以上を充足とする。生成時は検査・不正項目の除外後のパックで判定する。取得報告の 24 区分は変更しない。
+- 分析画面には、選択中の Project のパックにある実施記録だけを、件数・名前・種類・期間・顧客・状態・担当・回数・結果・出典を含む読み取り専用の一覧として表示する。常に社内情報として扱い、社外向け表示では一覧を隠す。既存の案件金額合計・ROI・ガントの計算には加えない。
+- この仕様は外部送信の許可を新設しない。既存の用途別の承認・送信前確認・人物情報の確認を維持する。顧客パック作成に関する D-12〜D-15 と §3.1 の旧記載との食い違いは別途反映が必要であり、本節をその解消や新たな承認と扱わない。
+
+#### 受入条件と検証
+
+| 条件 | 期待結果 | 検証先 |
+|---|---|---|
+| 金額・進捗なしの記録と、出典なし・不正な出典／顧客参照・文脈なし・重複 ID | 根拠と文脈のある記録は通り、不正な記録は検査エラー。同名の既存エンティティは警告 | `tests/ops-pipeline.test.ts` |
+| 日英の合成資料から生成し、一覧の削除・一部修正・不正な項目を含む回答を受け取る | 出典付きの有効な記録と他の有効項目を残し、不正部分と除外理由を記録。合成データでは最終パックの分析項目が 8/8 充足し、根拠のない数値は 0 件 | `tests/pack-generate.test.ts` |
+| 取り込み後の分析画面・再読み込み・Project 切替・社外向け表示 | 対象 Project の出典付き一覧を保持して表示し、別 Project と社外向け表示では出さない | `tests/engagements-panel.test.tsx`、`e2e/pack-import.spec.ts` |
+| 実施記録のない旧パックと不正な拡張 | 旧パックは従来どおり読み、不正な拡張は成功した空一覧として扱わない | `tests/engagements-panel.test.tsx`、`tests/ops-pipeline.test.ts` |
+| 手動取り込み用の日英プロンプトとスキーマ | 実施記録の項目を取得対象に含み、スキーマとの不一致を検出する | `tests/pack-import.test.ts`、`tests/ops-pipeline.test.ts` |
+
+**未検証:** 合成データの結果は実テナントでの取得品質を保証しない。実際の Work IQ と Foundry による生成 2 回・実施記録の保持率の再計測は未実施であり、実サービスの 8/8 や保持率 80% 以上を達成済みとは扱わない。
 
 ## 4. ペルソナ
 
@@ -1006,9 +1043,9 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | NFR-UX-003 | 時間のかかる処理の進行表示 | 承認済み | SHOULD | AC-187 | [quality.md](requirements/quality.md) |
 | NFR-UX-004 | エラーの原因と次の行動 | 承認済み | SHOULD | AC-188 | [quality.md](requirements/quality.md) |
 | NFR-UX-005 | OS と利用者の表示設定への追従 | 承認済み | SHOULD | AC-189 | [quality.md](requirements/quality.md) |
-| FR-133 | 分析手法の選択と開始 | 承認済み | MUST | AC-195〜AC-196 | [analysis-projects.md](requirements/analysis-projects.md) |
+| FR-133 | 分析手法の選択と開始 | 承認済み | MUST | AC-195〜AC-196、§3.11 の受入条件 | [analysis-projects.md](requirements/analysis-projects.md)、[§3.11](#311-顧客パックの実施記録) |
 | FR-134 | パラメーターの編集と結果の更新 | 承認済み | MUST | AC-197〜AC-199 | [analysis-projects.md](requirements/analysis-projects.md) |
-| FR-135 | ビュアーの切替と結果の確認 | 承認済み | MUST | AC-200〜AC-201 | [analysis-projects.md](requirements/analysis-projects.md) |
+| FR-135 | ビュアーの切替と結果の確認 | 承認済み | MUST | AC-200〜AC-201、§3.11 の受入条件 | [analysis-projects.md](requirements/analysis-projects.md)、[§3.11](#311-顧客パックの実施記録) |
 | FR-136 | 業務改善ステッパー | 承認済み | MUST | AC-202〜AC-204、AC-372。完了表示・ToDo移動の追加受入基準は §7.1 | [analysis-projects.md](requirements/analysis-projects.md)、[本書 §7.1](#71-ステップの完了シグナルとtodoの移動先) |
 | FR-137 | 企業の登録と複数 Project の管理（名前変更・削除の追加仕様は §3.9） | 承認済み | MUST | AC-205〜AC-208、§3.9 の受入条件 | [analysis-projects.md](requirements/analysis-projects.md)、[§3.9](#39-登録済み企業顧客とprojectの名前変更削除) |
 | FR-138 | Project の切替とデータの分離 | 承認済み | MUST | AC-209〜AC-210 | [analysis-projects.md](requirements/analysis-projects.md) |
@@ -1131,13 +1168,14 @@ ID（FR・NFR・AC・Q・PARAM）は `python scripts/next-id.py <種別>` でだ
 | FR-300 | 没入（Immersive）: 素材・奥行き・モーション・集中支援 | 承認済み | SHOULD | AC-814〜AC-816 | [app-experience.md](requirements/app-experience.md) |
 | FR-305 | 上端の中央へのドラッグでのレイアウトの雛形（Snap Layouts 相当）と順次の埋め | 承認済み | SHOULD | AC-859〜AC-869 | [app-experience.md](requirements/app-experience.md) |
 | FR-302 | 顧客パックのアップロードと Project への取り込み（複数ファイル・ドラッグ＆ドロップ・貼り付け、全か無か） | 承認済み | MUST | AC-837〜AC-844 | [customer-pack.md](requirements/customer-pack.md) |
-| FR-303 | ブラウザー内での顧客パックの検証（CLI の verify と同じ実装を使う） | 承認済み | MUST | AC-845〜AC-850 | [customer-pack.md](requirements/customer-pack.md) |
+| FR-303 | ブラウザー内での顧客パックの検証（CLI の verify と同じ実装を使う） | 承認済み | MUST | AC-845〜AC-850、§3.11 の受入条件 | [customer-pack.md](requirements/customer-pack.md)、[§3.11](#311-顧客パックの実施記録) |
 | FR-304 | 取り込む前の人の確認（機密区分の件数・人・ロゴ） | 承認済み | MUST | AC-851〜AC-855 | [customer-pack.md](requirements/customer-pack.md) |
 | FR-306 | 起動の 3 段階（スプラッシュ → 企業と Project の選択（サンプルデータの企業とデモ Project を含む）→ Project 画面）。選択はブラウザーのセッションごとに 1 回、作業先メニューから戻れる。登録済み企業・Project の名前変更と削除は §3.9 | 承認済み | MUST | e2e/project.spec.ts・e2e/motion-feed.spec.ts、§3.9 の受入条件 | [app-experience.md](requirements/app-experience.md)、[§3.9](#39-登録済み企業顧客とprojectの名前変更削除) |
 | FR-307 | 社内のファイルから顧客パックを作る Microsoft 365 Copilot 用プロンプト（資料の一覧 → 事実の抽出 → PART に分けた JSON。値を作らない・数値に出典）を画面からコピー・ダウンロードでき、検査のエラーから修正用プロンプトを作る（2026-11-10: 公開 Web 調査 → 顧客パック作成の 2 段に拡張。FR-308。同日改訂: 2 段目が `<packId>.zip`（pack.json・README.md）と少量なら ```json を返し、BAS がそのまま取り込む。AC-898） | 承認済み | SHOULD | tests/pack-import.test.ts・tests/zip-read.test.ts・e2e/pack-import.spec.ts | [customer-pack.md](requirements/customer-pack.md) |
-| FR-308 | 公開 Web 調査の指示（検索語は公開名・ドメイン・一般語だけで作り、社内の語を入れない。2026-11-10 改訂: 送信前の境界として、公開 Web 調査は社内データを使わない Web モードで公開の入力だけを渡し、社内資料を使う顧客パック作成は Web 検索をオフにして送る）と、BAS が使う全 24 区分・全項目の取得指示。出典に URL・確認日・資料内の位置を残す | 承認済み | MUST | AC-888〜AC-890 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
+| FR-308 | 公開 Web 調査の指示（検索語は公開名・ドメイン・一般語だけで作り、社内の語を入れない。2026-11-10 改訂: 送信前の境界として、公開 Web 調査は社内データを使わない Web モードで公開の入力だけを渡し、社内資料を使う顧客パック作成は Web 検索をオフにして送る）と、取得報告の全 24 区分・実施記録を含む項目の取得指示。出典に URL・確認日・資料内の位置を残す | 承認済み | MUST | AC-888〜AC-890、§3.11 の受入条件 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310)、[§3.11](#311-顧客パックの実施記録) |
 | FR-309 | 取得報告（`extensions.collection`）: 24 区分の状態・不足項目・次の取得方法・Web 検索の実施状況の検査と表示。データがあることを完了とみなさない | 承認済み | MUST | AC-891〜AC-893 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) |
-| FR-310 | 取り込みの厳格化（PART の欠落・矛盾・壊れた JSON を拒否）、任意拡張 6 種類と最適化・物の流れの検査、取り込んだ `dataCatalog` の Project での利用 | 承認済み | MUST | AC-894〜AC-897 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310) || FR-289 | 生成 AI（Microsoft Foundry）による AI 取り込み（Foundry 設定済みのときだけ選べる） | 承認済み | SHOULD | AC-757〜AC-760 | [app-core.md](requirements/app-core.md) |
+| FR-310 | 取り込みの厳格化（PART の欠落・矛盾・壊れた JSON を拒否）、実施記録を含む任意拡張と最適化・物の流れの検査、取り込んだ `dataCatalog` の Project での利用 | 承認済み | MUST | AC-894〜AC-897、§3.11 の受入条件 | [§3.8](#38-顧客パックの取得範囲出典取得報告fr-308fr-310)、[§3.11](#311-顧客パックの実施記録) |
+| FR-289 | 生成 AI（Microsoft Foundry）による AI 取り込み（Foundry 設定済みのときだけ選べる） | 承認済み | SHOULD | AC-757〜AC-760 | [app-core.md](requirements/app-core.md) |
 | NFR-SEC-012 | Foundry の API キーをリポジトリ・ログ・テストデータに出さない | 承認済み | MUST | AC-729〜AC-730 | [app-core.md](requirements/app-core.md) |
 | NFR-COST-001 | 分析実行の利用量と月の予算の上限 | 承認済み | SHOULD | AC-731〜AC-732 | [app-core.md](requirements/app-core.md) |
 

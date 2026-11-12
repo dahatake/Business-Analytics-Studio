@@ -2230,8 +2230,102 @@
     },
     "extensions": {
       "type": "object",
-      "propertyNames": {
-        "type": "string"
+      "properties": {
+        "engagements": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "ja": {
+                            "type": "string"
+                          },
+                          "en": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ja",
+                          "en"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "workshop",
+                      "briefing",
+                      "poc",
+                      "programme",
+                      "deliverable",
+                      "deal",
+                      "other"
+                    ]
+                  },
+                  "period": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "customer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "customerId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "owner": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  },
+                  "sourceIds": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "sourceIds"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "additionalProperties": {}
+        }
       },
       "additionalProperties": {}
     }

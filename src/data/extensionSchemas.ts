@@ -74,6 +74,28 @@ export const OkrExtension = z.object({
 }).passthrough();
 export type OkrExtension = z.infer<typeof OkrExtension>;
 
+/** Sourced work records whose material need not state deal amounts or initiative progress. Always internal. */
+export const EngagementsExtension = z.object({
+  items: z.array(z.object({
+    id: z.string().min(1),
+    name: LocalizableSchema,
+    type: z.enum(['workshop', 'briefing', 'poc', 'programme', 'deliverable', 'deal', 'other']).optional(),
+    period: z.string().trim().min(1).optional(),
+    customer: z.string().trim().min(1).optional(),
+    customerId: z.string().min(1).optional(),
+    status: z.string().trim().min(1).optional(),
+    owner: z.string().optional(),
+    count: z.string().optional(),
+    outcome: z.string().optional(),
+    sourceIds: z.array(z.string().min(1)).min(1),
+  }).passthrough()),
+}).passthrough();
+export type EngagementsExtension = z.infer<typeof EngagementsExtension>;
+
+export function hasEngagementContext(item: EngagementsExtension['items'][number]): boolean {
+  return !!(item.period || item.customer || item.customerId || item.status);
+}
+
 export const CoreObjectExtension = z.object({
   candidates: z.array(z.object({
     name: z.string().optional(),

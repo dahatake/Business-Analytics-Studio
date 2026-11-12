@@ -1,9 +1,12 @@
 import { z } from 'zod';
 import { CustomerPack } from '../../src/data/schema.ts';
+import { EngagementsExtension } from '../../src/data/extensionSchemas.ts';
 
 /** FR-118: JSON Schema of the customer pack, generated from the zod schema (the single source of truth). */
 export function packJsonSchema(version: string): Record<string, unknown> {
-  const schema = z.toJSONSchema(CustomerPack) as Record<string, unknown>;
+  const schema = z.toJSONSchema(CustomerPack.extend({
+    extensions: z.object({ engagements: EngagementsExtension.optional() }).catchall(z.unknown()).optional(),
+  })) as Record<string, unknown>;
   return {
     ...schema,
     $id: 'https://business-analytics-studio.local/pack.schema.json',

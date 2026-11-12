@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SecretVault } from './vault.ts';
 import { WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
+import { REQUIREMENTS, type ReadinessKey } from '../src/modules/project/analysisReadiness.ts';
 
 /**
  * D-14 (user, 2026-11-11): Microsoft Work IQ as a material source for the in-app customer pack (FR-311), only when the
@@ -131,8 +132,11 @@ export function settingsSignature(s: WorkIqSettings): string {
  */
 export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
-/** Follow-up searches built from the generator's own "what is missing" list (one round per stage). */
-export const MAX_WORKIQ_TOPICS = 4;
+/**
+ * Follow-up searches built from the generator's own "what is missing" list (one round per stage). D-15: 4 → 8, every
+ * round of the measured runs used all 4.
+ */
+export const MAX_WORKIQ_TOPICS = 8;
 const MAX_TOPIC_CHARS = 160;
 
 export interface WorkIqQuestion {
@@ -149,15 +153,44 @@ export interface WorkIqQuestion {
   aspects: WorkIqAspect[];
   /** Follow-up searches for missing items (short phrases, no instructions). */
   topics: string[];
+  /**
+   * Plan every readiness ladder wording up front and merge the searches per readiness item (Work IQ CLI route only;
+   * docs/workiq-agentic-retrieval-study.md). The relay builds those searches itself from analysisReadiness.
+   */
+  expand: boolean;
 }
 
-export type WorkIqSectionAnswer = (WorkIqAnswer & { key: string }) | { key: string; error: string };
+export type WorkIqSectionAnswer = (WorkIqAnswer & { key: string; searches?: string[] }) | { key: string; error: string };
 
 /** One search per requested section and topic, in order. Keys: the aspect, or `topic-<n>`. */
 export function workIqSearches(q: WorkIqQuestion): { key: string; query: string }[] {
   return [
     ...q.aspects.map((a) => ({ key: a, query: workIqAspectQuery(q, a) })),
     ...q.topics.map((topic, i) => ({ key: `topic-${i + 1}`, query: workIqTopicQuery(q, topic) })),
+  ];
+}
+
+/** The readiness items each section search feeds (the pack prompt's "use each where it belongs" rule). */
+export const ASPECT_ITEMS: Record<WorkIqAspect, readonly ReadinessKey[]> = {
+  org: ['org'], people: ['org'], locations: ['locations'], process: ['workflow'], data: ['dataCatalog'],
+  kpi: ['kpi'], engagements: ['customers', 'engagements'], issues: ['issues'],
+};
+
+export interface PlannedSearch {
+  key: string;
+  query: string;
+  kind: 'aspect' | 'ladder' | 'topic';
+  items: readonly ReadinessKey[];
+  /** The ladder wording behind a `ladder` search, as packGenerate's follow-up rounds would ask it. */
+  wording?: string;
+}
+
+/** workIqSearches plus, with `expand`, every ladder wording of every readiness item (keys `<item>-<n>`). */
+export function workIqPlan(q: WorkIqQuestion): PlannedSearch[] {
+  return [
+    ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })),
+    ...(q.expand ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
+    ...q.topics.map((topic, i): PlannedSearch => ({ key: `topic-${i + 1}`, query: workIqTopicQuery(q, topic), kind: 'topic', items: [] })),
   ];
 }
 
@@ -223,7 +256,8 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
     topics = (o.topics as string[]).map((t) => t.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
     if (topics.some((t) => t.length > MAX_TOPIC_CHARS)) return null;
   }
-  return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics };
+  if (o.expand !== undefined && typeof o.expand !== 'boolean') return null;
+  return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics, expand: o.expand === true };
 }
 
 export function workIqPrompt(q: WorkIqQuestion): string {

@@ -128,7 +128,7 @@ export function readinessCount(p: Pack, key: ReadinessKey): number {
       const okr = ext(p, 'okr');
       return of('kpi') + list(okr.kpis).length + list(okr.objectives).length;
     }
-    case 'engagements': return of('deal', 'deliverable', 'initiative');
+    case 'engagements': return of('deal', 'deliverable', 'initiative') + list(ext(p, 'engagements').items).length;
     case 'issues': return of('issue');
   }
 }

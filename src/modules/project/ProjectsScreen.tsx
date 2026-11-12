@@ -12,6 +12,9 @@ import { generatePrefillFor, PackGenerateDialog, type PackGenTarget } from './Pa
 import type { PackGenInput } from './packGenerate.ts';
 import { importedPacks, type ImportedPackMeta } from '../../data/packStore.ts';
 import { CompanyEditDialog, ProjectEditDialog } from './ProjectEditDialogs.tsx';
+import { CompanyAnchorPanel } from './CompanyAnchorPanel.tsx';
+import { CompanyAlignmentEvaluation } from './CompanyAlignmentEvaluation.tsx';
+import { ProjectAlignmentButton } from './ProjectAlignmentDialog.tsx';
 import { ProjectRelationsPanel } from './ProjectRelationsPanel.tsx';
 import { importProject } from './projectFile.ts';
 import { downloadProjectFile } from './ProjectMergeDialog.tsx';
@@ -47,13 +50,21 @@ export function ProjectsScreen() {
   };
 
   const onImport = async (file: File) => {
-    const outcome = importProject(await file.text());
-    if (outcome.ok) setMessage({ intent: 'success', text: t('proj.projects.imported', { name: outcome.name }) });
-    else setMessage({ intent: 'error', text: t(`proj.projects.importError.${outcome.error}`) });
+    try {
+      const outcome = importProject(await file.text());
+      if (outcome.ok) setMessage({ intent: 'success', text: t('proj.projects.imported', { name: outcome.name }) + (outcome.anchorSkipped ? ` ${t('proj.anchor.importSkipped')}` : '') });
+      else setMessage({ intent: 'error', text: t(`proj.projects.importError.${outcome.error}`) });
+    } catch (error) {
+      setMessage({ intent: 'error', text: t('proj.projects.importFailed', { reason: error instanceof Error ? error.message : String(error) }) });
+    }
   };
 
   const onExport = (p: Project) => {
-    downloadProjectFile(p.id);
+    try {
+      if (!downloadProjectFile(p.id)) setMessage({ intent: 'error', text: t('proj.anchor.exportFailed') });
+    } catch (error) {
+      setMessage({ intent: 'error', text: `${t('proj.anchor.exportFailed')} ${error instanceof Error ? error.message : String(error)}` });
+    }
   };
 
   const onGenerate = async (p: Project) => {
@@ -196,6 +207,8 @@ function CompanyPanel({ company, projects, relations, packs, activeId, onAddProj
         <p className="muted">{t('proj.company.shared')}</p>
       </section>
 
+      <CompanyAnchorPanel company={company} />
+      <CompanyAlignmentEvaluation companyId={company.id} />
       <h3 className="proj-h2">{t('proj.projects.tableCaption', { company: company.name })}</h3>
       <ScrollRegion label={t('proj.projects.tableCaption', { company: company.name })}>
         <table className="data-table proj-table">
@@ -242,6 +255,7 @@ function CompanyPanel({ company, projects, relations, packs, activeId, onAddProj
                         {t(pack ? 'proj.ready.refetch' : 'proj.gen.buttonShort')}
                       </Button>
                       <Button size="small" icon={<Edit20Regular />} onClick={() => onEditProject(p)} aria-label={t('proj.edit.named', { name: p.name })} data-testid={`proj-edit-${p.id}`}>{t('proj.edit.short')}</Button>
+                      <ProjectAlignmentButton company={company} project={p} />
                       <Button size="small" icon={<ArrowDownload20Regular />} onClick={() => onExport(p)} aria-label={t('proj.projects.exportNamed', { name: p.name })}>{t('proj.projects.exportShort')}</Button>
                       <Button size="small" icon={<Delete20Regular />} onClick={() => onDeleteProject(p)} aria-label={t('proj.projects.deleteNamed', { name: p.name })}>{t('proj.delete')}</Button>
                     </div>

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { FOUNDRY_MEDIA, type MediaCapability } from '../../ai/attachments.ts';
 import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { checkBudget, parseRequestPrice, type UnitPrices } from '../../ai/budget.ts';
@@ -235,6 +236,13 @@ export function runtimeSettings(): AiRuntimeSettings {
 }
 
 /** Whether an approved use is ready; only Copilot requires a manual price. */
+/** Files the selected provider and model read natively: Foundry chat completions document JPEG/PNG/GIF/WEBP for vision
+deployments; a Copilot model reports its own list (none until checked, and none for `auto`). */
+export function mediaCapability(s: Pick<AiSettingsState, 'provider' | 'copilotModel' | 'copilotStatus'>): MediaCapability | null {
+  if (s.provider === 'foundry') return FOUNDRY_MEDIA;
+  return s.copilotStatus?.models.find((m) => m.id === s.copilotModel)?.media ?? null;
+}
+
 export function liveReady(s: AiSettingsState): boolean {
   return s.liveEnabled && isConfigured(s) && (s.provider === 'foundry' || providerPrices(s) !== null);
 }

@@ -9,6 +9,8 @@ import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
 import { commitPackChange, newEntityId, referencesTo, usePackVersion } from '../../state/packEdits.ts';
 import { isHidden } from '../cardSpecs.ts';
+import { ensureSource, hashOfSource, itemOfSource, type AttachmentItem } from '../../state/attachments.ts';
+import { AttachmentField } from './AttachmentField.tsx';
 import {
   blankEntity, FIELDS, fromForm, setLText, toForm, type EditableKind, type FieldErrors, type FieldSpec, type FormState,
 } from './entitySpecs.ts';
@@ -43,12 +45,14 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [nested, setNested] = useState<{ kind: EditableKind; field: FieldSpec } | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
 
   useEffect(() => {
     if (!kind) return;
     const raw = existing ? (structuredClone(existing) as unknown as Record<string, unknown>) : blankEntity(kind, newEntityId(kind));
     setBase(raw);
     setForm(toForm(kind, raw, lang));
+    setAttachments((Array.isArray(raw.sourceIds) ? (raw.sourceIds as string[]) : []).map(itemOfSource).filter((x): x is AttachmentItem => x !== null));
     setErrors({});
     setFailure(null);
     setConfirmDelete(false);
@@ -82,6 +86,11 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
     if (!entity) return;
     setBusy(true);
     try {
+      // Attachments become pack sources first; the entity then cites them next to its other sources.
+      const attached: string[] = [];
+      for (const a of attachments) attached.push(await ensureSource(a, form.shareable === 'true'));
+      const others = entity.sourceIds.filter((sid) => hashOfSource(getEntity(sid)) === null);
+      entity.sourceIds = [...others, ...attached.filter((sid, i) => attached.indexOf(sid) === i)];
       await commitPackChange({ op: 'upsert', entity, region });
       onSaved?.(entity.id);
       onClose();
@@ -223,6 +232,12 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
                 <Textarea value={String(form.description ?? '')} onChange={(_, d) => set('description', d.value)} resize="vertical" rows={2} data-testid="entry-field-description" />
               </Field>
               {kind && FIELDS[kind].map(renderField)}
+              <AttachmentField
+                items={attachments}
+                onAdd={(add) => setAttachments((cur) => [...cur, ...add.filter((a) => !cur.some((x) => x.hash === a.hash))])}
+                onRemove={(it) => setAttachments((cur) => cur.filter((x) => x.hash !== it.hash))}
+                testId={depth ? `entry-att-${depth}` : 'entry-att'}
+              />
               <Checkbox
                 label={t('entry.field.shareable')}
                 checked={form.shareable === 'true'}

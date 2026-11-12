@@ -612,8 +612,9 @@ export const projJa = {
   'proj.rec.deleteNamed': '削除: {text}',
 
   'proj.ai.ask': 'AI に提案を依頼',
+  'proj.ai.scope': 'テーマ「{theme}」に関係する項目',
   'proj.ai.adopt': '決定として採用',
-  'proj.ai.mockNote': 'AI の提案は、外部送信の条件が決まるまでモックの回答です。',
+  'proj.ai.mockNote': 'AI の提案は、実接続が有効で接続が設定済みのとき、送信内容と費用を確認してから生成AIに依頼します。それ以外はモックの回答で、「モック」と表示します。',
 
   'proj.goal.title': '論点ごとの件数',
   'proj.goal.decisions': '決定事項',
@@ -873,6 +874,7 @@ export const projJa = {
   'proj.pack.logoFile': '許諾済みロゴの画像（任意）',
   'proj.pack.logoHint': 'PNG・JPEG・WebP（5 MB 以下）。指定しない場合はパック内の画像を使用します。利用条件は別途確認してください。',
   'proj.pack.logoFailed': 'ロゴを取り込めません（{message}）。画像を選び直すか、許諾チェックを外してください。',
+  'proj.gen.logoHint': 'PNG・JPEG・WebP（5 MB 以下）を選んでください。画像は AI や外部サービスには送らず、この端末に保存します。',
   'proj.pack.isSampleNote': 'このパックは isSample が true のため、画面には「サンプルデータ」と表示されます。',
   'proj.pack.destination': '取り込み先',
   'proj.pack.destinationNew': 'いまはデモを開いています。取り込み先の企業と Project を作ります（登録済みの企業名なら、その企業に Project を追加します）。',

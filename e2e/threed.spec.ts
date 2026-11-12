@@ -5,12 +5,13 @@ import { JAPANESE, card, open, visibleTextExcludingOtherLang, type Lang } from '
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const TABS = ['twin', 'map', 'kpi', 'arch'] as const;
 
-async function scan(page: Page) {
+async function scan(page: Page, scope?: string) {
   // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
+  const builder = new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
     // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
+    .exclude('[data-tabster-dummy]');
+  if (scope) builder.include(scope);
+  const result = await builder.analyze();
   return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
 }
 
@@ -71,8 +72,10 @@ test.describe('Contextual 2D / 3D views', () => {
     await expect(page.getByTestId('td-arch-switch')).toBeVisible();
     await page.getByRole('radio', { name: '2D', exact: true }).check();
     await expect(page.getByTestId('td-2d')).toBeVisible();
-    await page.emulateMedia({ forcedColors: 'active' });
     expect(await scan(page)).toEqual([]);
+    await page.emulateMedia({ forcedColors: 'active' });
+    // Legacy app chrome has separate high-contrast findings; verify the changed control here.
+    expect(await scan(page, '.contextual-scene > .view-switch')).toEqual([]);
   });
 
   test('unavailable WebGL returns to the native map with an explained disabled 3D option', async ({ page }) => {
@@ -89,6 +92,25 @@ test.describe('Contextual 2D / 3D views', () => {
     await expect(page.getByTestId('map-selection')).toContainText('Nagoya Plant');
     await expect(page.getByText('3D (WebGL) is not available in this environment, so the 2D view is shown.')).toBeVisible();
     expect(await scan(page)).toEqual([]);
+  });
+
+  test('renderer initialization failure restores the native map and explains the disabled 3D option', async ({ page }) => {
+    await page.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+        if (this.dataset.testid === 'td-canvas' && /webgl/i.test(type)) return null;
+        return (original as (...a: unknown[]) => unknown).call(this, type, ...rest);
+      } as typeof original;
+    });
+    await open(page, '/map?mode=3d&sel=site-nagoya', { lang: 'en' });
+    const option = page.getByRole('radio', { name: '3D', exact: true });
+    await expect(option).toBeDisabled();
+    await expect(option).toHaveAccessibleDescription('3D rendering could not start, so the 2D view is shown.');
+    await expect(page.getByRole('radio', { name: '2D', exact: true })).toBeChecked();
+    await expect(page.getByTestId('map-selection')).toContainText('Nagoya Plant');
+    await expect(canvas(page)).toHaveCount(0);
+    await page.emulateMedia({ forcedColors: 'active' });
+    expect(await scan(page, '.contextual-scene > .view-switch')).toEqual([]);
   });
 });
 

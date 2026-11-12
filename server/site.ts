@@ -40,16 +40,16 @@ const MAX_TEXT_CHARS = 6_000;
 const MAX_REDIRECTS = 3;
 
 /**
- * Pages that usually hold company facts, most valuable first. Tier 0 are detail pages (outline, sites, figures,
- * data) that state HQ, plants and numbers; tier 1 the company/profile hubs that link them; then IR, business,
- * history and sustainability.
+ * Brand guides and press kits come first because they contain exact identity rules. Company detail pages follow,
+ * then profile hubs, IR, business, history and sustainability.
  */
 const FACT_TIERS: RegExp[] = [
+  /(brand|press[-_]?kit|logo[-_]?usage|style[-_]?guide|design[-_]?system|visual[-_]?identity)/i,
   /(overview|outline|gaiyo|gaiyou|facilities|locations?|jigyosho|kyoten|plants?|factor(y|ies)|kojo|offices?|figures|facts?|data)(\/|\.html?|$)/i,
   /(about|company|corporate|profile|kaisha|kigyo|kigyou|summary|information)/i,
   /(^|\/)(ir|investors?)(\/|$)|investor/i,
   /(business|jigyo|products?|solutions?|services?|network)/i,
-  /(history|enkaku|message|philosophy|vision|brand|executives?|officers?|yakuin)/i,
+  /(history|enkaku|message|philosophy|vision|executives?|officers?|yakuin)/i,
   /(sustainability|csr|esg)/i,
 ];
 /** Query parameters that only track clicks: dropped so the same page is read once. */
@@ -161,7 +161,11 @@ export function factLinks(html: string, base: URL, limit: number): string[] {
   return rankedLinks(html, base).map(([u]) => u).slice(0, limit);
 }
 
-const tierOf = (u: string) => FACT_TIERS.findIndex((re) => re.test(new URL(u).pathname));
+const tierOf = (u: string) => {
+  const path = new URL(u).pathname;
+  if (/(^|\/)(executives?|officers?|yakuin)(\/|$)/i.test(path)) return 5;
+  return FACT_TIERS.findIndex((re) => re.test(path));
+};
 /** The section a page sits in: '/a/b/' and '/a/b.html' are both in '/a/'. */
 const sectionOf = (u: string) => new URL(u).pathname.replace(/\/$/, '').replace(/[^/]*$/, '');
 
@@ -177,7 +181,7 @@ function rankedLinks(html: string, base: URL): [string, number][] {
       continue;
     }
     if (u.protocol !== 'https:' || u.username || u.password || (u.port !== '' && u.port !== '443') || !sameSite(u.hostname, base.hostname) || /\.(pdf|zip|jpe?g|png|gif|svg|mp4|xlsx?|docx?|pptx?)$/i.test(u.pathname)) continue;
-    const tier = FACT_TIERS.findIndex((re) => re.test(u.pathname));
+    const tier = tierOf(u.toString());
     if (tier < 0) continue;
     u.hash = '';
     for (const key of [...u.searchParams.keys()]) if (TRACKING_PARAM.test(key)) u.searchParams.delete(key);
@@ -299,8 +303,8 @@ export async function fetchSitePages(rawUrl: string, deps: SiteDeps = {}): Promi
     if (!seen.has(url) && (!queue.has(url) || queue.get(url)! > score)) queue.set(url, score);
   };
   for (const [u, tier] of rankedLinks(first.html, site)) add(u, tier);
-  // Guesses rank with the hubs; a real link to the same page keeps its own (possibly better) rank.
-  for (const p of GUESSED_PATHS) add(new URL(p, new URL('./', site)).toString(), 1.5);
+  // Guesses run after linked fact pages; a real link to the same page keeps its (better) rank.
+  for (const p of GUESSED_PATHS) add(new URL(p, new URL('./', site)).toString(), 3.5);
   const depth = (s: string) => new URL(s).pathname.split('/').filter(Boolean).length;
   // Spread the few pages over different sections: each page already read in the same section costs a tier; news costs two.
   const effective = (u: string, score: number) =>

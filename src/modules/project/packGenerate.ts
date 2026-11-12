@@ -496,7 +496,7 @@ export function stageAPrompt(input: PackGenInput, entries: MaterialEntry[]): str
     ja ? '# 出力' : '# Output',
     `{"packId":"...","company":{"name":{"ja":"","en":""},"industry":{"ja":"","en":""}},"isSample":false,"regions":[...],"entities":[...],"extensions":{"brand":{...},"glossary":[...],"dataCatalog":{"items":[...]},"workflow":{"stages":[...]}},"gaps":[{"section":"site","missing":["..."],"nextAction":"..."}]}`,
     ja ? `- entities の kind は ${KINDS_A.join(', ')} だけ。` : `- entities may only have kind ${KINDS_A.join(', ')}.`,
-    ja ? '- brand は資料に色がある場合だけ。主色・文字色・書体・トーンと出典を調べ、不明な条件は gaps に記録する。ロゴ画像や logo は出力しない（利用許諾を確認した利用者が取込画面で画像を選ぶ）。' : '- Include brand only when the material states a colour. Research primary and text colours, fonts, tone and sources; report missing conditions in gaps. Do not output a logo or image (the user selects an image at import after confirming permission).',
+    ja ? '- brand は資料に色がある場合だけ。主色・文字色・書体・トーンと出典を調べ、不明な条件は gaps に記録する。資料にロゴの利用条件がある場合は logo の条件に反映し src は "brand/logo" とする。画像データは出力しない（利用者が許諾を確認して選ぶ）。' : '- Include brand only when the material states a colour. Research primary and text colours, fonts, tone and sources; report missing conditions in gaps. Put documented usage conditions in logo with src "brand/logo". Never output image data (the user selects it after confirming permission).',
     ja
       ? '- gaps: 資料で埋まらなかった区分（collection の区分名、または workflow・dataCatalog）と、不足している具体的な事実（社内で質問できる形で）。'
       : '- gaps: sections (collection names, or workflow / dataCatalog) the material could not fill, with the specific missing facts (phrased so they can be asked internally).',

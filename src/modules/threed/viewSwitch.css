@@ -30,6 +30,10 @@
   .view-switch-options .fui-Radio__label { min-height: 44px; }
 }
 @media (forced-colors: active) {
-  .view-switch-options .fui-Radio__input:enabled:checked ~ .fui-Radio__label { border-color: Highlight; color: Highlight; }
+  .view-switch-label { color: CanvasText; }
+  .view-switch-options { background: Canvas; border-color: ButtonBorder; }
+  .view-switch-options .fui-Radio__input:enabled:not(:checked) ~ .fui-Radio__label { color: ButtonText; }
+  .view-switch-options .fui-Radio__input:enabled:checked ~ .fui-Radio__label { background: Canvas; border-color: Highlight; color: Highlight; }
+  .view-switch-options .fui-Radio__input:focus-visible ~ .fui-Radio__label { outline-color: Highlight; }
   .view-switch-options .fui-Radio__input:disabled ~ .fui-Radio__label { color: GrayText; }
 }

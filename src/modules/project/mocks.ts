@@ -1,5 +1,7 @@
-import { aiComplete, registerMock, type AiResponse } from '../../ai/client.ts';
+import { aiComplete, preflight, registerMock, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { RECOMMEND_MAX_PROMPT_CHARS, RECOMMEND_TIMEOUT_MS } from '../../ai/policy.ts';
 import type { Entity } from '../../data/schema.ts';
+import type { MediaPart } from '../../ai/attachments.ts';
 import type { Lang } from '../../i18n/core.ts';
 import type { Localizable } from '../../state/text.ts';
 import { categoriesOf, type CategoryId } from './analysis.ts';
@@ -90,9 +92,28 @@ export async function requestAnalysisDraft(method: MethodId, lang: Lang, entitie
   return { response, items: parseDraft(method, response.text, lang) };
 }
 
-/** FR-050: AI suggestions for a theme. */
-export async function requestSuggestions(themeTitle: string, lang: Lang, entities: Entity[]): Promise<{ response: AiResponse; lines: Localizable[] }> {
-  registerMock('recommend', (req) => (req.prompt.includes(MARK_RECOMMEND) ? recommendMock(req.lang) : `[mock] ${req.prompt.slice(0, 80)}`));
-  const response = await aiComplete({ use: 'recommend', lang, prompt: `${MARK_RECOMMEND} ${themeTitle}`, entities });
-  return { response, lines: response.text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => bilingual(l, lang, SUGGESTIONS)) };
+/** D-20: the request "Ask AI for suggestions" sends, shared by the confirmation (preflight) and the send. */
+export function suggestionRequest(themeTitle: string, lang: Lang, entities: Entity[], attachments?: { text: string; media: MediaPart[] }): AiRequest {
+  const head = `${MARK_RECOMMEND} ${themeTitle}`;
+  const base: AiRequest = { use: 'recommend', lang, prompt: head, entities, timeoutMs: RECOMMEND_TIMEOUT_MS, ...(attachments?.media.length ? { media: attachments.media } : {}) };
+  if (!attachments?.text) return base;
+  // The relay refuses a longer prompt + context; shorten the attached text rather than fail the whole request.
+  const room = RECOMMEND_MAX_PROMPT_CHARS - head.length - preflight(base).context.length - 2;
+  if (room <= 0) return base;
+  const material = attachments.text.length > room ? `${attachments.text.slice(0, Math.max(0, room - 4))}\n[…]` : attachments.text;
+  return { ...base, prompt: `${head}\n\n${material}` };
+}
+
+const BULLET = /^\s*(?:[-*・•●▪]|\d+[.)．、]|[（(]\d+[)）])\s*/;
+const MAX_SUGGESTIONS = 5;
+/** One suggestion per line; a live model may still number or bullet them, or add a heading. */
+export function parseSuggestions(text: string, lang: Lang): Localizable[] {
+  return text.split('\n').map((l) => l.replace(BULLET, '').replace(/^\*\*(.+)\*\*$/, '$1').trim()).filter(Boolean).slice(0, MAX_SUGGESTIONS).map((l) => bilingual(l, lang, SUGGESTIONS));
+}
+
+/** FR-050: AI suggestions for a theme. Live only with the user's confirmation (D-20); otherwise a labelled mock. */
+export async function requestSuggestions(req: AiRequest): Promise<{ response: AiResponse; lines: Localizable[] }> {
+  registerMock('recommend', (r) => (r.prompt.includes(MARK_RECOMMEND) ? recommendMock(r.lang) : `[mock] ${r.prompt.slice(0, 80)}`));
+  const response = await aiComplete(req);
+  return { response, lines: parseSuggestions(response.text, req.lang) };
 }

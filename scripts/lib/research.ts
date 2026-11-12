@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { C03_TABLE, isApproved, type AiUse } from '../../src/ai/policy.ts';
 import { BRAND_SOURCE_PRIORITY, DEFAULT_PRIMARY, type BrandProfile, type BrandSourceKind } from '../../src/modules/ops/brand.ts';
 import { DEFAULT_PRESET_ID, findPreset } from '../../src/modules/ops/presets.ts';
+import { fetchSitePages, SiteError, type SiteDeps, type SitePage } from '../../server/site.ts';
 import { isoWithOffset } from './timing.ts';
 
 /** PARAM-004: research cache validity in days. */
@@ -18,6 +19,7 @@ export interface ResearchSource {
   /** Integration id in docs/integration-catalog.md. */
   integration: string | null;
   checkedAt: string;
+  references?: string[];
 }
 
 export interface ResearchCache {
@@ -29,6 +31,8 @@ export interface ResearchCache {
   input: { industry: string; lang: 'ja' | 'en' };
   /** FR-121: where the facts came from (in fallback order WorkIQ → Web → sample). */
   sources: ResearchSource[];
+  /** Public pages from the user-supplied official site; never includes downloaded images. */
+  webPages: SitePage[];
   usedSample: boolean;
   /** FR-122: brand research by source priority, falling back to the default theme. */
   brand: { priority: readonly BrandSourceKind[]; attempts: { kind: BrandSourceKind; status: SourceStatus; reason: string }[]; chosen: BrandSourceKind; profile: BrandProfile };
@@ -73,6 +77,7 @@ export function research(customer: string, input: { industry?: string; lang?: 'j
     expiresAt: isoWithOffset(new Date(now.getTime() + CACHE_DAYS * DAY)),
     input: { industry, lang: input.lang ?? 'ja' },
     sources,
+    webPages: [],
     usedSample: true,
     brand: {
       priority: BRAND_SOURCE_PRIORITY,
@@ -82,6 +87,67 @@ export function research(customer: string, input: { industry?: string; lang?: 'j
     },
     classification: 'internal',
   };
+}
+
+/**
+ * The explicitly supplied official URL is the only public-web input. This fetch does not use search engines or send
+ * customer data, and reuses the SSRF/size/page guards from the customer-pack reader.
+ */
+export async function researchOfficialSite(
+  customer: string,
+  input: { industry?: string; lang?: 'ja' | 'en'; officialUrl: string },
+  now: Date = new Date(),
+  deps: SiteDeps = {},
+): Promise<ResearchCache> {
+  const cache = research(customer, input, now);
+  const source = cache.sources.find((s) => s.id === 'web')!;
+  try {
+    const result = await fetchSitePages(input.officialUrl, { ...deps, now: deps.now ?? (() => now.getTime()) });
+    cache.webPages = result.pages;
+    source.status = 'used';
+    source.reason = 'Public pages from the user-supplied official URL were fetched; other pack sections still use sample content.';
+    source.references = result.pages.map((page) => page.url);
+    const brandPage = result.pages.find((page) => page.themeColor);
+    if (brandPage?.themeColor) {
+      const path = new URL(brandPage.url).pathname;
+      const kind: BrandSourceKind = /brand|style[-_]?guide|design[-_]?system|visual[-_]?identity/i.test(path)
+        ? 'brandGuide'
+        : /press[-_]?kit/i.test(path) ? 'pressKit' : /(^|\/)ir(\/|$)/i.test(path) ? 'irReport' : 'officialSite';
+      cache.brand.chosen = kind;
+      cache.brand.profile = {
+        primary: brandPage.themeColor,
+        tone: 'formal',
+        source: { kind, reference: brandPage.url, fetchedAt: brandPage.fetchedAt },
+      };
+    }
+    cache.brand.attempts = cache.brand.attempts.map((attempt) => {
+      const match = result.pages.find((page) => {
+        const path = new URL(page.url).pathname;
+        if (attempt.kind === 'brandGuide') return /brand|style[-_]?guide|design[-_]?system|visual[-_]?identity/i.test(path);
+        if (attempt.kind === 'pressKit') return /press[-_]?kit/i.test(path);
+        if (attempt.kind === 'irReport') return /(^|\/)ir(\/|$)/i.test(path);
+        return page.themeColor !== null;
+      });
+      return match
+        ? { ...attempt, status: 'used', reason: `Public page retained: ${match.url}` }
+        : { ...attempt, status: 'unavailable', reason: attempt.kind === 'officialSite' && !brandPage
+          ? 'No theme-color was present on the fetched pages.'
+          : 'No matching page was present in the fetched official-site pages.' };
+    });
+    if (result.failed.length) {
+      source.reason += ` Pages that failed: ${result.failed.map((item) => `${item.url} (${item.error})`).join('; ')}.`;
+    }
+  } catch (error) {
+    if (!(error instanceof SiteError)) throw error;
+    if (error.code === 'invalidUrl') throw error;
+    source.status = 'unavailable';
+    source.reason = `Public website fetch failed (${error.code}); sample content used.`;
+    cache.brand.attempts = cache.brand.attempts.map((attempt) => attempt.kind === 'officialSite'
+      ? { ...attempt, status: 'unavailable', reason: source.reason }
+      : attempt);
+  }
+  source.checkedAt = isoWithOffset(now);
+  return cache;
 }
 
 /** FR-123: age of the cache and whether it passed PARAM-004 (expired strictly after 30 days). */
@@ -112,12 +178,13 @@ export function readCache(cacheDir: string, slug: string): ResearchCache | null 
 function researchMarkdown(c: ResearchCache): string {
   const rows = c.sources.map((s) => `| ${s.id} | ${s.status} | ${s.reason} | ${s.checkedAt} |`).join('\n');
   const brand = c.brand.attempts.map((a) => `| ${a.kind} | ${a.status} | ${a.reason} |`).join('\n');
+  const refs = c.webPages.map((p) => `| ${p.title || p.url} | ${p.url} | ${p.fetchedAt} |`).join('\n');
   return `# Customer research: ${c.customer}
 
 - Fetched: ${c.fetchedAt} (expires ${c.expiresAt}, PARAM-004 = ${CACHE_DAYS} days)
 - Industry preset: ${c.input.industry}; language: ${c.input.lang}
 - Classification: ${c.classification} (do not commit; research-cache/ is git-ignored, C-02)
-- Result: ${c.usedSample ? '**sample used** — no external source was available' : 'researched'}
+- Result: ${c.usedSample ? '**sample content used** — sections not backed by collected sources remain sample data' : 'researched'}
 
 ## Sources (FR-121)
 
@@ -132,5 +199,11 @@ ${rows}
 ${brand}
 
 Chosen: **${c.brand.chosen}** (primary ${c.brand.profile.primary}).
+
+## Public official-site pages
+
+| title | URL | fetched |
+|---|---|---|
+${refs || '| none | none | none |'}
 `;
 }

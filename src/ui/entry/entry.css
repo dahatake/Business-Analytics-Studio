@@ -9,3 +9,9 @@
 .entry-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
 .entry-bar .fui-Select { min-width: 180px; max-width: 260px; }
 .entry-note { margin: 0 0 8px; font-size: 12px; }
+.entry-att-list { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.entry-att-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.entry-att-name { font-weight: 600; overflow-wrap: anywhere; }
+.entry-att-warn { font-size: 12px; color: var(--colorPaletteDarkOrangeForeground1, #8a3707); }
+.entry-att-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; }
+.entry-att-actions .fui-Select { min-width: 180px; max-width: 280px; }

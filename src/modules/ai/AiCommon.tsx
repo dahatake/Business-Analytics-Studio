@@ -9,6 +9,7 @@ import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
+import { useAiSettings } from './settingsStore.ts';
 import './ai.css';
 
 /** Reasons the UI can explain: the client gate's reasons plus the relay's own refusals. */
@@ -62,11 +63,12 @@ export function MockNotice({ reasons, children }: { reasons: string[]; children?
 /** A real (live) answer: labelled "Live" with the recorded cost and the tokens the provider reported. */
 export function LiveNotice({ costJpy, usage, children }: { costJpy: number | null; usage?: TokenCount; children?: ReactNode }) {
   const { t, fmt } = useI18n();
+  const provider = useAiSettings((s) => s.provider);
   return (
     <div className="ai-live" data-testid="ai-live-label">
       <div className="ai-mock-head">
         <Badge appearance="filled" color="success">{t('ai.live.badge')}</Badge>
-        <span>{t('ai.live.explain', { cost: costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, costJpy) })}</span>
+        <span>{t('ai.live.explain', { provider: t(`ai.provider.${provider}`), cost: costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, costJpy) })}</span>
       </div>
       {usage && (
         <p className="muted" data-testid="ai-live-tokens">
@@ -199,6 +201,8 @@ export interface LiveConfirmInfo {
   estimatedCostJpy: number | null;
   monthSpentJpy: number;
   monthBudgetJpy: number;
+  /** Attached files by name: sent to the model, or withheld (unreadable by the selected model, too large, missing). */
+  attachments?: { sent: string[]; skipped: string[] };
 }
 
 export interface LiveDecision {
@@ -212,6 +216,7 @@ type LiveConfirmFn = (info: LiveConfirmInfo) => LiveConfirmResult;
 
 export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmFn } {
   const { t, fmt } = useI18n();
+  const provider = useAiSettings((s) => s.provider);
   const [pending, setPending] = useState<LiveConfirmInfo | null>(null);
   const [personChecked, setPersonChecked] = useState(false);
   const resolver = useRef<((d: LiveDecision) => void) | null>(null);
@@ -236,11 +241,17 @@ export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmF
           <DialogContent className="ai-stack">
             {p && (
               <>
-                <p>{t('ai.live.lead', { use: t(p.use) })}</p>
+                <p>{t('ai.live.lead', { use: t(p.use), provider: t(`ai.provider.${provider}`) })}</p>
                 <ul className="ai-reasons" data-testid="ai-live-content">
                   <li>{t('ai.live.items', { count: p.itemCount, scope: p.scope })}</li>
                   <li data-testid="ai-live-internal">{t('ai.live.internal', { count: p.internalCount })}</li>
                   <li data-testid="ai-live-persons">{t('ai.live.persons', { count: p.personCount })}</li>
+                  {p.attachments && p.attachments.sent.length > 0 && (
+                    <li data-testid="ai-live-attachments">{t('ai.live.attachments', { count: p.attachments.sent.length, names: p.attachments.sent.join(', ') })}</li>
+                  )}
+                  {p.attachments && p.attachments.skipped.length > 0 && (
+                    <li data-testid="ai-live-attachments-skipped">{t('ai.live.attachmentsSkipped', { count: p.attachments.skipped.length, names: p.attachments.skipped.join(', ') })}</li>
+                  )}
                 </ul>
                 <p data-testid="ai-live-cost">{p.estimatedCostJpy === null ? t('ai.cost.unknown') : t('ai.live.cost', { cost: yenFine(fmt.locale, p.estimatedCostJpy), factor: AI_LIMITS.estimateSafetyFactor })}</p>
                 <p data-testid="ai-live-month">{t('ai.live.month', { spent: yenFine(fmt.locale, p.monthSpentJpy), budget: fmt.yen(p.monthBudgetJpy) })}</p>

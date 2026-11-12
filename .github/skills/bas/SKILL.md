@@ -12,8 +12,8 @@ The template (構成要素 A) is already built. For each customer only the **cus
 | Step | Command | What it does | Requirements |
 |---|---|---|---|
 | 0 | `.\setup.ps1` / `sh setup.sh` | Check Node.js, `npm ci` (locked deps, no admin, no global installs), build `dist/`. Idempotent | FR-107, FR-108 |
-| 1 | `node scripts/bas.ts research "<customer>" [--industry <preset>] [--lang ja\|en]` | Writes `research-cache/<customer>/research.json` and `customer-research.md` with `fetchedAt` and every source. WorkIQ → Web → LLM are tried in that order; each is recorded as BLOCKED with its reason (C-03 rows TBD, C-07) and the run falls back to **sample used**. Brand sources are tried by priority official site > brand guide > press kit > IR > **default theme** | FR-121, FR-122, UC-1 |
-| 2 | `node scripts/bas.ts build "<customer>" [--industry] [--lang] [--template dist] [--refresh]` | Uses the cache (proposes re-research when older than 30 days, PARAM-004), copies the template build to `work/<customer>/` (≤ 30 s, PARAM-005), generates `work/<customer>/data/pack.json`, then self-corrects **only the invalid items** for up to 3 rounds (PARAM-006) and verifies | FR-123〜FR-126, FR-130, UC-2 |
+| 1 | `node scripts/bas.ts research "<customer>" [--official-url <https-url>] [--industry <preset>] [--lang ja\|en]` | Writes `research-cache/<customer>/research.json` and `customer-research.md` with `fetchedAt` and every source. Without `--official-url`, public research is not run. With it, only the explicitly supplied public URL and up to 5 same-site HTML links are fetched; no search engine, company-name query, internal data, or images. Work IQ and LLM sources remain blocked. Brand guides/press kits are prioritized and an observed theme color is recorded with its source | FR-121, FR-122, UC-1 |
+| 2 | `node scripts/bas.ts build "<customer>" [--official-url <https-url>] [--industry] [--lang] [--template dist] [--refresh]` | Uses the cache (proposes re-research when older than 30 days, PARAM-004), copies the template build to `work/<customer>/` (≤ 30 s, PARAM-005), generates `work/<customer>/data/pack.json`, then self-corrects **only the invalid items** for up to 3 rounds (PARAM-006) and verifies. Supplying `--official-url` fetches the public site again | FR-123〜FR-126, FR-130, UC-2 |
 | 3 | `node scripts/bas.ts verify <pack.json>` | Schema, unique ids and references, a source for every numeric value, brand primary contrast ≥ 4.5:1, `internal` items listed. Each problem prints **cause** and **next action**; exit code 1 on errors (≤ 1 min, PARAM-020) | FR-127, FR-114〜FR-117 |
 | 4 | `node scripts/bas.ts launch "<customer>" [--port 4180]` or `.\start.ps1 -Customer "<customer>"` | Serves `work/<customer>/` on 127.0.0.1 and prints the URL | FR-128, FR-141 |
 | 5 | `node scripts/bas.ts package "<customer>"` | `work/<customer>-package/`: built app + pack + `serve.ts` + start scripts. Runs offline with only Node.js | FR-105 |
@@ -34,7 +34,7 @@ Input variables (FR-130): flags, or `BAS_CUSTOMER`, `BAS_INDUSTRY` (`manufacturi
 
 ## Rules for the agent
 
-- Never send customer information anywhere: external research and LLM generation stay BLOCKED until the C-03 table approves them. Do not work around the gate.
+- Never send private or internal customer information to external services. Public-site research is limited to the user-supplied official URL and its same-site HTML links under D-19; it does not use customer-name searches. AI research remains blocked by C-03.
 - `research-cache/`, `work/` and `logs/` are git-ignored; never commit them (C-02).
 - When verify fails, follow the printed action; prefer `build` again (self-correction) over hand edits; never touch valid items.
 - Record template issues found during a session with `feedback` (FR-131).

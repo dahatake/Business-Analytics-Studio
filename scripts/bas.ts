@@ -1,7 +1,7 @@
 /**
  * Business Analytics Studio generation pipeline (FR-120): research → build → verify → launch / package.
  * Run with Node ≥ 22.18 (type stripping): `node scripts/bas.ts <command> [args]`. `node scripts/bas.ts help` lists commands.
- * No network access: external research/LLM sources are BLOCKED by C-03/C-07 and recorded as "sample used".
+ * Public research only runs for a user-supplied official URL; LLM and internal-data sources remain gated by C-03.
  */
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkCatalog, requirementIds } from '../src/modules/ops/catalog.ts';
 import { INDUSTRY_PRESETS, findPreset, DEFAULT_PRESET_ID } from '../src/modules/ops/presets.ts';
 import { generateDraft, researchSourceId } from './lib/generate.ts';
-import { cacheAge, CACHE_DAYS, readCache, research, slugify, writeCache } from './lib/research.ts';
+import { cacheAge, CACHE_DAYS, readCache, research, researchOfficialSite, slugify, writeCache } from './lib/research.ts';
 import { packJsonSchema } from './lib/schema.ts';
 import { MAX_ROUNDS, selfCorrect } from './lib/selfcorrect.ts';
 import { startServer } from './lib/serve.ts';
@@ -57,6 +57,7 @@ function settings(args: Args) {
   if (lang !== 'ja' && lang !== 'en') throw new UsageError(`--lang must be ja or en (got "${lang}").`);
   return {
     customer: args.positional[1] ?? flag('customer') ?? env.BAS_CUSTOMER,
+    officialUrl: flag('official-url'),
     industry: flag('industry') ?? env.BAS_INDUSTRY ?? DEFAULT_PRESET_ID,
     lang: lang as 'ja' | 'en',
     template: dir('template', 'BAS_TEMPLATE', 'dist'),
@@ -90,9 +91,10 @@ function printVerify(io: Io, label: string, r: VerifyResult) {
 
 const HELP = `Business Analytics Studio pipeline (FR-120)
 
-  research <customer> [--industry <preset>] [--lang ja|en]   cache research in research-cache/<customer>/ (FR-121〜123)
-  build <customer> [--industry] [--lang] [--template dist] [--refresh]
-                                                             copy the template to work/<customer>/, generate and self-correct the pack (FR-124〜126, FR-130)
+  research <customer> [--official-url <https-url>] [--industry <preset>] [--lang ja|en]
+                                                             read up to six same-site pages from the URL you supply; no search engine, internal data or images
+  build <customer> [--official-url <https-url>] [--industry] [--lang] [--template dist] [--refresh]
+                                                             optionally refresh public research from the URL you supply, then build and verify (FR-123〜126, FR-130)
   verify <pack.json>                                         acceptance check with cause and action per problem (FR-127); exit 1 on errors
   launch <customer> [--port 4180]                            serve work/<customer>/ on 127.0.0.1 (FR-128)
   package <customer>                                         offline package work/<customer>-package/ (FR-105)
@@ -131,6 +133,9 @@ export async function run(argv: string[], io: Io = consoleIo): Promise<number> {
 }
 
 async function dispatch(command: string, args: Args, s: ReturnType<typeof settings>, timer: Timer, io: Io): Promise<number> {
+  const collectResearch = (customer: string) => s.officialUrl
+    ? researchOfficialSite(customer, { industry: s.industry, lang: s.lang, officialUrl: s.officialUrl }, s.now)
+    : research(customer, { industry: s.industry, lang: s.lang }, s.now);
   switch (command) {
     case 'help':
     case '--help':
@@ -139,10 +144,11 @@ async function dispatch(command: string, args: Args, s: ReturnType<typeof settin
 
     case 'research': {
       const customer = requireCustomer(s.customer);
-      const cache = await timer.step('research', () => research(customer, { industry: s.industry, lang: s.lang }, s.now));
+      const cache = await timer.step('research', () => collectResearch(customer));
       const file = await timer.step('writeCache', () => writeCache(s.cache, cache));
       io.out(`research ${customer}: cache written to ${file}`);
       for (const src of cache.sources) io.out(`  ${src.id.padEnd(7)} ${src.status.padEnd(9)} ${src.reason}`);
+      for (const page of cache.webPages) io.out(`  page    ${page.url} (${page.fetchedAt})`);
       io.out(`  brand   ${cache.brand.chosen} (${cache.brand.profile.primary}); priority ${cache.brand.priority.join(' > ')}`);
       io.out(`  expires ${cache.expiresAt} (${CACHE_DAYS} days, PARAM-004)`);
       return 0;
@@ -153,9 +159,9 @@ async function dispatch(command: string, args: Args, s: ReturnType<typeof settin
       const slug = slugify(customer);
       if (!findPreset(s.industry)) throw new UsageError(`Unknown industry preset "${s.industry}". Run: node scripts/bas.ts presets`);
       let cache = readCache(s.cache, slug);
-      if (!cache || args.flags.refresh) {
+      if (!cache || args.flags.refresh || s.officialUrl) {
         if (!cache) io.out(`No research cache for "${customer}"; running research first (UC-1).`);
-        cache = await timer.step('research', () => research(customer, { industry: s.industry, lang: s.lang }, s.now));
+        cache = await timer.step('research', () => collectResearch(customer));
         writeCache(s.cache, cache);
       } else {
         const age = cacheAge(cache.fetchedAt, s.now);

@@ -10,7 +10,7 @@ import { AiLiveError, aiLive, preflight, readLedger, rebindLedgerScope } from '.
 import { jstDay, jstMonth } from '../../ai/budget.ts';
 import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
 import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
-import { isReadableFile, withoutPackLogo } from '../../data/packImport.ts';
+import { isReadableFile, preparePackLogo, withoutPackLogo } from '../../data/packImport.ts';
 import { anchorFreshness } from '../../data/companyAnchor.ts';
 import { NewsRequest } from '../../data/news.ts';
 import { importedPackMeta, loadImportedPack, saveImportedPack } from '../../data/packStore.ts';
@@ -110,6 +110,9 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const [researchNote, setResearchNote] = useState('');
   const [approved, setApproved] = useState(false);
   const [costOk, setCostOk] = useState(false);
+  const [logoApproved, setLogoApproved] = useState(false);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'form' });
   const [steps, setSteps] = useState<Record<StepId, StepStatus>>(() => Object.fromEntries(STEPS.map((s) => [s, 'pending'])) as Record<StepId, StepStatus>);
@@ -125,6 +128,9 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     setPhase({ kind: 'form' });
     setApproved(false);
     setCostOk(false);
+    setLogoApproved(false);
+    setLogoFile(null);
+    setLogoError(null);
     setPublicTopicOk(false);
     setIncludeAnchor(true);
     // The pack's recorded inputs first, then what the user has since entered for the project, then the shared company profile.
@@ -228,6 +234,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
   const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget
+    && (!logoApproved || !!logoFile)
     && (!workIqShown || workIqReady(ai)) && !topicInvalid && (!topic || publicTopicOk) && (!anchorEnabled || !anchorLoad.error);
 
   const addFiles = async (files: FileList) => {
@@ -281,6 +288,18 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   };
 
   const start = async () => {
+    let logoBytes: Uint8Array | undefined;
+    setLogoError(null);
+    if (logoApproved && logoFile) {
+      try {
+        if (logoFile.size > MAX_FILE_BYTES) throw new Error('logo is too large');
+        logoBytes = new Uint8Array(await logoFile.arrayBuffer());
+        preparePackLogo({}, true, logoBytes);
+      } catch (err) {
+        setLogoError(t('proj.pack.logoFailed', { message: (err as Error).message }));
+        return;
+      }
+    }
     if (target.kind === 'project') remember(target.projectId);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -336,7 +355,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
         entities: result.summary.entities,
         importedAt: new Date().toISOString(),
         files: [`generated:${settings.provider}`, ...materials.map((m) => m.name)],
-      }, withoutPackLogo(result.pack));
+      }, logoApproved && logoBytes ? preparePackLogo(result.pack, true, logoBytes) : withoutPackLogo(result.pack));
     } catch (err) {
       const tokens = runTokens();
       rollback(created);
@@ -521,6 +540,15 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                       <Field label={t('proj.gen.field.researchNote')} hint={t('proj.gen.researchNoteHint')} className="gen-wide">
                         <Textarea value={researchNote} onChange={(_, d) => setResearchNote(d.value)} resize="vertical" rows={3} data-testid="gen-note" />
                       </Field>
+                      <div className="gen-wide">
+                        <Checkbox checked={logoApproved} onChange={(_, d) => { setLogoApproved(d.checked === true); setLogoError(null); }} label={t('proj.pack.checkLogo')} data-testid="gen-check-logo" />
+                        {logoApproved && (
+                          <Field label={t('proj.pack.logoFile')} hint={t('proj.gen.logoHint')}>
+                            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { setLogoFile(e.target.files?.[0] ?? null); setLogoError(null); }} data-testid="gen-logo-file" />
+                          </Field>
+                        )}
+                        {logoError && <MessageBar intent="error" role="alert"><MessageBarBody>{logoError}</MessageBarBody></MessageBar>}
+                      </div>
                       {tooMuch && <MessageBar intent="error" className="gen-wide"><MessageBarBody>{t('proj.gen.tooMuch', { count: fmt.integer(chars), max: fmt.integer(MAX_MATERIAL_CHARS) })}</MessageBarBody></MessageBar>}
                     </div>
                   </section>
@@ -605,9 +633,10 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
               )}
             </DialogActions>
           </DialogBody>
+          {/* Nested inside the surface so the modal stack restores this dialog, not the page behind it, on close. */}
+          <AiSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         </DialogSurface>
       </Dialog>
-      <AiSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>
   );
 }

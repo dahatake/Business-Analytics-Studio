@@ -16,6 +16,8 @@
  *   Microsoft Foundry (WORKIQ_SOURCE). With GitHub Copilot SDK the app neither shows nor calls Work IQ.
  * - D-18 (user, 2026-11-12): "packBuild" also generates all five analysis methods from the verified pack and its
  *   materials before saving; the call is included in the existing approval, cost estimate and per-run limit.
+ * - D-20 (user, 2026-11-12): "recommend" (FR-050, "Ask AI for suggestions" on a discussion theme) is approved for the
+ *   configured provider, with the theme's related items and attached files, after a per-send confirmation.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
@@ -48,7 +50,14 @@ export const DEFAULT_MONTHLY_BUDGET_JPY = 100_000;
 export const C03_TABLE: Record<AiUse, UseApproval> = {
   structure: TBD_ROW(),
   summarize: TBD_ROW(),
-  recommend: TBD_ROW(),
+  recommend: {
+    provider: ['foundry', 'copilotSdk'],
+    data: 'The discussion theme title, the theme\'s related items (internal allowed, D-2; person items only after FR-219 confirmation) and its attached files: text files as text in the prompt (shortened to fit), images and PDF as files only when the selected model reads that type. No other themes, records or app data',
+    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + per-send confirmation of the items, attached files, person data and cost (Foundry charges unknown, not capped by the app budget)',
+    costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+    openQuestions: [],
+    decidedBy: 'docs/decision-guide.md D-20 (2026-11-12)',
+  },
   chat: TBD_ROW(),
   executiveSummary: TBD_ROW(),
   explain: {
@@ -151,7 +160,16 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   // JSON and stops the run). The Foundry deployment accepted max_completion_tokens up to 128,000.
   packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
+  // D-20: a prompt of RECOMMEND_MAX_PROMPT_CHARS (at most that many tokens) plus up to 10 files at MEDIA_TOKEN_ESTIMATE each.
+  // Output 4,000: the reported output includes reasoning; 5 short Japanese lines measured 1,494 tokens (claude-haiku-4.5),
+  // so 1,500 would cut off a reasoning deployment on Foundry (max_completion_tokens) before any answer.
+  recommend: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 48_000, maxOutputTokens: 4000 },
 };
+
+/** D-20: characters of one recommend prompt + context (server/relay.ts); attached text is shortened to fit below it. */
+export const RECOMMEND_MAX_PROMPT_CHARS = 32_000;
+/** D-20: per-call timeout for suggestions; a model reading attached PDFs answers slower than a plain prompt. */
+export const RECOMMEND_TIMEOUT_MS = 90_000;
 
 /**
  * PARAM-148: calls one pack generation may make (2 generation stages + 1 five-method analysis + up to 2×4 re-runs

@@ -1,4 +1,5 @@
 import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
+import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
@@ -228,6 +229,7 @@ export const relayTransport: LiveTransport = async (call: LiveCall, signal?: Abo
       extraHeaders: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         use: call.use, provider: call.provider, lang: call.lang, prompt: call.prompt, context: call.context, maxOutputTokens: call.maxOutputTokens, timeoutMs: call.timeoutMs,
+        ...(call.media?.length ? { media: call.media } : {}),
       }),
       signal: controller.signal,
     });
@@ -250,6 +252,8 @@ export interface CopilotModelInfo {
   id: string;
   name: string;
   multiplier: number | null;
+  /** Files the model reads natively, as the Copilot runtime reports them (null: text only). */
+  media?: MediaCapability | null;
 }
 
 export interface CopilotStatusInfo {
@@ -262,6 +266,13 @@ export interface CopilotStatusInfo {
   model: string | null;
 }
 
+const readMedia = (v: unknown): MediaCapability | null => {
+  const m = v as Partial<MediaCapability> | null | undefined;
+  if (!m || !Array.isArray(m.types) || typeof m.maxFiles !== 'number' || typeof m.maxBytes !== 'number') return null;
+  const types = m.types.filter(isMediaType);
+  return types.length ? { types, maxFiles: m.maxFiles, maxBytes: m.maxBytes } : null;
+};
+
 /** Starts the Copilot runtime in the relay if needed and reports the CLI sign-in and the models it offers. */
 export async function fetchCopilotStatus(): Promise<CopilotStatusInfo> {
   try {
@@ -269,7 +280,7 @@ export async function fetchCopilotStatus(): Promise<CopilotStatusInfo> {
     if (!res.ok) return { reachable: false, available: false, authenticated: false, login: null, models: [], error: await errorCode(res), model: null };
     const b = (await res.json()) as Partial<CopilotStatusInfo> & { settings?: { model?: unknown } | null };
     const models = Array.isArray(b.models)
-      ? b.models.filter((m): m is CopilotModelInfo => typeof m?.id === 'string').map((m) => ({ id: m.id, name: typeof m.name === 'string' ? m.name : m.id, multiplier: typeof m.multiplier === 'number' ? m.multiplier : null }))
+      ? b.models.filter((m): m is CopilotModelInfo => typeof m?.id === 'string').map((m) => ({ id: m.id, name: typeof m.name === 'string' ? m.name : m.id, multiplier: typeof m.multiplier === 'number' ? m.multiplier : null, media: readMedia(m.media) }))
       : [];
     return {
       reachable: true,

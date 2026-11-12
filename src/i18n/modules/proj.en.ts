@@ -613,8 +613,9 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.rec.deleteNamed': 'Delete: {text}',
 
   'proj.ai.ask': 'Ask AI for suggestions',
+  'proj.ai.scope': 'items related to theme "{theme}"',
   'proj.ai.adopt': 'Adopt as decision',
-  'proj.ai.mockNote': 'AI suggestions are mock answers until the conditions for external sending are decided.',
+  'proj.ai.mockNote': 'When the live connection is on and set up, AI suggestions are requested from generative AI after you confirm what is sent and the cost. Otherwise they are mock answers labelled "Mock".',
 
   'proj.goal.title': 'Counts per theme',
   'proj.goal.decisions': 'Decisions',
@@ -874,6 +875,7 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.pack.logoFile': 'Approved logo image (optional)',
   'proj.pack.logoHint': 'PNG, JPEG or WebP (up to 5 MB). If not selected, the image in the pack is used. Check its usage conditions separately.',
   'proj.pack.logoFailed': 'Cannot import the logo ({message}). Choose another image or clear the permission checkbox.',
+  'proj.gen.logoHint': 'Choose a PNG, JPEG or WebP (up to 5 MB). The image stays on this device and is not sent to AI or external services.',
   'proj.pack.isSampleNote': 'This pack has isSample set to true, so the screens label it as sample data.',
   'proj.pack.destination': 'Import into',
   'proj.pack.destinationNew': 'The demo is open. A company and project to import into are created (with a registered company name, the project is added to that company).',

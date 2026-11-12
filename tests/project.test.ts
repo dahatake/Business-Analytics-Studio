@@ -15,7 +15,8 @@ import {
 import {
   defaultFileName, parseImport, parseJson, parseMarkdown, prepareExport, toFollowUp, toJson, toMarkdown, type ExportOptions, type ExportSource,
 } from '../src/modules/project/exportFormat.ts';
-import { parseDraft } from '../src/modules/project/mocks.ts';
+import { parseDraft, parseSuggestions, suggestionRequest } from '../src/modules/project/mocks.ts';
+import { RECOMMEND_MAX_PROMPT_CHARS } from '../src/ai/policy.ts';
 import type { AnalysisItem, MethodId, ProjectData } from '../src/modules/project/model.ts';
 import { exportProject, importProject } from '../src/modules/project/projectFile.ts';
 import { saveAnalysisForProject } from '../src/modules/project/stores.ts';
@@ -97,6 +98,20 @@ describe('analysis computations (FR-133/134)', () => {
       { category: 'strengths', text: 'A', score: 4 },
       { category: 'threats', text: 'C', score: 3 },
     ]);
+  });
+
+  it('D-20: live suggestions lose bullets and numbering, and are capped at 5 lines', () => {
+    expect(parseSuggestions('1. 目標を決める\n- 試行する\n・**関係者に共有する**\n\n（4）測る\n2) 広げる\n6. 余分', 'ja'))
+      .toEqual(['目標を決める', '試行する', '関係者に共有する', '測る', '広げる']);
+    // A year at the start of a sentence is not numbering.
+    expect(parseSuggestions('2026年度中に試行する', 'ja')).toEqual(['2026年度中に試行する']);
+  });
+
+  it('D-20: attached text is shortened so prompt + context stay within the relay limit', () => {
+    const req = suggestionRequest('在庫', 'ja', [], { text: 'あ'.repeat(RECOMMEND_MAX_PROMPT_CHARS * 2), media: [] });
+    expect(req.prompt.length).toBeLessThanOrEqual(RECOMMEND_MAX_PROMPT_CHARS);
+    expect(req.prompt.endsWith('[…]')).toBe(true);
+    expect(suggestionRequest('在庫', 'ja', [], { text: '短い資料', media: [] }).prompt).toBe('[bas-proj:recommend] 在庫\n\n短い資料');
   });
 });
 

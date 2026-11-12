@@ -655,6 +655,23 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect((await call(req('POST', '/relay/ai', aiBody({ prompt: 'x'.repeat(20_000), context: 'y'.repeat(12_000) })), ctx())).status).toBe(200);
   });
 
+  it('attachments: images go to Foundry as image_url parts; PDF, a spoofed type or media on a connection test never leave', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]).toString('base64');
+    const pdf = Buffer.from('%PDF-1.7\n%xx\n').toString('base64');
+    const image = { name: 'chart.png', mimeType: 'image/png', data: png };
+    for (const media of [[{ name: 'r.pdf', mimeType: 'application/pdf', data: pdf }], [{ ...image, mimeType: 'image/jpeg' }], [{ ...image, data: pdf }], []]) {
+      expect((await call(req('POST', '/relay/ai', aiBody({ media })), ctx())).status, JSON.stringify(media).slice(0, 60)).toBe(400);
+    }
+    expect((await call(req('POST', '/relay/ai', { use: 'connectionTest', media: [image] }), ctx())).status).toBe(400);
+    expect(seen).toHaveLength(0);
+    expect((await call(req('POST', '/relay/ai', aiBody({ media: [image] })), ctx())).status).toBe(200);
+    const sent = JSON.parse(seen[0]!.body) as { messages: { content: unknown }[] };
+    expect(sent.messages[1]!.content).toEqual([
+      { type: 'text', text: expect.stringContaining('Explain this screen.') },
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } },
+    ]);
+  });
+
   it('enforces the PARAM-116 minimum interval per use on the server (429)', async () => {
     expect((await call(req('POST', '/relay/ai', aiBody()), ctx())).status).toBe(200);
     clock += 4_999;
@@ -720,6 +737,27 @@ describe('D-12 packBuild through the relay', () => {
     expect(relayAiDecision('packBuild', true, C03_TABLE, 'copilotSdk')).toEqual([]);
     expect(relayAiDecision('explain', true, C03_TABLE, 'copilotSdk')).toEqual(['c03NotApproved']);
     expect(relayAiDecision('packBuild', false, C03_TABLE, 'copilotSdk')).toEqual(['notConfigured']);
+    expect(relayAiDecision('recommend', true, C03_TABLE, 'foundry')).toEqual([]);
+    expect(relayAiDecision('recommend', true, C03_TABLE, 'copilotSdk')).toEqual([]);
+  });
+
+  it('D-20 recommend: suggestion instructions for both providers; prompt + context capped at 32,000 characters', async () => {
+    const body = (extra: Record<string, unknown> = {}) => ({ use: 'recommend', provider: 'foundry', lang: 'ja', prompt: '[bas-proj:recommend] 在庫', context: '', maxOutputTokens: 4000, timeoutMs: 90_000, ...extra });
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig });
+    seen = [];
+    expect((await call(req('POST', '/relay/ai', body()), { config: testConfig })).status).toBe(200);
+    const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[]; response_format?: unknown };
+    expect(sent.messages[0]!.content).toContain('1 行に 1 件');
+    expect(sent.response_format).toBeUndefined();
+    expect((await call(req('POST', '/relay/ai', body({ prompt: 'x'.repeat(31_000), context: 'y'.repeat(1_001) })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', body({ maxOutputTokens: 4001 })), { config: testConfig })).status).toBe(400);
+
+    const { calls, service } = fakeCopilot('提案');
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    expect((await call(req('POST', '/relay/ai', body({ provider: 'copilotSdk', lang: 'en' })), { copilot: service })).status).toBe(200);
+    expect(calls[0]!.system).toContain('One per line');
+    await call(req('DELETE', '/relay/copilot'));
   });
 
   it('Foundry: JSON mode with max_completion_tokens and the pack system prompt; a deployment rejecting it is retried once classically', async () => {
@@ -768,6 +806,17 @@ describe('D-12 packBuild through the relay', () => {
     const st = await call(req('POST', '/relay/copilot/status', {}), { copilot: service });
     expect(st.body).toMatchObject({ authenticated: true, login: 'octocat', settings: { model: 'gpt-5' } });
     expect((await call(req('DELETE', '/relay/copilot'))).body).toEqual({ copilot: null });
+  });
+
+  it('Copilot: PDF and image attachments are passed to the service, which checks the model capability', async () => {
+    const { calls, service } = fakeCopilot('{"packId":"x"}');
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    const media = [{ name: 'r.pdf', mimeType: 'application/pdf', data: Buffer.from('%PDF-1.7\n').toString('base64') }];
+    expect((await call(req('POST', '/relay/ai', packBody({ provider: 'copilotSdk', media })), { copilot: service })).status).toBe(200);
+    expect((calls[0] as unknown as { media: unknown }).media).toEqual(media);
+    expect((await call(req('POST', '/relay/ai', packBody({ provider: 'copilotSdk', media: [{ ...media[0], mimeType: 'image/png' }] })), { copilot: service })).status).toBe(400);
+    expect(calls).toHaveLength(1);
+    await call(req('DELETE', '/relay/copilot'));
   });
 
   it('alignment proposals use the dedicated JSON instruction and C-03 gate for both providers', async () => {

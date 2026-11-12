@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
-  Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Select, Switch, Textarea,
+  Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Select, Spinner, Switch, Textarea,
 } from '@fluentui/react-components';
 import {
   Add20Regular, ArrowDownload20Regular, ArrowRedo20Regular, ArrowUndo20Regular, ArrowUpload20Regular, ChevronLeft20Regular,
@@ -18,7 +18,10 @@ import {
   themeCounts, treeOrder, updateRecord, updateTheme, validateRecord, validateTheme, type FieldError, type GlossaryEntry,
 } from './discussion.ts';
 import { parseImport } from './exportFormat.ts';
-import { requestSuggestions } from './mocks.ts';
+import { requestSuggestions, suggestionRequest } from './mocks.ts';
+import { isUseApproved, preflight, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { DiscussionRecord, RecordKind, Theme } from './model.ts';
 import {
   canUndoUseCaseImport, commitDiscussion, commitUseCaseImport, discussionEditor, redoDiscussion, undoDiscussion, undoUseCaseImport, useAnalyses,
@@ -31,6 +34,8 @@ import { useUseCases } from '../usecases/store.ts';
 import { usePackVersion } from '../../state/packEdits.ts';
 import { EntityEditorDialog } from '../../ui/entry/EntityEditorDialog.tsx';
 import { isEditableKind, type EditableKind } from '../../ui/entry/entitySpecs.ts';
+import { AttachmentField, useMediaCapability } from '../../ui/entry/AttachmentField.tsx';
+import { ensureSource, hashOfSource, itemOfSource, planAttachmentsForAi, summarizeForAi, type AttachmentItem } from '../../state/attachments.ts';
 import './project.css';
 
 /** Pack items a theme can be related to; new ones can be entered from the canvas and are saved in the pack data. */
@@ -280,8 +285,15 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
   const [busy, setBusy] = useState(false);
   const [entry, setEntry] = useState<EntryTarget | null>(null);
   usePackVersion((s) => s.version);
+  const cap = useMediaCapability();
+  const live = useAiSettings((s) => liveReady(s)) && isUseApproved('recommend');
+  const { dialog: liveDialog, confirmLive } = useLiveConfirm();
+  const [aiOutcome, setAiOutcome] = useState<AiResponse | 'cancelled' | null>(null);
   const idx = theme ? ordered.findIndex((o) => o.theme.id === theme.id) : -1;
-  useEffect(() => setEditingTitle(false), [theme?.id]);
+  useEffect(() => {
+    setEditingTitle(false);
+    setAiOutcome(null);
+  }, [theme?.id]);
 
   if (!theme) {
     return <Panel title={t('proj.canvas.title')} testId="proj-canvas" id="proj-canvas"><p className="muted">{t('proj.canvas.empty')}</p></Panel>;
@@ -299,16 +311,47 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
     setTitleError(null);
   };
   const askAi = async () => {
+    const ents = theme.relatedIds.map((id) => loaded.byId.get(id)).filter((e): e is Entity => !!e);
+    const plan = planAttachmentsForAi(attached, cap);
+    const req = suggestionRequest(loc(theme.title, lang), lang, ents, plan);
+    setAiOutcome(null);
     setBusy(true);
     try {
-      const ents = theme.relatedIds.map((id) => loaded.byId.get(id)).filter((e): e is Entity => !!e);
-      const { response, lines } = await requestSuggestions(loc(theme.title, lang), lang, ents);
-      let next = data;
+      let send: AiRequest = req;
+      if (live) {
+        const pf = preflight({ ...req, userConfirmed: true, personConfirmed: true });
+        // Blocked for a reason a confirmation cannot fix (budget, interval…): answer with the mock, ask nothing.
+        if (pf.allowed) {
+          const decision = await confirmLive({
+            use: 'ai.use.recommend', scope: t('proj.ai.scope', { theme: loc(theme.title, lang) }), itemCount: ents.length,
+            internalCount: pf.internalCount, personCount: pf.personCount, estimatedCostJpy: pf.estimatedCostJpy,
+            monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
+            ...(attached.length ? { attachments: { sent: attached.map((a) => a.name).filter((n) => !plan.skipped.includes(n)), skipped: plan.skipped } } : {}),
+          });
+          if (!decision.ok) return setAiOutcome('cancelled');
+          send = { ...req, userConfirmed: true, personConfirmed: decision.personConfirmed };
+        }
+      }
+      const { response, lines } = await requestSuggestions(send);
+      setAiOutcome(response);
+      if (!lines.length) return;
+      // Re-read: the theme may have changed while the confirmation was open.
+      let next = useDiscussion.getState().value;
       for (const line of lines) next = addRecord(next, { themeId: theme.id, kind: 'suggestion', author: 'ai', text: line, mock: response.mode === 'mock', classification: theme.classification });
       commitDiscussion(next, 'add', 'record', lines[0] ?? '');
     } finally {
       setBusy(false);
     }
+  };
+  const isAttachment = (id: string) => hashOfSource(loaded.byId.get(id)) !== null;
+  const attached = theme.relatedIds.map(itemOfSource).filter((x): x is AttachmentItem => x !== null);
+  const aiPlan = attached.length ? summarizeForAi(attached, cap) : null;
+  const attach = async (items: AttachmentItem[]) => {
+    const ids: string[] = [];
+    for (const it of items) ids.push(await ensureSource(it, theme.classification === 'shareable'));
+    const latest = useDiscussion.getState().value;
+    const current = latest.themes.find((x) => x.id === theme.id)?.relatedIds ?? theme.relatedIds;
+    commitDiscussion(updateTheme(latest, theme.id, { relatedIds: [...current, ...ids.filter((id, i) => !current.includes(id) && ids.indexOf(id) === i)] }), 'update', 'theme', theme.title);
   };
   const relatable = loaded.pack.entities.filter((e) => ['issue', 'solution', 'kpi', 'person'].includes(e.kind) && !theme.relatedIds.includes(e.id));
   const relate = (id: string) => commitDiscussion(updateTheme(data, theme.id, { relatedIds: [...theme.relatedIds, id] }), 'update', 'theme', theme.title);
@@ -364,8 +407,8 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
           )}
           <div className="proj-related">
             <span className="muted">{t('proj.canvas.related')}</span>
-            {theme.relatedIds.length === 0 && <span className="muted">{t('proj.canvas.noRelated')}</span>}
-            {theme.relatedIds.map((id) => {
+            {theme.relatedIds.filter((id) => !isAttachment(id)).length === 0 && <span className="muted">{t('proj.canvas.noRelated')}</span>}
+            {theme.relatedIds.filter((id) => !isAttachment(id)).map((id) => {
               const entity = loaded.byId.get(id);
               return (
                 <span key={id} className="proj-related-item">
@@ -411,6 +454,16 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
               onSaved={(id) => { if (!theme.relatedIds.includes(id)) relate(id); }}
             />
           </div>
+          <div className="proj-attachments">
+            {editMode && <p className="muted entry-note">{t('entry.att.themeHint')}</p>}
+            <AttachmentField
+              items={attached}
+              disabled={!editMode}
+              onAdd={attach}
+              onRemove={(it) => commitDiscussion(updateTheme(data, theme.id, { relatedIds: theme.relatedIds.filter((x) => x !== it.sourceId) }), 'update', 'theme', theme.title)}
+              testId="proj-att"
+            />
+          </div>
           <div className="proj-sections">
             {SECTIONS.map(({ kind, title }) => {
               const list = records.filter((r) => r.kind === kind);
@@ -422,6 +475,26 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
                   </h4>
                   {kind === 'suggestion' && (
                     <Button size="small" icon={<Sparkle20Regular />} disabled={busy || !editMode} onClick={() => void askAi()} data-testid="proj-ask-ai">{t('proj.ai.ask')}</Button>
+                  )}
+                  {kind === 'suggestion' && (
+                    <span className="proj-ai-mode">
+                      <Badge appearance="outline" size="small" color={live ? 'success' : 'warning'} data-testid="proj-ai-mode">{live ? t('ai.live.badge') : t('ai.mock.badge')}</Badge>
+                    </span>
+                  )}
+                  {kind === 'suggestion' && busy && <Spinner size="tiny" label={t('ai.loading')} />}
+                  {kind === 'suggestion' && aiOutcome === 'cancelled' && <p role="status" data-testid="proj-ai-cancelled">{t('ai.person.cancelled')}</p>}
+                  {kind === 'suggestion' && aiOutcome && aiOutcome !== 'cancelled' && (
+                    <div role="status" data-testid="proj-ai-outcome">
+                      {aiOutcome.mode === 'live'
+                        ? <LiveNotice costJpy={aiOutcome.costJpy ?? null} usage={aiOutcome.usage} />
+                        : <MockNotice reasons={aiOutcome.blockedReasons} />}
+                    </div>
+                  )}
+                  {kind === 'suggestion' && aiPlan && (
+                    <p className="muted entry-note" data-testid="proj-ai-attachments">
+                      {t('entry.att.aiPlan', { media: aiPlan.media, text: aiPlan.text })}
+                      {aiPlan.skipped.length > 0 && <> {t('entry.att.aiSkipped', { names: aiPlan.skipped.join(', ') })}</>}
+                    </p>
                   )}
                   {list.length === 0 ? <p className="muted">{t('proj.rec.none')}</p> : (
                     <ul className="proj-records">
@@ -435,6 +508,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
           {editMode && <AddRecordForm theme={theme} />}
         </div>
       </div>
+      {liveDialog}
     </Panel>
   );
 }

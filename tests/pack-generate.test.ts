@@ -746,8 +746,8 @@ describe('official-site reader guards (server/site.ts)', () => {
   });
 
   it('ranks profile and IR pages first, tries well-known paths when the menu is not in the HTML, and drops tracking parameters', async () => {
-    expect(factLinks('<a href="/sustainability/?padid=1">s</a><a href="/ir/">ir</a><a href="/company/profile/?utm_source=x">p</a>', new URL('https://contoso.example/'), 5))
-      .toEqual(['https://contoso.example/company/profile/', 'https://contoso.example/ir/', 'https://contoso.example/sustainability/']);
+    expect(factLinks('<a href="/sustainability/?padid=1">s</a><a href="/ir/">ir</a><a href="/company/profile/?utm_source=x">p</a><a href="/brand-guidelines/">b</a>', new URL('https://contoso.example/'), 5))
+      .toEqual(['https://contoso.example/brand-guidelines/', 'https://contoso.example/company/profile/', 'https://contoso.example/ir/', 'https://contoso.example/sustainability/']);
     const urls: string[] = [];
     const jsMenu = (async (u: URL | string) => {
       urls.push(String(u));

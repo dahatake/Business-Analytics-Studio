@@ -74,12 +74,12 @@ function copilotParts(kpiSourceIds = ['src-plan']) {
 }
 
 /** A stored (uncompressed) zip, as Python's zipfile writes by default. */
-function storedZip(files: Record<string, string>): Buffer {
+function storedZip(files: Record<string, string | Buffer>): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
   for (const [fileName, text] of Object.entries(files)) {
-    const body = Buffer.from(text, 'utf8');
+    const body = Buffer.isBuffer(text) ? text : Buffer.from(text, 'utf8');
     const name = Buffer.from(fileName, 'utf8');
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -111,6 +111,61 @@ function storedZip(files: Record<string, string>): Buffer {
 }
 
 test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
+  for (const approved of [false, true]) {
+    test(`zip logo is ${approved ? 'retained' : 'omitted'} after permission ${approved ? 'is given' : 'is not given'}`, async ({ page }) => {
+      await open(page, '/data');
+      const basePack = copilotParts().pack;
+      const pack = { ...basePack, extensions: { ...basePack.extensions, brand: { primary: '#1267B4', logo: { src: 'brand/logo.png', alt: l('ロゴ', 'Logo') } } } };
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aWQAAAAASUVORK5CYII=', 'base64');
+      await page.getByTestId('pack-file-input').setInputFiles({
+        name: 'brand.zip', mimeType: 'application/zip',
+        buffer: storedZip({ 'pack.json': JSON.stringify(pack), 'brand/logo.png': png }),
+      });
+      await page.getByTestId('pack-check').click();
+      await expect(page.getByTestId('pack-verdict')).toContainText('検査に合格');
+      await page.getByTestId('pack-check-approved').check();
+      await page.getByTestId('pack-check-classified').check();
+      await page.getByTestId('pack-check-people').check();
+      if (approved) await page.getByTestId('pack-check-logo').check();
+      await page.getByTestId('pack-dest-project').fill(approved ? '許諾あり' : '許諾なし');
+      await page.getByTestId('pack-import-apply').click();
+      await expect(page.getByTestId('pack-imported-notice')).toBeVisible();
+      await page.evaluate(() => { window.location.hash = '/brand'; });
+      const logo = page.getByTestId('brand-logo');
+      if (approved) {
+        await expect(logo.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+        await expect(logo.locator('img')).toHaveJSProperty('naturalWidth', 1);
+        await page.reload();
+        await expect(logo.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+        await expect(logo.locator('img')).toHaveJSProperty('naturalWidth', 1);
+      } else {
+        await expect(logo.getByTestId('logo-placeholder')).toBeVisible();
+        await expect(logo.locator('img')).toHaveCount(0);
+      }
+    });
+  }
+  test('a missing approved logo can be supplied separately', async ({ page }) => {
+    await open(page, '/data');
+    const basePack = copilotParts().pack;
+    const pack = { ...basePack, extensions: { ...basePack.extensions, brand: { primary: '#1267B4', logo: { src: 'brand/logo.png', alt: l('ロゴ', 'Logo') } } } };
+    await page.getByTestId('pack-paste').fill(JSON.stringify(pack));
+    await page.getByTestId('pack-check').click();
+    await page.getByTestId('pack-check-approved').check();
+    await page.getByTestId('pack-check-classified').check();
+    await page.getByTestId('pack-check-people').check();
+    await page.getByTestId('pack-check-logo').check();
+    await page.getByTestId('pack-dest-project').fill('別ファイル');
+    await page.getByTestId('pack-import-apply').click();
+    await expect(page.getByRole('alert')).toContainText('ロゴを取り込めません');
+    await page.getByTestId('pack-logo-file').setInputFiles({
+      name: 'logo.png', mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aWQAAAAASUVORK5CYII=', 'base64'),
+    });
+    await page.getByTestId('pack-import-apply').click();
+    await expect(page.getByTestId('pack-imported-notice')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/brand'; });
+    await expect(page.getByTestId('brand-logo').locator('img')).toHaveJSProperty('naturalWidth', 1);
+  });
   test('Copilot answer → check → fix prompt → import into a new project → screens use it → delete', async ({ page }) => {
     await open(page, '/data');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('データ管理');

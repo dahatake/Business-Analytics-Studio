@@ -6,6 +6,10 @@ import { AI_LIMITS, C03_TABLE, PER_USE_LIMITS, type AiUse, type Limits, type Pro
 import { actualCostJpy, checkBudget, estimateCostJpy, estimateTokens, type BudgetDecision, type UnitPrices, type UsageRecord } from './budget.ts';
 import { evaluateGate, type GateReason } from './gate.ts';
 import { selectOutbound, toPromptContext } from './redact.ts';
+import type { MediaPart } from './attachments.ts';
+
+/** Input tokens assumed per media file before sending (a high-detail image is roughly 1,100 tokens; PDF pages add more). */
+export const MEDIA_TOKEN_ESTIMATE = 1500;
 
 export interface AiRequest {
   use: AiUse;
@@ -24,6 +28,8 @@ export interface AiRequest {
   scope?: string | null;
   /** Ledger attribution: the sub-step inside the use (e.g. pack generation stage). */
   stage?: string;
+  /** Attached files the selected model reads natively (images, PDF); text files belong in the prompt. */
+  media?: MediaPart[];
 }
 
 export interface TokenCount {
@@ -65,6 +71,8 @@ export interface LiveCall {
   context: string;
   maxOutputTokens: number;
   timeoutMs: number;
+  /** Files sent natively to a model that reads them (see src/ai/attachments.ts). */
+  media?: MediaPart[];
 }
 
 export interface LiveResult {
@@ -152,7 +160,7 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
   const context = toPromptContext(selection, req.lang);
   const settings = runtime();
   const maxOutputTokens = req.maxOutputTokens ?? PER_USE_LIMITS[req.use]?.maxOutputTokens ?? AI_LIMITS.maxOutputTokens;
-  const estimatedInputTokens = estimateTokens(req.prompt + context);
+  const estimatedInputTokens = estimateTokens(req.prompt + context) + (req.media?.length ?? 0) * MEDIA_TOKEN_ESTIMATE;
   const prices = settings.prices ?? null;
   const estimatedCostJpy = prices ? estimateCostJpy(estimatedInputTokens, maxOutputTokens, prices) : null;
   const limits: Limits = { ...AI_LIMITS, monthlyBudgetJpy: settings.monthlyBudgetJpy ?? AI_LIMITS.monthlyBudgetJpy };
@@ -229,6 +237,7 @@ async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Pr
       context: pf.context,
       maxOutputTokens: pf.maxOutputTokens,
       timeoutMs: req.timeoutMs ?? 60_000,
+      ...(req.media?.length ? { media: req.media } : {}),
     }, signal);
   } catch (err) {
     // A cancelled or timed-out call may be billed; retain unknown costs as null, never free.

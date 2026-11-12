@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { base64Bytes, copilotMediaCapability, type MediaCapability, type MediaPart } from '../src/ai/attachments.ts';
 
 /**
  * GitHub Copilot as a provider (D-12), through @github/copilot-sdk. Authentication is the user's own Copilot CLI
@@ -14,6 +15,9 @@ export interface CopilotModel {
   name: string;
   /** Premium-request multiplier (null when the runtime does not report billing). */
   multiplier: number | null;
+  /** Files the model reads natively (null: text only). */
+  /** Absent when the model reports no vision input (text only). */
+  media?: MediaCapability;
 }
 
 export interface CopilotStatus {
@@ -32,7 +36,7 @@ export interface CopilotCompletion {
   premiumRequests: number;
 }
 
-export type CopilotErrorCode = 'sdkUnavailable' | 'startFailed' | 'notSignedIn' | 'unknownModel' | 'timeout' | 'aborted' | 'providerError' | 'emptyAnswer';
+export type CopilotErrorCode = 'sdkUnavailable' | 'startFailed' | 'notSignedIn' | 'unknownModel' | 'timeout' | 'aborted' | 'providerError' | 'emptyAnswer' | 'unsupportedAttachment';
 
 export class CopilotError extends Error {
   readonly code: CopilotErrorCode;
@@ -48,7 +52,7 @@ interface SdkEvent { data?: Record<string, unknown> }
 export interface SdkSession {
   sessionId: string;
   on(eventType: string, handler: (event: SdkEvent) => void): () => void;
-  sendAndWait(options: { prompt: string }, timeout?: number): Promise<{ data?: { content?: unknown } } | undefined>;
+  sendAndWait(options: { prompt: string; attachments?: { type: 'blob'; data: string; mimeType: string; displayName?: string }[] }, timeout?: number): Promise<{ data?: { content?: unknown } } | undefined>;
   abort(): Promise<void>;
   disconnect(): Promise<void>;
 }
@@ -56,7 +60,7 @@ export interface SdkClient {
   start(): Promise<void>;
   stop(): Promise<unknown>;
   getAuthStatus(): Promise<{ isAuthenticated: boolean; login?: string }>;
-  listModels(): Promise<{ id: string; name?: string; billing?: { multiplier?: number }; policy?: { state?: string } }[]>;
+  listModels(): Promise<{ id: string; name?: string; billing?: { multiplier?: number }; policy?: { state?: string }; capabilities?: unknown }[]>;
   createSession(config: Record<string, unknown>): Promise<SdkSession>;
   deleteSession?(sessionId: string): Promise<void>;
 }
@@ -68,6 +72,14 @@ const loadSdk = async (): Promise<CopilotSdk> => (await import('@github/copilot-
 
 /** Model ids as the Copilot CLI lists them, e.g. `gpt-5`, `claude-sonnet-4.5`, `auto`. */
 export const COPILOT_MODEL_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
+
+/** The selected model must report every type and stay within its file count and size limits. */
+const mediaFits = (media: MediaPart[], cap: MediaCapability | null) => cap !== null && media.length <= cap.maxFiles && media.every((m) => cap.types.includes(m.mimeType) && base64Bytes(m.data) <= cap.maxBytes);
+
+const mediaOf = (m: { capabilities?: unknown }) => {
+  const media = copilotMediaCapability(m.capabilities);
+  return media ? { media } : {};
+};
 
 export class CopilotService {
   private client: Promise<SdkClient> | null = null;
@@ -116,20 +128,21 @@ export class CopilotService {
       if (!auth.isAuthenticated) return { available: true, authenticated: false, login: null, models: [], error: 'notSignedIn' };
       const models = (await client.listModels())
         .filter((m) => COPILOT_MODEL_PATTERN.test(m.id) && m.policy?.state !== 'disabled')
-        .map((m) => ({ id: m.id, name: m.name || m.id, multiplier: typeof m.billing?.multiplier === 'number' ? m.billing.multiplier : null }));
+        .map((m) => ({ id: m.id, name: m.name || m.id, multiplier: typeof m.billing?.multiplier === 'number' ? m.billing.multiplier : null, ...mediaOf(m) }));
       return { available: true, authenticated: true, login: auth.login ?? null, models };
     } catch {
       return { available: true, authenticated: false, login: null, models: [], error: 'providerError' };
     }
   }
 
-  async complete(input: { model: string; system: string; prompt: string; timeoutMs: number; signal?: AbortSignal }): Promise<CopilotCompletion> {
+  async complete(input: { model: string; system: string; prompt: string; timeoutMs: number; signal?: AbortSignal; media?: MediaPart[] }): Promise<CopilotCompletion> {
     const client = await this.getClient();
     const auth = await client.getAuthStatus().catch(() => ({ isAuthenticated: false }));
     if (!auth.isAuthenticated) throw new CopilotError('notSignedIn');
     const known = await client.listModels().catch(() => []);
     const model = known.find((m) => m.id === input.model);
     if (known.length > 0 && !model && input.model !== 'auto') throw new CopilotError('unknownModel');
+    if (input.media?.length && !mediaFits(input.media, copilotMediaCapability(model?.capabilities))) throw new CopilotError('unsupportedAttachment');
     if (input.signal?.aborted) throw new CopilotError('aborted');
 
     const session = await client.createSession({
@@ -160,7 +173,10 @@ export class CopilotService {
     const onAbort = () => void session.abort().catch(() => undefined);
     input.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      const answer = await session.sendAndWait({ prompt: input.prompt }, input.timeoutMs).catch((err: unknown) => {
+      const answer = await session.sendAndWait({
+        prompt: input.prompt,
+        ...(input.media?.length ? { attachments: input.media.map((m) => ({ type: 'blob' as const, data: m.data, mimeType: m.mimeType, displayName: m.name })) } : {}),
+      }, input.timeoutMs).catch((err: unknown) => {
         if (input.signal?.aborted) throw new CopilotError('aborted');
         if (/timeout|timed out/i.test(String((err as Error)?.message))) throw new CopilotError('timeout');
         throw new CopilotError('providerError');

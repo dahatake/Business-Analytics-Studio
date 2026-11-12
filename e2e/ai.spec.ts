@@ -11,6 +11,15 @@ test.describe.configure({ mode: 'default' });
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const FAKE_KEY = 'sk-e2e-FAKE-0123456789-do-not-use';
 
+/** The relay refuses a connection test within 5 s of the previous one (429) and each attempt clears the consent, so retry both. */
+async function saveVerifiedConnection(scope: Page | ReturnType<Page['getByTestId']>, verified: string) {
+  await expect(async () => {
+    await scope.getByTestId('ai-connection-consent').check();
+    await scope.getByTestId('ai-connection-save').click();
+    await expect(scope.getByTestId('ai-relay-connection')).toContainText(verified, { timeout: 2_000 });
+  }).toPass({ intervals: [1_000, 2_000, 3_000], timeout: 20_000 });
+}
+
 async function scan(page: Page) {
   // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
   const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
@@ -241,12 +250,12 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(16);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(13);
-    // D-1 "explain" and, since D-12, "packBuild" (customer pack generation).
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(3);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'explain');
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'packBuild');
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(17);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(12);
+    // D-1 "explain", D-12 "packBuild", D-13 "connectionTest", D-17 "alignmentProposal" and D-20 "recommend" (in table order).
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(5);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'recommend');
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'alignmentProposal');
 
     await page.goto('/#/assistant');
     await page.getByTestId('ai-chat-input').fill('lead time');
@@ -460,7 +469,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
     await expect(page.getByTestId('ai-usage-input')).toHaveAttribute('maxlength', '8000');
 
     await expect(page.getByTestId('ai-import-ai')).toBeDisabled();
-    await expect(page.getByTestId('ai-import-reasons')).toContainText('C-03');
+    await expect(page.getByTestId('ai-import-reasons')).toContainText('this use are undecided');
   });
 
   test('story video creates a free mock without Foundry price input', async ({ page }) => {
@@ -609,9 +618,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText(saved);
     await expect(page.getByTestId('ai-price-input')).toHaveCount(0);
     await expect(page.getByTestId('ai-price-output')).toHaveCount(0);
-    await page.getByTestId('ai-connection-consent').check();
-    await page.getByTestId('ai-connection-save').click();
-    await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
+    await saveVerifiedConnection(page, lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
     received.length = 0;
     await page.getByTestId('ai-live-switch').check();
   }
@@ -685,6 +692,43 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(page.getByTestId('ai-explain-panel')).toContainText('送信していません');
     expect(received.length).toBe(before);
   });
+
+  test('D-20: "Ask AI for suggestions" confirms items and attached files, then sends the theme with its text attachment', async ({ page }) => {
+    await page.addInitScript(() => {
+      if (localStorage.getItem('bas.proj.ui')) return;
+      localStorage.setItem('bas.proj.ui', JSON.stringify({ state: { editor: '', editMode: true, lens: 'business', analysisLayout: 'split', firstRunDone: true }, version: 1 }));
+    });
+    await configure(page, 'en');
+    await page.goto('/#/discussion');
+    const canvas = page.getByTestId('proj-canvas');
+    await expect(page.getByTestId('proj-ai-mode')).toHaveText('Live');
+    await canvas.getByTestId('proj-att-input').setInputFiles([{ name: 'notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# Visit notes\nThe E2E plant waits 3 days for parts.\n') }]);
+    await expect(canvas.getByTestId('proj-att-item')).toHaveCount(1);
+    const suggestions = canvas.getByTestId('proj-section-suggestion').locator('.proj-records > li');
+    const before = await suggestions.count();
+    received.length = 0;
+
+    await canvas.getByTestId('proj-ask-ai').click();
+    const dialog = page.getByTestId('ai-live-confirm');
+    await expect(dialog).toContainText('Recommendations');
+    await expect(dialog).toContainText('Microsoft Foundry');
+    await expect(dialog.getByTestId('ai-live-attachments')).toContainText('notes.md');
+    expect(await scan(page)).toEqual([]);
+    expect(received).toHaveLength(0);
+    if (await dialog.getByTestId('ai-live-person-check').count()) await dialog.getByTestId('ai-live-person-check').check();
+    await dialog.getByTestId('ai-live-send').click();
+
+    await expect(canvas.getByTestId('proj-ai-outcome').getByTestId('ai-live-label')).toContainText('Live');
+    await expect(suggestions).toHaveCount(before + 1);
+    await expect(suggestions.last()).toContainText('Stub live explanation of the screen.');
+    expect(received).toHaveLength(1);
+    const sent = JSON.parse(received[0]!.body) as { messages: { role: string; content: unknown }[] };
+    expect(sent.messages[0]!.content).toContain('One per line');
+    expect(JSON.stringify(sent.messages[1]!.content)).toContain('waits 3 days for parts');
+    const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { use: string }[];
+    expect(ledger.at(-1)!.use).toBe('recommend');
+    expect(JSON.stringify(ledger)).not.toContain('waits 3 days');
+  });
 });
 
 /** Launch screen with one registered company and project (FR-311 live test). */
@@ -720,6 +764,7 @@ async function seedLaunch(page: Page, lang: Lang) {
   const stageA = {
     packId: 'contoso-delivery', company: { name: { ja: 'コントソ', en: 'Contoso Manufacturing' }, industry: lt('Manufacturing') }, isSample: false,
     regions: [{ id: 'region-kanto', name: lt('Kanto') }],
+    extensions: { brand: { primary: '#1267B4', logo: { src: 'brand/logo', alt: lt('Contoso logo'), minWidthPx: 20 } } },
     entities: [
       ent('site-tokyo', 'site', 'real', 'site', { role: 'hq', lat: 35.68, lon: 139.76, capacityTPerMonth: 0 }),
       ent('product-gear', 'product', 'real', 'thing', { category: lt('Parts'), siteId: 'site-tokyo', unitPriceJpy: 12000 }),
@@ -809,9 +854,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(settings.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
     await expect(settings.getByTestId('ai-price-input')).toHaveCount(0);
     await expect(settings.getByTestId('ai-price-output')).toHaveCount(0);
-    await settings.getByTestId('ai-connection-consent').check();
-    await settings.getByTestId('ai-connection-save').click();
-    await expect(settings.getByTestId('ai-relay-connection')).toContainText('Verified and saved');
+    await saveVerifiedConnection(settings, 'Verified and saved');
     received.length = 0;
     await settings.getByTestId('ai-live-switch').check();
     await expect(settings.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
@@ -821,7 +864,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     const dialog = page.getByTestId('gen-dialog');
     await dialog.getByTestId('gen-purpose').fill('Reduce late deliveries');
     await dialog.getByTestId('gen-news').uncheck(); // no internet in the test
-    await dialog.getByTestId('gen-files').setInputFiles({ name: 'delivery-kpi.csv', mimeType: 'text/csv', buffer: Buffer.from('kpi,baseline,current,target\non-time delivery %,92,94,98\ngear unit price JPY,12000,,\n') });
+    await dialog.getByTestId('gen-files').setInputFiles({ name: 'delivery-kpi.csv', mimeType: 'text/csv', buffer: Buffer.from('kpi,baseline,current,target\non-time delivery %,92,94,98\ngear unit price JPY,12000,,\nlogo minimum width: 20 px\n') });
     await expect(dialog.getByTestId('gen-file-list')).toContainText('delivery-kpi.csv');
     await expect(dialog.getByTestId('gen-estimate')).toContainText('unknown charges are not free');
     await expect(dialog.getByTestId('gen-start')).toBeDisabled();
@@ -844,6 +887,14 @@ async function seedLaunch(page: Page, lang: Lang) {
     await dialog.getByTestId('gen-check-approved').check();
     await dialog.getByTestId('gen-check-cost').check();
     await expect(dialog.getByTestId('gen-start')).toBeEnabled();
+    await dialog.getByTestId('gen-check-logo').check();
+    await expect(dialog.getByTestId('gen-start')).toBeDisabled();
+    await dialog.getByTestId('gen-logo-file').setInputFiles({ name: 'fake.png', mimeType: 'image/png', buffer: Buffer.from('not an image') });
+    await dialog.getByTestId('gen-start').click();
+    await expect(dialog.getByRole('alert')).toContainText('Cannot import the logo');
+    expect(received).toHaveLength(0);
+    const logoBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aWQAAAAASUVORK5CYII=';
+    await dialog.getByTestId('gen-logo-file').setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: Buffer.from(logoBase64, 'base64') });
     await dialog.getByTestId('gen-start').click();
 
     await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
@@ -867,6 +918,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     expect(received[2]!.user).toContain('initiative-x');
     expect(received[3]!.user).toContain('"fiveForces"');
     expect(received.map((r) => JSON.stringify(r.body)).join('')).not.toContain(FAKE_KEY);
+    expect(received.map((r) => JSON.stringify(r.body)).join('')).not.toContain(logoBase64);
 
     const stored = await page.evaluate(() => ({
       index: JSON.parse(localStorage.getItem('bas.packs.index') ?? '{}') as Record<string, { files: string[]; entities: number }>,
@@ -877,8 +929,13 @@ async function seedLaunch(page: Page, lang: Lang) {
     expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'fix-1'], ['pj-c', 'analysis']]);
     expect(stored.ledger.every((r) => r.costJpy === null)).toBe(true);
 
+    const reloaded = page.waitForEvent('load', { timeout: 10_000 }).catch(() => undefined);
     await dialog.getByTestId('gen-open').click();
+    await reloaded;
     await expect(page.locator('main#main')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/brand'; });
+    await expect(page.getByTestId('brand-logo').locator('img')).toHaveJSProperty('naturalWidth', 1);
+    await expect(page.getByTestId('brand-logo')).toContainText('20 px');
     await page.evaluate(() => { window.location.hash = '/analysis'; });
     await expect(page.getByTestId('proj-analysis-select').locator('option')).toHaveCount(5);
     await expect(page.getByTestId('proj-result-matrix')).toBeVisible();

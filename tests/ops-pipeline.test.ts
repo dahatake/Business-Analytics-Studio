@@ -6,7 +6,7 @@ import { samplePack } from '../src/data/sample.ts';
 import { CustomerPack } from '../src/data/schema.ts';
 import { verifyPack, type ProblemCode } from '../scripts/lib/verify.ts';
 import { selfCorrect, MAX_ROUNDS } from '../scripts/lib/selfcorrect.ts';
-import { cacheAge, CACHE_DAYS, research, slugify } from '../scripts/lib/research.ts';
+import { cacheAge, CACHE_DAYS, research, researchOfficialSite, slugify } from '../scripts/lib/research.ts';
 import { appendTiming, isoWithOffset, ISO_WITH_OFFSET, Timer, type TimingEntry } from '../scripts/lib/timing.ts';
 import { packJsonSchema, validateJsonSchema } from '../scripts/lib/schema.ts';
 import { generateDraft, researchSourceId } from '../scripts/lib/generate.ts';
@@ -160,6 +160,36 @@ describe('FR-121〜FR-123 research cache', () => {
     expect(c.brand.priority[0]).toBe('officialSite');
     expect(c.brand.chosen).toBe('defaultTheme');
     expect(c.classification).toBe('internal');
+  });
+
+  it('fetches only the supplied public site, records page sources, and uses an observed brand colour', async () => {
+    const requested: string[] = [];
+    const fetch = (async (input: URL | string | Request) => {
+      requested.push(String(input));
+      return new Response('<html><head><title>Contoso</title><meta name="theme-color" content="#123456"></head><body>Official information</body></html>', {
+        status: 200, headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }) as typeof globalThis.fetch;
+    const now = new Date('2026-11-09T10:00:00+09:00');
+    const c = await researchOfficialSite('Contoso', { officialUrl: 'https://contoso.example/' }, now, {
+      fetch,
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      now: () => now.getTime(),
+    });
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.every((url) => new URL(url).hostname === 'contoso.example')).toBe(true);
+    expect(c.sources.find((s) => s.id === 'web')).toMatchObject({ status: 'used', integration: 'web-research' });
+    expect(c.webPages.length).toBeGreaterThan(0);
+    expect(c.webPages.length).toBeLessThanOrEqual(6);
+    expect(c.brand).toMatchObject({
+      chosen: 'officialSite',
+      profile: { primary: '#123456', source: { kind: 'officialSite', reference: 'https://contoso.example/' } },
+    });
+    expect(c.usedSample).toBe(true);
+  });
+
+  it('rejects an invalid URL explicitly rather than silently falling back to sample data', async () => {
+    await expect(researchOfficialSite('Contoso', { officialUrl: 'http://intranet/' })).rejects.toMatchObject({ code: 'invalidUrl' });
   });
 
   it('expires after 30 days (PARAM-004)', () => {

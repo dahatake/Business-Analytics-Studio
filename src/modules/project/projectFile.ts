@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { appStorage as localStorage } from '../../data/deviceStorage.ts';
+import { appStorage as localStorage, readDeviceBinary } from '../../data/deviceStorage.ts';
+import { attachmentHashesIn, readAttachment, restoreAttachment, type StoredAttachment } from '../../state/attachments.ts';
+import { MEDIA_TYPES, TEXT_TYPES } from '../../ai/attachments.ts';
 import { CompanyAnchorDocumentSchema } from '../../data/companyAnchor.ts';
 import { companyAnchorKey, readCompanyAnchorDocument, restoreCompanyAnchorDocument } from '../../state/companyAnchors.ts';
 import { AlignmentSchema } from './companyAlignment.ts';
@@ -42,6 +44,10 @@ export const ProjectFileSchema = z.object({
   })).optional(),
   /** Scoped store name → stored value (all modules' project data). */
   data: z.record(z.string(), z.unknown()),
+  /** Attached files the project's data cites (`attachment:sha256:<hash>`), keyed by hash; verified again on import. */
+  attachments: z.record(z.string().regex(/^[0-9a-f]{64}$/), z.object({
+    name: z.string().min(1), mimeType: z.enum([...MEDIA_TYPES, ...TEXT_TYPES]), size: z.number().int().positive(), data: z.string(), addedAt: z.string(),
+  })).optional(),
   companyAnchor: CompanyAnchorDocumentSchema.optional(),
 }).superRefine((file, ctx) => {
   if (file.project.companyId !== file.company.id) ctx.addIssue({ code: 'custom', path: ['project', 'companyId'], message: 'Company id does not match' });
@@ -73,7 +79,27 @@ export function exportProject(projectId: string): ProjectFile | null {
   }
   const relations = s.relations.filter((r) => r.from === projectId || r.to === projectId);
   const companyAnchor = readCompanyAnchorDocument(company.id);
-  return { format: 'bas-project', version: 1, company, project, ...(relations.length ? { relations } : {}), data, ...(companyAnchor ? { companyAnchor } : {}) };
+  const attachments = exportedAttachments(projectId, data);
+  return {
+    format: 'bas-project', version: 1, company, project, ...(relations.length ? { relations } : {}), data,
+    ...(Object.keys(attachments).length ? { attachments } : {}), ...(companyAnchor ? { companyAnchor } : {}),
+  };
+}
+
+/** Files cited by the project's stores and by its imported customer pack (the bytes live in the device binary store). */
+function exportedAttachments(projectId: string, data: Record<string, unknown>): Record<string, StoredAttachment> {
+  let imported: unknown = null;
+  try {
+    imported = readDeviceBinary(`bas.binary.pack.${projectId}`);
+  } catch {
+    // No imported pack on this PC.
+  }
+  const out: Record<string, StoredAttachment> = {};
+  for (const hash of attachmentHashesIn([data, imported])) {
+    const stored = readAttachment(hash);
+    if (stored) out[hash] = stored;
+  }
+  return out;
 }
 
 export type ProjectImportOutcome = { ok: true; name: string; projectId: string; anchorSkipped?: boolean } | { ok: false; error: 'invalid' | 'exists' | 'limit' };
@@ -102,6 +128,7 @@ export function importProject(text: string): ProjectImportOutcome {
   };
   if (file.companyAnchor && !anchorSkipped) restoreCompanyAnchorDocument(file.companyAnchor);
   for (const [name, value] of Object.entries(file.data)) localStorage.setItem(scopedKey(project.id, name), JSON.stringify(value));
+  for (const [hash, stored] of Object.entries(file.attachments ?? {})) void restoreAttachment(hash, stored).catch(() => undefined);
   const known = new Set(s.projects.filter((p) => p.companyId === company.id).map((p) => p.id));
   const relations = (file.relations ?? [])
     .filter((r) => (r.from === project.id && known.has(r.to)) || (r.to === project.id && known.has(r.from)))

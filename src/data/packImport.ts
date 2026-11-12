@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Entity, LText, type EntityKind } from './schema.ts';
 import { samplePack } from './sample.ts';
 import { verifyPack, type Problem, type VerifyResult } from './verify.ts';
+import { DEFAULT_PRIMARY, parseBrand } from '../modules/ops/brand.ts';
 
 /**
  * FR-302〜FR-304: turn files or a pasted Microsoft 365 Copilot answer into one customer pack.
@@ -54,8 +55,49 @@ export interface PackSummary {
   flows: number;
   hasOptimization: boolean;
   hasBrand: boolean;
-  /** extensions.brand.logo points to a file that an in-browser import cannot carry (FR-304: logo unknown). */
+  /** The input contains a logo declaration (the image still requires permission). */
   hasLogo: boolean;
+}
+
+/** Strip logo data before persistence unless the user has explicitly approved its use. */
+export function withoutPackLogo(pack: Record<string, unknown>): Record<string, unknown> {
+  const extensions = pack.extensions;
+  if (!isRecord(extensions) || !isRecord(extensions.brand)) return pack;
+  const { logo: _logo, ...brand } = extensions.brand;
+  return { ...pack, extensions: { ...extensions, brand } };
+}
+
+/** Prepare a portable logo without loading network resources or trusting a file extension. */
+export function preparePackLogo(pack: Record<string, unknown>, approved: boolean, bytes?: Uint8Array): Record<string, unknown> {
+  if (!approved) return withoutPackLogo(pack);
+  const parsed = parseBrand(isRecord(pack.extensions) ? pack.extensions : undefined);
+  if (!parsed.ok) throw new Error(parsed.issues.join('; '));
+  const logo = parsed.profile?.logo;
+  if (!bytes && logo?.image) {
+    const encoded = logo.image.slice(logo.image.indexOf(',') + 1);
+    try { bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)); }
+    catch { throw new Error('invalid logo encoding'); }
+  }
+  if (!bytes) {
+    if (logo) throw new Error('logo image file not found');
+    return pack;
+  }
+  if (bytes.length > MAX_PACK_FILE_BYTES) throw new Error('logo is too large');
+  const png = bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes![i] === v);
+  const jpeg = bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+  const webp = bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP';
+  if (!png && !jpeg && !webp) throw new Error('logo must be a PNG, JPEG or WebP image');
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  const image = `data:image/${png ? 'png' : jpeg ? 'jpeg' : 'webp'};base64,${btoa(binary)}`;
+  const extensions = isRecord(pack.extensions) ? pack.extensions : {};
+  const company = isRecord(pack.company) ? pack.company : {};
+  const name = LText.safeParse(company.name);
+  const brand = parsed.profile ?? { primary: DEFAULT_PRIMARY, source: { kind: 'defaultTheme' as const } };
+  return {
+    ...pack,
+    extensions: { ...extensions, brand: { ...brand, logo: { ...logo, src: logo?.src ?? 'brand/logo', alt: logo?.alt ?? (name.success ? name.data : { ja: 'ロゴ', en: 'Logo' }), image } } },
+  };
 }
 
 export interface ImportAnalysis {

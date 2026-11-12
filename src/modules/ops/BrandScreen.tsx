@@ -139,8 +139,8 @@ function LogoPanel() {
   return (
     <Panel title={t('ops.logo.title')} rationale="ops.logo.why" testId="brand-logo">
       {logo && !broken ? (
-        <div className="ops-logo-frame" style={{ padding: `${logo.clearSpaceRatio * 48}px` }}>
-          <img src={`${import.meta.env.BASE_URL}${logo.src}`} alt={tx(logo.alt)} style={{ minWidth: logo.minWidthPx, height: 48 }} onError={() => setBroken(true)} />
+        <div className="ops-logo-frame" style={{ padding: `${(logo.clearSpaceRatio ?? 0) * 48}px` }}>
+          <img src={logo.image ?? `${import.meta.env.BASE_URL}${logo.src}`} alt={tx(logo.alt)} style={{ minWidth: logo.minWidthPx, height: 48 }} onError={() => setBroken(true)} />
         </div>
       ) : (
         <div className="ops-logo-placeholder" role="img" aria-label={t('ops.logo.placeholder', { company })} data-testid="logo-placeholder">
@@ -150,9 +150,9 @@ function LogoPanel() {
       <ul className="ops-list">
         {logo ? (
           <>
-            <li>{t('ops.logo.minWidth', { px: logo.minWidthPx })}</li>
-            <li>{t('ops.logo.clearSpace', { ratio: logo.clearSpaceRatio })}</li>
-            <li>{t('ops.logo.backgrounds', { list: logo.backgrounds.map((b) => t(`ops.mode.${b}` as MessageKey)).join(', ') })}</li>
+            {logo.minWidthPx !== undefined && <li>{t('ops.logo.minWidth', { px: logo.minWidthPx })}</li>}
+            {logo.clearSpaceRatio !== undefined && <li>{t('ops.logo.clearSpace', { ratio: logo.clearSpaceRatio })}</li>}
+            {logo.backgrounds && <li>{t('ops.logo.backgrounds', { list: logo.backgrounds.map((b) => t(`ops.mode.${b}` as MessageKey)).join(', ') })}</li>}
             <li>{t('ops.logo.noDistort')}</li>
           </>
         ) : (

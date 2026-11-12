@@ -17,7 +17,7 @@ import { parseGlossary } from '../src/modules/project/discussion.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import { verifyPack as cliVerifyPack } from '../scripts/lib/verify.ts';
 import {
-  analyzeImport, buildFixPrompt, extractJson, FIX_PROMPT_MAX_PROBLEMS, isReadableFile, normalizePack,
+  analyzeImport, buildFixPrompt, extractJson, FIX_PROMPT_MAX_PROBLEMS, isReadableFile, normalizePack, preparePackLogo,
 } from '../src/data/packImport.ts';
 import {
   deleteImportedPack, importedPackMeta, loadImportedPack, PACK_INDEX_KEY, saveImportedPack, setMemoryPackStore, type ImportedPackMeta,
@@ -28,6 +28,34 @@ import { promptSection } from '../src/modules/project/packPrompt.ts';
 const sourcedSample = { ...samplePack, entities: samplePack.entities.map((e) => (e.sourceIds.length ? e : { ...e, sourceIds: ['src-annual-report'] })) };
 
 const fence = (v: unknown) => `\`\`\`json\n${JSON.stringify(v, null, 2)}\n\`\`\``;
+
+describe('logo permission at import', () => {
+  const png = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aWQAAAAASUVORK5CYII=', 'base64'));
+  const pack = {
+    ...sourcedSample,
+    extensions: { brand: { primary: '#1267B4', fonts: { family: 'Example', fallbacks: [] }, logo: { src: 'brand/logo.png', alt: { ja: 'ロゴ', en: 'Logo' } } } },
+  };
+  it('removes the logo without approval while retaining other brand information', () => {
+    const result = preparePackLogo(pack, false, png);
+    expect(result.extensions).toEqual({ brand: { primary: '#1267B4', fonts: { family: 'Example', fallbacks: [] } } });
+    expect(pack.extensions.brand.logo).toBeDefined();
+  });
+  it('embeds an approved logo and preserves it through validation and reload', () => {
+    const result = preparePackLogo(pack, true, png);
+    const brand = BrandProfile.parse((result.extensions as { brand: unknown }).brand);
+    expect(brand.logo?.image).toMatch(/^data:image\/png;base64,/);
+    expect(BrandProfile.parse(loadPack(JSON.parse(JSON.stringify(result))).pack.extensions?.brand).logo?.image).toBe(brand.logo?.image);
+    expect(preparePackLogo(result, true)).toEqual(result);
+  });
+  it('rejects missing and unsupported images rather than persisting a broken logo', () => {
+    expect(() => preparePackLogo(pack, true)).toThrow('not found');
+    expect(() => preparePackLogo(pack, true, new TextEncoder().encode('<svg/>'))).toThrow('PNG, JPEG or WebP');
+  });
+  it('allows an approved image even when no brand was researched', () => {
+    const result = preparePackLogo({ ...sourcedSample, extensions: {} }, true, png);
+    expect(BrandProfile.parse((result.extensions as { brand: unknown }).brand).logo?.image).toMatch(/^data:image\/png/);
+  });
+});
 
 /** The sample pack as Microsoft 365 Copilot would answer it: prose + PART 1 (pack fields + sources) + entity PARTs. */
 function copilotAnswers(pack = sourcedSample, perPart = 40): string[] {

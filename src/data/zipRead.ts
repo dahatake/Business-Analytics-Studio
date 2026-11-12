@@ -87,6 +87,20 @@ async function entryBytes(view: DataView, e: Entry): Promise<Uint8Array> {
   throw new Error(`compression method ${e.method} is not supported`);
 }
 
+/** Extract only the referenced image, after the user confirms its rights. */
+export async function readZipLogo(data: ArrayBuffer, path: string): Promise<Uint8Array | null> {
+  const view = new DataView(data);
+  const entries = centralDirectory(view).filter((e) => e.name === path);
+  if (entries.length > 1) throw new Error('duplicate logo entries');
+  const entry = entries[0];
+  if (!entry) return null;
+  if (entry.size > MAX_PACK_FILE_BYTES || entry.size === 0xffffffff) throw new Error('logo is too large');
+  if (entry.flags & 1) throw new Error('encrypted logo');
+  const bytes = await entryBytes(view, entry);
+  if (bytes.length !== entry.size) throw new Error('invalid logo size');
+  return bytes;
+}
+
 /**
  * Reads the JSON entries of a zip (stored or deflate, as Python's zipfile writes).
  * Each entry is named `<zip>/<entry>` so the import report shows where a pack came from.

@@ -21,12 +21,14 @@ const LocalPath = z.string().min(1).refine((s) => !/^[a-z][a-z0-9+.-]*:/i.test(s
 export const LogoUsage = z.object({
   src: LocalPath,
   alt: LText,
+  /** Locally imported raster image; never fetched from a remote URL. */
+  image: z.string().max(7_000_000).regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/).optional(),
   /** Minimum rendered width in CSS px. */
-  minWidthPx: z.number().positive(),
+  minWidthPx: z.number().positive().optional(),
   /** Clear space around the logo as a ratio of its height. */
-  clearSpaceRatio: z.number().min(0).max(2),
+  clearSpaceRatio: z.number().min(0).max(2).optional(),
   /** Backgrounds the logo may be placed on. */
-  backgrounds: z.array(z.enum(['light', 'dark'])).min(1),
+  backgrounds: z.array(z.enum(['light', 'dark'])).min(1).optional(),
 });
 export type LogoUsage = z.infer<typeof LogoUsage>;
 

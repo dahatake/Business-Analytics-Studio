@@ -2,7 +2,7 @@ import { crc32, deflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { samplePack } from '../src/data/sample.ts';
 import { analyzeImport, MAX_PACK_FILE_BYTES } from '../src/data/packImport.ts';
-import { isZipFile, readZipJson } from '../src/data/zipRead.ts';
+import { isZipFile, readZipJson, readZipLogo } from '../src/data/zipRead.ts';
 
 interface ZipInput { name: string; data: Buffer | string; deflate?: boolean; declaredSize?: number }
 
@@ -56,6 +56,13 @@ const packJson = JSON.stringify(sourced, null, 2);
 const readme = '# Sources\n- 統合報告書 https://example.com/ir\n';
 
 describe('zip import (FR-307: the single Copilot prompt returns <packId>.zip)', () => {
+  it('extracts only an exact logo path and rejects duplicates and oversized images', async () => {
+    const zip = makeZip([{ name: 'brand/logo.png', data: 'image', deflate: true }, { name: '../brand/logo.png', data: 'other' }]);
+    expect(new TextDecoder().decode((await readZipLogo(zip, 'brand/logo.png'))!)).toBe('image');
+    expect(await readZipLogo(zip, 'brand/missing.png')).toBeNull();
+    await expect(readZipLogo(makeZip([{ name: 'brand/logo.png', data: 'a' }, { name: 'brand/logo.png', data: 'b' }]), 'brand/logo.png')).rejects.toThrow('duplicate');
+    await expect(readZipLogo(makeZip([{ name: 'brand/logo.png', data: 'a', declaredSize: MAX_PACK_FILE_BYTES + 1 }]), 'brand/logo.png')).rejects.toThrow('too large');
+  });
   it.each([false, true])('reads pack.json from a zip (deflate=%s), ignores README.md and imports it', async (deflate) => {
     const zip = makeZip([{ name: 'pack.json', data: packJson, deflate }, { name: 'README.md', data: readme, deflate }]);
     const r = await readZipJson('contoso.zip', zip);

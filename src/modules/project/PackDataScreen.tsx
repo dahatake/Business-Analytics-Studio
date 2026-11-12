@@ -11,7 +11,7 @@ import { CompanyAnchorVersionSchema } from '../../data/companyAnchor.ts';
 import { CustomerPack, type EntityKind } from '../../data/schema.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from '../../data/collection.ts';
 import {
-  analyzeImport, buildFixPrompt, isReadableFile, MAX_PACK_FILE_BYTES, type FileReport, type ImportAnalysis, type InputDoc,
+  analyzeImport, buildFixPrompt, isReadableFile, MAX_PACK_FILE_BYTES, preparePackLogo, type FileReport, type ImportAnalysis, type InputDoc,
 } from '../../data/packImport.ts';
 import { deleteImportedPack, importedPackMeta, saveImportedPack } from '../../data/packStore.ts';
 import { useI18n } from '../../i18n/index.ts';
@@ -20,7 +20,8 @@ import { useSettings } from '../../state/settings.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.tsx';
 import { copilotPrompt, copilotResearchPrompt, PROMPT_DOC } from './packPrompt.ts';
-import { isZipFile, readZipJson } from '../../data/zipRead.ts';
+import { isZipFile, readZipJson, readZipLogo } from '../../data/zipRead.ts';
+import { parseBrand } from '../ops/brand.ts';
 import { yyyymmdd } from './exportFormat.ts';
 import { hrefFor, navigate } from '../../state/router.ts';
 import { readiness } from './analysisReadiness.ts';
@@ -345,6 +346,7 @@ function ImportPanel() {
 
   const check = async () => {
     setBusy(true);
+    setAnalysis(null);
     const docs: InputDoc[] = [];
     const rejected: FileReport[] = [];
     for (const { file } of picked) {
@@ -420,14 +422,14 @@ function ImportPanel() {
       </div>
       {analysis && (
         <div ref={resultRef} tabIndex={-1} className="pack-result" aria-label={t('proj.pack.resultTitle')} data-testid="pack-result">
-          <ResultView analysis={analysis} />
+          <ResultView analysis={analysis} picked={picked} />
         </div>
       )}
     </Panel>
   );
 }
 
-function ResultView({ analysis }: { analysis: ImportAnalysis }) {
+function ResultView({ analysis, picked }: { analysis: ImportAnalysis; picked: Picked[] }) {
   const { t, tx, fmt, lang } = useI18n();
   const { verify, summary } = analysis;
   const errors = verify?.problems.filter((p) => p.severity === 'error') ?? [];
@@ -533,12 +535,12 @@ function ResultView({ analysis }: { analysis: ImportAnalysis }) {
         </section>
       )}
 
-      {analysis.canImport && analysis.pack && summary && <ConfirmAndImport analysis={analysis} />}
+      {analysis.canImport && analysis.pack && summary && <ConfirmAndImport analysis={analysis} picked={picked} />}
     </>
   );
 }
 
-function ConfirmAndImport({ analysis }: { analysis: ImportAnalysis }) {
+function ConfirmAndImport({ analysis, picked }: { analysis: ImportAnalysis; picked: Picked[] }) {
   const { t, lang } = useI18n();
   const summary = analysis.summary!;
   const target = useProjects((s) => s.target);
@@ -547,13 +549,14 @@ function ConfirmAndImport({ analysis }: { analysis: ImportAnalysis }) {
   const [approved, setApproved] = useState(false);
   const [classified, setClassified] = useState(false);
   const [people, setPeople] = useState(summary.people === 0);
-  const [logo, setLogo] = useState(!summary.hasLogo);
+  const [logo, setLogo] = useState(false);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
   const [companyName, setCompanyName] = useState(summary.company.name?.[lang] ?? '');
   const [projectName, setProjectName] = useState(() => t('proj.pack.defaultProject', { date: new Date().toISOString().slice(0, 10) }));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const replacing = !toDemo && project ? importedPackMeta(project.id) !== null : false;
-  const ready = approved && classified && people && logo && (!toDemo || (companyName.trim() && projectName.trim()));
+  const ready = approved && classified && people && (!toDemo || (companyName.trim() && projectName.trim()));
 
   const resolveProject = (): string | null => {
     if (!toDemo && project) return project.id;
@@ -576,9 +579,32 @@ function ConfirmAndImport({ analysis }: { analysis: ImportAnalysis }) {
   const onImport = async () => {
     setSaving(true);
     setError(null);
+    let pack: Record<string, unknown>;
+    try {
+      let bytes: Uint8Array | undefined;
+      if (logo && logoFile) {
+        if (logoFile.size > MAX_PACK_FILE_BYTES) throw new Error('logo is too large');
+        bytes = new Uint8Array(await logoFile.arrayBuffer());
+      } else if (logo && summary.hasLogo) {
+        const extensions = analysis.pack!.extensions;
+        const brand = parseBrand(extensions && typeof extensions === 'object' && !Array.isArray(extensions) ? extensions as Record<string, unknown> : undefined);
+        const path = brand.ok ? brand.profile?.logo?.src : undefined;
+        if (path && brand.ok && !brand.profile?.logo?.image) {
+          for (const { file } of picked.filter(({ file }) => isZipFile(file.name, file.type))) {
+            const found = await readZipLogo(await file.arrayBuffer(), path);
+            if (found && bytes) throw new Error('logo found in multiple archives');
+            if (found) bytes = found;
+          }
+        }
+      }
+      pack = preparePackLogo(analysis.pack!, logo, bytes);
+    } catch (err) {
+      setError(t('proj.pack.logoFailed', { message: (err as Error).message }));
+      setSaving(false);
+      return;
+    }
     const projectId = resolveProject();
     if (!projectId) { setSaving(false); return; }
-    const pack = analysis.pack!;
     try {
       await saveImportedPack({
         projectId,
@@ -612,8 +638,11 @@ function ConfirmAndImport({ analysis }: { analysis: ImportAnalysis }) {
         {summary.people > 0 && (
           <Checkbox checked={people} onChange={(_, d) => setPeople(d.checked === true)} label={t('proj.pack.checkPeople', { count: summary.people })} data-testid="pack-check-people" />
         )}
-        {summary.hasLogo && (
-          <Checkbox checked={logo} onChange={(_, d) => setLogo(d.checked === true)} label={t('proj.pack.checkLogo')} data-testid="pack-check-logo" />
+        <Checkbox checked={logo} onChange={(_, d) => setLogo(d.checked === true)} label={t('proj.pack.checkLogo')} data-testid="pack-check-logo" />
+        {logo && (
+          <Field label={t('proj.pack.logoFile')} hint={t('proj.pack.logoHint')}>
+            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} data-testid="pack-logo-file" />
+          </Field>
         )}
       </div>
       {summary.isSample && <MessageBar intent="info"><MessageBarBody>{t('proj.pack.isSampleNote')}</MessageBarBody></MessageBar>}

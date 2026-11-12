@@ -181,7 +181,9 @@ export function GraphScreen() {
         </Field>
       </div>
 
-      {tab === 'criteria' ? <SuitabilityPanel ext={ext.ext} /> : sceneTab ? <ContextualScene key={sceneTab} tab={sceneTab} /> : (
+      {tab === 'criteria' && <SuitabilityPanel ext={ext.ext} />}
+      {sceneTab && <ContextualScene key={sceneTab} tab={sceneTab} />}
+      {tab !== 'criteria' && !sceneTab && (
         <>
           <div className="graph-controls-bar">
             <ViewSwitch mode={format} onChange={(value) => replaceQuery({ format: value })} includeGraph testId="graph-format" />

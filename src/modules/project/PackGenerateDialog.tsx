@@ -10,7 +10,7 @@ import { AiLiveError, aiLive, preflight, readLedger, rebindLedgerScope } from '.
 import { jstDay, jstMonth } from '../../ai/budget.ts';
 import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
 import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
-import { isReadableFile } from '../../data/packImport.ts';
+import { isReadableFile, withoutPackLogo } from '../../data/packImport.ts';
 import { anchorFreshness } from '../../data/companyAnchor.ts';
 import { NewsRequest } from '../../data/news.ts';
 import { importedPackMeta, loadImportedPack, saveImportedPack } from '../../data/packStore.ts';
@@ -336,7 +336,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
         entities: result.summary.entities,
         importedAt: new Date().toISOString(),
         files: [`generated:${settings.provider}`, ...materials.map((m) => m.name)],
-      }, result.pack);
+      }, withoutPackLogo(result.pack));
     } catch (err) {
       const tokens = runTokens();
       rollback(created);

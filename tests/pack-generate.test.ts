@@ -5,7 +5,7 @@ import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, par
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import {
-  applyFix, fieldTopics, generatePack, missingRequired, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
+  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
 } from '../src/modules/project/packGenerate.ts';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
@@ -629,6 +629,48 @@ describe('FR-311 pack generation (D-12)', () => {
     const off = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], { fetchWorkIq: async () => { asked++; throw new Error('must not be asked'); } });
     await generatePack(input({ useWorkIq: false }), off, () => {}, new AbortController().signal);
     expect(asked).toBe(1);
+  });
+
+  it('D-14: a transient fan-out failure is tried again with a fresh process, the purpose section is labelled, and rounds still run when both tries fail', async () => {
+    const queries: WorkIqQuery[] = [];
+    let fails = 1;
+    const purposeSection = { key: 'purpose', question: 'q', answer: 'Hubらじお 視聴者 12 名（2026年10月）', citations: [{ title: 'Viva Engage', url: 'https://engage.cloud.microsoft/x' }], sensitivity: null, fetchedAt: NOW.toISOString() };
+    const flaky = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
+      fetchWorkIq: async (q) => {
+        queries.push(q);
+        if (q.expand && fails-- > 0) throw Object.assign(new Error('relay 503'), { code: 'workiqUnavailable' });
+        return q.expand ? [purposeSection] : [];
+      },
+    });
+    const r = await generatePack(input({ useWorkIq: true }), flaky, () => {}, new AbortController().signal);
+    expect(queries.filter((q) => q.expand)).toHaveLength(2);
+    expect(r.report.retrievalErrors).toContainEqual({ what: 'workiq', error: 'workiqUnavailable' });
+    expect(r.report.retrieved.some((x) => x.kind === 'workiq')).toBe(true);
+    expect(flaky.prompts.some((p) => p.includes('Project の目的に関する社内情報'))).toBe(true);
+
+    queries.length = 0;
+    const down = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
+      fetchWorkIq: async (q) => { queries.push(q); if (q.expand) throw Object.assign(new Error('relay 503'), { code: 'workiqUnavailable' }); return []; },
+    });
+    const r2 = await generatePack(input({ useWorkIq: true }), down, () => {}, new AbortController().signal);
+    expect(r2.report.retrievalErrors).toEqual(expect.arrayContaining([{ what: 'workiq', error: 'workiqUnavailable' }, { what: 'workiq', error: 'retry-1: workiqUnavailable' }]));
+    // Work IQ may be back for the follow-up searches: they are still asked.
+    expect(queries.some((q) => !q.expand)).toBe(true);
+    expect(Object.values(r2.report.stopReasons ?? {})).not.toContain('workIqUnavailable');
+  });
+
+  it('news searched by company name only: headlines on the purpose come first, a few others stay as background, the rest is reported', async () => {
+    const titles = ['Contoso の株価が下落', '納期遅延の削減へ Contoso が新システム', 'Contoso で大規模障害', 'Contoso 社長交代', 'Contoso 決算', 'Contoso が新工場'];
+    expect(newsOnPurpose(titles.map((title) => ({ title })), input()).kept.map((a) => a.title)).toEqual(['納期遅延の削減へ Contoso が新システム']);
+    expect(newsOnPurpose([{ title: 'Contoso 決算' }], input({ purpose: 'x', projectName: 'y' })).dropped).toEqual([]);
+    const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
+      fetchNews: async () => ({ provider: 'Google News RSS', fetchedAt: NOW.toISOString(), articles: titles.map((title, i) => ({ title, url: `https://news.example/${i}`, source: '日刊', publishedAt: '2026-10-01T00:00:00Z' })) }),
+    });
+    const r = await generatePack(input(), d, () => {}, new AbortController().signal);
+    const sent = r.report.retrieved.filter((x) => x.kind === 'news').map((x) => x.title);
+    expect(sent[0]).toBe('納期遅延の削減へ Contoso が新システム');
+    expect(sent).toHaveLength(4);
+    expect(r.report.offPurposeNews?.map((a) => a.title)).toEqual(['Contoso 決算', 'Contoso が新工場']);
   });
 
   it('fails without saving anything when the model gives no JSON, a call fails, or the user cancels', async () => {

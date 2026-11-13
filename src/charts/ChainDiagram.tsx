@@ -35,13 +35,13 @@ export function chainOf(id: string): Set<string> {
 }
 
 /** F-3.2.4: business relationship as lanes customer → deal → deliverable → invoice. */
-export function ChainDiagram({ selected, onSelect }: { selected: string | null; onSelect: (id: string) => void }) {
+export function ChainDiagram({ selected, onSelect, exclude }: { selected: string | null; onSelect: (id: string) => void; exclude?: (e: Entity) => boolean }) {
   const { t, tx } = useI18n();
   const audience = useSettings((s) => s.audience);
   const version = usePackVersion((s) => s.version);
 
   const { nodes, links, height } = useMemo(() => {
-    const visible = <T extends Entity>(xs: T[]) => xs.filter((x) => !isHidden(x, audience));
+    const visible = <T extends Entity>(xs: T[]) => xs.filter((x) => !isHidden(x, audience) && !exclude?.(x));
     const order: Record<(typeof COLUMNS)[number], Entity[]> = { customer: [], deal: [], deliverable: [], invoice: [] };
     for (const c of visible(entitiesOf('customer'))) {
       order.customer.push(c);
@@ -65,7 +65,7 @@ export function ChainDiagram({ selected, onSelect }: { selected: string | null; 
       .filter((e) => (e.type === 'places' || e.type === 'produces' || e.type === 'billedAs') && pos.has(e.source) && pos.has(e.target))
       .map((e) => ({ edge: e, s: pos.get(e.source)!, t: pos.get(e.target)! }));
     return { nodes: [...pos.values()], links, height };
-  }, [audience, version]);
+  }, [audience, version, exclude]);
 
   const highlight = selected ? chainOf(selected) : null;
   const link = d3.linkHorizontal<{ source: [number, number]; target: [number, number] }, [number, number]>();

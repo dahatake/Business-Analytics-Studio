@@ -112,6 +112,45 @@ export type WorkIqSectionLike = (WorkIqLike & { key: string; searches?: readonly
 
 /** Every Work IQ section the generator asks for first: the internal facts a business discussion needs. */
 export const WORKIQ_GEN_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
+/** Tries of the planned fan-out when the whole call fails with a transient error. */
+export const WORKIQ_FANOUT_TRIES = 2;
+/** Fan-out failures a later search may not repeat; any other code (sign-in, permission, EULA, refusal) is final. */
+const WORKIQ_TRANSIENT: ReadonlySet<string> = new Set(['workiqUnavailable', 'workiqBusy', 'workiqTimeout', 'badWorkiqResponse', 'badRelayAnswer']);
+
+const NEWS_STOPWORDS = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'their', 'into', 'more', 'many', 'only', 'what', 'have', 'has', 'are', 'not', 'but', 'its', 'our', 'your', 'about', 'than', 'they', 'them', 'each', 'other', 'also', 'such', 'very']);
+
+/**
+ * The terms of the project name, purpose and focus a headline must share to be about the project. The company name is
+ * left out: a search by company name returns it in every headline. Latin words, katakana runs and kanji runs.
+ */
+export function purposeTerms(input: Pick<PackGenInput, 'companyName' | 'projectName' | 'purpose' | 'focus'>): string[] {
+  const company = new Set(input.companyName.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const text = `${input.projectName} ${input.purpose} ${input.focus}`;
+  const terms = new Set<string>();
+  for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9+#.-]*|[ァ-ヶー]{3,}|[\u4e00-\u9fff々]{2,}/g)) {
+    const t = m[0].replace(/[.-]+$/, '').toLowerCase();
+    if (/^[a-z]/.test(t) && (t.length < 2 || NEWS_STOPWORDS.has(t))) continue;
+    if (!company.has(t)) terms.add(t);
+  }
+  return [...terms];
+}
+
+/** Off-purpose headlines still sent as background when the news search was by company name only. */
+const OFF_PURPOSE_NEWS_KEPT = 3;
+
+/** Headlines that share a purpose term (checked on this PC; nothing is sent). Without terms every headline is kept. */
+export function newsOnPurpose<T extends { title: string }>(articles: readonly T[], input: Pick<PackGenInput, 'companyName' | 'projectName' | 'purpose' | 'focus'>): { kept: T[]; dropped: T[] } {
+  const terms = purposeTerms(input);
+  if (!terms.length) return { kept: [...articles], dropped: [] };
+  const hits = (title: string) => {
+    const lower = title.toLowerCase();
+    return terms.some((t) => (/^[a-z0-9]/.test(t) ? new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(lower) : lower.includes(t)));
+  };
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const a of articles) (hits(a.title) ? kept : dropped).push(a);
+  return { kept, dropped };
+}
 /** Follow-up questions per round (the relay's MAX_WORKIQ_TOPICS; D-15: 4 → 8, every measured round used all 4). */
 export const MAX_GAP_TOPICS = 8;
 /**
@@ -194,6 +233,8 @@ export interface GenerationReport {
   removed: { path: string; reason: string }[];
   /** Sources the model created itself (not from the app's material); dropped. */
   droppedSources: string[];
+  /** News headlines left out because they share no term with the project, purpose or focus (checked on this PC). */
+  offPurposeNews?: { title: string; url: string }[];
   /** Numbers not found in the text of the cited material: review before showing them to a customer. */
   ungrounded: { id: string; field: string; value: number }[];
   /** Work IQ follow-up rounds: what was missing, what was asked, what came back new, and whether the re-run was kept. */
@@ -363,6 +404,8 @@ const WORKIQ_SECTION_LABEL: Record<string, [ja: string, en: string]> = {
   customers: ['顧客・顧客セグメント', 'customers and customer segments'],
   workflow: ['業務の流れ（入力→処理→出力→引き継ぎ）', 'work process (input → work → output → handoff)'],
   dataCatalog: ['データ資産・システム・レポート', 'data assets, systems and reports'],
+  // The purpose concepts searched one by one (server/workiq.ts purposeTopics), merged into one section.
+  purpose: ['Project の目的に関する社内情報', 'internal information on the project purpose'],
 };
 
 function sectionLabel(key: string, ja: boolean): string {
@@ -456,10 +499,10 @@ function rules(lang: Lang): string {
       '- 資料に書かれていない値・URL・人物・日付は作らない。根拠がない必須項目があるエンティティは出さない。',
       '- 企業分析は利用者が入力した要約で、原資料そのものではない。会社が表明した目標と推定を区別し、Project との整合を強制しない。数値は出典抜粋と照合し、人が確認する。',
       '- 中心は対象の Project とその目的・業務課題。課題・原因・施策・KPI・グラフのノードは目的に関係するものを優先し、ニュース・公開Web（source-news-* / source-web-*）は周辺の文脈として少しだけ使い、主役にしない。',
-      '- ニュースの見出し（source-news-*）は出来事・課題・原因の根拠にだけ使い、顧客・仕入先の取引関係や拠点・製品の値の根拠にしない。',
+      '- ニュースの見出し（source-news-*）は出来事・課題・原因の根拠にだけ使い、顧客・仕入先の取引関係や拠点・製品の値の根拠にしない。目的と関係しない出来事（障害・株価・人事など）をニュースだけを根拠に課題にしない。',
       '- 業種を製造業と決めつけない。営業・サービス・管理の組織なら工場・生産ライン・物流の用語を使わず、その組織の言葉（顧客、案件、提案、イベント、レポート等）で書く。',
       '- 拠点: 営業所・オフィス・Hub・ブリーフィングセンター等は role:"office"、capacityTPerMonth:0、city（例 "Tokyo"）と country を書く（座標はアプリが city から補う）。海外拠点も資料にあれば含める。',
-      '- Work IQ の回答（source-workiq-*）は Microsoft 365 の社内情報の要約で、区分ごとに分かれている。各区分を対応する場所に使う: 組織→person/site、KPI・OKR→extensions.okr（数値の基準値・現在値・目標値がそろう時だけ kpi エンティティ）、業務の流れ→extensions.workflow、データ資産→extensions.dataCatalog、拠点→site、顧客→customer、案件・取り組み→下記の engagements の規則、課題→issue/cause。回答に書かれていない値は作らず、「見つからない」とされた項目は作らない。人物は氏名と役職だけにする。',
+      '- Work IQ の回答（source-workiq-*）は Microsoft 365 の社内情報の要約で、区分ごとに分かれている。各区分を対応する場所に使う: 組織→person/site、KPI・OKR→extensions.okr（数値の基準値・現在値・目標値がそろう時だけ kpi エンティティ）、業務の流れ→extensions.workflow、データ資産→extensions.dataCatalog、拠点→site、顧客→customer、案件・取り組み→下記の engagements の規則、課題→issue/cause。回答に書かれていない値は作らず、「見つからない」とされた項目は作らない。人物は氏名と役職だけにする。「Project の目的に関する社内情報」の区分は目的の論点ごとの検索結果で、目的の課題・原因・施策・取り組み・KPI の第一の根拠として使う。',
       '- extensions.workflow.stages: このチーム（組織）の仕事を、受け取るもの（inputs）→行う作業（activities）→出すもの（outputs）→次の段（next）／引き継ぐ他チーム（handoffTo）の順に書く。使うレポート・システムは data。各段に sourceIds。',
       '- extensions.okr: kpis（name・definition・target・current・unit・period・owner は文字列で原文どおり。現在値が資料にない時は current を書かない）と objectives（objective・keyResults）。各要素に sourceIds。',
       '- 実施した案件・取り組みは extensions.engagements.items に保存する。各項目に id・name・sourceIds（1 件以上）、および period・customer・status の少なくとも 1 つを資料どおりに書く。任意: type（workshop/briefing/poc/programme/deliverable/deal/other）、customerId（既存の customer の id）、owner（氏名と役職のみ）、count・outcome。name は文字列または ja/en、他の事実は原文の文字列。金額・進捗・日付を補わない。deal は金額・製品・顧客・日付・担当が、initiative は進捗・期間・担当と費用・効果のある solution が資料にそろう時だけ。同じ実施情報をエンティティと engagements の両方に書かない。',
@@ -473,10 +516,10 @@ function rules(lang: Lang): string {
       '- Never invent values, URLs, people or dates the material does not state. Leave out entities whose required fields have no basis.',
       '- The company analysis is a user-supplied summary, not the original source. Separate stated objectives from inference, do not force project alignment, and have a person check numbers against source excerpts.',
       '- The project, its purpose and its business problem come first. Issues, causes, solutions, KPIs and graph nodes should serve that purpose; news and public web (source-news-*, source-web-*) are light context only and must not dominate.',
-      '- News headlines (source-news-*) may support events, issues and causes only; never customer or supplier relationships, or site and product values.',
+      '- News headlines (source-news-*) may support events, issues and causes only; never customer or supplier relationships, or site and product values. Never turn an event unrelated to the purpose (outages, share prices, appointments…) into an issue on news alone.',
       '- Do not assume manufacturing. For a sales, service or administrative organisation, avoid plant, production-line and logistics terms and use its own (customers, engagements, proposals, events, reports…).',
       '- Sites: sales offices, hubs, briefing centres and similar are role:"office" with capacityTPerMonth:0, plus city (e.g. "Tokyo") and country (the app sets coordinates from the city). Include locations abroad when the material names them.',
-      '- The Work IQ answers (source-workiq-*) summarise internal Microsoft 365 information, one per section. Use each where it belongs: organisation → person/site, KPI/OKR → extensions.okr (kpi entities only when baseline, current and target numbers are all stated), process → extensions.workflow, data assets → extensions.dataCatalog, locations → site, customers → customer, work records → engagements rules below, issues → issue/cause. Never create values they do not state or items they report as not found. People: name and title only.',
+      '- The Work IQ answers (source-workiq-*) summarise internal Microsoft 365 information, one per section. Use each where it belongs: organisation → person/site, KPI/OKR → extensions.okr (kpi entities only when baseline, current and target numbers are all stated), process → extensions.workflow, data assets → extensions.dataCatalog, locations → site, customers → customer, work records → engagements rules below, issues → issue/cause. Never create values they do not state or items they report as not found. People: name and title only. The "internal information on the project purpose" section searched each point of the purpose: use it first for the purpose\'s issues, causes, solutions, work records and KPIs.',
       '- extensions.workflow.stages: the team\'s work as what it receives (inputs) → what it does (activities) → what it hands over (outputs) → next stage ids (next) / other teams taking over (handoffTo); reports and systems used go in data. sourceIds on each stage.',
       '- extensions.okr: kpis (name, definition, target, current, unit, period, owner as strings, worded as in the material; omit current when the material has no current value) and objectives (objective, keyResults). sourceIds on each.',
       '- Work records go in extensions.engagements.items. Each item needs id, name, sourceIds (at least one), and at least one of period, customer or status stated in the material. Optional: type (workshop/briefing/poc/programme/deliverable/deal/other), customerId (an existing customer id), owner (name and title only), count, outcome. name is a string or ja/en; other facts are verbatim strings. Never fill in amounts, progress or dates. Use deal only when value, products, customer, date and owner are known; initiative only when progress, dates, owner and a solution with cost and benefit are known. Do not duplicate the same work in entities and engagements.',
@@ -1192,10 +1235,16 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     }
   }
   emit('collect', 'running', 0.6);
+  const offPurposeNews: { title: string; url: string }[] = [];
   if (input.useNews && deps.fetchNews) {
     try {
-      const r = await deps.fetchNews(input.companyName.trim(), input.lang, signal, input.publicWebTopic?.trim() || undefined);
-      news = r.articles.slice(0, 10);
+      const topic = input.publicWebTopic?.trim() || undefined;
+      const r = await deps.fetchNews(input.companyName.trim(), input.lang, signal, topic);
+      // Without a confirmed topic the search is by company name only: the headlines that touch the project come first,
+      // and only a few others stay as background (the rules forbid making an issue of them alone).
+      const { kept, dropped } = topic ? { kept: r.articles, dropped: [] } : newsOnPurpose(r.articles, input);
+      news = [...kept, ...dropped.slice(0, OFF_PURPOSE_NEWS_KEPT)].slice(0, 10);
+      offPurposeNews.push(...dropped.filter((a) => !news.includes(a)).map((a) => ({ title: a.title, url: a.url })));
       newsFetchedAt = r.fetchedAt;
     } catch (err) {
       if (signal.aborted) throw cancelled();
@@ -1212,17 +1261,28 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   };
   /** Follow-up wordings already searched (by the planned fan-out or an earlier round): never asked twice. */
   const asked = new Set<string>();
+  /** The planned fan-out failed in a way a later search will fail too (sign-in, permission, EULA, CLI, relay refusal). */
+  let workIqBlocked = false;
   if (input.useWorkIq && deps.fetchWorkIq) {
     emit('collect', 'running', 0.8);
-    try {
-      // Planned fan-out (docs/workiq-agentic-retrieval-study.md): the section searches and every readiness ladder
-      // wording at once, merged per readiness item, so the follow-up rounds below are left with the model's own gaps.
-      workiq = await deps.fetchWorkIq({ ...workIqBase, aspects: WORKIQ_GEN_ASPECTS, expand: true }, signal);
-      noteSectionErrors(workiq);
-      for (const s of workIqAnswers(workiq)) for (const w of s.searches ?? []) asked.add(clip(w.replace(/\s+/g, ' ').trim(), 150));
-    } catch (err) {
-      if (signal.aborted) throw cancelled();
-      retrievalErrors.push({ what: 'workiq', error: (err as { code?: string }).code ?? (err as Error).message });
+    // Planned fan-out (docs/workiq-agentic-retrieval-study.md): the section searches, every readiness ladder wording and
+    // the purpose concepts at once, merged per readiness item, so the follow-up rounds below are left with the model's
+    // own gaps. A transient failure of the whole fan-out (Work IQ down, a CLI process without its search tool) is tried
+    // once more after a pause; the relay starts a fresh CLI process for it.
+    for (let attempt = 0; attempt < WORKIQ_FANOUT_TRIES; attempt++) {
+      try {
+        workiq = await deps.fetchWorkIq({ ...workIqBase, aspects: WORKIQ_GEN_ASPECTS, expand: true }, signal);
+        noteSectionErrors(workiq);
+        for (const s of workIqAnswers(workiq)) for (const w of s.searches ?? []) asked.add(clip(w.replace(/\s+/g, ' ').trim(), 150));
+        break;
+      } catch (err) {
+        if (signal.aborted) throw cancelled();
+        const code = (err as { code?: string }).code ?? (err as Error).message;
+        retrievalErrors.push({ what: 'workiq', error: `${attempt ? `retry-${attempt}: ` : ''}${code}` });
+        workIqBlocked = !WORKIQ_TRANSIENT.has(code);
+        if (workIqBlocked || attempt + 1 >= WORKIQ_FANOUT_TRIES) break;
+        await pause(deps.retryDelayMs ?? 5_000);
+      }
     }
   }
   const entries = materialSources(input, pages, news, newsFetchedAt, now(), workiq);
@@ -1304,7 +1364,8 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     let current = start;
     let gaps = takeGaps(current);
     if (!input.useWorkIq || !deps.fetchWorkIq) return { pack: current, gaps };
-    if (!workiq) { stopReasons[prefix] = 'workIqUnavailable'; return { pack: current, gaps }; }
+    // After a transient fan-out failure the rounds still ask (minutes later, in a fresh CLI process); a blocked one stops.
+    if (!workiq && workIqBlocked) { stopReasons[prefix] = 'workIqUnavailable'; return { pack: current, gaps }; }
     let view = survive(prefix, current, base);
     let flat = 0;
     for (let round = 1; ; round++) {
@@ -1439,6 +1500,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     fixRounds: rounds,
     removed: pruned.removed,
     droppedSources: [...new Set(droppedSources)],
+    ...(offPurposeNews.length ? { offPurposeNews } : {}),
     ungrounded: ungroundedNumbers(finalPack, bodies),
     ...(input.useWorkIq ? { collectionRounds, stopReasons } : {}),
     readiness: readiness(finalPack),
@@ -1457,8 +1519,8 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
 export function runPlan(input: PackGenInput): { minCalls: number; maxCalls: number; promptChars: number } {
   const site = input.officialUrl.trim() ? 5 * 6_500 : 0;
   const news = input.useNews ? 10 * 200 : 0;
-  // The merged readiness items (Work IQ CLI) plus the follow-up answers a run may keep; fitPrompt caps every call.
-  const workiq = input.useWorkIq ? WORKIQ_GEN_ASPECTS.length * (WORKIQ_ITEM_MAX_CHARS + 600) + MAX_FOLLOWUP_CHARS : 0;
+  // The merged readiness items and the purpose section (Work IQ CLI) plus the follow-up answers a run may keep; fitPrompt caps every call.
+  const workiq = input.useWorkIq ? (WORKIQ_GEN_ASPECTS.length + 1) * (WORKIQ_ITEM_MAX_CHARS + 600) + MAX_FOLLOWUP_CHARS : 0;
   const base = stageAPrompt(input, []).length;
   const anchor = input.companyAnchor
     ? materialSources({ ...input, materials: [], researchNote: '' }, [], [], '', new Date(), null)

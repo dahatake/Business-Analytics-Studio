@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { TokenSummary, TokenTotals } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
+import { isNewsDerived } from '../../data/pack.ts';
 import { translate, type Lang, type MessageKey, type Vars } from '../../i18n/core.ts';
 import { loc, type Localizable } from '../../state/text.ts';
 import { ALL_PERSONAS, personaLabel, type Persona } from '../../state/personas.ts';
@@ -94,7 +95,7 @@ export function prepareExport(src: ExportSource, opts: ExportOptions): PreparedE
   }
   const useCases = opts.include.useCases ? src.useCases : null;
   const relatedIdSet = new Set<string>([...themes.flatMap((t) => t.relatedIds), ...(useCases ?? []).flatMap((u) => u.relatedIds)]);
-  let related = [...relatedIdSet].map((id) => src.byId.get(id)).filter((e): e is Entity => !!e);
+  let related = [...relatedIdSet].map((id) => src.byId.get(id)).filter((e): e is Entity => !!e && !isNewsDerived(e, src.byId));
   if (opts.audience === 'external') {
     // Display rule (FR-054, isHidden in src/ui/cardSpecs.ts): internal items stay hidden for an external audience.
     // This is independent of D-2, which only governs what generative AI may send.

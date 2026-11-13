@@ -1,24 +1,32 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactElement } from 'react';
 import {
-  Button, Field, Input, MessageBar, MessageBarBody, Radio, RadioGroup, Select, Tab, TabList,
+  Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Tab, TabList, ToggleButton,
+  Toolbar, ToolbarRadioButton, ToolbarRadioGroup, Tooltip,
 } from '@fluentui/react-components';
-import { Add20Regular, Delete20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { entitiesOf } from '../../data/pack.ts';
+import {
+  Add16Regular, Add20Regular, ArrowMove24Regular, CheckmarkCircle20Filled, Circle20Regular, CursorClick20Regular,
+  DataBarHorizontal20Regular, Delete20Regular, Dismiss16Regular, Edit16Regular, Flow16Regular, Flowchart24Regular,
+  DataScatter20Regular, Grid20Regular, Grid24Regular, Link16Regular, PeopleTeam24Regular, Scales24Regular, Sparkle20Regular, Table20Regular,
+} from '@fluentui/react-icons';
+import { entitiesOf, getEntity, loaded } from '../../data/pack.ts';
 import { translate } from '../../i18n/core.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
 import { replaceQuery, useRoute } from '../../state/router.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
-import { categoriesOf, categoryWeight, clampScore, computeAnalysis, newAnalysis, validateItems, WEIGHT_MAX, WEIGHT_MIN, SCORE_MAX, SCORE_MIN } from './analysis.ts';
+import { categoriesOf, categoryWeight, clampScore, computeAnalysis, newAnalysis, shownMethodsOf, validateItems, WEIGHT_MAX, WEIGHT_MIN, SCORE_MAX, SCORE_MIN } from './analysis.ts';
+import { itemKey, relatedItems, type LinkSelection } from './analysisLinks.ts';
 import { categoryKey, describeInsight, fmtScore, methodDescKey, methodKey } from './analysisText.ts';
-import { AnalysisViewer, type Viewer } from './AnalysisViewer.tsx';
+import { AnalysisViewer, type LinkView, type Viewer } from './AnalysisViewer.tsx';
 import { AuthorBadge, BackToHome, MockBadge, ScrollRegion } from './common.tsx';
 import { KpiOkrPanel } from './KpiOkrPanel.tsx';
 import { EngagementsPanel } from './EngagementsPanel.tsx';
 import { requestAnalysisDraft } from './mocks.ts';
-import { METHODS, newId, type Analysis, type AnalysisItem, type MethodId } from './model.ts';
+import { METHODS, newId, type Analysis, type AnalysisData, type AnalysisItem, type MethodId } from './model.ts';
 import { useAnalyses, useProjUi } from './stores.ts';
 import './project.css';
+
+type Layout = 'split' | 'results' | 'stacked';
 
 /** FR-133〜FR-135, FR-140, FR-153/154, NFR-UX-006. */
 export function AnalysisScreen() {
@@ -54,53 +62,270 @@ export function AnalysisScreen() {
   );
 }
 
-function AnalysisTab({ layout }: { layout: 'split' | 'results' | 'stacked' }) {
+/** One recognisable shape per framework (Fluent system icons; no third-party artwork). */
+const METHOD_ICON: Record<MethodId, ComponentType<{ 'aria-hidden'?: boolean; className?: string }>> = {
+  swot: Grid24Regular,
+  fiveForces: ArrowMove24Regular,
+  valueChain: Flowchart24Regular,
+  threeC: PeopleTeam24Regular,
+  bsc: Scales24Regular,
+};
+
+/** The analysis a method's tile shows: the one being edited when it is of that method, else the latest. */
+function tileAnalysis(data: AnalysisData, method: MethodId): Analysis | null {
+  const own = data.analyses.filter((a) => a.method === method);
+  const active = own.find((a) => a.id === data.activeId);
+  if (active) return active;
+  return own.reduce<Analysis | null>((best, a) => (!best || a.updatedAt >= best.updatedAt ? a : best), null);
+}
+
+function AnalysisTab({ layout }: { layout: Layout }) {
   const { t, lang } = useI18n();
   const data = useAnalyses((s) => s.value);
   const set = useAnalyses((s) => s.set);
-  const [method, setMethod] = useState<MethodId>('swot');
+  const shown = shownMethodsOf(data);
   const active = data.analyses.find((a) => a.id === data.activeId) ?? null;
+  const [selection, setSelection] = useState<LinkSelection | null>(null);
 
-  const start = () => {
+  const toggleMethod = (m: MethodId) => set((v) => {
+    const cur = shownMethodsOf(v);
+    return { ...v, shownMethods: cur.includes(m) ? cur.filter((x) => x !== m) : METHODS.filter((x) => x === m || cur.includes(x)) };
+  });
+  const start = (method: MethodId) => {
     const at = new Date().toISOString();
     const n = data.analyses.filter((a) => a.method === method).length + 1;
     const title = { ja: translate('ja', 'proj.an.newTitle', { method: translate('ja', methodKey(method)), n }), en: translate('en', 'proj.an.newTitle', { method: translate('en', methodKey(method)), n }) };
     const a = newAnalysis(method, title, newId('an'), at);
-    set((v) => ({ analyses: [...v.analyses, a], activeId: a.id }));
+    set((v) => ({ ...v, analyses: [...v.analyses, a], activeId: a.id, shownMethods: METHODS.filter((x) => x === method || shownMethodsOf(v).includes(x)) }));
   };
+  const open = (id: string) => set((v) => {
+    const a = v.analyses.find((x) => x.id === id);
+    if (!a) return v;
+    return { ...v, activeId: id, shownMethods: METHODS.filter((x) => x === a.method || shownMethodsOf(v).includes(x)) };
+  });
+
+  // A selection survives edits but not the removal of its analysis, its items or its method's tile.
+  const sel = useMemo(() => {
+    if (!selection) return null;
+    const a = data.analyses.find((x) => x.id === selection.analysisId);
+    if (!a || !shown.includes(a.method) || tileAnalysis(data, a.method)?.id !== a.id) return null;
+    const ids = selection.itemIds.filter((id) => a.items.some((i) => i.id === id));
+    return ids.length ? { analysis: a, itemIds: ids } : null;
+  }, [selection, data, shown]);
+  const visible = useMemo(() => shown.map((m) => tileAnalysis(data, m)).filter((a): a is Analysis => !!a), [data, shown]);
+  const related = useMemo(
+    () => (sel ? relatedItems({ analysisId: sel.analysis.id, itemIds: sel.itemIds }, visible, loaded) : new Map()),
+    [sel, visible],
+  );
+  const toggle = useCallback((analysisId: string, itemIds: string[]) => {
+    setSelection((cur) => (cur && cur.analysisId === analysisId && cur.itemIds.length === itemIds.length && itemIds.every((id) => cur.itemIds.includes(id))
+      ? null
+      : { analysisId, itemIds }));
+  }, []);
+  const link: LinkView = useMemo(() => ({
+    selected: new Set(sel ? sel.itemIds.map((id) => itemKey(sel.analysis.id, id)) : []),
+    related,
+    toggle,
+    clear: () => setSelection(null),
+    entityName: (id: string) => {
+      const e = getEntity(id);
+      return e ? loc(e.name, lang) : id;
+    },
+  }), [sel, related, toggle, lang]);
+
+  useEffect(() => {
+    if (!sel) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) setSelection(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sel]);
+
+  const selLabel = (() => {
+    if (!sel) return '';
+    const items = sel.analysis.items.filter((i) => sel.itemIds.includes(i.id));
+    if (items.length === 1) return loc(items[0]!.text, lang);
+    const cats = [...new Set(items.map((i) => i.category))];
+    return cats.map((c) => t(categoryKey(c))).join('・');
+  })();
+  const otherCount = sel ? [...related.keys()].filter((k) => !k.startsWith(`${sel.analysis.id}:`)).length : 0;
+
+  const dashboard = (
+    <Panel title={t('proj.an.dashboard')} rationale="proj.an.dashboardWhy" className={layout === 'split' && active ? 'proj-dash-panel' : 'span-full proj-dash-panel'} testId="proj-dashboard">
+      <div className={`proj-link-status${sel ? ' active' : ''}`} role="status" aria-live="polite" data-testid="proj-link-status">
+        {sel
+          ? (
+            <>
+              <CursorClick20Regular aria-hidden className="proj-link-status-icon" />
+              <span className="proj-link-status-text">{t('proj.link.status', { label: selLabel, count: related.size, other: otherCount })}</span>
+              <span className="proj-link-legend" aria-hidden>
+                <span className="proj-link-hint same"><Link16Regular /></span>{t('proj.link.legendSame')}
+                <span className="proj-link-hint near"><Flow16Regular /></span>{t('proj.link.legendNear')}
+              </span>
+              <Button size="small" appearance="subtle" icon={<Dismiss16Regular />} onClick={() => setSelection(null)} data-testid="proj-link-clear">{t('proj.link.clear')}</Button>
+            </>
+          )
+          : <span className="muted">{t('proj.link.hint')}</span>}
+      </div>
+      {shown.length === 0
+        ? <p className="muted">{t('proj.an.noneShown')}</p>
+        : (
+          <div className="proj-dash">
+            {shown.map((m) => (
+              <AnalysisTile
+                key={m}
+                method={m}
+                analysis={tileAnalysis(data, m)}
+                options={data.analyses.filter((a) => a.method === m)}
+                editing={active?.method === m}
+                link={link}
+                relatedCount={(() => {
+                  const a = tileAnalysis(data, m);
+                  return a && sel ? [...related.keys()].filter((k) => k.startsWith(`${a.id}:`)).length : 0;
+                })()}
+                hasSelection={!!sel}
+                onStart={() => start(m)}
+                onOpen={open}
+              />
+            ))}
+          </div>
+        )}
+    </Panel>
+  );
+
+  const editor = active
+    ? <AnalysisEditor key={active.id} analysis={active} analyses={data.analyses} onOpen={open} link={link} split={layout === 'split'} />
+    : null;
 
   return (
     <>
       <Panel title={t('proj.an.choose')} rationale="proj.an.chooseWhy" className="span-full" testId="proj-method-panel" id="proj-method-panel">
-        <div className="proj-method-row">
-          <RadioGroup value={method} onChange={(_, d) => setMethod(d.value as MethodId)} aria-label={t('proj.an.method')} className="proj-methods">
-            {METHODS.map((m) => (
-              <Radio key={m} value={m} label={<span><strong>{t(methodKey(m))}</strong><span className="proj-method-desc">{t(methodDescKey(m))}</span></span>} />
-            ))}
-          </RadioGroup>
-          <Button appearance="primary" icon={<Add20Regular />} onClick={start} data-testid="proj-start-analysis">{t('proj.an.start')}</Button>
+        <p className="proj-method-hint">{t('proj.an.chooseHint')}</p>
+        <div role="group" aria-label={t('proj.an.shownMethods')} className="proj-methods">
+          {METHODS.map((m) => {
+            const Icon = METHOD_ICON[m];
+            const on = shown.includes(m);
+            const count = data.analyses.filter((a) => a.method === m).length;
+            return (
+              <ToggleButton
+                key={m}
+                checked={on}
+                appearance="subtle"
+                className={`proj-method-btn${on ? ' on' : ''}`}
+                onClick={() => toggleMethod(m)}
+                data-testid={`proj-method-${m}`}
+              >
+                <span className="proj-method-icon"><Icon aria-hidden /></span>
+                <span className="proj-method-text">
+                  <span className="proj-method-name">{t(methodKey(m))}</span>
+                  <span className="proj-method-desc">{t(methodDescKey(m))}</span>
+                </span>
+                {count > 0 && <Badge appearance="tint" size="small" className="proj-method-count">{t('proj.an.methodCount', { count })}</Badge>}
+                <span className="proj-method-check" aria-hidden>{on ? <CheckmarkCircle20Filled /> : <Circle20Regular />}</span>
+              </ToggleButton>
+            );
+          })}
         </div>
-        {data.analyses.length > 0 && (
-          <Field label={t('proj.an.existing')} className="proj-existing">
-            <Select value={active?.id ?? ''} onChange={(_, d) => set((v) => ({ ...v, activeId: d.value || null }))} data-testid="proj-analysis-select">
-              {data.analyses.map((a) => <option key={a.id} value={a.id}>{`${loc(a.title, lang)} — ${t(methodKey(a.method))}`}</option>)}
-            </Select>
-          </Field>
-        )}
         {data.analyses.length === 0 && <p className="muted">{t('proj.an.none')}</p>}
       </Panel>
-      {active && <ActiveAnalysis key={active.id} analysis={active} layout={layout} />}
+      {layout === 'split' && editor
+        ? <div className="proj-split span-full">{editor}{dashboard}</div>
+        : layout === 'stacked' ? <>{editor}{dashboard}</> : <>{dashboard}{editor}</>}
     </>
   );
 }
 
-function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'split' | 'results' | 'stacked' }) {
+function AnalysisTile({ method, analysis, options, editing, link, relatedCount, hasSelection, onStart, onOpen }: {
+  method: MethodId;
+  analysis: Analysis | null;
+  options: Analysis[];
+  editing: boolean;
+  link: LinkView;
+  relatedCount: number;
+  hasSelection: boolean;
+  onStart: () => void;
+  onOpen: (id: string) => void;
+}) {
+  const { t, lang } = useI18n();
+  const [viewer, setViewer] = useState<Viewer>('plot');
+  const result = useMemo(() => (analysis ? computeAnalysis(analysis) : null), [analysis]);
+  const Icon = METHOD_ICON[method];
+  const name = t(methodKey(method));
+  const headingId = `proj-tile-h-${method}`;
+  const viewers: { id: Viewer; label: string; icon: ReactElement }[] = [
+    { id: 'plot', label: t('proj.viewer.plot'), icon: <DataScatter20Regular /> },
+    { id: 'matrix', label: t('proj.viewer.matrix'), icon: <Grid20Regular /> },
+    { id: 'table', label: t('proj.viewer.table'), icon: <Table20Regular /> },
+    { id: 'chart', label: t('proj.viewer.chart'), icon: <DataBarHorizontal20Regular /> },
+  ];
+  return (
+    <section className={`proj-tile${editing ? ' editing' : ''}`} aria-labelledby={headingId} data-testid={`proj-tile-${method}`}>
+      <header className="proj-tile-head">
+        <span className="proj-method-icon"><Icon aria-hidden /></span>
+        <div className="proj-tile-titles">
+          <h3 id={headingId} className="proj-tile-title">{name}</h3>
+          {analysis && options.length > 1
+            ? (
+              <Select size="small" value={analysis.id} onChange={(_, d) => onOpen(d.value)} aria-label={t('proj.an.tileAnalysis', { method: name })} data-testid={`proj-tile-select-${method}`}>
+                {options.map((a) => <option key={a.id} value={a.id}>{loc(a.title, lang)}</option>)}
+              </Select>
+            )
+            : analysis && <p className="proj-result-title">{loc(analysis.title, lang)}</p>}
+        </div>
+        <div className="proj-tile-actions">
+          {editing && <Badge appearance="filled" color="brand" size="small">{t('proj.an.editing')}</Badge>}
+          {hasSelection && analysis && <Badge appearance="tint" color={relatedCount ? 'brand' : 'informative'} size="small" data-testid={`proj-link-count-${method}`}>{t('proj.link.count', { count: relatedCount })}</Badge>}
+          {analysis && !editing && (
+            <Tooltip content={t('proj.an.edit')} relationship="description">
+              <Button size="small" appearance="subtle" icon={<Edit16Regular />} onClick={() => onOpen(analysis.id)} data-testid={`proj-edit-${method}`}>{t('proj.an.edit')}</Button>
+            </Tooltip>
+          )}
+          {analysis && (
+            <Tooltip content={t('proj.an.newOf', { method: name })} relationship="label">
+              <Button size="small" appearance="subtle" icon={<Add16Regular />} onClick={onStart} data-testid={`proj-new-${method}`} />
+            </Tooltip>
+          )}
+        </div>
+      </header>
+      {analysis && result
+        ? (
+          <>
+            <p className="proj-insight" data-testid="proj-insight">{describeInsight(result, t)}</p>
+            {result.overall !== null && <p className="proj-overall" data-testid="proj-overall">{t('proj.an.overall', { score: fmtScore(result.overall) })}</p>}
+            <Toolbar
+              size="small"
+              aria-label={t('proj.viewer.label')}
+              checkedValues={{ viewer: [viewer] }}
+              onCheckedValueChange={(_, d) => d.checkedItems[0] && setViewer(d.checkedItems[0] as Viewer)}
+              className="proj-tile-viewers"
+            >
+              <ToolbarRadioGroup>
+                {viewers.map((v) => (
+                  <Tooltip key={v.id} content={v.label} relationship="label">
+                    <ToolbarRadioButton name="viewer" value={v.id} appearance="subtle" icon={v.icon} />
+                  </Tooltip>
+                ))}
+              </ToolbarRadioGroup>
+            </Toolbar>
+            <AnalysisViewer analysis={analysis} result={result} viewer={viewer} link={link} />
+          </>
+        )
+        : (
+          <div className="proj-tile-empty">
+            <p className="muted">{t('proj.an.tileEmpty', { method: name })}</p>
+            <Button appearance="primary" icon={<Add20Regular />} onClick={onStart} data-testid={`proj-start-${method}`}>{t('proj.an.start')}</Button>
+          </div>
+        )}
+    </section>
+  );
+}
+
+function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis: Analysis; analyses: Analysis[]; onOpen: (id: string) => void; link: LinkView; split: boolean }) {
   const { t, lang } = useI18n();
   const set = useAnalyses((s) => s.set);
-  const [viewer, setViewer] = useState<Viewer>('matrix');
   const [draftNote, setDraftNote] = useState<{ count: number; mock: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
-  const result = useMemo(() => computeAnalysis(analysis), [analysis]);
   const issues = useMemo(() => validateItems(analysis.items), [analysis.items]);
   const cats = categoriesOf(analysis.method);
 
@@ -108,8 +333,8 @@ function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'spl
   const updateItem = (id: string, patch: Partial<AnalysisItem>) => update((a) => ({ ...a, items: a.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) }));
   const addItem = () => update((a) => ({ ...a, items: [...a.items, { id: newId('item'), category: cats[0]!, text: '', score: 3, weight: 1, author: 'human' }] }));
   const removeAnalysis = () => set((v) => {
-    const analyses = v.analyses.filter((a) => a.id !== analysis.id);
-    return { analyses, activeId: analyses[0]?.id ?? null };
+    const rest = v.analyses.filter((a) => a.id !== analysis.id);
+    return { ...v, analyses: rest, activeId: rest.find((a) => a.method === analysis.method)?.id ?? rest[0]?.id ?? null };
   });
   const num = (raw: string, min: number, max: number): number | null => {
     const n = Number.parseFloat(raw);
@@ -126,9 +351,20 @@ function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'spl
       setBusy(false);
     }
   };
+  const rowMark = (id: string) => {
+    if (link.selected.size === 0) return '';
+    const key = itemKey(analysis.id, id);
+    if (link.selected.has(key)) return 'is-selected';
+    return link.related.has(key) ? 'is-related' : '';
+  };
 
-  const editor = (
-    <Panel title={t('proj.an.params')} rationale="proj.an.paramsWhy" testId="proj-params" className={layout === 'split' ? '' : 'span-full'}>
+  return (
+    <Panel title={`${t('proj.an.params')} — ${loc(analysis.title, lang)}`} rationale="proj.an.paramsWhy" testId="proj-params" className={split ? '' : 'span-full'} id="proj-editor">
+      <Field label={t('proj.an.editTarget')} className="proj-existing">
+        <Select value={analysis.id} onChange={(_, d) => onOpen(d.value)} data-testid="proj-analysis-select">
+          {analyses.map((a) => <option key={a.id} value={a.id}>{`${loc(a.title, lang)} — ${t(methodKey(a.method))}`}</option>)}
+        </Select>
+      </Field>
       <h3 className="proj-h3">{t('proj.an.weights')}</h3>
       <div className="proj-weights">
         {cats.map((c) => (
@@ -167,7 +403,7 @@ function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'spl
             {analysis.items.map((i, idx) => {
               const bad = (f: 'text' | 'score' | 'weight') => issues.some((x) => x.itemId === i.id && x.field === f);
               return (
-                <tr key={i.id}>
+                <tr key={i.id} className={rowMark(i.id)}>
                   <td>
                     <Select aria-label={t('proj.an.itemCategory', { n: idx + 1 })} value={i.category} onChange={(_, d) => updateItem(i.id, { category: d.value })}>
                       {cats.map((c) => <option key={c} value={c}>{t(categoryKey(c))}</option>)}
@@ -224,21 +460,4 @@ function ActiveAnalysis({ analysis, layout }: { analysis: Analysis; layout: 'spl
       )}
     </Panel>
   );
-
-  const results = (
-    <Panel title={t('proj.an.results')} rationale="proj.an.resultsWhy" testId="proj-results" className={layout === 'split' ? '' : 'span-full'}>
-      <p className="proj-result-title">{loc(analysis.title, lang)}</p>
-      <p className="proj-insight" data-testid="proj-insight" aria-live="polite">{describeInsight(result, t)}</p>
-      {result.overall !== null && <p className="proj-overall" data-testid="proj-overall">{t('proj.an.overall', { score: fmtScore(result.overall) })}</p>}
-      <RadioGroup layout="horizontal" value={viewer} onChange={(_, d) => setViewer(d.value as Viewer)} aria-label={t('proj.viewer.label')}>
-        <Radio value="table" label={t('proj.viewer.table')} />
-        <Radio value="matrix" label={t('proj.viewer.matrix')} />
-        <Radio value="chart" label={t('proj.viewer.chart')} />
-      </RadioGroup>
-      <AnalysisViewer analysis={analysis} result={result} viewer={viewer} />
-    </Panel>
-  );
-
-  if (layout === 'split') return <div className="proj-split span-full">{editor}{results}</div>;
-  return layout === 'results' ? <>{results}{editor}</> : <>{editor}{results}</>;
 }

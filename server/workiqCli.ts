@@ -564,6 +564,49 @@ export const WORKIQ_SESSION_IDLE_MS = 300_000;
 const RETRIED: ReadonlySet<WorkIqErrorCode> = new Set(['workiqUnavailable', 'workiqBusy', 'workiqTimeout']);
 const RETRY_BACKOFF = [1, 4] as const;
 const FATAL: ReadonlySet<WorkIqErrorCode> = new Set(['notSignedIn', 'workiqForbidden', 'workiqEulaRequired', 'workiqCliMissing']);
+/**
+ * Observed 2026-11-13 with @microsoft/workiq 1.0.0: a `workiq mcp` process sometimes lists only its local tools
+ * (accept_eula, ask, list_agents, get_debug_link) and never adds `retrieve` later in the same process (polled for 2
+ * minutes, no list_changed notification), while a fresh process often has it. Two more starts are tried; then the
+ * searches go through `ask`.
+ */
+const TOOL_RESTARTS = 2;
+const TOOLS_LIST_TIMEOUT_MS = 30_000;
+/** `ask` is a Microsoft 365 Copilot chat turn (about 60–100 s each), so it gets a longer timeout than `retrieve`. */
+const ASK_TIMEOUT_MS = 240_000;
+const MAX_ASK_CITATIONS = 20;
+
+type SearchTool = 'retrieve' | 'ask';
+
+/** The `ask` request for one planned search: facts with their source, from Microsoft 365 only. */
+export function workIqAskQuestion(query: string, lang: 'ja' | 'en'): string {
+  return lang === 'ja'
+    ? `私がアクセスできる Microsoft 365 の情報（メール・会議・Teams のチャット・OneDrive と SharePoint のファイル）から、次の件について事実だけを箇条書きで答えてください。各事実に根拠の文書・会議・メールの名前・日付・リンクを付け、推測や一般論は書かず、見つからなければ「見つからない」と書いてください。\n対象: ${query}`
+    : `From the Microsoft 365 information I can access (mail, meetings, Teams chats, OneDrive and SharePoint files), list only facts about the following, each with the name, date and link of the document, meeting or mail behind it. Do not guess or generalise; write "not found" when nothing is found.\nSubject: ${query}`;
+}
+
+/**
+ * An `ask` answer in the `retrieve` payload shape, so the merge and the generator read both alike: the answer text is
+ * the top-level markdown (marked as a Copilot summary) and every https link it cites becomes a citation-only hit.
+ */
+export function askAsRetrieval(result: unknown, lang: 'ja' | 'en'): Json | WorkIqError {
+  if (!isObj(result)) return new WorkIqError('badWorkiqResponse');
+  if (needsEula(result)) return new WorkIqError('workiqEulaRequired');
+  const sc = isObj(result.structuredContent) ? result.structuredContent : {};
+  const answer = (typeof sc.answer === 'string' && sc.answer.trim() ? sc.answer : texts(result).join('\n')).trim();
+  if (result.isError === true) return errorFromText(answer);
+  const hits: Json[] = [];
+  const seen = new Set<string>();
+  for (const m of answer.matchAll(/(?:\[([^\]\n]{1,200})\]\()?(https:\/\/[^\s)<>"'\]]+)\)?/g)) {
+    const url = httpsUrl(m[2]);
+    if (!url || seen.has(url.href) || hits.length >= MAX_ASK_CITATIONS) continue;
+    seen.add(url.href);
+    const title = m[1]?.replace(/^\^?\d+$/, '').trim();
+    hits.push({ webUrl: url.href, ...(title ? { resourceMetadata: { document: { title } } } : {}) });
+  }
+  const note = lang === 'ja' ? '（Work IQ ask による Microsoft 365 Copilot の要約回答）' : '(Microsoft 365 Copilot summary via Work IQ ask)';
+  return { structuredContent: { [RETRIEVAL_KEY]: { markdown: answer ? `${note}\n${answer}` : '', retrievalHits: hits, stoppedReason: 'completed' } } };
+}
 
 /** One Work IQ CLI call at a time per relay, like the REST route. */
 export class WorkIqCliService {
@@ -579,6 +622,8 @@ export class WorkIqCliService {
   private session: McpSession | null = null;
   private opening: Promise<McpSession> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The search tool of the current session (startSearchSession). */
+  private searchTool: SearchTool = 'retrieve';
 
   constructor(opts: WorkIqCliServiceOptions = {}) {
     this.readConfig = opts.config ?? ((cmd) => workIqCliConfig(cmd));
@@ -621,10 +666,33 @@ export class WorkIqCliService {
       this.idleTimer = null;
     }
     if (this.session?.alive) return Promise.resolve(this.session);
-    this.opening ??= McpSession.open(this.command(), this.doSpawn ?? (spawn as unknown as SpawnLike), this.timeoutMs, signal)
+    this.opening ??= this.startSearchSession(signal)
       .then((s) => (this.session = s))
       .finally(() => { this.opening = null; });
     return this.opening;
+  }
+
+  /**
+   * Starts `workiq mcp` and checks which search tool it offers (tools/list): a process without `retrieve` is restarted
+   * up to TOOL_RESTARTS times, then `ask` is used. A server that cannot list its tools is assumed to have `retrieve`.
+   */
+  private async startSearchSession(signal?: AbortSignal): Promise<McpSession> {
+    for (let start = 0; ; start++) {
+      const s = await McpSession.open(this.command(), this.doSpawn ?? (spawn as unknown as SpawnLike), this.timeoutMs, signal);
+      const listed = await s.request('tools/list', {}, Math.min(this.timeoutMs, TOOLS_LIST_TIMEOUT_MS), signal);
+      const names = listed instanceof WorkIqError || !Array.isArray(listed.tools) ? null
+        : listed.tools.flatMap((t) => (isObj(t) && typeof t.name === 'string' ? [t.name] : []));
+      if (!names || names.includes('retrieve')) {
+        this.searchTool = 'retrieve';
+        return s;
+      }
+      if (start >= TOOL_RESTARTS || signal?.aborted) {
+        this.searchTool = names.includes('ask') ? 'ask' : 'retrieve';
+        return s;
+      }
+      s.close();
+      await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs));
+    }
   }
 
   /** Ends the pack-search session now (settings changed, a fatal failure, or the caller is done). */
@@ -641,35 +709,51 @@ export class WorkIqCliService {
     this.idleTimer.unref?.();
   }
 
-  /** One `retrieve` in the session, tried up to twice more after a transient failure (a dead session is restarted). */
-  private async retrieveInSession(query: string, timeZone: string, signal?: AbortSignal): Promise<Json | WorkIqError> {
+  /**
+   * One search in the session (`retrieve`, or `ask` when the process lacks it), tried up to twice more after a transient
+   * failure (a dead session is restarted).
+   */
+  private async retrieveInSession(query: string, timeZone: string, lang: 'ja' | 'en', signal?: AbortSignal, retries: number = RETRY_BACKOFF.length): Promise<Json | WorkIqError> {
     for (let attempt = 0; ; attempt++) {
       let r: Json | WorkIqError;
       try {
         const s = await this.openSession(signal);
-        r = await s.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding', timeZone } }, this.timeoutMs, signal);
+        if (this.searchTool === 'ask') {
+          const answer = await s.request('tools/call', { name: 'ask', arguments: { question: workIqAskQuestion(query, lang) } }, Math.max(this.timeoutMs, ASK_TIMEOUT_MS), signal);
+          r = answer instanceof WorkIqError ? answer : askAsRetrieval(answer, lang);
+        } else {
+          r = await s.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding', timeZone } }, this.timeoutMs, signal);
+        }
       } catch (error) {
         r = error instanceof WorkIqError ? error : new WorkIqError('workiqUnavailable');
       }
       const code = retrieveError(r);
-      if (attempt >= RETRY_BACKOFF.length || !code || !RETRIED.has(code) || signal?.aborted) return r;
+      if (attempt >= retries || !code || !RETRIED.has(code) || signal?.aborted) return r;
       await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs * RETRY_BACKOFF[attempt]!));
     }
   }
 
   /**
    * The pack searches (server/workiq.ts workIqPlan): the requested sections, with `expand` every readiness ladder
-   * wording as well, and the follow-up topics. They run four at a time in one MCP session that stays open between the
-   * calls of a generation. Without `expand` each search is its own section, as before; with it, the searches of each
-   * readiness item are merged into one section (mergeByItem). A section that fails is reported in its place; sign-in,
-   * permission and EULA failures stop the run because every other section would fail the same way.
+   * wording and the purpose concepts as well, and the follow-up topics. They run four at a time in one MCP session that
+   * stays open between the calls of a generation. Without `expand` each search is its own section, as before; with it,
+   * the searches of each readiness item are merged into one section (mergeByItem) and the purpose searches into a
+   * `purpose` section. When the session has to use `ask`, the ladder wordings are left out (each `ask` already answers
+   * broadly and takes about a minute). A section that fails is reported in its place; sign-in, permission and EULA
+   * failures stop the run because every other section would fail the same way.
    */
   askSections(question: WorkIqQuestion, signal?: AbortSignal): Promise<WorkIqSectionAnswer[]> {
     return this.run(async () => {
-      const plan = workIqPlan(question);
       let raw: (Json | WorkIqError)[];
+      let plan: ReturnType<typeof workIqPlan>;
       try {
-        raw = await inPool(plan, WORKIQ_CLI_CONCURRENCY, (p) => this.retrieveInSession(p.query, question.timeZone, signal));
+        try {
+          await this.openSession(signal);
+        } catch {
+          // Reported by the searches below, which try to start the session again.
+        }
+        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve' });
+        raw = await inPool(plan, WORKIQ_CLI_CONCURRENCY, (p) => this.retrieveInSession(p.query, question.timeZone, question.lang, signal));
       } finally {
         this.keepSessionIdle();
       }
@@ -683,7 +767,11 @@ export class WorkIqCliService {
         this.closeSession();
         throw new WorkIqError(fatal);
       }
-      if (codes.every((c) => c !== null)) throw new WorkIqError(codes[0]!);
+      if (codes.every((c) => c !== null)) {
+        // A process whose searches all failed is not reused: the next call starts a fresh one (and checks its tools).
+        this.closeSession();
+        throw new WorkIqError(codes[0]!);
+      }
       const fetchedAt = new Date(this.now()).toISOString();
       const single = (i: number): WorkIqSectionAnswer => {
         const r = raw[i]!;
@@ -696,6 +784,8 @@ export class WorkIqCliService {
         const idx = plan.flatMap((p, i) => (p.items.includes(req.key) ? [i] : []));
         return { key: req.key, queries: idx.map((i) => plan[i]!.query), wordings: idx.flatMap((i) => (plan[i]!.wording ? [plan[i]!.wording!] : [])), results: idx.map((i) => raw[i]!) };
       });
+      const purposeIdx = plan.flatMap((p, i) => (p.kind === 'purpose' ? [i] : []));
+      if (purposeIdx.length) items.push({ key: 'purpose', queries: purposeIdx.map((i) => plan[i]!.query), wordings: [], results: purposeIdx.map((i) => raw[i]!) });
       return [...mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS), ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
     });
   }
@@ -705,7 +795,14 @@ export class WorkIqCliService {
     if (this.now() - this.lastVerification < 5_000) return Promise.reject(new WorkIqError('workiqBusy'));
     this.lastVerification = this.now();
     return this.run(async () => {
-      const result = await this.retrieve(WORKIQ_CLI_VERIFY_QUERY, 'UTC', signal);
+      let r: Json | WorkIqError;
+      try {
+        r = await this.retrieveInSession(WORKIQ_CLI_VERIFY_QUERY, 'UTC', 'en', signal, 0);
+      } finally {
+        this.closeSession();
+      }
+      if (r instanceof WorkIqError) throw r;
+      const result = parseRetrieveResult(r, WORKIQ_CLI_VERIFY_QUERY, new Date(this.now()).toISOString());
       if (result.citations.length === 0) throw new WorkIqError('workiqNoGrounding');
     });
   }

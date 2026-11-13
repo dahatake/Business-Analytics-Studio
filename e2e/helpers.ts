@@ -11,17 +11,18 @@ export interface SetupOptions {
   skipOpening?: boolean;
   /** Skip start-up step 2 (company and project selection). Defaults to skipOpening. */
   skipLaunch?: boolean;
-  /** Share a device namespace only in tests which explicitly exercise multiple origins. */
-  deviceId?: string;
+  /** Share a device namespace across origins, or use null for an isolated production-mode server. */
+  deviceId?: string | null;
 }
 
 /** Seed persisted settings before the app boots (same shape zustand/persist writes). */
 export async function setup(page: Page, opts: SetupOptions = {}) {
   const { lang = 'ja', audience = 'internal', motion = 'reduce', skipOpening = true } = opts;
   const skipLaunch = opts.skipLaunch ?? skipOpening;
-  const deviceId = opts.deviceId ?? randomUUID();
+  const deviceId = opts.deviceId === undefined ? randomUUID() : opts.deviceId;
   await page.addInitScript(({ lang, audience, motion, skipOpening, skipLaunch, deviceId }) => {
-    localStorage.setItem('bas.device.test', deviceId);
+    if (deviceId === null) localStorage.removeItem('bas.device.test');
+    else localStorage.setItem('bas.device.test', deviceId);
     if (sessionStorage.getItem('bas.e2e.seeded')) return;
     sessionStorage.setItem('bas.e2e.seeded', '1');
     if (skipOpening) sessionStorage.setItem('bas.openingSeen', '1');

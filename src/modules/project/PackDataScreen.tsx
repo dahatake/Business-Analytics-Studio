@@ -273,7 +273,7 @@ function CollectionCoverage({ raw }: { raw: unknown }) {
                 <th scope="row">{key in labels ? t(labels[key as keyof typeof labels]) : t(`proj.pack.kind.${key as EntityKind}`)}</th>
                 <td>{t(presence[key] ? 'proj.pack.yes' : 'proj.pack.no')}</td>
                 <td>{section ? t(`proj.pack.coverage.status.${section.status}`) : t('proj.pack.coverage.unknown')}</td>
-                <td>{section ? [section.reason, section.missingFields.join(', '), section.sourceIds.join(', ')].filter(Boolean).join(' · ') : '—'}</td>
+                <td>{section ? [section.reason, section.missingFields.join(', '), section.sourceIds.filter((id) => !id.startsWith('source-news-')).join(', ')].filter(Boolean).join(' · ') : '—'}</td>
                 <td>{section?.nextAction ?? '—'}</td>
               </tr>
             );

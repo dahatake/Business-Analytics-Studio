@@ -1,4 +1,4 @@
-import type { Edge, LoadedPack, RelationType } from '../../data/pack.ts';
+import { isNewsDerived, type Edge, type LoadedPack, type RelationType } from '../../data/pack.ts';
 import type { Entity, EntityKind, LText } from '../../data/schema.ts';
 import type { FlowKind, KpiStage, Layer, NormalizedGraphExtension, Semantic, TwinKind } from './extensions.ts';
 
@@ -199,19 +199,19 @@ export function deriveTwins(data: LoadedPack, ext?: NormalizedGraphExtension): T
   for (const edge of data.edges) {
     if (!TWIN_EDGE_TYPES.includes(edge.type)) continue;
     const s = data.byId.get(edge.source), t = data.byId.get(edge.target);
-    if (!s || !t || s.world === t.world) continue;
+    if (!s || !t || isNewsDerived(s, data.byId) || isNewsDerived(t, data.byId) || s.world === t.world) continue;
     const digital = s.world === 'digital' ? s : t;
     const real = digital === s ? t : s;
     add(digital.id, real.id, twinKindForType(digital.type), 'edge');
   }
   for (const e of data.pack.entities) {
-    if (e.kind !== 'kpi') continue;
+    if (e.kind !== 'kpi' || isNewsDerived(e, data.byId)) continue;
     const owner = data.byId.get(e.ownerId);
     if (owner?.kind === 'person' && data.byId.has(owner.siteId)) add(e.id, owner.siteId, 'measures', 'derived');
   }
   for (const tw of ext?.twins ?? []) {
     const d = data.byId.get(tw.digital), r = data.byId.get(tw.real);
-    if (d?.world === 'digital' && r?.world === 'real') add(d.id, r.id, tw.kind, 'pack');
+    if (d?.world === 'digital' && r?.world === 'real' && !isNewsDerived(d, data.byId) && !isNewsDerived(r, data.byId)) add(d.id, r.id, tw.kind, 'pack');
   }
   return out;
 }

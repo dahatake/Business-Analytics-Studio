@@ -4,7 +4,10 @@ import { samplePack } from '../src/data/sample.ts';
 import { loadPack } from '../src/data/pack.ts';
 import type { Entity } from '../src/data/schema.ts';
 import { useProjects } from '../src/state/projects.ts';
-import { computeAnalysis, demoAnalyses, categoryScore, newAnalysis, validateItems } from '../src/modules/project/analysis.ts';
+import { computeAnalysis, demoAnalyses, categoryScore, newAnalysis, shownMethodsOf, validateItems } from '../src/modules/project/analysis.ts';
+import { itemEntities, itemKey, relatedItems } from '../src/modules/project/analysisLinks.ts';
+import { highlightedScore, layoutPlot } from '../src/modules/project/analysisPlot.ts';
+import { nextDot } from '../src/modules/project/analysisPlotRender.ts';
 import { describeInsight } from '../src/modules/project/analysisText.ts';
 import { translate } from '../src/i18n/core.ts';
 import { achievementPct, demoKpis, kpiStatusText, okrPct, packKpis, statusForPct, validateKpi } from '../src/modules/project/kpiOkr.ts';
@@ -112,6 +115,128 @@ describe('analysis computations (FR-133/134)', () => {
     expect(req.prompt.length).toBeLessThanOrEqual(RECOMMEND_MAX_PROMPT_CHARS);
     expect(req.prompt.endsWith('[…]')).toBe(true);
     expect(suggestionRequest('在庫', 'ja', [], { text: '短い資料', media: [] }).prompt).toBe('[bas-proj:recommend] 在庫\n\n短い資料');
+  });
+});
+
+describe('cross-highlighting between analyses (FR-135)', () => {
+  const d = demoAnalyses(samplePack);
+  const swot = d.analyses.find((a) => a.method === 'swot')!;
+  const bsc = d.analyses.find((a) => a.method === 'bsc')!;
+  const textOf = (i: AnalysisItem) => (typeof i.text === 'string' ? i.text : i.text.en);
+  const byText = (a: typeof swot, en: string) => a.items.find((i) => textOf(i) === en)!;
+  const nameOf = (id: string) => { const n = pack.byId.get(id)!.name; return typeof n === 'string' ? n : n.en; };
+
+  it('an issue highlights, in another analysis, the KPIs the pack measures it by and, in its own, the solutions that resolve it', () => {
+    const issue = pack.byId.get('issue-lead-time')!;
+    const kpis = pack.edges.filter((e) => e.source === issue.id && e.type === 'measuredBy').map((e) => nameOf(e.target));
+    const sols = pack.edges.filter((e) => e.target === issue.id && e.type === 'resolves').map((e) => nameOf(e.source));
+    expect(kpis.length).toBeGreaterThan(0);
+    const rel = relatedItems({ analysisId: swot.id, itemIds: [byText(swot, nameOf(issue.id)).id] }, d.analyses, pack);
+    const bscHits = bsc.items.filter((i) => rel.has(itemKey(bsc.id, i.id))).map(textOf).sort();
+    expect(bscHits).toEqual([...kpis].sort());
+    // "On-time delivery" is only reachable through the measuredBy edge.
+    expect(rel.get(itemKey(bsc.id, byText(bsc, 'On-time delivery').id))).toEqual({ kind: 'near', entityId: 'kpi-otd' });
+    for (const s of sols) expect(rel.get(itemKey(swot.id, byText(swot, s).id))).toMatchObject({ kind: 'near', entityId: expect.stringMatching(/^sol-/) });
+    // Unrelated items stay unmarked, and the selection itself is not "related".
+    expect(rel.has(itemKey(swot.id, byText(swot, 'Rising raw-material prices').id))).toBe(false);
+    expect(rel.has(itemKey(swot.id, byText(swot, nameOf(issue.id)).id))).toBe(false);
+  });
+
+  it('items naming the same entity, or with the same text, link as "same"; a whole category can be the selection', () => {
+    const free = { ...newAnalysis('threeC', 'x', 'an-free', '2026-01-01'), items: [
+      { ...item('company', 4, 1, 'f1'), text: { ja: '名古屋工場の稼働率が高い', en: 'High utilisation at Nagoya Plant' } },
+      { ...item('competitor', 3, 1, 'f2'), text: 'Rising raw-material prices' },
+      { ...item('customer', 3, 1, 'f3'), text: 'Nagoya Plantation tea' },
+    ] };
+    const all = [swot, free];
+    const plant = byText(swot, 'Nagoya Plant');
+    const rel = relatedItems({ analysisId: swot.id, itemIds: [plant.id] }, all, pack);
+    expect(rel.get(itemKey(free.id, 'f1'))).toEqual({ kind: 'same', entityId: 'site-nagoya' });
+    // Latin names match whole words only.
+    expect(rel.has(itemKey(free.id, 'f3'))).toBe(false);
+    const threat = byText(swot, 'Rising raw-material prices');
+    expect(relatedItems({ analysisId: swot.id, itemIds: [threat.id] }, all, pack).get(itemKey(free.id, 'f2'))).toEqual({ kind: 'same' });
+    const strengths = swot.items.filter((i) => i.category === 'strengths').map((i) => i.id);
+    expect(relatedItems({ analysisId: swot.id, itemIds: strengths }, all, pack).has(itemKey(free.id, 'f1'))).toBe(true);
+    expect(itemEntities(free.items[0]!, pack)).toEqual(new Set(['site-nagoya']));
+  });
+
+  it('shown methods default to the methods that have analyses and keep the method order', () => {
+    expect(shownMethodsOf(d)).toEqual(['swot', 'bsc']);
+    expect(shownMethodsOf({ ...d, shownMethods: ['bsc', 'fiveForces'] })).toEqual(['fiveForces', 'bsc']);
+    expect(shownMethodsOf({ ...d, shownMethods: [] })).toEqual([]);
+  });
+});
+
+describe('d3 dot plot layout (FR-135)', () => {
+  // Many ties on purpose: the beeswarm has to stack them without overlap.
+  const many = analysisOf('swot', [
+    ...Array.from({ length: 14 }, (_, k) => item('strengths', 4, (k % 5) + 1, `s${k}`)),
+    item('weaknesses', 1, 3, 'w1'), item('weaknesses', 5, 0, 'w2'), item('weaknesses', 3, 2, 'w3'),
+    item('threats', 3, 1, 't1'),
+  ]);
+
+  it('dots never overlap, stay inside their band and plot area, and follow the score order on x', () => {
+    const l = layoutPlot(many);
+    expect(l.dots).toHaveLength(many.items.length);
+    for (let a = 0; a < l.dots.length; a++) {
+      for (let b = a + 1; b < l.dots.length; b++) {
+        const p = l.dots[a]!, q = l.dots[b]!;
+        expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeGreaterThanOrEqual(p.r + q.r - 0.5);
+      }
+    }
+    for (const dot of l.dots) {
+      const row = l.rows.find((r) => r.id === dot.category)!;
+      expect(dot.y - dot.r).toBeGreaterThanOrEqual(row.y0 - 0.5);
+      expect(dot.y + dot.r).toBeLessThanOrEqual(row.y1 + 0.5);
+      expect(dot.x - dot.r).toBeGreaterThanOrEqual(l.left - 0.5);
+      expect(dot.x + dot.r).toBeLessThanOrEqual(l.right + 0.5);
+    }
+    const w = (id: string) => l.dots.find((dd) => dd.itemId === id)!;
+    expect(w('w1').x).toBeLessThan(w('w3').x);
+    expect(w('w3').x).toBeLessThan(w('w2').x);
+    // Bigger weight, bigger dot; weight 0 still gets a visible dot.
+    expect(w('s4').r).toBeGreaterThan(w('s0').r);
+    expect(w('w2').r).toBeGreaterThan(0);
+    // Rows follow the method's category order and do not overlap.
+    expect(l.rows.map((r) => r.id)).toEqual(['strengths', 'weaknesses', 'opportunities', 'threats']);
+    for (let k = 1; k < l.rows.length; k++) expect(l.rows[k]!.y0).toBeGreaterThanOrEqual(l.rows[k - 1]!.y1);
+  });
+
+  it('is deterministic, and editing one item moves only that item (object constancy for the transition)', () => {
+    expect(layoutPlot(many)).toEqual(layoutPlot(many));
+    const edited = { ...many, items: many.items.map((i) => (i.id === 't1' ? { ...i, score: 5 } : i)) };
+    const before = layoutPlot(many), after = layoutPlot(edited);
+    const pos = (l: typeof before, id: string) => l.dots.find((dd) => dd.itemId === id)!;
+    expect(pos(after, 't1').x).toBeGreaterThan(pos(before, 't1').x);
+    for (const id of ['s0', 'w1', 'w3']) expect(pos(after, id)).toEqual(pos(before, id));
+  });
+
+  it('the mean line sits at the category score; an empty category has none', () => {
+    const l = layoutPlot(many);
+    const weak = l.rows.find((r) => r.id === 'weaknesses')!;
+    expect(weak.mean).toBe(categoryScore(many.items, 'weaknesses'));
+    expect(l.rows.find((r) => r.id === 'opportunities')!.meanX).toBeNull();
+  });
+
+  it('cross-highlight value is the weighted mean of only the highlighted items (Power BI style)', () => {
+    const items = [item('strengths', 5, 1, 'a'), item('strengths', 2, 2, 'b'), item('strengths', 1, 1, 'c')];
+    expect(highlightedScore(items, 'strengths', (i) => i.id !== 'c')).toBe(3);
+    expect(highlightedScore(items, 'strengths', () => false)).toBeNull();
+  });
+
+  it('arrow keys move along a row by score and to the nearest dot of the next row with dots', () => {
+    const l = layoutPlot(many);
+    const leftmost = [...l.dots].filter((dd) => dd.category === 'weaknesses').sort((a, b) => a.x - b.x)[0]!.itemId;
+    expect(leftmost).toBe('w1');
+    expect(nextDot(l, 'w1', 'ArrowRight')).toBe('w3');
+    expect(nextDot(l, 'w3', 'ArrowLeft')).toBe('w1');
+    expect(nextDot(l, 'w1', 'ArrowLeft')).toBeNull();
+    // Opportunities is empty, so ↓ from weaknesses lands on threats.
+    expect(nextDot(l, 'w3', 'ArrowDown')).toBe('t1');
+    expect(nextDot(l, 't1', 'ArrowUp')).toBe('w3');
+    expect(nextDot(l, 't1', 'Home')).toMatch(/^s\d+$/);
+    expect(nextDot(l, 's0', 'End')).toBe('t1');
   });
 });
 

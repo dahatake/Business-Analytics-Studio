@@ -119,12 +119,14 @@ describe('company anchor and project alignment', () => {
       entities: [
         source('source-workiq-1', 'm365'),
         source('source-web-1', 'web'),
+        source('source-news-1', 'web'),
         { id: 'cause-1', kind: 'cause', name: lt('Work IQ fact'), description: lt('Review the original'), world: 'real', type: 'event', classification: 'internal', author: 'ai', sourceIds: ['source-workiq-1'] },
         { id: 'person-1', kind: 'person', name: lt('Private person'), description: lt('Private'), world: 'real', type: 'person', classification: 'internal', author: 'ai', sourceIds: ['source-workiq-1'], role: lt('Role'), siteId: 'site-1' },
       ],
       extensions: {},
     });
     const sources = projectEvidenceSources(pack, 'en');
+    expect(sources.some((item) => item.id.startsWith('source-news-'))).toBe(false);
     expect(sources.find((item) => item.id === 'source-workiq-1')?.facts).toEqual([{ kind: 'cause', text: 'Work IQ fact: Review the original' }]);
     const prompt = alignmentPrompt(anchor, 'Improve deliveries', { projectKpi: 'Delay rate', sources: sources.filter((s) => s.id === 'source-workiq-1') }, 'en');
     expect(prompt).toContain('Work IQ fact');

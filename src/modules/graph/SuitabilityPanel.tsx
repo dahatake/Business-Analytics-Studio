@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Field, Select } from '@fluentui/react-components';
-import { loaded } from '../../data/pack.ts';
+import { getEntity, loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { SEMANTICS, type Semantic } from './extensions.ts';
@@ -14,7 +14,7 @@ export function SuitabilityPanel({ ext }: { ext: NormalizedGraphExtension }) {
   const [directed, setDirected] = useState(true);
   const [question, setQuestion] = useState<Question>('chain');
   const result = assessSuitability(semantic, directed, question);
-  const usedTypes = useMemo(() => RELATION_TYPES.filter((r) => loaded.edges.some((e) => e.type === r)), []);
+  const usedTypes = useMemo(() => RELATION_TYPES.filter((r) => loaded.edges.some((e) => e.type === r && getEntity(e.source) && getEntity(e.target))), []);
 
   return (
     <div className="split">

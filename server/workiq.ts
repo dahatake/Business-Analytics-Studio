@@ -179,17 +179,59 @@ export const ASPECT_ITEMS: Record<WorkIqAspect, readonly ReadinessKey[]> = {
 export interface PlannedSearch {
   key: string;
   query: string;
-  kind: 'aspect' | 'ladder' | 'topic';
+  kind: 'aspect' | 'ladder' | 'purpose' | 'topic';
   items: readonly ReadinessKey[];
   /** The ladder wording behind a `ladder` search, as packGenerate's follow-up rounds would ask it. */
   wording?: string;
 }
 
-/** workIqSearches plus, with `expand`, every ladder wording of every readiness item (keys `<item>-<n>`). */
-export function workIqPlan(q: WorkIqQuestion): PlannedSearch[] {
+/** Purpose searches per planned fan-out: the clauses and the names the purpose and focus mention. */
+export const MAX_PURPOSE_SEARCHES = 8;
+const MAX_PURPOSE_CLAUSE_CHARS = 120;
+
+/**
+ * The concepts of the project purpose, searched one by one with `expand` (2026-11-13: the purpose of a real project named
+ * a Viva Engage channel, account-team information sharing and competitive differentiation, and none of the readiness
+ * wordings reached them). Named things (quoted, or Latin-script names such as "Viva Engage" or "Hubらじお") come first
+ * because Microsoft 365 search matches them exactly; then each clause of the purpose, then the focus.
+ */
+export function purposeTopics(q: Pick<WorkIqQuestion, 'company' | 'project' | 'purpose' | 'focus' | 'lang'>): string[] {
+  const known = new Set([q.company, q.project].map((s) => s.toLowerCase()));
+  const names: string[] = [];
+  const addName = (raw: string) => {
+    const t = raw.replace(/\s+/g, ' ').trim().slice(0, MAX_TOPIC_CHARS);
+    if (t.length < 3 || known.has(t.toLowerCase()) || names.some((n) => n.toLowerCase() === t.toLowerCase())) return;
+    names.push(t);
+  };
+  const text = `${q.purpose}\n${q.focus}`;
+  for (const m of text.matchAll(/[「『"“`]([^」』"”`\n]{2,60})[」』"”`]/g)) addName(m[1]!);
+  // Latin-script names, with a kana suffix kept ("Hubらじお") and capitalised words joined ("Viva Engage"). In Japanese
+  // text any Latin word is a name; in English only joined capitalised words and inner capitals ("PowerBI") are. A dot
+  // belongs to a name only inside it ("Node.js"), so a sentence end never joins two sentences.
+  for (const m of text.matchAll(/[A-Za-z](?:[\w+&-]|\.(?=\w))*(?:[ \u3000][A-Z](?:[\w+&-]|\.(?=\w))*)*[ぁ-んァ-ヶー]*/g)) {
+    const t = m[0].replace(/-+$/, '');
+    if (/[ぁ-んァ-ヶー]/.test(t) || (/^[A-Z]/.test(t) && /\s/.test(t)) || /.[A-Z]/.test(t) || (q.lang === 'ja' && /[A-Za-z]{3}/.test(t))) addName(t);
+  }
+  const clauses = q.purpose.split(/[。．.!?！？\n]+/).map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => s.length >= 6).map((s) => s.slice(0, MAX_PURPOSE_CLAUSE_CHARS));
+  const ja = q.lang === 'ja';
+  const named = names.map((n) => (ja ? `${n} の内容・利用状況・関係者・数値・課題` : `${n}: what it is, usage, people involved, figures and issues`));
+  const focus = q.focus.trim() ? [ja ? `重点「${q.focus.trim().slice(0, MAX_PURPOSE_CLAUSE_CHARS)}」に関する取り組み・事例・数値` : `focus "${q.focus.trim().slice(0, MAX_PURPOSE_CLAUSE_CHARS)}": initiatives, examples and figures`] : [];
+  const out: string[] = [];
+  for (const t of [...named, ...clauses, ...focus]) if (!out.includes(t)) out.push(t);
+  return out.slice(0, MAX_PURPOSE_SEARCHES);
+}
+
+/**
+ * workIqSearches plus, with `expand`, every ladder wording of every readiness item (keys `<item>-<n>`) and the purpose
+ * concepts (keys `purpose-<n>`). `ladder: false` keeps the purpose searches but drops the wordings, for the slower
+ * synthesized `ask` fallback (server/workiqCli.ts).
+ */
+export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean } = {}): PlannedSearch[] {
+  const ladder = q.expand && opts.ladder !== false;
   return [
     ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })),
-    ...(q.expand ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
+    ...(ladder ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
+    ...(q.expand ? purposeTopics(q).map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })) : []),
     ...q.topics.map((topic, i): PlannedSearch => ({ key: `topic-${i + 1}`, query: workIqTopicQuery(q, topic), kind: 'topic', items: [] })),
   ];
 }

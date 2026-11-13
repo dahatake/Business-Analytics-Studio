@@ -347,7 +347,11 @@ function attributesOf(e: Entity, inp: SceneInput): InfoRow[] {
     const stage = kpiStageOf(e.id, inp.ext.ext);
     rows.push({ label: t('graph.attr.stage'), value: stage ? t(`graph.stage.${stage}`) : t('graph.stage.unset') });
   }
-  rows.push({ label: t('graph.attr.relations'), value: inp.fmtNumber(inp.data.edges.filter((x) => x.source === e.id || x.target === e.id).length) });
+  rows.push({ label: t('graph.attr.relations'), value: inp.fmtNumber(inp.data.edges.filter((x) => {
+    if (x.source !== e.id && x.target !== e.id) return false;
+    const source = inp.data.byId.get(x.source), target = inp.data.byId.get(x.target);
+    return !!source && !!target && inp.visible(source) && inp.visible(target);
+  }).length) });
   return rows;
 }
 

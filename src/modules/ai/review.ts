@@ -1,5 +1,5 @@
 import type { Entity, EntityKind, EntityOf } from '../../data/schema.ts';
-import { loaded } from '../../data/pack.ts';
+import { getEntity, loaded } from '../../data/pack.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { selectOutbound } from '../../ai/redact.ts';
 import { translate, type Lang, type MessageKey } from '../../i18n/core.ts';
@@ -74,7 +74,7 @@ export function proposalFor(lang: Lang, entities: Entity[]): string {
 /** Mock for use 'review': JSON array of {componentId, text}. */
 export function reviewMock(lang: Lang, prompt: string): string {
   const seeds: ProposalSeed[] = parseComponents(prompt).map((c) => {
-    const ents = c.entityIds.map((id) => loaded.byId.get(id)).filter((e): e is Entity => Boolean(e));
+    const ents = c.entityIds.map((id) => getEntity(id)).filter((e): e is Entity => Boolean(e));
     return { componentId: c.id, text: proposalFor(lang, selectOutbound(ents, loaded.byId).included) };
   });
   return JSON.stringify(seeds);

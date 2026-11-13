@@ -128,8 +128,7 @@ test.describe('ops: integrations (FR-199〜FR-203)', () => {
 
 test('FR-101: a pack built by the CLI is shown without rebuilding the app', async ({ page }) => {
   test.setTimeout(90_000);
-  const base = resolve('.bas-local', `e2e-ops-${test.info().workerIndex}`);
-  rmSync(base, { recursive: true, force: true });
+  const base = test.info().outputPath('cli-pack');
   mkdirSync(base, { recursive: true });
   const template = resolve(process.env.BAS_OUT ?? 'dist');
   const indexBefore = readFileSync(join(template, 'index.html'), 'utf8');
@@ -138,13 +137,16 @@ test('FR-101: a pack built by the CLI is shown without rebuilding the app', asyn
   expect(r.status, r.stdout + r.stderr).toBe(0);
   const app = join(base, 'work', 'contoso-robotics-e2e');
   expect(readFileSync(join(app, 'index.html'), 'utf8')).toBe(indexBefore);
-  const served = await startServer(app, 0);
+  const served = await startServer(app, 0, '127.0.0.1', join(base, 'device'));
   try {
-    await setup(page, { lang: 'en' });
+    await setup(page, { lang: 'en', deviceId: null });
     await page.goto(`${served.url}#/`);
     await expect(page.locator('main#main')).toBeVisible();
     await expect(page.getByText('Contoso Robotics E2E').first()).toBeVisible();
     await page.goto(`${served.url}#/brand`);
+    await expect(page.getByTestId('brand-origin')).toHaveText('Default theme');
+    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await page.reload();
     await expect(page.getByTestId('brand-origin')).toHaveText('Default theme');
   } finally {
     await served.close();

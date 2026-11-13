@@ -1,6 +1,6 @@
 import type { CustomerPack, EntityOf } from '../../data/schema.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
-import type { Analysis, AnalysisData, AnalysisItem, MethodId } from './model.ts';
+import { METHODS, type Analysis, type AnalysisData, type AnalysisItem, type MethodId } from './model.ts';
 
 /** Category ids of every method. Names only (general frameworks; no copyrighted text). */
 export const METHOD_CATEGORIES = {
@@ -157,6 +157,12 @@ export const clampScore = (v: number) => Math.min(SCORE_MAX, Math.max(SCORE_MIN,
 
 export function newAnalysis(method: MethodId, title: Analysis['title'], id: string, at: string): Analysis {
   return { id, method, title, items: [], weights: Object.fromEntries(categoriesOf(method).map((c) => [c, 1])), createdAt: at, updatedAt: at };
+}
+
+/** Methods shown side by side on the dashboard: the saved choice, else every method that has an analysis (in method order). */
+export function shownMethodsOf(data: AnalysisData): MethodId[] {
+  const chosen = data.shownMethods ?? data.analyses.map((a) => a.method);
+  return METHODS.filter((m) => chosen.includes(m));
 }
 
 /* ---------- Demo analyses, derived from the customer pack ---------- */

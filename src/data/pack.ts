@@ -26,6 +26,13 @@ export interface LoadedPack {
   issues: PackIssue[];
 }
 
+/** A news headline, or an item whose every valid source is a news headline. */
+export function isNewsDerived(e: Entity | undefined, byId: Map<string, Entity> = loaded.byId): boolean {
+  if (!e) return false;
+  if (e.kind === 'source') return e.id.startsWith('source-news-');
+  return e.sourceIds.length > 0 && e.sourceIds.every((id) => byId.get(id)?.id.startsWith('source-news-') === true);
+}
+
 /** Validate entity-by-entity so one bad item does not block the whole pack (FR-102). */
 export function loadPack(raw: unknown): LoadedPack {
   const issues: PackIssue[] = [];
@@ -116,22 +123,24 @@ export function packKey(origin: PackOrigin): string {
 }
 
 export function entitiesOf<K extends EntityKind>(kind: K, data: LoadedPack = loaded): EntityOf<K>[] {
-  return data.pack.entities.filter((e): e is EntityOf<K> => e.kind === kind);
+  return data.pack.entities.filter((e): e is EntityOf<K> => e.kind === kind && !isNewsDerived(e, data.byId));
 }
 
 export function getEntity(id: string, data: LoadedPack = loaded): Entity | undefined {
-  return data.byId.get(id);
+  const entity = data.byId.get(id);
+  return entity && !isNewsDerived(entity, data.byId) ? entity : undefined;
 }
 
 export function neighbors(id: string, data: LoadedPack = loaded): { entity: Entity; edge: Edge; direction: 'out' | 'in' }[] {
   const out: { entity: Entity; edge: Edge; direction: 'out' | 'in' }[] = [];
+  if (!getEntity(id, data)) return out;
   for (const edge of data.edges) {
     if (edge.source === id) {
       const entity = data.byId.get(edge.target);
-      if (entity) out.push({ entity, edge, direction: 'out' });
+      if (entity && !isNewsDerived(entity, data.byId)) out.push({ entity, edge, direction: 'out' });
     } else if (edge.target === id) {
       const entity = data.byId.get(edge.source);
-      if (entity) out.push({ entity, edge, direction: 'in' });
+      if (entity && !isNewsDerived(entity, data.byId)) out.push({ entity, edge, direction: 'in' });
     }
   }
   return out;

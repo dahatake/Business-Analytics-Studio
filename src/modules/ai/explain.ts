@@ -1,5 +1,5 @@
 import type { Entity, EntityKind, EntityOf } from '../../data/schema.ts';
-import { entitiesOf, getEntity, neighbors, loaded } from '../../data/pack.ts';
+import { entitiesOf, getEntity, neighbors } from '../../data/pack.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 
@@ -41,7 +41,7 @@ export function entitiesOfComponents(components: ScreenComponent[]): Entity[] {
   const out: Entity[] = [];
   for (const c of components) {
     for (const id of c.entityIds) {
-      const e = loaded.byId.get(id);
+      const e = getEntity(id);
       if (e && !seen.has(id)) {
         seen.add(id);
         out.push(e);

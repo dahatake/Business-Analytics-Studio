@@ -1,5 +1,5 @@
 import type { Entity, EntityKind, EntityOf } from '../data/schema.ts';
-import { getEntity, entitiesOf, regionName, neighbors } from '../data/pack.ts';
+import { getEntity, entitiesOf, isNewsDerived, regionName, neighbors } from '../data/pack.ts';
 import type { Formatters, MessageKey } from '../i18n/index.ts';
 import type { LText } from '../data/schema.ts';
 import { kpiProgress } from '../domain/kpi.ts';
@@ -168,5 +168,5 @@ export function routeFor(e: Entity): string | null {
 }
 
 export function isHidden(e: Entity, audience: 'internal' | 'external'): boolean {
-  return audience === 'external' && e.classification === 'internal';
+  return isNewsDerived(e) || (audience === 'external' && e.classification === 'internal');
 }

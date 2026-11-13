@@ -167,8 +167,8 @@ function WorkflowPanel({ workflow }: { workflow: WorkflowExtension }) {
                 {list(t('flows.work.data'), s.data, 'workflow-data')}
               </div>
               {next.length > 0 && <p data-testid="workflow-next"><strong>{t('flows.work.next')}</strong> → {next.join(' / ')}</p>}
-              {s.sourceIds && s.sourceIds.length > 0 && (
-                <p className="muted">{t('flows.work.sources')}: {s.sourceIds.map((id, k) => <span key={id}>{k > 0 && ', '}{getEntity(id) ? <EntityRef id={id} /> : id}</span>)}</p>
+              {s.sourceIds && s.sourceIds.some((id) => getEntity(id) || !loaded.byId.has(id)) && (
+                <p className="muted">{t('flows.work.sources')}: {s.sourceIds.filter((id) => getEntity(id) || !loaded.byId.has(id)).map((id, k) => <span key={id}>{k > 0 && ', '}{getEntity(id) ? <EntityRef id={id} /> : id}</span>)}</p>
               )}
             </li>
           );

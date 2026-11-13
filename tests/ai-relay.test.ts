@@ -15,7 +15,7 @@ import {
   relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
 } from '../server/relay.ts';
 import { spawn } from 'node:child_process';
-import { WorkIqError, type WorkIqQuestion } from '../server/workiq.ts';
+import { MAX_PURPOSE_SEARCHES, WorkIqError, purposeTopics, type WorkIqQuestion } from '../server/workiq.ts';
 import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, WorkIqCliService, mergeByItem, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
@@ -1120,10 +1120,23 @@ process.stdin.on('data', (d) => {
       process.stdout.write('not json from the CLI\\n');
       send({ id: 99, method: 'roots/list' });
       send({ id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'WorkIQ', version: '1.0.0' } } });
+    } else if (m.method === 'tools/list') {
+      // The remote tools (retrieve) appear only in some CLI processes; 'restart' lacks them in the first process.
+      const starts = mode === 'restart' ? (fs.existsSync(log + '.starts') ? Number(fs.readFileSync(log + '.starts', 'utf8')) : 0) + 1 : 0;
+      if (mode === 'restart') fs.writeFileSync(log + '.starts', String(starts));
+      const local = ['accept_eula', 'ask', 'list_agents', 'get_debug_link'];
+      const remote = mode === 'askonly' || mode === 'askfail' || starts === 1 ? [] : ['retrieve'];
+      send({ id: m.id, result: { tools: [...local, ...remote].map((name) => ({ name, inputSchema: { type: 'object' } })) } });
     } else if (m.method === 'tools/call') {
       fs.appendFileSync(log, JSON.stringify(m.params) + '\\n');
       if (mode === 'crash') process.exit(3);
       if (mode === 'hang') return;
+      if (m.params.name === 'ask' && mode !== 'eula') {
+        if (mode === 'askfail') { send({ id: m.id, result: { isError: true, content: [{ type: 'text', text: 'Network error: the request failed.' }] } }); continue; }
+        const answer = 'NSAT target 4.5 (FY27) [KPI scorecard](https://contoso.sharepoint.com/kpi.xlsx). See also https://teams.microsoft.com/l/meetup-join/9 .';
+        send({ id: m.id, result: { content: [{ type: 'text', text: answer }], structuredContent: { answer, conversationId: 'c1' } } });
+        continue;
+      }
       const q = String(m.params.arguments && m.params.arguments.query);
       tries[q] = (tries[q] || 0) + 1;
       if (mode === 'flaky' && /KPI/.test(q) && tries[q] <= 2) {
@@ -1303,9 +1316,10 @@ process.stdin.on('data', (d) => {
     const r = await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['kpi'], expand: true }), { workiqCli: cli('byquery') });
     expect(r.status).toBe(200);
     const sections = (r.body as { sections: { key: string; question: string; answer: string; citations: { title: string }[]; searches: string[] }[] }).sections;
-    expect(sections.map((s) => s.key)).toEqual(['org', 'locations', 'customers', 'workflow', 'dataCatalog', 'kpi', 'engagements', 'issues']);
-    // 1 section search + 3 wordings × 8 items, built by the relay.
-    expect(calls()).toHaveLength(25);
+    expect(sections.map((s) => s.key)).toEqual(['org', 'locations', 'customers', 'workflow', 'dataCatalog', 'kpi', 'engagements', 'issues', 'purpose']);
+    // 1 section search + 3 wordings × 8 items + 1 search built from the purpose, built by the relay.
+    expect(calls()).toHaveLength(26);
+    expect(calls().some((c) => String(c.arguments.query).includes('Reduce late deliveries'))).toBe(true);
     const kpi = sections.find((s) => s.key === 'kpi')!;
     expect(kpi.searches).toEqual(['KPI and OKR definitions with targets and actuals', 'metrics and attainment in scorecards, QBRs and business reviews', 'fiscal-year targets, commitments and success measures']);
     expect(kpi.question.split('\n')).toHaveLength(4);
@@ -1315,6 +1329,50 @@ process.stdin.on('data', (d) => {
     expect(all.split('Shared overview').length - 1).toBe(1);
     expect(all.split('NSAT target 4.5').length - 1).toBe(1);
     expect(sections.filter((s) => s.key !== 'kpi').every((s) => s.citations.length === 0)).toBe(true);
+  });
+
+  it('plans the purpose concepts: named things first, then each purpose clause and the focus, capped', () => {
+    const base = { company: 'Contoso', project: 'Innovation Hub', focus: '', lang: 'ja' as const };
+    const topics = purposeTopics({ ...base, purpose: 'Viva Engage の「Hubらじお」動画の視聴者が少ない。アカウントチームへの情報共有を強化したい。Contoso と Innovation Hub は対象外' });
+    expect(topics.slice(0, 2)).toEqual(['Hubらじお の内容・利用状況・関係者・数値・課題', 'Viva Engage の内容・利用状況・関係者・数値・課題']);
+    expect(topics).toContain('アカウントチームへの情報共有を強化したい');
+    // The company and project are no named topics of their own (every search is already about them).
+    expect(topics.filter((t) => t.endsWith('課題')).some((t) => /^(Contoso|Innovation Hub) /.test(t))).toBe(false);
+    expect(purposeTopics({ ...base, lang: 'en', purpose: 'Reduce late deliveries. Ok.', focus: 'Kansai' })).toEqual(['Reduce late deliveries', 'focus "Kansai": initiatives, examples and figures']);
+    expect(purposeTopics({ ...base, purpose: Array.from({ length: 12 }, (_, i) => `目的の文その${i}について`).join('。') })).toHaveLength(MAX_PURPOSE_SEARCHES);
+  });
+
+  it('restarts a CLI process that lacks retrieve, and searches through ask when no process offers it', async () => {
+    const q: WorkIqQuestion = { company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-11', lang: 'en', timeZone: 'Asia/Tokyo', aspects: ['kpi'], topics: [], expand: true };
+    const restarted = cli('restart');
+    try {
+      await restarted.askSections(q);
+      expect(Number(readFileSync(`${log}.starts`, 'utf8'))).toBe(2);
+      expect(calls().every((c) => c.name === 'retrieve')).toBe(true);
+    } finally {
+      restarted.closeSession();
+    }
+
+    rmSync(log, { force: true });
+    const askOnly = cli('askonly');
+    try {
+      const sections = await askOnly.askSections(q);
+      // Without retrieve: no ladder wordings (one ask per section search and purpose concept), each a Copilot summary with its links.
+      expect(calls().map((c) => c.name)).toEqual(['ask', 'ask']);
+      expect(String(calls()[0]!.arguments.question)).toMatch(/Microsoft 365[\s\S]*Subject: /);
+      const kpi = sections.find((s) => s.key === 'kpi') as { answer: string; citations: { title: string; url: string }[] };
+      expect(kpi.answer).toContain('Microsoft 365 Copilot summary');
+      expect(kpi.citations.map((c) => c.url).sort()).toEqual(['https://contoso.sharepoint.com/kpi.xlsx', 'https://teams.microsoft.com/l/meetup-join/9']);
+      expect(kpi.citations.find((c) => c.url.endsWith('kpi.xlsx'))?.title).toBe('KPI scorecard');
+      expect(sections.map((s) => s.key)).toContain('purpose');
+    } finally {
+      askOnly.closeSession();
+    }
+
+    rmSync(log, { force: true });
+    const failing = cli('askfail');
+    await expect(failing.askSections(q)).rejects.toBeInstanceOf(WorkIqError);
+    failing.closeSession();
   });
 
   it('merges planned searches by fused rank: one item per source, the longest excerpt, protected text withheld, the budget, and failed items', () => {

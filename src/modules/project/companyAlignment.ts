@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { CompanyAnchor, CompanyAnchorVersion } from '../../data/companyAnchor.ts';
 import { OkrExtension } from '../../data/extensionSchemas.ts';
 import { extractJson } from '../../data/packImport.ts';
-import type { CustomerPack } from '../../data/schema.ts';
+import type { CustomerPack, EntityOf } from '../../data/schema.ts';
 import { loc } from '../../state/text.ts';
 
 const str = z.string();
@@ -230,7 +230,7 @@ export function orderedCompanyObjectives(anchor: CompanyAnchor): CompanyAnchor['
 /** Project facts are secondary, potentially AI-generated summaries; the original documents still need review. */
 export function projectEvidenceSources(pack: CustomerPack, lang: 'ja' | 'en'): ProjectEvidenceSource[] {
   const okr = OkrExtension.safeParse(pack.extensions?.okr);
-  return pack.entities.filter((entity) => entity.kind === 'source').map((source) => {
+  return pack.entities.filter((entity): entity is EntityOf<'source'> => entity.kind === 'source' && !entity.id.startsWith('source-news-')).map((source) => {
     const facts: ProjectEvidenceSource['facts'] = [];
     for (const entity of pack.entities) {
       if (!entity.sourceIds.includes(source.id) || !['issue', 'cause', 'solution', 'kpi', 'initiative'].includes(entity.kind)) continue;

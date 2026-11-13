@@ -138,9 +138,11 @@ test.describe('step deliverables and to-do band', () => {
     await go(page, '/home');
     const band = page.getByTestId('dlv-band');
     await expect(band).toBeVisible();
-    const live = await page.locator('.live-feed').boundingBox();
+    const live = await page.getByRole('region', { name: 'ライブフィード' }).boundingBox();
+    const news = await page.getByRole('region', { name: '企業ニュース' }).boundingBox();
     const box = await band.boundingBox();
     expect(box!.y).toBeGreaterThanOrEqual(live!.y + live!.height - 1);
+    expect(box!.y).toBeGreaterThanOrEqual(news!.y + news!.height - 1);
     expect(box!.width).toBeGreaterThan(1000); // full width
     await expect(band).toContainText('ステップ 1/5: 課題定義');
     await expect(band).toContainText('成果物: 課題定義書');
@@ -228,10 +230,12 @@ test.describe('step deliverables and to-do band', () => {
     await open(page, '/home');
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByTestId('dlv-progress')).toHaveText('4/6 完了');
-    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.setViewportSize({ width: 1600, height: 1400 });
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('dlv-todo-define-doc')).toBeVisible();
-    // 1440×900 (browser chrome excluded): the head and the open list would take 40 % (> 35 %) of the height, so it closes again.
+    const bottom = await page.getByTestId('dlv-band').evaluate((el) => el.getBoundingClientRect().bottom + window.scrollY);
+    expect(bottom).toBeLessThanOrEqual(1400 * 0.35);
+    // At a shorter viewport the fixed area and list no longer fit within 35% of the height.
     await page.setViewportSize({ width: 1440, height: 789 });
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'false');
   });

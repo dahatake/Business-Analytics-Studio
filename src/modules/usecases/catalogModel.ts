@@ -1,4 +1,4 @@
-import { loaded, type LoadedPack } from '../../data/pack.ts';
+import { getEntity, isNewsDerived, loaded, type LoadedPack } from '../../data/pack.ts';
 import type { Entity, EntityKind, LText } from '../../data/schema.ts';
 import { locAll, type Localizable } from '../../state/text.ts';
 import { normalizeId, normalizeName } from './normalize.ts';
@@ -86,19 +86,17 @@ const matches = (term: Term, texts: string[]) => texts.some((t) => term.patterns
 
 /** Expand a use case's related ids along the pack: solutions → issues → causes / KPIs. */
 export function expandRelated(uc: UseCase, data: LoadedPack = loaded): Set<string> {
-  const out = new Set(uc.relatedIds);
+  const out = new Set(uc.relatedIds.filter((id) => !isNewsDerived(data.byId.get(id), data.byId)));
   for (const id of uc.relatedIds) {
-    const e = data.byId.get(id);
+    const e = getEntity(id, data);
     if (e?.kind === 'solution') {
-      e.issueIds.forEach((i) => out.add(i));
-      e.kpiIds.forEach((k) => out.add(k));
+      e.issueIds.concat(e.kpiIds).filter((ref) => !isNewsDerived(data.byId.get(ref), data.byId)).forEach((ref) => out.add(ref));
     }
   }
   for (const id of [...out]) {
-    const e = data.byId.get(id);
+    const e = getEntity(id, data);
     if (e?.kind === 'issue') {
-      e.causeIds.forEach((c) => out.add(c));
-      e.kpiIds.forEach((k) => out.add(k));
+      e.causeIds.concat(e.kpiIds).filter((ref) => !isNewsDerived(data.byId.get(ref), data.byId)).forEach((ref) => out.add(ref));
     }
   }
   return out;
@@ -135,7 +133,7 @@ export function deriveDataModel(useCases: UseCase[], data: LoadedPack = loaded):
     return cand;
   };
 
-  const records = data.pack.entities;
+  const records = data.pack.entities.filter((e) => !isNewsDerived(e, data.byId));
   const kindOf = new Map<EntityKind, DataEntity>();
   const kinds = new Set(records.map((e) => e.kind));
   const dataTyped = new Set(records.filter((e) => e.type === 'data').map((e) => e.kind));
@@ -186,6 +184,7 @@ export function deriveDataModel(useCases: UseCase[], data: LoadedPack = loaded):
     rel.add(a < b ? `${a}|${b}` : `${b}|${a}`);
   };
   for (const edge of data.edges) {
+    if (isNewsDerived(data.byId.get(edge.source), data.byId) || isNewsDerived(data.byId.get(edge.target), data.byId)) continue;
     const a = kindOf.get(data.byId.get(edge.source)?.kind as EntityKind);
     const b = kindOf.get(data.byId.get(edge.target)?.kind as EntityKind);
     if (a && b) addRel(a.id, b.id);

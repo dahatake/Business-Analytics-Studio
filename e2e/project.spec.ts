@@ -253,32 +253,139 @@ test.describe('project module', () => {
 
   test('@perf analysis: changing a parameter updates the result within 2 s (FR-134, PARAM-032) and viewers switch (FR-135)', async ({ page }) => {
     await go(page, '/analysis');
-    await expect(page.getByTestId('proj-result-matrix')).toBeVisible();
-    await page.getByRole('radio', { name: '表', exact: true }).check();
-    const cell = page.getByTestId('proj-score-strengths');
+    const swot = page.getByTestId('proj-tile-swot');
+    await expect(swot.getByTestId('proj-result-plot')).toBeVisible();
+    await swot.getByRole('radio', { name: '表', exact: true }).check();
+    const cell = swot.getByTestId('proj-score-strengths');
     await expect(cell).toHaveText('4.00');
     const t0 = Date.now();
     await page.getByTestId('proj-item-score-1').fill('1');
     await expect(cell).not.toHaveText('4.00', { timeout: 2000 });
     expect(Date.now() - t0).toBeLessThan(2000);
-    const insight = await page.getByTestId('proj-insight').textContent();
+    const insight = await swot.getByTestId('proj-insight').textContent();
     await page.getByTestId('proj-weight-threats').fill('5');
-    await expect(page.getByTestId('proj-insight')).not.toHaveText(insight ?? '', { timeout: 2000 });
-    await page.getByRole('radio', { name: 'グラフ' }).check();
-    await expect(page.getByTestId('proj-result-chart')).toBeVisible();
+    await expect(swot.getByTestId('proj-insight')).not.toHaveText(insight ?? '', { timeout: 2000 });
+    await swot.getByRole('radio', { name: 'グラフ' }).check();
+    await expect(swot.getByTestId('proj-result-chart')).toBeVisible();
 
-    // FR-133: start a new method; FR-140: AI draft is labelled as mock.
-    await page.getByRole('radio', { name: /^ファイブフォース分析/ }).check();
-    await page.getByTestId('proj-start-analysis').click();
-    await expect(page.getByTestId('proj-insight')).toHaveText('項目を追加すると結果が表示されます。');
+    // FR-133: add a method to the dashboard and start it; FR-140: AI draft is labelled as mock.
+    const ff = page.getByTestId('proj-method-fiveForces');
+    await expect(ff).toHaveAttribute('aria-pressed', 'false');
+    await ff.click();
+    await expect(ff).toHaveAttribute('aria-pressed', 'true');
+    const tile = page.getByTestId('proj-tile-fiveForces');
+    await tile.getByTestId('proj-start-fiveForces').click();
+    await expect(tile.getByTestId('proj-insight')).toHaveText('項目を追加すると結果が表示されます。');
     await page.getByTestId('proj-ai-draft').click();
     await expect(page.getByTestId('proj-ai-note')).toContainText('モック');
-    await expect(page.getByTestId('proj-overall')).toBeVisible();
+    await expect(tile.getByTestId('proj-overall')).toBeVisible();
 
     // FR-153/154: KPI status text.
     await page.getByRole('tab', { name: 'KPI・OKR' }).click();
     await expect(page.getByTestId('proj-kpi-panel')).toBeVisible();
     await expect(page.getByTestId('proj-okr-panel')).toContainText('納期と品質で選ばれる工場になる');
+  });
+
+  test('analysis dashboard: several methods side by side, and selecting an item highlights related items in every tile (FR-135)', async ({ page }) => {
+    await go(page, '/analysis');
+    await expect(page.getByTestId('proj-method-swot')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('proj-method-bsc')).toHaveAttribute('aria-pressed', 'true');
+    const swot = page.getByTestId('proj-tile-swot');
+    const bsc = page.getByTestId('proj-tile-bsc');
+    // The default view is the d3 dot plot: one dot per item.
+    await expect(bsc.getByTestId('proj-result-plot')).toBeVisible();
+    await expect(swot.locator('.proj-plot-dot')).not.toHaveCount(0);
+
+    // Hovering a dot shows its details.
+    const weakness = swot.getByRole('button', { name: /受注から出荷までが長い/ });
+    await weakness.hover();
+    await expect(swot.getByTestId('proj-plot-tip')).toContainText('受注から出荷までが長い');
+
+    // An issue (weakness) is measured by KPIs in the BSC and resolved by a solution (opportunity) in the SWOT.
+    await weakness.click();
+    await expect(weakness).toHaveAttribute('aria-pressed', 'true');
+    await expect(weakness).toHaveClass(/is-selected/);
+    await expect(page.getByTestId('proj-link-status')).toContainText('受注から出荷までが長い');
+    await expect(bsc.getByTestId('proj-link-count-bsc')).toBeVisible();
+    await expect(bsc.getByRole('button', { name: /納期遵守率/ })).toHaveClass(/is-related-(same|near)/);
+    await expect(swot.getByRole('button', { name: /需要予測と生産計画の最適化/ })).toHaveClass(/is-related-near/);
+    await expect(bsc.locator('.proj-plot-dot.is-dimmed').first()).toBeVisible();
+
+    // Arrow keys move the focus from dot to dot; Enter selects the focused dot.
+    await weakness.focus();
+    await page.keyboard.press('ArrowDown');
+    const focused = page.locator('.proj-plot-dot:focus');
+    await expect(focused).toHaveCount(1);
+    await expect(weakness).not.toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(focused).toHaveAttribute('aria-pressed', 'true');
+    await expect(weakness).toHaveAttribute('aria-pressed', 'false');
+    await weakness.click();
+
+    // The same selection holds in the other views of a tile; the chart overlays the highlighted items' value.
+    await bsc.getByRole('radio', { name: 'マトリクス' }).check();
+    await expect(bsc.locator('.proj-link-li.is-related', { hasText: '納期遵守率' })).toBeVisible();
+    await bsc.getByRole('radio', { name: '表', exact: true }).check();
+    await expect(bsc.locator('.proj-link-row.is-related')).not.toHaveCount(0);
+    await bsc.getByRole('radio', { name: 'グラフ' }).check();
+    await expect(bsc.getByTestId('proj-result-chart')).toHaveClass(/has-highlight/);
+    await expect(bsc.getByTestId('proj-chart-hl-customerView')).not.toHaveAttribute('data-value', '');
+    await expect(bsc.getByTestId('proj-chart-hl-customerView')).not.toHaveAttribute('width', '0');
+
+    // A click on the empty area of a visual clears the selection, as in BI tools; so does Esc.
+    await swot.locator('.proj-plot-bg').click({ position: { x: 4, y: 4 } });
+    await expect(weakness).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('.is-related, .is-related-same, .is-related-near')).toHaveCount(0);
+    await weakness.click();
+    await expect(weakness).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Escape');
+    await expect(weakness).toHaveAttribute('aria-pressed', 'false');
+
+    // Hiding a method removes its tile, and the choice survives a reload.
+    await page.getByTestId('proj-method-bsc').click();
+    await expect(bsc).toBeHidden();
+    await page.reload();
+    await expect(page.getByTestId('proj-tile-swot')).toBeVisible();
+    await expect(page.getByTestId('proj-method-bsc')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('proj-tile-bsc')).toBeHidden();
+  });
+
+  test('analysis dot plot: editing a score moves the same dot (d3 keyed join), and reduced motion applies it at once (FR-134/135)', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await go(page, '/analysis');
+    const swot = page.getByTestId('proj-tile-swot');
+    const dots = swot.locator('.proj-plot-dot');
+    await expect(dots).not.toHaveCount(0);
+    // Tag the DOM nodes: a keyed join updates them in place instead of re-creating them.
+    const read = () => dots.evaluateAll((els) => els.map((el) => ({
+      id: el.getAttribute('data-item-id'),
+      cat: el.getAttribute('data-category'),
+      score: el.getAttribute('data-score'),
+      cx: Number(el.getAttribute('cx')),
+      cy: Number(el.getAttribute('cy')),
+      tagged: (el as unknown as { bas?: number }).bas === 1,
+    })));
+    await dots.evaluateAll((els) => els.forEach((el) => { (el as unknown as { bas?: number }).bas = 1; }));
+    const before = await read();
+    const was = (id: string | null) => before.find((x) => x.id === id)!;
+    await page.getByTestId('proj-item-score-1').fill('1');
+    await expect.poll(async () => (await read()).filter((d) => d.score !== was(d.id).score).length).toBe(1);
+    const first = await read();
+    const edited = first.find((d) => d.score !== was(d.id).score)!;
+    expect(edited.score).toBe('1');
+    expect(edited.cx).toBeLessThan(was(edited.id).cx);
+    // Other categories keep their layout (a row only shifts as a whole when a row above changes height).
+    const others = first.filter((x) => x.cat !== edited.cat);
+    expect(others.length).toBeGreaterThan(0);
+    for (const d of others) expect(d.cx).toBeCloseTo(was(d.id).cx, 6);
+    for (const cat of new Set(others.map((d) => d.cat))) {
+      const shifts = others.filter((d) => d.cat === cat).map((d) => d.cy - was(d.id).cy);
+      for (const sh of shifts) expect(sh).toBeCloseTo(shifts[0]!, 6);
+    }
+    await page.waitForTimeout(200);
+    // Reduced motion: the first changed frame is already the final position (no transition in flight).
+    expect(await read()).toEqual(first);
+    expect(first.every((d) => d.tagged)).toBe(true);
   });
 
   test('discussion: themes, decisions, next actions, undo/redo, export with default name and restore (FR-044〜FR-056)', async ({ page }) => {

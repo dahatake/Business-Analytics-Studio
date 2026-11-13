@@ -49,7 +49,8 @@ function dealValues(data: LoadedPack) {
 
 function matchEntity(name: string, data: LoadedPack) {
   const n = name.trim().toLowerCase();
-  return data.pack.entities.find((e) => (e.kind === 'product' || e.kind === 'site') && (e.name.ja.toLowerCase() === n || e.name.en.toLowerCase() === n));
+  return [...entitiesOf('product', data), ...entitiesOf('site', data)]
+    .find((e) => e.name.ja.toLowerCase() === n || e.name.en.toLowerCase() === n);
 }
 
 /**

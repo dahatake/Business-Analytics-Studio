@@ -4,7 +4,7 @@ import { Search20Regular, Send20Regular } from '@fluentui/react-icons';
 import { aiComplete, type AiResponse } from '../../ai/client.ts';
 import { C03_TABLE, isApproved } from '../../ai/policy.ts';
 import { selectOutbound } from '../../ai/redact.ts';
-import { loaded } from '../../data/pack.ts';
+import { getEntity, loaded } from '../../data/pack.ts';
 import type { Entity } from '../../data/schema.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { createScopedStore } from '../../state/projects.ts';
@@ -54,7 +54,7 @@ function SearchAndChat() {
     setCancelled(false);
     const grounding = search(index, q, 5)
       .filter((h) => h.type === 'entity')
-      .map((h) => loaded.byId.get(h.id))
+      .map((h) => getEntity(h.id))
       .filter((e): e is Entity => Boolean(e));
     if (!(await confirm(grounding, t('ai.scope.chat')))) {
       setCancelled(true);

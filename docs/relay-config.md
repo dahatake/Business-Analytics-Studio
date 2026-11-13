@@ -155,8 +155,14 @@ executable (or a `.js` entry run with the same Node). Before the first use, `npm
 `setup.ps1 -WorkIq` / `setup.sh --workiq`) starts the same command once, lists its tools and shows the CLI's saved
 account; it calls no tool, so nothing is searched or billed and the EULA is not accepted. It exits 1 with a next action
 when the CLI cannot start, times out (sign-in not finished; `--timeout <seconds>`), or offers no `retrieve`.
-Only two tools are called by the relay:
+The remote `retrieve` tool is missing from some CLI processes (it never appears later in the same process), so the
+pack-search session checks `tools/list` first, restarts the CLI up to twice without `retrieve`, and then searches with
+the CLI's local `ask` tool instead (one Microsoft 365 Copilot answer per planned search, marked as a Copilot summary,
+with the https links it cites as citations; the ladder wordings are skipped because each `ask` takes about a minute).
+With `expand`, up to 8 extra searches are built from the project purpose and focus (named things first, then each
+purpose sentence) and merged into a `purpose` section. Only these tools are called by the relay:
 
+- `ask` (read-only), only as the fallback described above and for verification when `retrieve` is missing.
 - `retrieve` with `strategy: "grounding"` (read-only). Two payload shapes under
   `structuredContent["application/vnd.ms-workiq.retrieval"]` are read: the [documented contract](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/mcp/retrieve)
   (top-level `markdown` with `retrievalHits[].webUrl`) and the shape `@microsoft/workiq` 1.0.x actually returned on
@@ -174,7 +180,7 @@ Only two tools are called by the relay:
   answers `412 workiqEulaRequired`. `npm run workiq:check` shows the persisted state.
 
 The CLI's stderr is discarded (it can contain account names). A missing Node/npx or program is `503 workiqCliMissing`;
-the CLI exiting early is `502 workiqUnavailable`; the 120-second limit is `504 workiqTimeout`. A CLI verification is
+the CLI exiting early is `502 workiqUnavailable`; the 120-second limit (240 seconds for an `ask` fallback search) is `504 workiqTimeout`. A CLI verification is
 sealed with an HMAC keyed by a relay-only vault secret (`workiqCliKey`), so editing `workiq.json` cannot fake it;
 switching routes or deleting the settings removes that key. The CLI makes its own network connections
 (`login.microsoftonline.com`, `workiq.svc.cloud.microsoft`, and `registry.npmjs.org` for npx), which
@@ -199,8 +205,8 @@ set without the two Work IQ hosts.
 
 `POST /relay/workiq/verify` accepts only `{ "provider": "foundry" }`. The REST route uses the same fixed endpoints,
 delegated credentials, outbound allowlist, response-size cap and 120-second timeout as customer retrieval and asks for
-one accessible OneDrive/SharePoint file with web grounding disabled; the CLI route runs one `retrieve` for a recent
-Microsoft 365 item. A nonempty response **with an HTTPS source
+one accessible OneDrive/SharePoint file with web grounding disabled; the CLI route runs one `retrieve` (or `ask` when
+no CLI start offers `retrieve`) for a recent Microsoft 365 item. A nonempty response **with an HTTPS source
 citation** is required; sign-in, conversation creation or an ungrounded response alone cannot pass. This is a retrieval
 smoke test, not proof of complete customer coverage or independent attestation of the cited document.
 No customer name, project or attachments are sent. Retrieved text/URLs are discarded and never returned, logged,

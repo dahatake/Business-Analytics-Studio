@@ -1,6 +1,6 @@
 import { Badge, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import { EngagementsExtension } from '../../data/extensionSchemas.ts';
-import { loaded, packOrigin } from '../../data/pack.ts';
+import { getEntity, loaded, packOrigin } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
@@ -41,7 +41,7 @@ export function EngagementsPanel() {
             </thead>
             <tbody>
               {parsed.data.items.map((item) => {
-                const customer = item.customerId ? loaded.byId.get(item.customerId) : undefined;
+                const customer = item.customerId ? getEntity(item.customerId) : undefined;
                 return (
                   <tr key={item.id}>
                     <th scope="row">{loc(item.name, lang)}</th>
@@ -53,9 +53,9 @@ export function EngagementsPanel() {
                     <td>{item.count}</td>
                     <td>{item.outcome}</td>
                     <td>{item.sourceIds.map((id) => {
-                      const source = loaded.byId.get(id);
-                      return source?.kind === 'source' ? loc(source.name, lang) : id;
-                    }).join(', ')}</td>
+                      const source = getEntity(id);
+                      return source?.kind === 'source' ? loc(source.name, lang) : null;
+                    }).filter((name): name is string => name !== null).join(', ')}</td>
                   </tr>
                 );
               })}

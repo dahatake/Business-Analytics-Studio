@@ -295,3 +295,48 @@ node scripts/workiq-bench.ts pipeline --project <pj-id> --rounds 3              
 - 単体テスト（`tests/pack-generate.test.ts`・`tests/ai-relay.test.ts`）: 機械的な修復と項目ごとの除外、修正の回答による削除の無視、値の名指しの質問、2 回続けての打ち切り、送信の大きさの調整（英字と日本語の両方）、生成AIの再送とアプリの上限による拒否の区別、Work IQ の 2 回の再試行。
 - E2E: `e2e/ai.spec.ts`（`BAS_RELAY_TEST_OUTBOUND=1` で中継を通した作成を含む 27 件）、`e2e/pack-generate.spec.ts`。
 - 実運用と同じサービスでの作成 3 回（実装前 1 回・実装後 2 回）。結果は数値だけを `logs/workiq-bench/` に保存した。
+
+## 10. 第 3 回（2026-11-13）: Project の目的に必要な社内情報が取れない
+
+### 10.1 生の記録から分かったこと
+
+端末の保存領域にある作成の記録（`retrievalErrors`・`stopReasons`・送った資料の一覧）と、CLI への直接の MCP 呼び出しで確かめた。
+
+- **Work IQ のデータが 0 件だった。** 同じ CLI のプロセスでも、起動のたびに `tools/list` の内容が変わる。ローカルの道具（`accept_eula`・`ask`・`list_agents`・`get_debug_link`）は常にあるが、リモートの `retrieve` が無いプロセスがある。無いプロセスでは後から現れず、list_changed の通知も来ない。この場合、計画したすべての検索が `workiqUnavailable` になる。生成側はそれを「使えない」とみなし、追加取得も行わずに終了していた（`stopReasons` = `workIqUnavailable`）。
+- **目的の言葉で検索していなかった。** 検索は「準備度の 8 区分 × 言い換え」と、モデルが挙げた不足だけから作られていた。目的に書かれた固有の対象（例: Viva Engage のチャンネル名、アカウントチームとの情報共有、競合との差別化）は、どの検索にも入っていなかった。
+- **会社名だけのニュースが課題になっていた。** ニュースを会社名だけで検索すると、目的と関係のない見出し（サービス障害など）が返る。モデルはそれを課題に変えていた。
+- 同じ時間帯には Work IQ 側も失敗していた（`ask` が約 96 秒後にネットワークエラー）。このため、実サービスでの通しの再計測はできていない（§10.4）。
+
+### 10.2 変更
+
+| 変更 | 場所 |
+|---|---|
+| CLI の起動時に `tools/list` を確かめる。`retrieve` が無ければプロセスを最大 2 回起動し直す。それでも無いときは `ask` で検索する。`ask` の回答は「Microsoft 365 Copilot の要約」と明記して `retrieve` と同じ形に直し、回答中の https のリンクを出典にする。`ask` は 1 回に約 1 分かかるので、言い換えの検索は省く | `startSearchSession`・`askAsRetrieval`（[server/workiqCli.ts](../server/workiqCli.ts)） |
+| `expand` のとき、目的と重点から検索を最大 8 件作る。順序は、固有名（かぎ括弧、英字の名前、「Hubらじお」のような英字＋かな）→ 目的の文ごと → 重点。結果は `purpose` 区分にまとめ、生成側には「Project の目的に関する社内情報」として渡す | `purposeTopics`・`workIqPlan`（[server/workiq.ts](../server/workiq.ts)） |
+| 最初の一括取得が一時的なエラー（`workiqUnavailable`・`workiqBusy`・`workiqTimeout` など）で失敗したら、間を置いてもう 1 回試す。それでも失敗した場合も追加取得は続ける。追加取得を打ち切る（`workIqUnavailable`）のは、サインイン・権限・EULA など、次の検索でも同じく失敗する場合だけにする | [packGenerate.ts](../src/modules/project/packGenerate.ts) |
+| 会社名だけで検索したニュースを、この PC の中で並べ替える。目的・重点・Project 名の語を含む見出しを先にし、それ以外は背景として 3 件まで送る。送らなかった見出しは報告の `offPurposeNews` に残す。生成の規則では、目的と関係しない出来事を、ニュースだけを根拠に課題にすることを禁じた | 同上 |
+
+送信先は変わらない。目的の文が送られるのは Work IQ（社内）だけで、ニュースと公開 Web には従来どおり会社名と、確認済みの話題だけを送る。
+
+### 10.3 検証
+
+- 単体テスト（`tests/ai-relay.test.ts`）: 偽の CLI で次を確かめた。
+  - `retrieve` の無いプロセスを起動し直すこと。
+  - `ask` だけのときに出典つきの要約を読むこと。
+  - `ask` が失敗したときにエラーになること。
+  - 目的から検索を作る規則（固有名が先、会社名・Project 名は除外、文の区切りで名前をつながない、最大 8 件）。
+  - `expand` の検索数（25 → 26）。
+- 単体テスト（`tests/pack-generate.test.ts`）: 次を確かめた。
+  - 一時的な失敗を再試行し、`purpose` 区分の見出しが送られること。
+  - 2 回とも失敗しても追加取得が続くこと。
+  - ニュースの並べ替えと `offPurposeNews`。
+
+### 10.4 限界と次に確かめること
+
+- 実サービスでの再計測はしていない（Work IQ 側の障害のため）。回復したら同じ Project で作り直し、次を確かめる。
+  - 報告の `retrievalErrors` に `retry-1:` が無いか、あっても Work IQ の資料が送られていること。
+  - `stopReasons` が `workIqUnavailable` でないこと。
+  - `purpose` 区分に目的の固有名（例: Viva Engage）の出典があること。
+  - `offPurposeNews` に障害などの見出しが入っていること。
+- `ask` での代替は Copilot の要約なので、`retrieve` より情報が少なく、出典は回答中のリンクだけになる。
+- 公開サイトの巡回の順位づけは、まだ目的を見ていない（[server/site.ts](../server/site.ts)）。

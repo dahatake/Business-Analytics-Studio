@@ -938,7 +938,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(page.getByTestId('brand-logo')).toContainText('20 px');
     await page.evaluate(() => { window.location.hash = '/analysis'; });
     await expect(page.getByTestId('proj-analysis-select').locator('option')).toHaveCount(5);
-    await expect(page.getByTestId('proj-result-matrix')).toBeVisible();
+    await expect(page.getByTestId('proj-result-plot').first()).toBeVisible();
     await expect(page.getByTestId('proj-params').getByText('Mock', { exact: true })).toHaveCount(0);
     expect(received).toHaveLength(4); // opening the screen only displays the saved analyses
 

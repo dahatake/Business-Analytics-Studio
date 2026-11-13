@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { PARAMS } from '../src/config/params.ts';
+import { samplePack } from '../src/data/sample.ts';
 import { card, open } from './helpers.ts';
 
 test.describe('F-3.2.1 detail cards', () => {
@@ -175,5 +176,46 @@ test.describe('F-3.2.4 business relationships', () => {
     await page.locator('.force-graph [data-entity-ref="deal-sakura-ev"]').focus();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/focus=deal-sakura-ev/);
+  });
+
+  test('news-feed headlines and items resting on them alone are left out; the rest is analysed', async ({ page }) => {
+    const l = (s: string) => ({ ja: s, en: s });
+    const common = { world: 'digital', type: 'data', classification: 'shareable', author: 'ai', description: l('About') };
+    const news = (n: number) => ({ ...common, kind: 'source', id: `source-news-${n}`, name: l(`Headline ${n}`), sourceIds: [], publisher: l('Paper'), url: `https://news.example.com/${n}`, origin: 'web' });
+    const pack = {
+      ...samplePack,
+      entities: [
+        ...samplePack.entities.map((e) => (e.id === 'issue-quality' ? { ...e, sourceIds: [...e.sourceIds, 'source-news-1'] } : e)),
+        news(1), news(2),
+        { ...common, world: 'real', type: 'event', kind: 'issue', id: 'issue-outage', name: l('Outage'), impact: 3, feasibility: 3, causeIds: [], kpiIds: [], sourceIds: ['source-news-2'] },
+      ],
+    };
+    await page.route('**/data/pack.json', (route) => route.fulfill({ json: pack }));
+    await open(page, '/relations?view=graph&focus=source-news-2&hops=3', { lang: 'en' });
+    await expect(page.getByTestId('news-excluded')).toContainText('headlines (2) and items supported only by them (1)');
+    await expect(page.locator('#focus-select option[value^="source-news-"], #focus-select option[value="issue-outage"]')).toHaveCount(0);
+    await expect(page.locator('#focus-select')).toHaveValue('cust-sakura-motors');
+    await expect(page.locator('.force-graph .graph-node').first()).toBeVisible();
+    await expect(page.locator('.force-graph [data-entity-ref^="source-news-"]')).toHaveCount(0);
+
+    await open(page, '/relations?view=graph&focus=issue-quality', { lang: 'en' });
+    await expect(page.getByTestId('selection-evidence')).toContainText('Public material and web (1)');
+    await expect(page.getByTestId('selection-evidence').locator('[data-entity-ref^="source-news-"]')).toHaveCount(0);
+    await expect(page.getByTestId('selection-links')).toContainText('Early-failure rate');
+    await expect(page.getByTestId('selection-gaps')).toContainText('No gaps found.');
+
+    await open(page, '/relations?view=table', { lang: 'en' });
+    await expect(page.getByTestId('relation-table').locator('tbody tr').first()).toBeVisible();
+    await expect(page.getByTestId('relation-table').locator('[data-entity-ref^="source-news-"], [data-entity-ref="issue-outage"]')).toHaveCount(0);
+
+    await open(page, '/graph?view=relations&level=element', { lang: 'en' });
+    await expect(page.getByTestId('graph-node-table').locator('tr[data-row-for^="source-news-"], tr[data-row-for="issue-outage"]')).toHaveCount(0);
+    await open(page, '/graph?view=twin&level=element', { lang: 'en' });
+    await expect(page.getByTestId('graph-node-table').locator('tr[data-row-for^="source-news-"], tr[data-row-for="issue-outage"]')).toHaveCount(0);
+
+    await open(page, '/', { lang: 'en' });
+    await expect(page.locator('[data-entity-ref="issue-outage"], [data-entity-ref^="source-news-"]')).toHaveCount(0);
+    await open(page, '/entity/source-news-1', { lang: 'en' });
+    await expect(page.getByRole('heading', { name: 'Headline 1' })).toHaveCount(0);
   });
 });

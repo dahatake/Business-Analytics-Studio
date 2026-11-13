@@ -129,10 +129,10 @@ export function EntityPage({ id }: { id: string }) {
         </Panel>
       )}
 
-      {e.sourceIds.length > 0 && (
+      {e.sourceIds.some((s) => getEntity(s)) && (
         <Panel title={t('entity.sources')}>
           <ul className="ref-list">
-            {e.sourceIds.map((s) => <li key={s}><EntityRef id={s} /></li>)}
+            {e.sourceIds.filter((s) => getEntity(s)).map((s) => <li key={s}><EntityRef id={s} /></li>)}
           </ul>
         </Panel>
       )}

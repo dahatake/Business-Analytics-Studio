@@ -4,7 +4,7 @@ import {
   ArrowDown16Regular, ArrowLeft16Regular, ArrowRight16Regular, ArrowUp16Regular, FullScreenMaximize16Regular,
   FullScreenMinimize16Regular, ZoomFit16Regular, ZoomIn16Regular, ZoomOut16Regular,
 } from '@fluentui/react-icons';
-import { loaded } from '../../data/pack.ts';
+import { getEntity, loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { replaceQuery, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
@@ -53,7 +53,7 @@ export function GraphScreen() {
 
   const ext = useMemo(() => graphExtensionFor(loaded), []);
   const visible = useCallback((e: Parameters<typeof isHidden>[0]) => !isHidden(e, audience), [audience]);
-  const selEntity = sel ? loaded.byId.get(sel) : undefined;
+  const selEntity = sel ? getEntity(sel) : undefined;
   const selected = selEntity && visible(selEntity) ? selEntity.id : null;
 
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -271,7 +271,7 @@ export function GraphScreen() {
                 </thead>
                 <tbody>
                   {scene.nodes.map((n) => {
-                    const e = n.entityId ? loaded.byId.get(n.entityId) : undefined;
+                    const e = n.entityId ? getEntity(n.entityId) : undefined;
                     return (
                       <tr key={n.id} className={highlight === n.id ? 'selected' : ''} onClick={() => locate(n.id)} data-row-for={n.id}>
                         <th scope="row"><button type="button" className="graph-row-button">{n.label}</button></th>

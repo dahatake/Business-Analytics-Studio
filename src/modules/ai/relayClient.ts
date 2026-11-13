@@ -395,7 +395,7 @@ export async function pollWorkIqSignIn(): Promise<{ status: 'pending'; interval:
 
 export async function verifyWorkIq(): Promise<WorkIqStatus> {
   const res = await relayFetch('/relay/workiq/verify', {
-    ...jsonInit('POST', { provider: 'foundry' }), signal: AbortSignal.timeout(125_000),
+    ...jsonInit('POST', { provider: 'foundry' }), signal: AbortSignal.timeout(330_000),
   });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const status = asWorkIq(((await res.json()) as { workiq?: unknown }).workiq);

@@ -6,7 +6,7 @@ import {
   Add20Regular, ArrowDownload20Regular, ArrowRedo20Regular, ArrowUndo20Regular, ArrowUpload20Regular, ChevronLeft20Regular,
   ChevronRight20Regular, Checkmark20Regular, Delete20Regular, Edit20Regular, Sparkle20Regular,
 } from '@fluentui/react-icons';
-import { loaded } from '../../data/pack.ts';
+import { getEntity, loaded } from '../../data/pack.ts';
 import type { Entity } from '../../data/schema.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { loc, type Localizable } from '../../state/text.ts';
@@ -311,7 +311,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
     setTitleError(null);
   };
   const askAi = async () => {
-    const ents = theme.relatedIds.map((id) => loaded.byId.get(id)).filter((e): e is Entity => !!e);
+    const ents = theme.relatedIds.map((id) => getEntity(id)).filter((e): e is Entity => !!e);
     const plan = planAttachmentsForAi(attached, cap);
     const req = suggestionRequest(loc(theme.title, lang), lang, ents, plan);
     setAiOutcome(null);
@@ -343,7 +343,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
       setBusy(false);
     }
   };
-  const isAttachment = (id: string) => hashOfSource(loaded.byId.get(id)) !== null;
+  const isAttachment = (id: string) => hashOfSource(getEntity(id)) !== null;
   const attached = theme.relatedIds.map(itemOfSource).filter((x): x is AttachmentItem => x !== null);
   const aiPlan = attached.length ? summarizeForAi(attached, cap) : null;
   const attach = async (items: AttachmentItem[]) => {
@@ -353,7 +353,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
     const current = latest.themes.find((x) => x.id === theme.id)?.relatedIds ?? theme.relatedIds;
     commitDiscussion(updateTheme(latest, theme.id, { relatedIds: [...current, ...ids.filter((id, i) => !current.includes(id) && ids.indexOf(id) === i)] }), 'update', 'theme', theme.title);
   };
-  const relatable = loaded.pack.entities.filter((e) => ['issue', 'solution', 'kpi', 'person'].includes(e.kind) && !theme.relatedIds.includes(e.id));
+  const relatable = loaded.pack.entities.filter((e) => getEntity(e.id) && ['issue', 'solution', 'kpi', 'person'].includes(e.kind) && !theme.relatedIds.includes(e.id));
   const relate = (id: string) => commitDiscussion(updateTheme(data, theme.id, { relatedIds: [...theme.relatedIds, id] }), 'update', 'theme', theme.title);
 
   return (
@@ -407,9 +407,9 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
           )}
           <div className="proj-related">
             <span className="muted">{t('proj.canvas.related')}</span>
-            {theme.relatedIds.filter((id) => !isAttachment(id)).length === 0 && <span className="muted">{t('proj.canvas.noRelated')}</span>}
-            {theme.relatedIds.filter((id) => !isAttachment(id)).map((id) => {
-              const entity = loaded.byId.get(id);
+            {theme.relatedIds.filter((id) => getEntity(id) && !isAttachment(id)).length === 0 && <span className="muted">{t('proj.canvas.noRelated')}</span>}
+            {theme.relatedIds.filter((id) => getEntity(id) && !isAttachment(id)).map((id) => {
+              const entity = getEntity(id);
               return (
                 <span key={id} className="proj-related-item">
                   <EntityRef id={id} />

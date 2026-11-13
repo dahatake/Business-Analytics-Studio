@@ -3,7 +3,7 @@ import { Badge, Button, Field, Input, MessageBar, MessageBarBody, ProgressBar, S
 import { Add20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { loc, type Localizable } from '../../state/text.ts';
-import { loaded, packOrigin } from '../../data/pack.ts';
+import { getEntity, loaded, packOrigin } from '../../data/pack.ts';
 import { OkrExtension } from '../../data/extensionSchemas.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { achievementPct, kpiStatusText, okrPct, statusForPct, validateKpi, type KpiField, type KpiStatusText } from './kpiOkr.ts';
@@ -264,9 +264,5 @@ function PackOkrPanel() {
 
 function fmtSources(ids: readonly string[] | undefined, lang: Parameters<typeof loc>[1]): string {
   if (!ids?.length) return '';
-  const byId = new Map(loaded.pack.entities.map((e) => [e.id, e]));
-  return ids.map((id) => {
-    const e = byId.get(id);
-    return e ? loc(e.name, lang) : id;
-  }).join(', ');
+  return ids.map((id) => getEntity(id)).filter((e) => e?.kind === 'source').map((e) => loc(e.name, lang)).join(', ');
 }

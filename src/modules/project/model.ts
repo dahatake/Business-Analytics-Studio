@@ -96,7 +96,12 @@ export const AnalysisSchema = z.object({
 });
 export type Analysis = z.infer<typeof AnalysisSchema>;
 
-export const AnalysisDataSchema = z.object({ analyses: z.array(AnalysisSchema), activeId: z.string().nullable() });
+export const AnalysisDataSchema = z.object({
+  analyses: z.array(AnalysisSchema),
+  activeId: z.string().nullable(),
+  /** Methods shown side by side on the analysis dashboard; absent = every method that has an analysis. */
+  shownMethods: z.array(z.enum(METHODS)).optional(),
+});
 export type AnalysisData = z.infer<typeof AnalysisDataSchema>;
 
 /** Everything the project module stores per project (exported/restored together). */

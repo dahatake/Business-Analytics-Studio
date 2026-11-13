@@ -22,10 +22,10 @@ export interface Served {
   close: () => Promise<void>;
 }
 
-export function startServer(dir: string, port = 4180, host = '127.0.0.1'): Promise<Served> {
+export function startServer(dir: string, port = 4180, host = '127.0.0.1', deviceDir = process.env.BAS_DEVICE_DIR ?? resolve('.bas-local')): Promise<Served> {
   const root = resolve(dir);
   if (!existsSync(join(root, 'index.html'))) return Promise.reject(new Error(`No index.html in ${root}. Build first (npm run build, or bas build <customer>).`));
-  const device = createDeviceService(process.env.BAS_DEVICE_DIR ?? resolve('.bas-local'));
+  const device = createDeviceService(deviceDir);
   const server = createServer((req, res) => device.handle(req, res, () => {
     const url = new URL(req.url ?? '/', `http://${host}`);
     let rel = decodeURIComponent(url.pathname);

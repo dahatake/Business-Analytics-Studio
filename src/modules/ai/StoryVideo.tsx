@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Field, Select, Spinner } from '@fluentui/react-components';
 import { Pause20Regular, Play20Regular, Video20Regular } from '@fluentui/react-icons';
 import { aiComplete } from '../../ai/client.ts';
-import { loaded } from '../../data/pack.ts';
+import { getEntity } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useReducedMotion } from '../../state/motion.ts';
 import { useSettings } from '../../state/settings.ts';
@@ -71,7 +71,7 @@ export function StoryVideoSection() {
   const sources = useMemo(() => {
     if (useCases.length > 0) return useCases.map(sourceFromUseCase);
     return sourcesFromSolutions((id) => {
-      const e = loaded.byId.get(id);
+      const e = getEntity(id);
       return !!e && !isHidden(e, audience);
     });
   }, [useCases, audience]);

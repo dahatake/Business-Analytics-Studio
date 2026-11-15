@@ -18,10 +18,12 @@ import { useUseCases } from '../usecases/store.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, requestDeliverableDraft } from './deliverableDraft.ts';
 import {
-  applyDraft, evaluateStep, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
-  type CheckContext, type CheckRef, type TodoResult,
+  applyDraft, evaluateStep, threadOf, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
+  type AppCheckContext, type CheckContext, type CheckRef, type TodoResult,
 } from './deliverables.ts';
-import { useAnalyses, useDeliverables, useDiscussion, useProjTransient, useProjUi, useScopeKpis } from './stores.ts';
+import { useAnalyses, useDeliverables, useDiscussion, useProjTransient, useProjUi, useScopeKpis, useStrategy } from './stores.ts';
+import { gapCount, normalizeStrategy } from './strategy.ts';
+import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import './project.css';
 
 /** YYYY-MM-DD in the app's time zone. The demo is judged on the sample's "as of" date so it stays deterministic. */
@@ -29,16 +31,59 @@ export function todayIn(timeZone: string = PARAMS.timeZone, now = new Date()): s
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
-export function useCheckContext(): CheckContext {
+export function useCheckContext(): AppCheckContext {
   const discussion = useDiscussion((s) => s.value);
   const kpi = useScopeKpis();
   const analysis = useAnalyses((s) => s.value);
   const useCases = useUseCases((s) => s.value);
   const raw = useDeliverables((s) => s.value);
+  const rawStrategy = useStrategy((s) => s.value);
   const isDemo = useProjects((s) => s.target.kind === 'demo');
+  const { project, company } = useActiveProject();
+  const companyId = company?.id ?? '';
+  const objectives = useMemo(() => companyObjectives(companyId), [companyId]);
+  const alignments = project?.alignments;
   return useMemo(() => ({
     pack: loaded, discussion, kpi, analysis, useCases, deliverables: normalizeDeliverables(raw), today: isDemo ? PARAMS.asOfDate : todayIn(),
-  }), [discussion, kpi, analysis, useCases, raw, isDemo]);
+    strategy: normalizeStrategy(rawStrategy), objectives,
+    projectObjectiveIds: [...new Set((alignments ?? []).filter((a) => a.kind !== 'unaligned').flatMap((a) => a.objectiveIds))],
+  }), [discussion, kpi, analysis, useCases, raw, isDemo, rawStrategy, objectives, alignments]);
+}
+
+/** The company's stated objectives (company anchor), the top of the company → OKR → KPI → solution chain. */
+export function companyObjectives(companyId: string): { id: string; text: string }[] {
+  if (!companyId) return [];
+  try {
+    return latestCompanyAnchor(companyId)?.anchor.statedObjectives.map((o) => ({ id: o.id, text: o.text })) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Company objective → OKR → KPI → solution in one line, with the number of breaks; links to the full chain.
+ * The band shows it as text: the band overlays scrolled content, and a link there would obscure targets beneath it.
+ */
+export function StrategySummary({ ctx, link = true }: { ctx: CheckContext; link?: boolean }) {
+  const { t } = useI18n();
+  const thread = threadOf(ctx);
+  const gaps = gapCount(thread);
+  const body = (
+    <>
+      <span>{t('sol.thread.compact', { objectives: thread.objectives.length, okrs: thread.okrs.length, kpis: thread.kpis.length, solutions: thread.solutions.length })}</span>
+      {' '}
+      <Badge size="small" appearance="tint" color={gaps ? 'warning' : 'success'} data-testid="sol-summary-gaps">
+        {gaps ? t('sol.thread.summaryGaps', { n: gaps }) : t('sol.thread.summaryOk')}
+      </Badge>
+    </>
+  );
+  return link ? (
+    <a className="sol-summary" href={`${hrefFor('/deliverables', { step: 'kpi' })}#sol-thread`} title={t('sol.thread.open')} data-testid="sol-summary">
+      {body}
+    </a>
+  ) : (
+    <span className="sol-summary" data-testid="sol-summary">{body}</span>
+  );
 }
 
 export const deliverableNameKey = (step: ImprovementStep) => `dlv.${step}.name` as MessageKey;
@@ -54,6 +99,17 @@ function signOffNow(todoId: string, checked: boolean) {
 const MAX_REFS = 5;
 
 /** Prefer the first failing field; otherwise open the exact tab/component where the work is done. */
+/** Strategy checks open the panel where the gap is fixed, not the document fields. */
+const STRATEGY_TARGETS: Record<string, string> = {
+  'kpi-definition': 'sol-def',
+  'kpi-company': 'sol-def',
+  'sol-type': 'sol-types',
+  'sol-contribution': 'sol-types',
+  'sol-target': 'sol-sim',
+  'dlv-trace': 'sol-thread',
+  'dlv-docs': 'sol-docs',
+};
+
 export function todoHref(r: TodoResult): string {
   const [path = '/', query = ''] = r.todo.href.split('?');
   const q = new URLSearchParams(query);
@@ -64,7 +120,9 @@ export function todoHref(r: TodoResult): string {
   if (r.todo.kind === 'manual') {
     q.set('target', `dlv-sign-${r.todo.id}`);
   } else if (path === '/deliverables') {
-    q.set('target', 'dlv-fields');
+    q.set('target', STRATEGY_TARGETS[r.todo.id] ?? 'dlv-fields');
+  } else if (path === '/projects') {
+    q.set('target', 'proj-active');
   } else if (path === '/analysis') {
     if (q.get('tab') === 'kpi') q.set('target', r.todo.id === 'kpi-okr' ? 'proj-okr-panel' : 'proj-kpi-panel');
     else q.set('target', 'proj-method-panel');
@@ -234,6 +292,7 @@ export function StepTodoBand() {
             {t(collapsed ? 'dlv.band.expand' : 'dlv.band.collapse')}
           </Button>
         </div>
+        <StrategySummary ctx={ctx} link={false} />
       </div>
       <div id={listId} ref={setList} className="dlv-band-scroll" hidden={collapsed} tabIndex={collapsed ? undefined : 0} role="region" aria-label={t('dlv.band.list', { step: stepName })}>
         <ul className="dlv-band-list">

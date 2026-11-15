@@ -19,6 +19,8 @@ import { BAND_LIST_HEIGHT_GUESS, shouldAutoExpand, todoHref } from '../src/modul
 import { parseHash } from '../src/state/router.ts';
 import { buildDraft, draftPrompt, draftToText, parseDraftText, requestDeliverableDraft } from '../src/modules/project/deliverableDraft.ts';
 import { requestAnalysisDraft } from '../src/modules/project/mocks.ts';
+import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContribution, type StrategyData } from '../src/modules/project/strategy.ts';
+import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -56,6 +58,52 @@ function drafted(c: CheckContext, lang: 'ja' | 'en' = 'ja', audience: 'internal'
   return data;
 }
 
+const OBJECTIVE = { id: 'obj-mtp-1', text: '中期経営計画: 2027 年度までに納期遵守率 98 %' };
+
+/**
+ * What a person does on the strategy panels: confirm each solution's type (digital only where a use case exists),
+ * estimate contributions that close every project KPI gap, align the project to a company objective, and write the
+ * deliverable sections the data cannot fill.
+ */
+function withStrategy(c: CheckContext): CheckContext {
+  const at = '2026-11-09T09:00:00Z';
+  const solutions = pack.pack.entities.filter((e): e is EntityOf<'solution'> => e.kind === 'solution');
+  let s: StrategyData = emptyStrategy();
+  const registered = c.useCases.filter((u) => u.origin === 'registered');
+  for (const sol of solutions) s = setSolutionType(s, sol.id, registered.some((u) => u.relatedIds.includes(sol.id)) ? 'digital' : 'process', 'Tester', at);
+  const claims = new Map<string, string[]>();
+  for (const sol of solutions) {
+    const own = c.kpi.kpis.filter((k) => sol.kpiIds.includes(k.id));
+    for (const k of own.length ? own : c.kpi.kpis.slice(0, 1)) claims.set(k.id, [...(claims.get(k.id) ?? []), sol.id]);
+  }
+  for (const k of c.kpi.kpis) if (!claims.has(k.id)) claims.set(k.id, [solutions[0]!.id]);
+  for (const [kpiId, sols] of claims) {
+    const k = c.kpi.kpis.find((x) => x.id === kpiId)!;
+    const per = (Math.abs(k.target - k.current) * 1.2) / sols.length / 10;
+    for (const solutionId of sols) {
+      s = upsertContribution(s, {
+        id: `c-${solutionId}-${kpiId}`, solutionId, kpiId, lever: 'sites switched', leverUnit: 'sites',
+        amount: { low: 10, mode: 10, high: 10 }, effectPerUnit: { low: per, mode: per, high: per },
+        rampStart: '2026-12-01', fullEffect: '2027-01-31', basis: 'measured', evidence: 'pilot 2026-10',
+      });
+    }
+  }
+  // Every KPI must be a key result of some OKR (the demo leaves kpi-co2 outside its OKRs).
+  const inOkr = new Set(c.kpi.okrs.flatMap((o) => o.keyResults.map((kr) => kr.kpiId)));
+  const extra = c.kpi.kpis.filter((k) => !inOkr.has(k.id)).map((k) => ({ id: `kr-${k.id}`, kpiId: k.id, text: k.name }));
+  const okrs = extra.length && c.kpi.okrs[0] ? [{ ...c.kpi.okrs[0], keyResults: [...c.kpi.okrs[0].keyResults, ...extra] }, ...c.kpi.okrs.slice(1)] : c.kpi.okrs;
+  const ctx: CheckContext = { ...c, kpi: { ...c.kpi, okrs }, strategy: s, objectives: [OBJECTIVE], projectObjectiveIds: [OBJECTIVE.id] };
+  const thread = strategyThread({ ...ctx, strategy: s, objectives: [OBJECTIVE], projectObjectiveIds: [OBJECTIVE.id] });
+  for (const sol of solutions) {
+    const doc = buildSolutionDoc(sol, thread.solutions.find((x) => x.id === sol.id)!, thread, { ...ctx, strategy: s, objectives: [OBJECTIVE], projectObjectiveIds: [OBJECTIVE.id] }, 'ja');
+    for (const sec of doc.sections.filter((x) => x.open)) s = setSection(s, sol.id, sec.id, `${sec.id}: 2027-03-31 までに担当部長が確定`);
+  }
+  return { ...ctx, strategy: s };
+}
+
+/** The strategy-panel checks a person completes (the demo pack holds no company objectives or estimates). */
+const STRATEGY_TODOS = ['tobe-link', 'kpi-company', 'sol-type', 'sol-contribution', 'sol-target', 'dlv-trace', 'dlv-docs'];
+
 describe('step deliverables: definitions', () => {
   it('every task links to a component, and document failures link to the first field needing work', () => {
     for (const step of IMPROVEMENT_STEPS) {
@@ -73,19 +121,29 @@ describe('step deliverables: definitions', () => {
       }
     }
     const c = demoCtx();
-    const data = setField(drafted(c), 'define', 'success', { text: 'Improve', author: 'human', updatedAt: '2026-11-09T10:00:00Z' });
-    expect(parseHash(todoHref(byId('define', { ...c, deliverables: data })['define-doc']!)).query.get('target')).toBe('dlv-field-success');
+    const data = setField(drafted(c), 'tobe', 'success', { text: 'Improve', author: 'human', updatedAt: '2026-11-09T10:00:00Z' });
+    expect(parseHash(todoHref(byId('tobe', { ...c, deliverables: data })['tobe-doc']!)).query.get('target')).toBe('dlv-field-success');
     expect(parseHash(todoHref(byId('kpi', c)['kpi-okr']!)).query.get('target')).toBe('proj-okr-panel');
-    expect(parseHash(todoHref(byId('define', emptyProjectCtx())['define-decision']!)).query.get('target')).toBe('proj-tree');
+    expect(parseHash(todoHref(byId('asis', emptyProjectCtx())['define-decision']!)).query.get('target')).toBe('proj-tree');
+    // Strategy checks open the panel where the gap is fixed.
+    const target = (step: ImprovementStep, id: string) => parseHash(todoHref(byId(step, c)[id]!)).query.get('target');
+    expect(target('tobe', 'tobe-link')).toBe('proj-active');
+    expect(target('kpi', 'kpi-definition')).toBe('sol-def');
+    expect(target('kpi', 'kpi-company')).toBe('sol-def');
+    expect(target('solution', 'sol-type')).toBe('sol-types');
+    expect(target('solution', 'sol-target')).toBe('sol-sim');
+    expect(target('deliverable', 'dlv-trace')).toBe('sol-thread');
+    expect(target('deliverable', 'dlv-docs')).toBe('sol-docs');
   });
 
   it('defines a deliverable for each of the five steps with fields, exit criteria and at least one human sign-off', () => {
+    expect(IMPROVEMENT_STEPS).toEqual(['asis', 'tobe', 'kpi', 'solution', 'deliverable']);
     expect(Object.keys(STEP_DEFS).sort()).toEqual([...IMPROVEMENT_STEPS].sort());
     for (const s of IMPROVEMENT_STEPS) {
       const d = STEP_DEFS[s];
       expect(d.fields.length, s).toBeGreaterThanOrEqual(5);
-      expect(d.todos.filter((x) => x.kind === 'auto').length, s).toBeGreaterThanOrEqual(3);
-      expect(d.todos.filter((x) => x.kind === 'manual').length, s).toBe(1);
+      expect(d.todos.filter((x) => x.kind === 'auto').length, s).toBeGreaterThanOrEqual(2);
+      expect(d.todos.filter((x) => x.kind === 'manual').length, s).toBeGreaterThanOrEqual(1);
       expect(d.todos.every((x) => (x.kind === 'auto') === (typeof x.check === 'function')), s).toBe(true);
       expect(d.inputs.length, s).toBeGreaterThan(0);
     }
@@ -102,7 +160,7 @@ describe('step deliverables: definitions', () => {
     // Result codes: collect from contexts that exercise both verdicts of every check.
     const broken = clone();
     broken.entities = broken.entities.filter((e) => !['issue', 'cause', 'kpi', 'solution', 'initiative'].includes(e.kind));
-    const ctxs = [emptyProjectCtx(), demoCtx(), demoCtx({ deliverables: drafted(demoCtx()) }), { ...emptyProjectCtx(), pack: loadPack(broken) }];
+    const ctxs = [emptyProjectCtx(), demoCtx(), demoCtx({ deliverables: drafted(demoCtx()) }), withStrategy(demoCtx({ deliverables: drafted(demoCtx()) })), { ...emptyProjectCtx(), pack: loadPack(broken) }];
     for (const c of ctxs) for (const s of IMPROVEMENT_STEPS) for (const r of evaluateStep(s, c)) if (r.outcome) keys.push(resultKey(r.outcome.code));
     for (const k of new Set(keys)) {
       for (const lang of ['ja', 'en'] as const) expect(typeof translate(lang, k as MessageKey), `${lang}:${k}`).toBe('string');
@@ -113,49 +171,59 @@ describe('step deliverables: definitions', () => {
 describe('step deliverables: validity checks', () => {
   it('a new, empty project fails every project-data check and every deliverable field check', () => {
     const c = emptyProjectCtx();
-    const define = byId('define', c);
-    expect(define['define-sources']!.done).toBe(true); // pack data is shared
-    expect(define['define-decision']!.outcome?.code).toBe('noThemes');
-    expect(define['define-doc']!.outcome).toMatchObject({ ok: false, code: 'docMissing', vars: { empty: 7, vague: 0 } });
-    expect(define['define-doc']!.outcome?.refs).toHaveLength(7);
-    expect(define['define-agree']!.done).toBe(false);
-    expect(byId('asis', c)['asis-framework']!.outcome?.code).toBe('noAnalysis');
+    const asis = byId('asis', c);
+    expect(asis['define-sources']!.done).toBe(true); // pack data is shared
+    expect(asis['define-decision']!.outcome?.code).toBe('noThemes');
+    expect(asis['asis-doc']!.outcome).toMatchObject({ ok: false, code: 'docMissing', vars: { empty: 10, vague: 0 } });
+    expect(asis['asis-doc']!.outcome?.refs).toHaveLength(10);
+    expect(asis['define-agree']!.done).toBe(false);
+    expect(asis['asis-framework']!.outcome?.code).toBe('noAnalysis');
+    expect(byId('tobe', c)['tobe-link']!.outcome?.code).toBe('noCompanyObjectives');
+    expect(byId('tobe', c)['tobe-doc']!.outcome).toMatchObject({ ok: false, code: 'docMissing', vars: { empty: 5 } });
+    expect(byId('kpi', c)['kpi-definition']!.done).toBe(false);
     expect(byId('kpi', c)['kpi-valid']!.outcome?.code).toBe('noProjectKpis');
     expect(byId('kpi', c)['kpi-coverage']!.outcome?.code).toBe('issuesNotMeasured');
     expect(byId('kpi', c)['kpi-okr']!.outcome?.code).toBe('noOkr');
-    expect(byId('usecase', c)['uc-registered']!.outcome?.code).toBe('noUseCases');
-    expect(byId('plan', c)['plan-decision']!.outcome?.code).toBe('noPlanDecision');
+    expect(byId('solution', c)['uc-registered']!.outcome?.code).toBe('noUseCases');
+    expect(byId('solution', c)['sol-type']!.outcome?.code).toBe('typesUnconfirmed');
+    expect(byId('solution', c)['sol-contribution']!.outcome?.code).toBe('solutionsWithoutContribution');
+    expect(byId('solution', c)['sol-target']!.outcome?.code).toBe('noProjectKpis');
+    expect(byId('deliverable', c)['plan-decision']!.outcome?.code).toBe('noPlanDecision');
+    expect(byId('deliverable', c)['dlv-docs']!.outcome?.code).toBe('docsOpen');
     for (const s of IMPROVEMENT_STEPS) expect(progressOf(evaluateStep(s, c)).complete, s).toBe(false);
   });
 
-  it('the demo meets every data check; only the deliverable fields and the sign-offs are left', () => {
+  it('the demo meets every data check; the fields, the sign-offs and the strategy work are left', () => {
+    const open = (c: CheckContext, s: ImprovementStep) => evaluateStep(s, c).filter((r) => !r.done).map((r) => r.todo.id).sort();
+    const userWork = (s: ImprovementStep, extra: string[]) => STEP_DEFS[s].todos.filter((x) => x.kind === 'manual' || x.id.endsWith('-doc') || extra.includes(x.id)).map((x) => x.id).sort();
     const c = demoCtx();
-    for (const s of IMPROVEMENT_STEPS) {
-      const open = evaluateStep(s, c).filter((r) => !r.done).map((r) => r.todo.id);
-      expect(open.sort(), s).toEqual(STEP_DEFS[s].todos.filter((x) => x.kind === 'manual' || x.id.endsWith('-doc')).map((x) => x.id).sort());
-    }
+    for (const s of IMPROVEMENT_STEPS) expect(open(c, s), s).toEqual(userWork(s, STRATEGY_TODOS));
+    // Once the strategy panels are done, only the fields and the sign-offs remain.
+    const strategic = withStrategy(c);
+    for (const s of IMPROVEMENT_STEPS) expect(open(strategic, s), s).toEqual(userWork(s, []));
   });
 
   it('the band names the next thing to do and lists open criteria first; nothing is next once the step is complete', () => {
     const c = demoCtx();
-    const results = evaluateStep('define', c);
-    expect(nextTodo(results)?.todo.id).toBe('define-doc');
+    const results = evaluateStep('asis', c);
+    expect(nextTodo(results)?.todo.id).toBe('asis-doc');
     const ordered = openFirst(results).map((r) => r.todo.id);
-    expect(ordered.slice(0, 2)).toEqual(['define-doc', 'define-agree']);
+    expect(ordered.slice(0, 3)).toEqual(['asis-doc', 'asis-field', 'define-agree']);
     expect([...ordered].sort()).toEqual(results.map((r) => r.todo.id).sort());
-    // After the draft the field check passes, so the sign-off becomes next; after it, nothing is left.
+    // After the draft the field check passes, so the sign-offs become next; after them, nothing is left.
     let data = drafted(c);
-    expect(nextTodo(evaluateStep('define', { ...c, deliverables: data }))?.todo.id).toBe('define-agree');
+    expect(nextTodo(evaluateStep('asis', { ...c, deliverables: data }))?.todo.id).toBe('asis-field');
+    data = setSignOff(data, 'asis-field', { at: '2026-11-09T10:00:00Z', by: 'Tester' });
     data = setSignOff(data, 'define-agree', { at: '2026-11-09T10:00:00Z', by: 'Tester' });
-    expect(nextTodo(evaluateStep('define', { ...c, deliverables: data }))).toBeUndefined();
+    expect(nextTodo(evaluateStep('asis', { ...c, deliverables: data }))).toBeUndefined();
   });
 
-  it('after "Draft with Copilot" and the sign-offs every step is complete (ja and en)', () => {
+  it('after "Draft with Copilot", the strategy work and the sign-offs every step is complete (ja and en)', () => {
     for (const lang of ['ja', 'en'] as const) {
       const base = demoCtx();
       let data = drafted(base, lang);
       for (const s of IMPROVEMENT_STEPS) for (const x of STEP_DEFS[s].todos.filter((y) => y.kind === 'manual')) data = setSignOff(data, x.id, { at: '2026-11-09T10:00:00Z', by: 'Tester' });
-      const c = { ...base, deliverables: data };
+      const c = withStrategy({ ...base, deliverables: data });
       for (const s of IMPROVEMENT_STEPS) {
         const failed = evaluateStep(s, c).filter((r) => !r.done).map((r) => `${r.todo.id}:${r.outcome?.code}`);
         expect(failed, `${lang}:${s}`).toEqual([]);
@@ -166,17 +234,21 @@ describe('step deliverables: validity checks', () => {
   it('field checks reject statements without numbers or deadlines (SMART)', () => {
     let data = emptyDeliverables();
     const at = '2026-11-09T00:00:00Z';
-    for (const f of STEP_DEFS.define.fields) data = setField(data, 'define', f.id, { text: 'TBD', author: 'human', updatedAt: at });
-    let r = byId('define', { ...emptyProjectCtx(), deliverables: data })['define-doc']!;
+    for (const f of STEP_DEFS.asis.fields) data = setField(data, 'asis', f.id, { text: 'TBD', author: 'human', updatedAt: at });
+    const r = byId('asis', { ...emptyProjectCtx(), deliverables: data })['asis-doc']!;
     expect(r.outcome).toMatchObject({ ok: false, code: 'docVague', vars: { empty: 0, vague: 3 } });
-    expect(r.outcome?.refs?.map((x) => (x.type === 'field' ? x.id : '')).sort()).toEqual(['impact', 'problem', 'success']);
-    data = setField(data, 'define', 'problem', { text: 'Lead time 16 days', author: 'human', updatedAt: at });
-    data = setField(data, 'define', 'impact', { text: '¥120M a year', author: 'human', updatedAt: at });
-    data = setField(data, 'define', 'success', { text: '10 days', author: 'human', updatedAt: at });
-    r = byId('define', { ...emptyProjectCtx(), deliverables: data })['define-doc']!;
-    expect(r.outcome).toMatchObject({ ok: false, code: 'docVague', vars: { vague: 1 } }); // success has no deadline
-    data = setField(data, 'define', 'success', { text: '10 days by 2027-03-31', author: 'human', updatedAt: at });
-    expect(byId('define', { ...emptyProjectCtx(), deliverables: data })['define-doc']!.done).toBe(true);
+    expect(r.outcome?.refs?.map((x) => (x.type === 'field' ? x.id : '')).sort()).toEqual(['evidence', 'impact', 'problem']);
+    for (const f of STEP_DEFS.tobe.fields) data = setField(data, 'tobe', f.id, { text: 'TBD', author: 'human', updatedAt: at });
+    const tobe = () => byId('tobe', { ...emptyProjectCtx(), deliverables: data })['tobe-doc']!;
+    expect(tobe().outcome?.refs?.map((x) => (x.type === 'field' ? x.id : '')).sort()).toEqual(['gap', 'success', 'vision']);
+    data = setField(data, 'tobe', 'vision', { text: 'Next-day shipping nationwide by FY27', author: 'human', updatedAt: at });
+    data = setField(data, 'tobe', 'gap', { text: '16 → 10 days', author: 'human', updatedAt: at });
+    data = setField(data, 'tobe', 'success', { text: '10 days', author: 'human', updatedAt: at });
+    let r2 = tobe();
+    expect(r2.outcome).toMatchObject({ ok: false, code: 'docVague', vars: { vague: 1 } }); // success has no deadline
+    data = setField(data, 'tobe', 'success', { text: '10 days by 2027-03-31', author: 'human', updatedAt: at });
+    r2 = tobe();
+    expect(r2.done).toBe(true);
   });
 
   it('counter-examples in the pack are caught and point at the offending items', () => {
@@ -192,11 +264,11 @@ describe('step deliverables: validity checks', () => {
     kpi.target = 900; // "decrease" KPI with a target above the baseline
     const c = { ...demoCtx(), pack: loadPack(p) };
     const refIds = (r: ReturnType<typeof byId>[string]) => r.outcome?.refs?.map((x) => (x.type === 'entity' ? x.id : '')) ?? [];
-    const define = byId('define', c);
-    expect(define['define-sources']!.done).toBe(false);
-    expect(refIds(define['define-sources']!)).toEqual(['issue-energy']);
-    expect(refIds(define['define-causes']!)).toEqual(['issue-energy']);
-    const plan = byId('plan', c);
+    const asis = byId('asis', c);
+    expect(asis['define-sources']!.done).toBe(false);
+    expect(refIds(asis['define-sources']!)).toEqual(['issue-energy']);
+    expect(refIds(asis['define-causes']!)).toEqual(['issue-energy']);
+    const plan = byId('deliverable', c);
     expect(refIds(plan['plan-schedule']!)).toEqual(['init-dp-rollout']);
     expect(plan['plan-payback']!.outcome).toMatchObject({ ok: false, code: 'paybackTooLong', vars: { n: 1, max: 3 } });
     expect(refIds(byId('kpi', c)['kpi-direction']!)).toEqual(['kpi-defect']);
@@ -210,7 +282,7 @@ describe('step deliverables: validity checks', () => {
     const k = byId('kpi', c);
     expect(k['kpi-deadline']!.outcome).toMatchObject({ ok: false, code: 'kpisPastDeadline', vars: { n: 1, today: TODAY } });
     expect(k['kpi-okr']!.outcome).toMatchObject({ ok: false, code: 'okrDangling', vars: { n: 1 } });
-    const u = byId('usecase', c);
+    const u = byId('solution', c);
     expect(u['uc-complete']!.done).toBe(false);
     expect(u['uc-trace']!.done).toBe(false);
   });
@@ -251,11 +323,11 @@ describe('step deliverables: validity checks', () => {
     expect(paybackYears(sol, [init('2026-01-01', '2026-07-01'), init('2026-04-01', '2027-01-01')])).toBeCloseTo(2, 2);
     expect(paybackYears({ ...sol, annualBenefitJpy: 0 }, [])).toBe(Infinity);
     // The sample's longest payback with its build period is ~1.2 years: within the default, but not within a 1-year hurdle.
-    const demo = byId('plan', demoCtx())['plan-payback']!;
+    const demo = byId('deliverable', demoCtx())['plan-payback']!;
     expect(demo.outcome).toMatchObject({ ok: true, code: 'paybackOk', vars: { max: PAYBACK_MAX_YEARS } });
     const strict = setPaybackLimit(emptyDeliverables(), { value: 1, at: '2026-11-09T10:00:00Z', by: 'CFO office' });
     expect(paybackLimit(strict)).toBe(1);
-    const failing = byId('plan', { ...demoCtx(), deliverables: strict })['plan-payback']!;
+    const failing = byId('deliverable', { ...demoCtx(), deliverables: strict })['plan-payback']!;
     expect(failing.outcome).toMatchObject({ ok: false, code: 'paybackTooLong', vars: { max: 1 } });
     expect(paybackLimit(setPaybackLimit(strict, null))).toBe(PAYBACK_MAX_YEARS);
     // A broken stored criterion falls back to the default instead of breaking the check.
@@ -281,10 +353,10 @@ describe('step deliverables: validity checks', () => {
 
   it('sign-offs are recorded with who and when, and can be withdrawn', () => {
     let data = setSignOff(emptyDeliverables(), 'define-agree', { at: '2026-11-09T10:00:00Z', by: 'Sato' });
-    let r = byId('define', { ...emptyProjectCtx(), deliverables: data })['define-agree']!;
+    let r = byId('asis', { ...emptyProjectCtx(), deliverables: data })['define-agree']!;
     expect(r).toMatchObject({ done: true, signOff: { by: 'Sato' } });
     data = setSignOff(data, 'define-agree', null);
-    r = byId('define', { ...emptyProjectCtx(), deliverables: data })['define-agree']!;
+    r = byId('asis', { ...emptyProjectCtx(), deliverables: data })['define-agree']!;
     expect(r.done).toBe(false);
   });
 
@@ -297,13 +369,14 @@ describe('step deliverables: validity checks', () => {
 describe('Draft with Copilot', () => {
   it('drafts are grounded in the pack: numbers, sources and owners come from the data', () => {
     const c = demoCtx();
-    const define = buildDraft({ step: 'define', ctx: c, lang: 'ja', audience: 'internal' });
-    expect(define.problem).toContain('受注から出荷までが長い');
-    expect(define.problem).toContain('16 日'); // kpi-lead-time current
-    expect(define.success).toContain('2027-03-31');
-    expect(define.hypotheses).toContain('【仮説】');
-    expect(define.sponsor).not.toMatch(/Okafor|オカフォー/); // roles, not personal names
-    const plan = buildDraft({ step: 'plan', ctx: c, lang: 'en', audience: 'internal' });
+    const asis = buildDraft({ step: 'asis', ctx: c, lang: 'ja', audience: 'internal' });
+    expect(asis.problem).toContain('受注から出荷までが長い');
+    expect(asis.problem).toContain('16 日'); // kpi-lead-time current
+    expect(asis.sponsor).not.toMatch(/Okafor|オカフォー/); // roles, not personal names
+    const tobe = buildDraft({ step: 'tobe', ctx: c, lang: 'ja', audience: 'internal' });
+    expect(tobe.success).toContain('2027-03-31');
+    expect(tobe.hypotheses).toContain('【仮説】');
+    const plan = buildDraft({ step: 'deliverable', ctx: c, lang: 'en', audience: 'internal' });
     expect(plan.roadmap?.split('\n')[0]).toContain('2026-07-01'); // sorted by start
     expect(plan.businessCase).toContain('payback 0.4 years'); // 48M / 120M
     // The ask never asks to start an initiative that is already finished (init-dp-pilot is 100 % done).
@@ -329,14 +402,14 @@ describe('Draft with Copilot', () => {
   });
 
   it('applying a draft never overwrites what a person wrote unless asked', () => {
-    let data = setField(emptyDeliverables(), 'define', 'problem', { text: 'mine', author: 'human', updatedAt: 't' });
+    let data = setField(emptyDeliverables(), 'asis', 'problem', { text: 'mine', author: 'human', updatedAt: 't' });
     const draft = { problem: 'ai problem', impact: 'ai impact', bogus: 'x' };
-    const kept = applyDraft(data, 'define', draft, { overwrite: false, mock: true, at: 't2' });
+    const kept = applyDraft(data, 'asis', draft, { overwrite: false, mock: true, at: 't2' });
     expect(kept.applied).toEqual(['impact']);
-    expect(kept.data.docs.define?.problem?.text).toBe('mine');
-    expect(kept.data.docs.define?.impact).toEqual({ text: 'ai impact', author: 'ai', mock: true, updatedAt: 't2' });
-    data = applyDraft(data, 'define', draft, { overwrite: true, mock: false, at: 't3' }).data;
-    expect(data.docs.define?.problem).toEqual({ text: 'ai problem', author: 'ai', updatedAt: 't3' });
+    expect(kept.data.docs.asis?.problem?.text).toBe('mine');
+    expect(kept.data.docs.asis?.impact).toEqual({ text: 'ai impact', author: 'ai', mock: true, updatedAt: 't2' });
+    data = applyDraft(data, 'asis', draft, { overwrite: true, mock: false, at: 't3' }).data;
+    expect(data.docs.asis?.problem).toEqual({ text: 'ai problem', author: 'ai', updatedAt: 't3' });
   });
 
   it('goes through the C-03 gate; without approval the mock answers and says why', async () => {

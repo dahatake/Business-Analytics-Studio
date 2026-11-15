@@ -10,6 +10,8 @@ import { achievementPct, kpiStatusText, okrPct, statusForPct, validateKpi, type 
 import { newId, type KpiData, type KpiDef } from './model.ts';
 import { useKpis, useScopeKpis } from './stores.ts';
 import { ScrollRegion } from './common.tsx';
+import { useCheckContext } from './deliverablesUi.tsx';
+import { KpiDefinitionPanel, OriginBadge } from './StrategyPanels.tsx';
 
 const EMPTY = { name: '', unit: '', baseline: '', current: '', target: '', deadline: '' };
 const STATUS_COLOR: Record<KpiStatusText, 'success' | 'informative' | 'subtle' | 'warning'> = {
@@ -36,6 +38,8 @@ export function KpiOkrPanel() {
   const [objective, setObjective] = useState('');
   const [krs, setKrs] = useState([{ text: '', kpiId: '' }]);
   const [okrError, setOkrError] = useState<string | null>(null);
+  const ctx = useCheckContext();
+  const objectiveText = (id: string) => ctx.objectives.find((o) => o.id === id)?.text;
 
   const submitKpi = () => {
     const bad = validateKpi(form);
@@ -75,6 +79,7 @@ export function KpiOkrPanel() {
 
   return (
     <>
+      <KpiDefinitionPanel ctx={ctx} />
       <Panel title={t('proj.kpi.title')} rationale="proj.kpi.why" className="span-full" testId="proj-kpi-panel" id="proj-kpi-panel">
         <ScrollRegion label={t('proj.kpi.title')}>
           <table className="data-table compact">
@@ -99,7 +104,7 @@ export function KpiOkrPanel() {
                 const name = loc(k.name, lang);
                 return (
                   <tr key={k.id}>
-                    <th scope="row">{name}</th>
+                    <th scope="row">{name} <OriginBadge origin={k.origin} /></th>
                     <td>{loc(k.unit, lang)}</td>
                     <td className="num">{k.baseline}</td>
                     <td className="num">{k.current}</td>
@@ -148,10 +153,14 @@ export function KpiOkrPanel() {
               <li key={o.id} className="proj-okr">
                 <div className="proj-okr-head">
                   <strong>{loc(o.objective, lang)}</strong>
+                  <OriginBadge origin={o.origin} />
                   <span>{pct === null ? '—' : `${Math.round(pct)}%`}</span>
                   <StatusBadge status={statusForPct(pct)} />
                   <Button size="small" appearance="subtle" icon={<Delete20Regular />} aria-label={t('proj.okr.deleteNamed', { name: loc(o.objective, lang) })} onClick={() => set((v) => ({ ...v, okrs: v.okrs.filter((x) => x.id !== o.id) }))} />
                 </div>
+                {(o.companyObjectiveIds ?? []).some(objectiveText) && (
+                  <p className="muted" data-testid={`proj-okr-company-${o.id}`}>{t('sol.thread.objective')}{': '}{(o.companyObjectiveIds ?? []).map(objectiveText).filter(Boolean).join(lang === 'ja' ? '、' : ', ')}</p>
+                )}
                 <ul>
                   {o.keyResults.map((kr) => {
                     const k = data.kpis.find((x) => x.id === kr.kpiId);

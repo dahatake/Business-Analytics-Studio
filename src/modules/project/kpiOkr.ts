@@ -57,14 +57,15 @@ export function packKpis(pack: CustomerPack, today = new Date()): KpiData {
   const deadline = next.toISOString().slice(0, 10);
   const kpis: KpiDef[] = pack.entities
     .filter((e): e is EntityOf<'kpi'> => e.kind === 'kpi')
-    .map((k) => ({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline }));
+    .map((k) => ({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline, origin: 'customerDefined' as const, sourceIds: k.sourceIds }));
   const ids = new Set(kpis.map((k) => k.id));
   const ext = OkrExtension.safeParse(pack.extensions?.okr);
   const okrs: Okr[] = (ext.success ? ext.data.objectives : []).flatMap((o) => {
     const keyResults = o.keyResults
       .map((kr, i) => ({ id: `${o.id}-kr-${i + 1}`, text: kr.text, kpiId: kr.kpiId ?? '' }))
       .filter((kr) => ids.has(kr.kpiId));
-    return keyResults.length ? [{ id: o.id, objective: o.objective, keyResults }] : [];
+    const companyObjectiveIds = companyObjectiveIdsOf(o);
+    return keyResults.length ? [{ id: o.id, objective: o.objective, keyResults, origin: 'customerDefined' as const, ...(companyObjectiveIds.length ? { companyObjectiveIds } : {}) }] : [];
   });
   return { kpis, okrs };
 }
@@ -73,7 +74,7 @@ export function packKpis(pack: CustomerPack, today = new Date()): KpiData {
 export function demoKpis(pack: CustomerPack): KpiData {
   const kpis: KpiDef[] = pack.entities
     .filter((e): e is EntityOf<'kpi'> => e.kind === 'kpi')
-    .map((k) => ({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline: '2027-03-31' }));
+    .map((k) => ({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline: '2027-03-31', origin: 'customerDefined' as const, sourceIds: k.sourceIds }));
   const has = (id: string) => kpis.some((k) => k.id === id);
   const kr = (id: string, kpiId: string, ja: string, en: string) => ({ id, kpiId, text: { ja, en } });
   const okrs: Okr[] = [
@@ -94,6 +95,85 @@ export function demoKpis(pack: CustomerPack): KpiData {
         kr('kr-demo-5', 'kpi-engagement', '従業員エンゲージメントを高める', 'Raise employee engagement'),
       ].filter((k) => has(k.kpiId)),
     },
-  ].filter((o) => o.keyResults.length > 0);
+  ].filter((o) => o.keyResults.length > 0).map((o) => ({ ...o, origin: 'customerDefined' as const }));
   return { kpis, okrs };
+}
+
+/** Company-anchor objective ids an OKR objective of the pack says it serves (passthrough field). */
+function companyObjectiveIdsOf(o: unknown): string[] {
+  const ids = (o as { companyObjectiveIds?: unknown }).companyObjectiveIds;
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+}
+
+export const DEFINITION_STATUSES = ['defined', 'partial', 'undefined', 'notRetrieved'] as const;
+export type DefinitionStatus = (typeof DEFINITION_STATUSES)[number];
+
+export interface KpiDefinitionState {
+  status: DefinitionStatus;
+  /** true when the pack stated the status; false when it was inferred from what the pack contains. */
+  stated: boolean;
+  checkedSources: string[];
+  /** KPIs/objectives the customer defined (pack kpi entities + extensions.okr). */
+  kpis: number;
+  objectives: number;
+}
+
+/**
+ * FR-313: does the customer already have a KPI/OKR definition? The pack generator records it in extensions.okr; for
+ * older packs it is inferred: objectives with key results = defined, KPIs only = partial, nothing = not retrieved
+ * (absence of evidence is not evidence that the customer has none).
+ */
+export function kpiDefinitionState(pack: CustomerPack): KpiDefinitionState {
+  const ext = OkrExtension.safeParse(pack.extensions?.okr);
+  const data = ext.success ? ext.data : null;
+  const kpis = pack.entities.filter((e) => e.kind === 'kpi').length + (data?.kpis.length ?? 0);
+  const objectives = data?.objectives.filter((o) => o.keyResults.length > 0).length ?? 0;
+  const checkedSources = data?.checkedSources ?? [];
+  if (data?.definitionStatus) return { status: data.definitionStatus, stated: true, checkedSources, kpis, objectives };
+  const status: DefinitionStatus = objectives > 0 ? 'defined' : kpis > 0 ? 'partial' : 'notRetrieved';
+  return { status, stated: false, checkedSources, kpis, objectives };
+}
+
+export interface ProposalInput {
+  pack: CustomerPack;
+  current: KpiData;
+  /** Company-anchor objectives (published or customer-stated) the proposal may serve. */
+  objectives: { id: string; text: string }[];
+  /** YYYY-MM-DD: the default deadline of proposed KPIs. */
+  deadline: string;
+  lang: 'ja' | 'en';
+}
+
+/**
+ * Proposes a KPI/OKR definition when the customer has none (or it could not be retrieved): one objective per company
+ * objective (else one per top issue), key results on the KPIs the issues are measured by. Everything is marked
+ * `proposed`; nothing the project already has is changed. The sponsor must agree before it counts (kpi-measure).
+ */
+export function proposeKpiDefinition({ pack, current, objectives, deadline, lang }: ProposalInput): KpiData {
+  const byId = new Map(pack.entities.map((e) => [e.id, e]));
+  const kpis = [...current.kpis];
+  const has = (id: string) => kpis.some((k) => k.id === id);
+  const issues = pack.entities.filter((e): e is EntityOf<'issue'> => e.kind === 'issue');
+  const issueKpiIds = issues.map((i) => i.kpiIds.filter((id) => byId.get(id)?.kind === 'kpi'));
+  for (const id of issueKpiIds.flat()) {
+    const k = byId.get(id);
+    if (k?.kind !== 'kpi' || has(id)) continue;
+    kpis.push({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline, origin: 'proposed', sourceIds: k.sourceIds });
+  }
+  const used = new Set(current.okrs.flatMap((o) => o.keyResults.map((kr) => kr.kpiId)));
+  const free = [...new Set(issueKpiIds.flat())].filter((id) => has(id) && !used.has(id));
+  if (free.length === 0) return { kpis, okrs: current.okrs };
+  const kpiName = (id: string) => {
+    const k = kpis.find((x) => x.id === id)!;
+    return typeof k.name === 'string' ? k.name : k.name[lang];
+  };
+  const kr = (oid: string, ids: string[]) => ids.map((id, i) => ({ id: `${oid}-kr-${i + 1}`, kpiId: id, text: lang === 'ja' ? `${kpiName(id)}を目標値にする` : `Bring ${kpiName(id)} to target` }));
+  const stamp = Date.now().toString(36);
+  const okrs: Okr[] = objectives.length
+    ? [{ id: `okr-prop-${stamp}`, objective: objectives[0]!.text, keyResults: kr(`okr-prop-${stamp}`, free), origin: 'proposed', companyObjectiveIds: objectives.map((o) => o.id) }]
+    : issues.filter((i) => i.kpiIds.some((id) => free.includes(id))).slice(0, 3).map((i, n) => {
+      const oid = `okr-prop-${stamp}-${n + 1}`;
+      return { id: oid, objective: lang === 'ja' ? `「${i.name.ja}」を解決する` : `Solve "${i.name.en}"`, keyResults: kr(oid, i.kpiIds.filter((id) => free.includes(id))), origin: 'proposed' as const };
+    });
+  return { kpis, okrs: [...current.okrs, ...okrs.filter((o) => o.keyResults.length > 0)] };
 }

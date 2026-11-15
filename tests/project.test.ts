@@ -281,7 +281,7 @@ describe('KPI status thresholds (PARAM-044 / PARAM-045)', () => {
     const d = packKpis(raw, new Date('2026-05-10T00:00:00Z'));
     expect(d.kpis.map((k) => k.id)).toEqual(samplePack.entities.filter((e) => e.kind === 'kpi').map((e) => e.id));
     expect(d.kpis.every((k) => k.deadline === '2027-05-10')).toBe(true);
-    expect(d.okrs).toEqual([{ id: 'okr-linked', objective: '顧客満足を高める', keyResults: [{ id: 'okr-linked-kr-1', text: 'NSAT を上げる', kpiId }] }]);
+    expect(d.okrs).toEqual([{ id: 'okr-linked', objective: '顧客満足を高める',     keyResults: [{ id: 'okr-linked-kr-1', text: 'NSAT を上げる', kpiId }], origin: 'customerDefined' }]);
   });
 });
 
@@ -476,7 +476,7 @@ describe('export and restore (FR-051〜FR-056, FR-219)', () => {
 describe('project file with ids (FR-139)', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
   });
 
   it('saves generated analyses to their project without changing the currently open demo', () => {

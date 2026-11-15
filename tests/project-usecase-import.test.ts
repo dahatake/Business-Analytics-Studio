@@ -94,7 +94,7 @@ describe('use cases in a restored export are candidates, never overwritten (I-1,
   describe('store glue (written via useUseCases)', () => {
     beforeEach(() => {
       localStorage.clear();
-      useProjects.setState({ companies: [], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+      useProjects.setState({ companies: [], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
     });
 
     it('commit writes the selection and undo restores the previous list', () => {

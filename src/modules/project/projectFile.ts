@@ -6,7 +6,7 @@ import { CompanyAnchorDocumentSchema } from '../../data/companyAnchor.ts';
 import { companyAnchorKey, readCompanyAnchorDocument, restoreCompanyAnchorDocument } from '../../state/companyAnchors.ts';
 import { AlignmentSchema } from './companyAlignment.ts';
 import {
-  MAX_PROJECTS_PER_COMPANY, RELATION_KINDS, SCOPE_PREFIX, scopedKey, useProjects, IMPROVEMENT_STEPS, type Company, type Project, type ProjectRelation,
+  MAX_PROJECTS_PER_COMPANY, RELATION_KINDS, SCOPE_PREFIX, scopedKey, useProjects, IMPROVEMENT_STEPS, migrateStep, type Company, type Project, type ProjectRelation,
 } from '../../state/projects.ts';
 
 const Brief = z.object({
@@ -31,7 +31,7 @@ export const ProjectFileSchema = z.object({
     anchorRef: z.object({ key: z.string(), version: z.number().int().positive(), asOf: z.iso.date() }).optional(),
   }),
   project: z.object({
-    id: z.string().min(1), companyId: z.string().min(1), name: z.string().min(1), createdAt: z.string(), step: z.enum(IMPROVEMENT_STEPS), brief: Brief.optional(),
+    id: z.string().min(1), companyId: z.string().min(1), name: z.string().min(1), createdAt: z.string(), step: z.preprocess(migrateStep, z.enum(IMPROVEMENT_STEPS)), brief: Brief.optional(),
     alignments: z.array(AlignmentSchema).optional(),
     mergedFrom: z.array(z.object({
       name: z.string(), createdAt: z.string(), mergedAt: z.string(), brief: Brief.optional(), reasons: z.array(z.string()), score: z.number(), hadPack: z.boolean(),

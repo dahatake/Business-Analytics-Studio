@@ -5,7 +5,7 @@ import { UndoStack } from '../src/state/history.ts';
 describe('companies and projects (FR-137〜139)', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
   });
 
   it('validates names and enforces PARAM-031 per company', () => {
@@ -52,7 +52,7 @@ describe('companies and projects (FR-137〜139)', () => {
     useProjects.getState().setTarget({ kind: 'project', projectId: p.id });
     useProjects.getState().setStep('kpi');
     expect(useProjects.getState().projects[0]!.step).toBe('kpi');
-    expect(useProjects.getState().demoStep).toBe('define');
+    expect(useProjects.getState().demoStep).toBe('asis');
   });
 
   it('validates renames without changing identity, scope data or selection, and persists them', async () => {
@@ -99,6 +99,18 @@ describe('companies and projects (FR-137〜139)', () => {
     expect(useProjects.getState().projects).toEqual(renamedProjects);
     expect(useProjects.getState().target).toEqual({ kind: 'project', projectId: one.id });
     expect(useProjects.getState().lastProjectId).toBe(one.id);
+  });
+
+  it('maps stored step ids of the old flow on load and keeps the registry at version 1 (device storage validates it)', async () => {
+    localStorage.setItem('bas.projects', JSON.stringify({
+      version: 1,
+      state: { companies: [{ id: 'c', name: 'C', createdAt: '' }], projects: [{ id: 'p', companyId: 'c', name: 'P', createdAt: '', step: 'usecase' }], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' },
+    }));
+    await useProjects.persist.rehydrate();
+    expect(useProjects.getState().projects[0]!.step).toBe('solution');
+    expect(useProjects.getState().demoStep).toBe('asis');
+    useProjects.getState().setStep('tobe');
+    expect(JSON.parse(localStorage.getItem('bas.projects')!).version).toBe(1);
   });
 
   it('cascades company deletion, clears active and last selection, and preserves unrelated data', () => {
@@ -150,7 +162,7 @@ describe('companies and projects (FR-137〜139)', () => {
 describe('company information and project inputs', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
   });
 
   it('keeps company information once per company and the inputs per project, trimming and clearing fields', () => {

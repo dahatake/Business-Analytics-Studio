@@ -5,7 +5,7 @@ import {
 } from '../src/modules/project/projectMerge.ts';
 
 const project = (id: string, name: string, purpose?: string, extra: Partial<Project> = {}): Project => ({
-  id, companyId: 'c', name, createdAt: '2025-01-01T00:00:00Z', step: 'define', ...(purpose ? { brief: { purpose } } : {}), ...extra,
+  id, companyId: 'c', name, createdAt: '2025-01-01T00:00:00Z', step: 'asis', ...(purpose ? { brief: { purpose } } : {}), ...extra,
 });
 const relation = (from: string, to: string, kind: ProjectRelation['kind']): ProjectRelation => ({
   id: `${from}-${to}`, companyId: 'c', from, to, kind, createdAt: '2025-01-01T00:00:00Z',
@@ -136,7 +136,7 @@ describe('re-pointing relations on merge', () => {
 describe('mergeProjects (store)', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], relations: [], mergeDismissals: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], mergeDismissals: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
   });
 
   const setup = () => {

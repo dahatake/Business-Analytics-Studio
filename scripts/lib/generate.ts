@@ -1,3 +1,4 @@
+import { stampKpiDefinition } from '../../src/data/kpiDefinition.ts';
 import { samplePack } from '../../src/data/sample.ts';
 import { findPreset, DEFAULT_PRESET_ID } from '../../src/modules/ops/presets.ts';
 import type { ResearchCache } from './research.ts';
@@ -28,6 +29,8 @@ export function generateDraft(cache: ResearchCache, input: GenerateInput): Recor
   draft.extensions = {
     ...(samplePack.extensions ?? {}),
     brand: cache.brand.profile,
+    // FR-313: public research never holds the customer's internal KPI/OKR definition; the app prompts to define it.
+    okr: { ...stampKpiDefinition({}, 0, [...cache.sources.filter((s) => s.status !== 'blocked').map((s) => s.id), ...cache.webPages.map((p) => p.url)]), definitionStatus: 'notRetrieved' },
     ops: {
       templateVersion: input.templateVersion,
       preset: preset.id,

@@ -12,8 +12,9 @@ import {
   setField, setPaybackLimit, STEP_DEFS,
   type CheckContext,
 } from './deliverables.ts';
-import { deliverableNameKey, TodoItem, todayIn, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
+import { deliverableNameKey, StrategySummary, TodoItem, todayIn, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
+import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
 import './project.css';
 
 const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_STEPS as readonly string[]).includes(s);
@@ -31,6 +32,7 @@ function inputCount(id: string, c: CheckContext): number {
     case 'flows': return n('deal') + n('deliverable') + n('invoice');
     case 'projectKpis': return c.kpi.kpis.length;
     case 'okrs': return c.kpi.okrs.length;
+    case 'objectives': return c.objectives?.length ?? 0;
     case 'useCases': return c.useCases.filter((u) => u.origin === 'registered').length;
     case 'solutions': return n('solution');
     case 'personas': return new Set(c.useCases.map((u) => u.persona)).size;
@@ -150,6 +152,7 @@ export function DeliverablesScreen() {
       <section className="span-full dlv-head" aria-labelledby="dlv-name">
         <h2 id="dlv-name" className="proj-h2" data-testid="dlv-name">{t(deliverableNameKey(step))}</h2>
         <p><strong>{t('dlv.screen.purpose')}:</strong> {t(`dlv.${step}.purpose`)}</p>
+        <p><StrategySummary ctx={ctx} /></p>
       </section>
 
       <Panel title={t('dlv.screen.exit')} testId="dlv-exit" className="dlv-exit">
@@ -159,7 +162,10 @@ export function DeliverablesScreen() {
         </ul>
       </Panel>
 
-      {step === 'plan' && <PaybackCriterion />}
+      {step === 'kpi' && <KpiDefinitionPanel ctx={ctx} />}
+      {step === 'solution' && <SolutionStrategyPanel ctx={ctx} />}
+      {step === 'deliverable' && <SolutionDocsPanel ctx={ctx} />}
+      {step === 'deliverable' && <PaybackCriterion />}
 
       <Panel title={t('dlv.screen.inputs')} testId="dlv-inputs" className="dlv-inputs">
         <ul className="dlv-input-list">
@@ -202,6 +208,8 @@ export function DeliverablesScreen() {
           })}
         </div>
       </Panel>
+
+      <StrategyThreadPanel ctx={ctx} />
     </div>
   );
 }

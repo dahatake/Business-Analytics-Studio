@@ -1,3 +1,4 @@
+import { stampKpiDefinition } from '../../data/kpiDefinition.ts';
 import { z } from 'zod';
 import { CompanyAnchorVersionSchema, type CompanyAnchorVersion } from '../../data/companyAnchor.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence, type CollectionSection } from '../../data/collection.ts';
@@ -516,7 +517,7 @@ function rules(lang: Lang): string {
       '- 拠点: 営業所・オフィス・Hub・ブリーフィングセンター等は role:"office"、capacityTPerMonth:0、city（例 "Tokyo"）と country を書く（座標はアプリが city から補う）。海外拠点も資料にあれば含める。',
       '- Work IQ の回答（source-workiq-*）は Microsoft 365 の社内情報の要約で、区分ごとに分かれている。各区分を対応する場所に使う: 組織→person/site、KPI・OKR→extensions.okr（数値の基準値・現在値・目標値がそろう時だけ kpi エンティティ）、業務の流れ→extensions.workflow、データ資産→extensions.dataCatalog、拠点→site、顧客→customer、案件・取り組み→下記の engagements の規則、課題→issue/cause。回答に書かれていない値は作らず、「見つからない」とされた項目は作らない。人物は氏名と役職だけにする。「Project の目的に関する社内情報」の区分は目的の論点ごとの検索結果で、目的の課題・原因・施策・取り組み・KPI の第一の根拠として使う。',
       '- extensions.workflow.stages: このチーム（組織）の仕事を、受け取るもの（inputs）→行う作業（activities）→出すもの（outputs）→次の段（next）／引き継ぐ他チーム（handoffTo）の順に書く。使うレポート・システムは data。各段に sourceIds。',
-      '- extensions.okr: kpis（name・definition・target・current・unit・period・owner は文字列で原文どおり。現在値が資料にない時は current を書かない）と objectives（objective・keyResults）。各要素に sourceIds。',
+      '- extensions.okr: kpis（name・definition・target・current・unit・period・owner は文字列で原文どおり。現在値が資料にない時は current を書かない）と objectives（objective・keyResults）。各要素に sourceIds。顧客がすでに KPI/OKR を定義しているかを必ず確かめ、definitionStatus（defined=定義が見つかり記録した / partial=KPI だけなど一部 / undefined=資料に「定義していない」と明記 / notRetrieved=確かめられなかった）と checkedSources（確かめた資料・会議の名前）を書く。見つからないことは undefined の根拠にならない（notRetrieved にする）。中期経営計画などの経営目標に対応する OKR は objective にその目標の文言を含める。',
       '- 実施した案件・取り組みは extensions.engagements.items に保存する。各項目に id・name・sourceIds（1 件以上）、および period・customer・status の少なくとも 1 つを資料どおりに書く。任意: type（workshop/briefing/poc/programme/deliverable/deal/other）、customerId（既存の customer の id）、owner（氏名と役職のみ）、count・outcome。name は文字列または ja/en、他の事実は原文の文字列。金額・進捗・日付を補わない。deal は金額・製品・顧客・日付・担当が、initiative は進捗・期間・担当と費用・効果のある solution が資料にそろう時だけ。同じ実施情報をエンティティと engagements の両方に書かない。',
       '- extensions.dataCatalog.items: 組織が管理・利用するデータ（Power BI レポート、ダッシュボード、CRM、リスト、Excel 等）を name・description・domain・columns（分かる列）・url（引用の URL）で書く。',
       `- 1 回の回答は ${MAX_STAGE_ENTITIES} エンティティまで。`,
@@ -533,7 +534,7 @@ function rules(lang: Lang): string {
       '- Sites: sales offices, hubs, briefing centres and similar are role:"office" with capacityTPerMonth:0, plus city (e.g. "Tokyo") and country (the app sets coordinates from the city). Include locations abroad when the material names them.',
       '- The Work IQ answers (source-workiq-*) summarise internal Microsoft 365 information, one per section. Use each where it belongs: organisation → person/site, KPI/OKR → extensions.okr (kpi entities only when baseline, current and target numbers are all stated), process → extensions.workflow, data assets → extensions.dataCatalog, locations → site, customers → customer, work records → engagements rules below, issues → issue/cause. Never create values they do not state or items they report as not found. People: name and title only. The "internal information on the project purpose" section searched each point of the purpose: use it first for the purpose\'s issues, causes, solutions, work records and KPIs.',
       '- extensions.workflow.stages: the team\'s work as what it receives (inputs) → what it does (activities) → what it hands over (outputs) → next stage ids (next) / other teams taking over (handoffTo); reports and systems used go in data. sourceIds on each stage.',
-      '- extensions.okr: kpis (name, definition, target, current, unit, period, owner as strings, worded as in the material; omit current when the material has no current value) and objectives (objective, keyResults). sourceIds on each.',
+      '- extensions.okr: kpis (name, definition, target, current, unit, period, owner as strings, worded as in the material; omit current when the material has no current value) and objectives (objective, keyResults). sourceIds on each. Always check whether the customer already defines KPIs/OKRs and write definitionStatus (defined = found and recorded / partial = e.g. KPIs only / undefined = the material states there is none / notRetrieved = could not be checked) and checkedSources (names of the documents or meetings checked). Not finding a definition is not evidence there is none (use notRetrieved). For OKRs serving a company objective (e.g. the medium-term plan), quote that objective in the objective text.',
       '- Work records go in extensions.engagements.items. Each item needs id, name, sourceIds (at least one), and at least one of period, customer or status stated in the material. Optional: type (workshop/briefing/poc/programme/deliverable/deal/other), customerId (an existing customer id), owner (name and title only), count, outcome. name is a string or ja/en; other facts are verbatim strings. Never fill in amounts, progress or dates. Use deal only when value, products, customer, date and owner are known; initiative only when progress, dates, owner and a solution with cost and benefit are known. Do not duplicate the same work in entities and engagements.',
       '- extensions.dataCatalog.items: data the organisation owns or uses (Power BI reports, dashboards, CRM, lists, workbooks…) with name, description, domain, columns (when known) and url (the cited URL).',
       `- At most ${MAX_STAGE_ENTITIES} entities per answer.`,
@@ -575,7 +576,7 @@ export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foun
     '| id | kind | name |', '|---|---|---|', ...known,
     `regions: ${regions.join(', ') || '—'}`,
     ja ? '# 出力' : '# Output',
-    `{"entities":[...],"flows":[...],"optimization":{...},"extensions":{"okr":{"kpis":[...],"objectives":[...]},"engagements":{"items":[...]},"graph":{...},"architecture":{...},"coreObject":{...}},"gaps":[{"section":"kpi","missing":["..."],"nextAction":"..."}]}`,
+    `{"entities":[...],"flows":[...],"optimization":{...},"extensions":{"okr":{"kpis":[...],"objectives":[...],"definitionStatus":"...","checkedSources":[...]},"engagements":{"items":[...]},"graph":{...},"architecture":{...},"coreObject":{...}},"gaps":[{"section":"kpi","missing":["..."],"nextAction":"..."}]}`,
     ja
       ? `- entities の kind は ${KINDS_B.join(', ')} だけ。目的「${input.purpose.trim()}」に関係する課題・原因・施策・KPI・取り組みを優先する。deal・deliverable・invoice は社内資料に根拠があるときだけ。`
       : `- entities may only have kind ${KINDS_B.join(', ')}. Prefer issues, causes, solutions, KPIs and initiatives relevant to the purpose "${input.purpose.trim()}". deal, deliverable and invoice only with work material behind them.`,
@@ -1487,6 +1488,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   /* 6. Collection report, number check, generation record */
   emit('finalize', 'running');
   const ext = { ...((finalPack.extensions as Record<string, unknown>) ?? {}) };
+  ext.okr = stampKpiDefinition(ext.okr, (Array.isArray(finalPack.entities) ? finalPack.entities : []).filter((e: unknown) => isObj(e) && e.kind === 'kpi').length, entries.filter((e) => e.item.kind !== 'news' && e.item.kind !== 'web').map((e) => e.item.title));
   ext.collection = buildCollection(finalPack, input.asOf.trim(), pages.length + news.length > 0, gaps, input.lang, entries.some((e) => e.item.kind === 'workiq'));
   if (input.companyAnchor) {
     ext.companyAnchor = structuredClone(input.companyAnchor);

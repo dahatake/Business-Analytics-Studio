@@ -8,9 +8,22 @@ import { AlignmentSchema, alignmentEvaluationKey, type Alignment } from '../modu
 
 /** PARAM-031: projects per company. */
 export const MAX_PROJECTS_PER_COMPANY = 50;
-/** PARAM-030: business-improvement steps (課題定義→現状分析→KPI 測定→ユースケース作成→施策計画). */
-export const IMPROVEMENT_STEPS = ['define', 'asis', 'kpi', 'usecase', 'plan'] as const;
+/**
+ * PARAM-030: business-improvement steps (現状分析→あるべき姿→KPI/OKR 定義→ソリューション作成→成果物).
+ * The order follows the strategy-map logic (Kaplan & Norton): the gap between as-is and to-be is measured by KPIs/OKRs
+ * before solutions are chosen, and every solution ends in the deliverable that fits its type (requirements definition
+ * for digital ones, a plan for process/people/asset/partner changes).
+ */
+export const IMPROVEMENT_STEPS = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
 export type ImprovementStep = (typeof IMPROVEMENT_STEPS)[number];
+/** Step ids before the restructure (v1) → current ids. */
+const LEGACY_STEPS: Record<string, ImprovementStep> = { define: 'asis', usecase: 'solution', plan: 'deliverable' };
+/** Reads a stored step id (old or new); unknown values fall back to the first step. */
+export function migrateStep(raw: unknown): ImprovementStep {
+  if (typeof raw !== 'string') return 'asis';
+  if ((IMPROVEMENT_STEPS as readonly string[]).includes(raw)) return raw as ImprovementStep;
+  return LEGACY_STEPS[raw] ?? 'asis';
+}
 
 /** Facts about the customer that every project of the company shares (entered once, reused by each pack). */
 export interface CompanyProfile {
@@ -238,7 +251,7 @@ export const useProjects = create<ProjectsState>()(
       mergeDismissals: [],
       target: { kind: 'demo' },
       lastProjectId: null,
-      demoStep: 'define',
+      demoStep: 'asis',
       addCompany: (raw, profile) => {
         const name = raw.trim();
         if (!name) return { ok: false, reason: 'emptyName' };
@@ -294,7 +307,7 @@ export const useProjects = create<ProjectsState>()(
         if (siblings.some((p) => p.name === name)) return { ok: false, reason: 'duplicate' };
         const id = newId('pj');
         const cleaned = brief ? mergeFields<ProjectBrief>({}, brief) : {};
-        const project: Project = { id, companyId, name, createdAt: now(), step: 'define', ...(Object.keys(cleaned).length ? { brief: cleaned } : {}) };
+        const project: Project = { id, companyId, name, createdAt: now(), step: 'asis', ...(Object.keys(cleaned).length ? { brief: cleaned } : {}) };
         set((s) => ({ projects: [...s.projects, project] }));
         return { ok: true, id };
       },
@@ -406,8 +419,15 @@ export const useProjects = create<ProjectsState>()(
     }),
     {
       name: PROJECTS_STORAGE_KEY,
+      // Stays at version 1: device storage validates bas.projects as version 1. Old step ids are mapped on every load.
       version: 1,
       storage: createJSONStorage(() => localStorage),
+      merge: (persisted, current) => {
+        const s = { ...((persisted ?? {}) as Partial<ProjectsState>) } as { projects?: { step?: unknown }[]; demoStep?: unknown };
+        if (Array.isArray(s.projects)) s.projects = s.projects.map((p) => ({ ...p, step: migrateStep(p.step) }));
+        if ('demoStep' in s) s.demoStep = migrateStep(s.demoStep);
+        return { ...current, ...(s as Partial<ProjectsState>) };
+      },
       partialize: ({ companies, projects, relations, mergeDismissals, target, lastProjectId, demoStep }) => ({ companies, projects, relations, mergeDismissals, target, lastProjectId, demoStep }),
     },
   ),
@@ -433,7 +453,7 @@ export function useActiveProject(): { project: Project | null; company: Company 
     const projectId = s.target.projectId;
     const project = s.projects.find((p) => p.id === projectId) ?? null;
     const company = project ? s.companies.find((c) => c.id === project.companyId) ?? null : null;
-    return { project, company, step: project?.step ?? 'define' };
+    return { project, company, step: project?.step ?? 'asis' };
   }));
 }
 

@@ -27,8 +27,8 @@ beforeEach(() => {
   useProjects.setState({
     companies: [{ id: 'a', name: 'Acme', createdAt: '' }, { id: 'b', name: 'Other', createdAt: '' }],
     projects: [
-      { id: 'pa', companyId: 'a', name: 'A project', createdAt: '', step: 'define' },
-      { id: 'pb', companyId: 'b', name: 'B project', createdAt: '', step: 'define' },
+      { id: 'pa', companyId: 'a', name: 'A project', createdAt: '', step: 'asis' },
+      { id: 'pb', companyId: 'b', name: 'B project', createdAt: '', step: 'asis' },
     ],
     target: { kind: 'project', projectId: 'pa' },
   });

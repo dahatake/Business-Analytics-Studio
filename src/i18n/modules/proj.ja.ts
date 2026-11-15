@@ -23,11 +23,11 @@ export const projJa = {
   'proj.target.manage': '企業と Project を管理…',
 
   'proj.stepper.label': '業務改善ステップ',
-  'proj.step.define': '課題定義',
   'proj.step.asis': '現状分析',
-  'proj.step.kpi': 'KPI 測定',
-  'proj.step.usecase': 'ユースケース作成',
-  'proj.step.plan': '施策計画',
+  'proj.step.tobe': 'あるべき姿',
+  'proj.step.kpi': 'KPI/OKR 定義',
+  'proj.step.solution': 'ソリューション作成',
+  'proj.step.deliverable': '要求定義・成果物',
 
   'proj.firstRun.demo': 'デモで試す',
 

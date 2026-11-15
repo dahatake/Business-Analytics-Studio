@@ -200,7 +200,7 @@ describe('independent alignment evaluation', () => {
 describe('company anchor persistence and project portability', () => {
   beforeEach(() => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], relations: [], mergeDismissals: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], relations: [], mergeDismissals: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
   });
 
   it('versions shared company data separately, exports it, restores it, and deletes it with the company', () => {

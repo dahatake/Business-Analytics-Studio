@@ -71,6 +71,13 @@ export const OkrExtension = z.object({
     }).passthrough()).default([]),
     sourceIds: SourceIds,
   }).passthrough()).default([]),
+  /**
+   * FR-313: whether the customer has its own KPI/OKR definition. defined = found and recorded; partial = some found
+   * (e.g. KPIs without objectives); undefined = the material says there is none; notRetrieved = could not be checked.
+   */
+  definitionStatus: z.enum(['defined', 'partial', 'undefined', 'notRetrieved']).optional(),
+  /** What was searched to decide the status (document names, meetings), so the claim can be checked. */
+  checkedSources: z.array(z.string()).optional(),
 }).passthrough();
 export type OkrExtension = z.infer<typeof OkrExtension>;
 

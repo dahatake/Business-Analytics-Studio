@@ -63,7 +63,8 @@ export function buildDraft({ step, ctx, lang, audience }: DraftInput): Record<st
   const uniq = <T,>(xs: T[]) => [...new Set(xs)];
   const topKpis = uniq(top.flatMap(kpisOf));
 
-  switch (step) {
+  const part = (key: 'define' | 'asis' | 'kpi' | 'usecase' | 'plan'): Record<string, string> => {
+  switch (key) {
     case 'define': {
       const rest = issues.slice(TOP_ISSUES);
       return {
@@ -243,6 +244,46 @@ export function buildDraft({ step, ctx, lang, audience }: DraftInput): Record<st
         ]),
       };
     }
+  }
+  };
+
+  switch (step) {
+    case 'asis': {
+      const { hypotheses: _h, success: _s, ...define } = part('define');
+      return { ...define, ...part('asis') };
+    }
+    case 'tobe': {
+      const { hypotheses, success } = part('define');
+      const objectives = ctx.objectives ?? [];
+      const linked = new Set([...(ctx.projectObjectiveIds ?? []), ...ctx.kpi.okrs.flatMap((o) => o.companyObjectiveIds ?? [])]);
+      const anchor = objectives.filter((o) => linked.has(o.id)).map((o) => o.text);
+      const solutions = uniq(top.flatMap(solutionsOf));
+      return {
+        vision: bullets([
+          ...(anchor.length ? anchor : objectives.map((o) => o.text)).map((o) => L(lang, { ja: `経営目標: ${o}`, en: `Company objective: ${o}` })),
+          ...topKpis.map((k) => L(lang, { ja: `${deadlineOf(k)} までに ${name(k)} が ${num(k.target, k.unit)} になっている`, en: `By ${deadlineOf(k)}, ${name(k)} is ${num(k.target, k.unit)}` })),
+        ]),
+        toBeProcess: bullets(solutions.map((s) => `${name(s)}: ${loc(s.description, lang)}`)),
+        gap: bullets(topKpis.map((k) => L(lang, {
+          ja: `${name(k)}: 現状 ${num(k.current, k.unit)} → 目標 ${num(k.target, k.unit)}（差 ${num(Math.abs(k.target - k.current), k.unit)}）`,
+          en: `${name(k)}: now ${num(k.current, k.unit)} → target ${num(k.target, k.unit)} (gap ${num(Math.abs(k.target - k.current), k.unit)})`,
+        }))),
+        hypotheses: hypotheses ?? '',
+        success: success ?? '',
+      };
+    }
+    case 'kpi': return part('kpi');
+    case 'solution': {
+      const solutions = v.of('solution');
+      return {
+        options: bullets(solutions.map((s) => L(lang, {
+          ja: `${name(s)}: 投資 ${fmt.yenCompact(s.costJpy)}、年間効果 ${fmt.yenCompact(s.annualBenefitJpy)}${s.msProducts.length ? `（${s.msProducts.join(', ')}）` : ''}`,
+          en: `${name(s)}: invest ${fmt.yenCompact(s.costJpy)}, annual benefit ${fmt.yenCompact(s.annualBenefitJpy)}${s.msProducts.length ? ` (${s.msProducts.join(', ')})` : ''}`,
+        }))),
+        ...part('usecase'),
+      };
+    }
+    case 'deliverable': return part('plan');
   }
 }
 

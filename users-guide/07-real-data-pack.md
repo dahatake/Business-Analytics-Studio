@@ -314,7 +314,7 @@ Excel・PDFなどの資料そのものは「対象外」と表示されます（
 | `optimization` | 工場能力・需要・生産/輸送コスト・CO2・リードタイム・現行配分の入力 |
 | `extensions` | ブランドやデータカタログなど、各機能の拡張データ。使わないサンプル値を残さない |
 | `extensions.workflow` | 製造業以外の組織の業務の流れ。`{"stages":[{"id","name","team","inputs":[],"activities":[],"outputs":[],"data":[],"next":["次の段階のid"],"handoffTo":["引き継ぐ外部チーム"],"sourceIds":[]}]}`。「業務と物の流れ」と 3D のデジタルツインに表示 |
-| `extensions.okr` | 社内の KPI と OKR を書かれたとおりに記録。`{"kpis":[{"id","name","definition","target","current","unit","period","owner","sourceIds"}],"objectives":[{"id","objective","owner","keyResults":[{"text","target","period","kpiId"}],"sourceIds"}]}`。目標値は文章でよい。数値の基準値・現在値・目標値がそろう KPI だけを `kpi` エンティティにする |
+| `extensions.okr` | 社内の KPI と OKR を書かれたとおりに記録。`{"kpis":[{"id","name","definition","target","current","unit","period","owner","sourceIds"}],"objectives":[{"id","objective","owner","keyResults":[{"text","target","period","kpiId"}],"sourceIds"}]}`。目標値は文章でよい。数値の基準値・現在値・目標値がそろう KPI だけを `kpi` エンティティにする。顧客自身の定義の有無を `definitionStatus`（`defined` 取得済み・`partial` 一部・`undefined` 定義なしを確認・`notRetrieved` 確認できず）に、確認した資料を `checkedSources` に記録する。中身がないのに `defined` と書かれた場合は作成時に付け直す。`undefined`・`notRetrieved`・`partial` なら、Project の「KPI/OKR 定義」で定義案を作る（[第2章](02-orientation.md#経営kpiokrproject-のつながり)） |
 | 拠点の `role` | `hq`（本社）・`plant`（工場）・`dc`（物流拠点）・`office`（オフィス・営業拠点）。工場のない組織に `plant` を使わない |
 
 数値には定義、単位、対象期間、出典を付けます。参照IDは実在し、必要な種類（たとえば `ownerId` が人物、`siteId` が拠点）を指す必要があります。表示テキストを持つレコードは日英両方を埋め、空文字を避けてください。特に `flows` と `optimization` は表の行列の順・単位・期間をそろえます。

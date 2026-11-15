@@ -47,6 +47,14 @@ export type DiscussionData = z.infer<typeof DiscussionDataSchema>;
 
 /* ---------- KPI / OKR (FR-153, FR-154) ---------- */
 
+/**
+ * Where a KPI/OKR comes from (FR-313). customerDefined = the customer's own definition (scorecard, OKR sheet, plan),
+ * companyAnchor = the company's published or stated objective/KPI, proposed = defined in this app because none was
+ * found; a proposal is a hypothesis until the sponsor agrees to it.
+ */
+export const KPI_ORIGINS = ['customerDefined', 'companyAnchor', 'proposed'] as const;
+export type KpiOrigin = (typeof KPI_ORIGINS)[number];
+
 export const KpiDefSchema = z.object({
   id: z.string().min(1),
   name: LocalizableSchema,
@@ -55,6 +63,9 @@ export const KpiDefSchema = z.object({
   current: z.number(),
   target: z.number(),
   deadline: z.string(),
+  origin: z.enum(KPI_ORIGINS).optional(),
+  /** Pack source entity ids (or anchor source ids) the definition comes from. */
+  sourceIds: z.array(z.string()).optional(),
 });
 export type KpiDef = z.infer<typeof KpiDefSchema>;
 
@@ -62,6 +73,9 @@ export const OkrSchema = z.object({
   id: z.string().min(1),
   objective: LocalizableSchema,
   keyResults: z.array(z.object({ id: z.string().min(1), text: LocalizableSchema, kpiId: z.string().min(1) })).min(1),
+  origin: z.enum(KPI_ORIGINS).optional(),
+  /** Company-anchor objective ids (statedObjectives) this objective serves: the company ↔ project link. */
+  companyObjectiveIds: z.array(z.string()).optional(),
 });
 export type Okr = z.infer<typeof OkrSchema>;
 

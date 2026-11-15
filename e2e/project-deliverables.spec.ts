@@ -21,43 +21,42 @@ async function go(page: Page, route: string, lang: Lang = 'ja') {
 }
 
 test.describe('step deliverables and to-do band', () => {
-  test('all five step signals follow task completion, survive reload, and clear when work is undone', async ({ page }) => {
+  test('the step signal follows task completion, survives reload, and clears when work is undone', async ({ page }) => {
     await go(page, '/home');
-    const steps = [
-      ['define', 'define-agree'],
-      ['asis', 'asis-field'],
-      ['kpi', 'kpi-measure'],
-      ['usecase', 'uc-review'],
-      ['plan', 'plan-approve'],
-    ] as const;
+    const steps = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
     const stepper = page.getByTestId('proj-stepper');
-    for (const [step] of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
-    for (const [step, sign] of steps) {
-      const button = stepper.locator(`[data-step="${step}"]`);
-      await button.click();
-      await expect(button).toHaveAttribute('data-complete', 'false');
-      await page.getByTestId('dlv-draft').click();
-      await page.getByTestId('dlv-draft-apply').click();
-      await expect(button).toHaveAttribute('data-complete', 'false'); // Draft alone is not sign-off.
-      await page.getByTestId(`dlv-sign-${sign}`).check();
-      await expect(button).toHaveAttribute('data-complete', 'true');
-      await expect(button).toHaveAccessibleName(/完了/);
-      await expect(button.locator('.proj-step-check')).toBeVisible();
-      const rgb = await button.evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g)!.map(Number));
-      expect(rgb[1]).toBeGreaterThan(rgb[0]!);
-      expect(rgb[1]).toBeGreaterThan(rgb[2]!);
-      await page.getByTestId(`dlv-sign-${sign}`).uncheck();
-      await expect(button).toHaveAttribute('data-complete', 'false');
-      await page.getByTestId(`dlv-sign-${sign}`).check();
-    }
+    for (const step of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
+    const button = stepper.locator('[data-step="asis"]');
+    await button.click();
+    await page.getByTestId('dlv-draft').click();
+    await page.getByTestId('dlv-draft-apply').click();
+    await expect(button).toHaveAttribute('data-complete', 'false'); // Draft alone is not sign-off.
+    await page.getByTestId('dlv-sign-asis-field').check();
+    await expect(button).toHaveAttribute('data-complete', 'false');
+    await page.getByTestId('dlv-sign-define-agree').check();
+    await expect(button).toHaveAttribute('data-complete', 'true');
+    await expect(button).toHaveAccessibleName(/完了/);
+    await expect(button.locator('.proj-step-check')).toBeVisible();
+    const rgb = await button.evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g)!.map(Number));
+    expect(rgb[1]).toBeGreaterThan(rgb[0]!);
+    expect(rgb[1]).toBeGreaterThan(rgb[2]!);
+    await page.getByTestId('dlv-sign-define-agree').uncheck();
+    await expect(button).toHaveAttribute('data-complete', 'false');
+    await page.getByTestId('dlv-sign-define-agree').check();
+    // Drafting and signing the to-be step is not enough: the project is not yet tied to a company objective.
+    await stepper.locator('[data-step="tobe"]').click();
+    await page.getByTestId('dlv-draft').click();
+    await page.getByTestId('dlv-draft-apply').click();
+    await page.getByTestId('dlv-sign-tobe-agree').check();
+    await expect(stepper.locator('[data-step="tobe"]')).toHaveAttribute('data-complete', 'false');
+    await expect(page.getByTestId('dlv-todo-tobe-link')).toHaveAttribute('data-done', 'false');
     await page.reload();
-    for (const [step] of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'true');
+    await expect(button).toHaveAttribute('data-complete', 'true');
     expect(await scan(page)).toEqual([]);
 
-    await page.goto('/#/deliverables?step=define');
-    await page.getByTestId('dlv-field-success').fill('数値と期限がない');
-    await expect(stepper.locator('[data-step="define"]')).toHaveAttribute('data-complete', 'false');
-    for (const [step] of steps.slice(1)) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'true');
+    await page.goto('/#/deliverables?step=asis');
+    await page.getByTestId('dlv-field-problem').fill('数値がない');
+    await expect(button).toHaveAttribute('data-complete', 'false');
 
     // Completion belongs to the project, not the device or the previously selected step.
     await page.goto('/#/projects');
@@ -67,18 +66,18 @@ test.describe('step deliverables and to-do band', () => {
     await page.getByRole('button', { name: 'Project を作成' }).click();
     await page.getByTestId('proj-target-menu').click();
     await page.getByRole('menuitemradio', { name: '未完了Project' }).click();
-    for (const [step] of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
+    for (const step of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
   });
 
   test('the fix link in every step opens and focuses the first incomplete deliverable field', async ({ page }) => {
     await page.setViewportSize({ width: 1240, height: 750 });
     await go(page, '/home');
     const steps = [
-      ['define', 'define-doc', 'problem'],
-      ['asis', 'asis-doc', 'currentProcess'],
+      ['asis', 'asis-doc', 'problem'],
+      ['tobe', 'tobe-doc', 'vision'],
       ['kpi', 'kpi-doc', 'kpiTree'],
-      ['usecase', 'uc-doc', 'actors'],
-      ['plan', 'plan-doc', 'roadmap'],
+      ['solution', 'uc-doc', 'options'],
+      ['deliverable', 'plan-doc', 'roadmap'],
     ] as const;
     for (const [step, todo, field] of steps) {
       await page.locator(`.proj-step[data-step="${step}"]`).click();
@@ -98,15 +97,15 @@ test.describe('step deliverables and to-do band', () => {
       await expect(input).toBeFocused();
     }
     // A warning in a previously drafted document targets the specific invalid field, not the first field.
-    await page.locator('.proj-step[data-step="define"]').click();
+    await page.locator('.proj-step[data-step="asis"]').click();
     await page.getByTestId('dlv-draft').click();
     await page.getByTestId('dlv-draft-apply').click();
     await page.getByTestId('dlv-next').click();
-    await expect(page.locator('#dlv-sign-define-agree')).toBeFocused();
-    await page.goto('/#/deliverables?step=define');
-    await page.getByTestId('dlv-field-success').fill('要改善');
-    await page.getByTestId('dlv-band').getByTestId('dlv-todo-define-doc').getByRole('link', { name: /対応する/ }).click();
-    await expect(page.getByTestId('dlv-field-success')).toBeFocused();
+    await expect(page.locator('#dlv-sign-asis-field')).toBeFocused();
+    await page.goto('/#/deliverables?step=asis');
+    await page.getByTestId('dlv-field-impact').fill('要改善');
+    await page.getByTestId('dlv-band').getByTestId('dlv-todo-asis-doc').getByRole('link', { name: /対応する/ }).click();
+    await expect(page.getByTestId('dlv-field-impact')).toBeFocused();
     expect(await scan(page)).toEqual([]);
   });
 
@@ -144,15 +143,15 @@ test.describe('step deliverables and to-do band', () => {
     expect(box!.y).toBeGreaterThanOrEqual(live!.y + live!.height - 1);
     expect(box!.y).toBeGreaterThanOrEqual(news!.y + news!.height - 1);
     expect(box!.width).toBeGreaterThan(1000); // full width
-    await expect(band).toContainText('ステップ 1/5: 課題定義');
-    await expect(band).toContainText('成果物: 課題定義書');
-    // Demo: the data checks pass; the deliverable fields and the sponsor's agreement are still open.
-    await expect(page.getByTestId('dlv-progress')).toHaveText('4/6 完了');
+    await expect(band).toContainText('ステップ 1/5: 現状分析');
+    await expect(band).toContainText('成果物: 現状分析レポート（課題定義を含む）');
+    // Demo: the data checks pass; the deliverable fields, the field check and the sponsor's agreement are still open.
+    await expect(page.getByTestId('dlv-progress')).toHaveText('8/11 完了');
     await expect(page.getByTestId('dlv-todo-define-sources')).toHaveAttribute('data-done', 'true');
-    await expect(page.getByTestId('dlv-todo-define-doc')).toHaveAttribute('data-done', 'false');
-    await expect(page.getByTestId('dlv-result-define-doc')).toHaveText('未記入 7 項目、数値・期限が足りない 0 項目');
+    await expect(page.getByTestId('dlv-todo-asis-doc')).toHaveAttribute('data-done', 'false');
+    await expect(page.getByTestId('dlv-result-asis-doc')).toHaveText('未記入 10 項目、数値・期限が足りない 0 項目');
     // The head line says what to do next, and the open criteria come first in the list.
-    await expect(page.getByTestId('dlv-next')).toHaveAttribute('data-todo', 'define-doc');
+    await expect(page.getByTestId('dlv-next')).toHaveAttribute('data-todo', 'asis-doc');
     await expect(page.getByTestId('dlv-next')).toContainText('次にやること:');
     await expect(band.locator('.dlv-band-list > li').first()).toHaveAttribute('data-done', 'false');
     expect(await scan(page)).toEqual([]);
@@ -169,7 +168,8 @@ test.describe('step deliverables and to-do band', () => {
     expect(await scan(page)).toEqual([]);
     await dialog.getByTestId('dlv-draft-apply').click();
     await expect(dialog).toBeHidden();
-    await expect(page.getByTestId('dlv-progress')).toHaveText('5/6 完了');
+    await expect(page.getByTestId('dlv-progress')).toHaveText('9/11 完了');
+    await page.getByTestId('dlv-sign-asis-field').check();
     await page.getByTestId('dlv-sign-define-agree').check();
     await expect(page.getByTestId('dlv-progress')).toHaveText('完了条件をすべて満たしました');
     await expect(page.getByTestId('dlv-result-define-agree')).toContainText('E2E が確認');
@@ -178,27 +178,27 @@ test.describe('step deliverables and to-do band', () => {
 
     // The deliverable screen shows the drafted fields as AI (mock) and re-judges edits immediately.
     await page.getByTestId('dlv-open').click();
-    await expect(page).toHaveURL(/#\/deliverables\?step=define/);
-    await expect(page.getByTestId('dlv-name')).toHaveText('課題定義書');
-    const success = page.getByTestId('dlv-field-success');
-    await expect(success).toHaveValue(/2027-03-31/);
+    await expect(page).toHaveURL(/#\/deliverables\?step=asis/);
+    await expect(page.getByTestId('dlv-name')).toHaveText('現状分析レポート（課題定義を含む）');
+    const problem = page.getByTestId('dlv-field-problem');
+    await expect(problem).toHaveValue(/16 日/);
     await expect(page.getByTestId('dlv-fields').getByText('モック').first()).toBeVisible();
-    await success.fill('リードタイムを短くする');
+    await problem.fill('リードタイムを短くする');
     await expect(page.getByText('数値を入れてください')).toBeVisible();
-    await expect(page.getByTestId('dlv-screen-progress')).toHaveText('5/6 完了');
+    await expect(page.getByTestId('dlv-screen-progress')).toHaveText('10/11 完了');
     expect(await scan(page)).toEqual([]);
 
     // Kept after a reload (project-scoped storage).
     await page.reload();
-    await expect(page.getByTestId('dlv-field-success')).toHaveValue('リードタイムを短くする');
+    await expect(page.getByTestId('dlv-field-problem')).toHaveValue('リードタイムを短くする');
   });
 
   test('the band follows the stepper; each step has its own deliverable', async ({ page }) => {
     await go(page, '/home');
-    await page.locator('.proj-step[data-step="plan"]').click();
+    await page.locator('.proj-step[data-step="deliverable"]').click();
     const band = page.getByTestId('dlv-band');
-    await expect(band).toContainText('ステップ 5/5: 施策計画');
-    await expect(band).toContainText('施策計画書（ロードマップと投資対効果）');
+    await expect(band).toContainText('ステップ 5/5: 要求定義・成果物');
+    await expect(band).toContainText('最終成果物（要求定義書・施策計画）');
     await expect(page.getByTestId('dlv-todo-plan-schedule')).toHaveAttribute('data-done', 'true');
     await page.getByTestId('dlv-draft').click();
     await expect(page.getByTestId('dlv-draft-field-businessCase')).toContainText('回収');
@@ -220,7 +220,7 @@ test.describe('step deliverables and to-do band', () => {
     await decision.getByRole('link', { name: /対応する/ }).click();
     await expect(page).toHaveURL(/#\/discussion/);
     await expect(page.locator('#proj-tree')).toBeFocused();
-    await expect(page.getByTestId('dlv-progress')).toHaveText('3/6 完了');
+    await expect(page.getByTestId('dlv-progress')).toHaveText('6/11 完了');
   });
 
   test('automatic mode: summary only on short windows, full list on tall ones', async ({ page }) => {
@@ -229,10 +229,10 @@ test.describe('step deliverables and to-do band', () => {
     });
     await open(page, '/home');
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.getByTestId('dlv-progress')).toHaveText('4/6 完了');
+    await expect(page.getByTestId('dlv-progress')).toHaveText('8/11 完了');
     await page.setViewportSize({ width: 1600, height: 1400 });
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByTestId('dlv-todo-define-doc')).toBeVisible();
+    await expect(page.getByTestId('dlv-todo-asis-doc')).toBeVisible();
     const bottom = await page.getByTestId('dlv-band').evaluate((el) => el.getBoundingClientRect().bottom + window.scrollY);
     expect(bottom).toBeLessThanOrEqual(1400 * 0.35);
     // At a shorter viewport the fixed area and list no longer fit within 35% of the height.
@@ -242,10 +242,11 @@ test.describe('step deliverables and to-do band', () => {
 
   test('numbers in the text are reconciled with the KPIs; the payback hurdle is the project\'s own', async ({ page }) => {
     await go(page, '/deliverables?step=asis');
-    await expect(page.getByTestId('dlv-todo-asis-reconcile')).toHaveAttribute('data-done', 'true');
-    await expect(page.getByTestId('dlv-result-asis-reconcile')).toContainText('KPI の値と一致');
+    const exit = page.getByTestId('dlv-exit');
+    await expect(exit.getByTestId('dlv-todo-asis-reconcile')).toHaveAttribute('data-done', 'true');
+    await expect(exit.getByTestId('dlv-result-asis-reconcile')).toContainText('KPI の値と一致');
 
-    await page.getByTestId('dlv-tab-plan').click();
+    await page.getByTestId('dlv-tab-deliverable').click();
     const payback = page.getByTestId('dlv-todo-plan-payback');
     await expect(payback).toContainText('3 年以内（構築期間を含む）');
     await expect(payback).toHaveAttribute('data-done', 'true');
@@ -270,17 +271,42 @@ test.describe('step deliverables and to-do band', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.getByTestId('dlv-todo-define-doc')).toBeHidden();
+    await expect(page.getByTestId('dlv-todo-asis-doc')).toBeHidden();
     await page.reload();
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByTestId('dlv-progress')).toBeVisible();
   });
 
+  test('solution step: confirming a type and estimating a contribution feeds the KPI simulation and the linked deliverable', async ({ page }) => {
+    await go(page, '/deliverables?step=solution');
+    await expect(page.getByTestId('dlv-todo-sol-type')).toHaveAttribute('data-done', 'false');
+    const sol = page.getByTestId('sol-solution-sol-energy-twin');
+    await sol.evaluate((el) => { (el as HTMLDetailsElement).open = true; });
+    await page.getByTestId('sol-type-sol-energy-twin').selectOption('process');
+    await page.getByTestId('sol-contrib-add-sol-energy-twin').click();
+    await page.getByTestId('sol-c-lever').fill('切替拠点');
+    await page.getByTestId('sol-c-unit').fill('拠点');
+    for (const [k, v] of [['low', '3'], ['mode', '4'], ['high', '5']] as const) await page.getByTestId(`sol-c-amount-${k}`).fill(v);
+    for (const [k, v] of [['low', '50'], ['mode', '80'], ['high', '100']] as const) await page.getByTestId(`sol-c-effect-${k}`).fill(v);
+    await page.getByTestId('sol-c-ramp').fill('2026-12-01');
+    await page.getByTestId('sol-c-full').fill('2027-01-31');
+    await page.getByTestId('sol-c-save').click();
+    await expect(page.getByTestId('sol-sim-kpi-co2')).toBeVisible();
+    await expect(page.getByTestId('sol-sim-prob-kpi-co2')).toHaveText(/%/);
+    await expect(page.getByTestId('sol-thread-solution-sol-energy-twin')).toBeVisible();
+    await page.getByTestId('dlv-tab-deliverable').click();
+    await expect(page.getByTestId('sol-doc-state-sol-energy-twin')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+    await page.reload();
+    await page.getByTestId('dlv-tab-solution').click();
+    await expect(page.getByTestId('sol-sim-kpi-co2')).toBeVisible();
+  });
+
   test('English: the band, the draft and the deliverable screen have no Japanese', async ({ page }) => {
     await go(page, '/deliverables?step=kpi', 'en');
-    await expect(page.getByTestId('dlv-name')).toHaveText('KPI definition and measurement plan');
+    await expect(page.getByTestId('dlv-name')).toHaveText('KPI/OKR definition (measurement plan)');
     await page.getByTestId('dlv-screen-draft').click();
-    await expect(page.getByTestId('dlv-draft-dialog')).toContainText('Draft: KPI definition');
+    await expect(page.getByTestId('dlv-draft-dialog')).toContainText('Draft: KPI/OKR definition');
     await page.getByTestId('dlv-draft-apply').click();
     await expect(page.getByTestId('dlv-field-formula')).toHaveValue(/lower is better/);
     expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);

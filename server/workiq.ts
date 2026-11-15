@@ -264,7 +264,7 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
   const text: Record<WorkIqAspect, string> = ja
     ? {
       org: `${subject}の組織・チームの概要、ミッション、役割分担、体制、組織図`,
-      kpi: `${subject}の KPI・OKR・目標値・スコアカード・実績値（数値・単位・期間・責任者）`,
+      kpi: `${subject}の KPI・OKR の定義の有無と所在資料、目標値・スコアカード・実績値（数値・単位・期間・責任者）、経営目標との対応`,
       process: `${subject}の業務プロセス: 依頼や受付（インプット）、各工程の作業、成果物（アウトプット）、次に引き継ぐチーム`,
       data: `${subject}のチームが管理・利用するデータ、レポート、ダッシュボード、システム、データ定義やデータ辞書`,
       locations: `${subject}の拠点・オフィス・施設の一覧（都市と国）`,
@@ -274,7 +274,7 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
     }
     : {
       org: `${subject}: organisation and team overview, mission, roles and responsibilities, structure, org chart`,
-      kpi: `${subject}: KPIs, OKRs, targets, scorecards and actuals (figures, units, periods, owners)`,
+      kpi: `${subject}: whether KPIs/OKRs are defined and where, targets, scorecards and actuals (figures, units, periods, owners), and the company objectives they serve`,
       process: `${subject}: business process: requests and intake (inputs), work in each step, deliverables (outputs), the team that takes over next`,
       data: `${subject}: data, reports, dashboards, systems and data definitions or data dictionaries the team owns or uses`,
       locations: `${subject}: list of locations, offices and facilities (city and country)`,

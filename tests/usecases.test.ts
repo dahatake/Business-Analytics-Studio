@@ -83,7 +83,7 @@ describe('demo seeds (FR-180, PARAM-060)', () => {
 
   it('demo starts from the seeds, a new project starts empty', () => {
     localStorage.clear();
-    useProjects.setState({ companies: [], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'define' });
+    useProjects.setState({ companies: [], projects: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
     expect(useUseCases.getState().value.length).toBe(seeds.length);
     const c = useProjects.getState().addCompany('Co');
     if (!c.ok) throw new Error();

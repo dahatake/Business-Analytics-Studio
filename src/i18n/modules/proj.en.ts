@@ -24,11 +24,11 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.target.manage': 'Manage companies and projects…',
 
   'proj.stepper.label': 'Improvement steps',
-  'proj.step.define': 'Define the problem',
   'proj.step.asis': 'Analyze the current state',
-  'proj.step.kpi': 'Measure KPIs',
-  'proj.step.usecase': 'Write use cases',
-  'proj.step.plan': 'Plan initiatives',
+  'proj.step.tobe': 'Shape the to-be state',
+  'proj.step.kpi': 'Define KPIs/OKRs',
+  'proj.step.solution': 'Design solutions',
+  'proj.step.deliverable': 'Requirements and deliverables',
 
   'proj.firstRun.demo': 'Try the demo',
 

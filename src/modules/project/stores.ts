@@ -9,6 +9,7 @@ import { demoDiscussion, DiscussionEditor, type ChangeEntry, type Lens } from '.
 import { demoKpis, packKpis } from './kpiOkr.ts';
 import type { AnalysisData, DiscussionData, KpiData } from './model.ts';
 import { emptyDeliverables, type DeliverableData } from './deliverables.ts';
+import { emptyStrategy, type StrategyData } from './strategy.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
 import { useUseCases, type UseCase } from '../usecases/store.ts';
 import { UseCaseImportUndo } from './useCaseImport.ts';
@@ -39,6 +40,8 @@ export function saveAnalysisForProject(projectId: string, value: AnalysisData) {
 }
 /** Step deliverables (fields added on top of the pack and project data) and sign-offs. Every scope starts empty. */
 export const useDeliverables = createScopedStore<DeliverableData>('proj.deliverables', () => emptyDeliverables());
+/** Solution types, KPI contribution estimates, deliverable section edits and the KPI/OKR definition status. */
+export const useStrategy = createScopedStore<StrategyData>('proj.strategy', () => emptyStrategy());
 
 /** Device-level preferences of this module (not project data). */
 interface ProjUiState {

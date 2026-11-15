@@ -3,7 +3,7 @@ import type { Project, ProjectRelation } from '../src/state/projects.ts';
 import { circleLayout, MAX_SUGGESTIONS, sameIssueGroups, similarity, suggestRelations, SUGGEST_THRESHOLD } from '../src/modules/project/projectRelations.ts';
 
 const project = (id: string, name: string, purpose?: string): Project => ({
-  id, companyId: 'c', name, createdAt: '2025-01-01T00:00:00Z', step: 'define', ...(purpose ? { brief: { purpose } } : {}),
+  id, companyId: 'c', name, createdAt: '2025-01-01T00:00:00Z', step: 'asis', ...(purpose ? { brief: { purpose } } : {}),
 });
 const relation = (from: string, to: string, kind: ProjectRelation['kind']): ProjectRelation => ({
   id: `${from}-${to}`, companyId: 'c', from, to, kind, createdAt: '2025-01-01T00:00:00Z',

@@ -229,7 +229,7 @@ function CompanyPanel({ company, projects, relations, packs, activeId, onAddProj
             {projects.map((p) => {
               const pack = packs[p.id];
               return (
-                <tr key={p.id} className={activeId === p.id ? 'selected' : undefined} data-testid={`proj-row-${p.id}`}>
+                <tr key={p.id} id={activeId === p.id ? 'proj-active' : undefined} tabIndex={activeId === p.id ? -1 : undefined} className={activeId === p.id ? 'selected' : undefined} data-testid={`proj-row-${p.id}`}>
                   <th scope="row">
                     {p.name}
                     {activeId === p.id && <Badge appearance="filled" color="brand" className="proj-inline-badge">{t('proj.projects.open')}</Badge>}

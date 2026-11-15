@@ -9,8 +9,10 @@ import type { ImprovementStep } from '../../state/projects.ts';
 import type { Localizable } from '../../state/text.ts';
 import type { UseCase } from '../usecases/store.ts';
 import { categoriesOf } from './analysis.ts';
-import { validateKpi } from './kpiOkr.ts';
+import { validateKpi, kpiDefinitionState } from './kpiOkr.ts';
 import type { AnalysisData, DiscussionData, KpiData, KpiDef } from './model.ts';
+import { buildSolutionDoc } from './solutionDocs.ts';
+import { emptyStrategy, strategyThread, type CompanyObjective, type StrategyData, type StrategyThread } from './strategy.ts';
 
 /**
  * Deliverables of the five improvement steps (FR-136 / PARAM-030): what each step must have finished (exit criteria)
@@ -62,7 +64,30 @@ export const emptyDeliverables = (): DeliverableData => ({ docs: {}, signOffs: {
 /** Stored values are read back defensively: a broken value never breaks the screen. */
 export function normalizeDeliverables(raw: unknown): DeliverableData {
   const r = DeliverableDataSchema.safeParse(raw);
-  return r.success ? r.data : emptyDeliverables();
+  return r.success ? migrateDocs(r.data) : emptyDeliverables();
+}
+
+/** Where each field of the old steps (define / usecase / plan) lives now. */
+const LEGACY_FIELDS: Record<string, Record<string, ImprovementStep>> = {
+  define: { problem: 'asis', impact: 'asis', scopeIn: 'asis', scopeOut: 'asis', sponsor: 'asis', hypotheses: 'tobe', success: 'tobe' },
+  usecase: { actors: 'solution', scenario: 'solution', acceptance: 'solution', dataNeeds: 'solution', risks: 'solution' },
+  plan: { roadmap: 'deliverable', businessCase: 'deliverable', raci: 'deliverable', risks: 'deliverable', ask: 'deliverable' },
+};
+
+/** Moves fields written under the old step ids to the new steps; a field already written in the new step wins. */
+export function migrateDocs(data: DeliverableData): DeliverableData {
+  if (!Object.keys(LEGACY_FIELDS).some((s) => data.docs[s])) return data;
+  const docs: DeliverableData['docs'] = {};
+  for (const [step, fields] of Object.entries(data.docs)) if (!LEGACY_FIELDS[step]) docs[step] = { ...fields };
+  for (const [old, map] of Object.entries(LEGACY_FIELDS)) {
+    for (const [id, value] of Object.entries(data.docs[old] ?? {})) {
+      const to = map[id];
+      if (!to) continue;
+      docs[to] = { ...(docs[to] ?? {}) };
+      if (!docs[to][id]) docs[to][id] = value;
+    }
+  }
+  return { ...data, docs };
 }
 
 /* ---------- Definitions ---------- */
@@ -84,7 +109,16 @@ export interface CheckContext {
   deliverables: DeliverableData;
   /** YYYY-MM-DD in the app's time zone. */
   today: string;
+  /** Project strategy data (solution types, contributions, deliverable sections). Absent = empty. */
+  strategy?: StrategyData;
+  /** Company-anchor objectives of the project's company. Absent = none registered. */
+  objectives?: CompanyObjective[];
+  /** Company objectives the project is aligned to (Project.alignments). */
+  projectObjectiveIds?: string[];
 }
+
+/** The context the app builds: every strategy field resolved. */
+export type AppCheckContext = CheckContext & Required<Pick<CheckContext, 'strategy' | 'objectives' | 'projectObjectiveIds'>>;
 
 /** Something a check result points at, so the user can see exactly what to fix. */
 export type CheckRef =
@@ -162,22 +196,26 @@ function docCheck(step: ImprovementStep, fields: FieldDef[]) {
 
 /* ---------- The five steps ---------- */
 
-const DEFINE_FIELDS: FieldDef[] = [
+const ASIS_FIELDS: FieldDef[] = [
   { id: 'problem', quantified: true },
   { id: 'impact', quantified: true },
   { id: 'scopeIn' },
   { id: 'scopeOut' },
   { id: 'sponsor' },
-  { id: 'hypotheses' },
-  { id: 'success', quantified: true, timeBound: true },
-];
-
-const ASIS_FIELDS: FieldDef[] = [
   { id: 'currentProcess' },
   { id: 'evidence', quantified: true },
   { id: 'rootCause' },
   { id: 'dataGaps' },
   { id: 'constraints' },
+];
+
+/** The to-be picture: where the company wants to be, by when, and the measured gap from today. */
+const TOBE_FIELDS: FieldDef[] = [
+  { id: 'vision', timeBound: true },
+  { id: 'toBeProcess' },
+  { id: 'gap', quantified: true },
+  { id: 'hypotheses' },
+  { id: 'success', quantified: true, timeBound: true },
 ];
 
 const KPI_FIELDS: FieldDef[] = [
@@ -188,7 +226,8 @@ const KPI_FIELDS: FieldDef[] = [
   { id: 'owner' },
 ];
 
-const USECASE_FIELDS: FieldDef[] = [
+const SOLUTION_FIELDS: FieldDef[] = [
+  { id: 'options' },
   { id: 'actors' },
   { id: 'scenario' },
   { id: 'acceptance', quantified: true },
@@ -196,7 +235,7 @@ const USECASE_FIELDS: FieldDef[] = [
   { id: 'risks' },
 ];
 
-const PLAN_FIELDS: FieldDef[] = [
+const DELIVERABLE_FIELDS: FieldDef[] = [
   { id: 'roadmap', timeBound: true },
   { id: 'businessCase', quantified: true },
   { id: 'raci' },
@@ -355,11 +394,23 @@ export function cyclicInitiatives(inits: EntityOf<'initiative'>[]): string[] {
   return [...bad];
 }
 
+const threads = new WeakMap<CheckContext, StrategyThread>();
+
+/** The strategy thread of the context (computed once per context: several checks read it). */
+export function threadOf(c: CheckContext): StrategyThread {
+  let t = threads.get(c);
+  if (!t) {
+    t = strategyThread({ pack: c.pack, kpi: c.kpi, useCases: c.useCases, strategy: c.strategy ?? emptyStrategy(), objectives: c.objectives ?? [], projectObjectiveIds: c.projectObjectiveIds ?? [] });
+    threads.set(c, t);
+  }
+  return t;
+}
+
 export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
-  define: {
-    step: 'define',
-    inputs: ['issues', 'causes', 'sources', 'discussion'],
-    fields: DEFINE_FIELDS,
+  asis: {
+    step: 'asis',
+    inputs: ['issues', 'causes', 'sources', 'discussion', 'analyses', 'kpis', 'flows'],
+    fields: ASIS_FIELDS,
     todos: [
       {
         id: 'define-sources', kind: 'auto', href: '/relations',
@@ -397,15 +448,6 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return decisions > 0 ? pass('decisionsRecorded', { themes, decisions }) : fail('noDecision', [], { themes });
         },
       },
-      { id: 'define-doc', kind: 'auto', href: docHref('define'), check: docCheck('define', DEFINE_FIELDS) },
-      { id: 'define-agree', kind: 'manual', href: docHref('define') },
-    ],
-  },
-  asis: {
-    step: 'asis',
-    inputs: ['analyses', 'causes', 'kpis', 'flows'],
-    fields: ASIS_FIELDS,
-    todos: [
       {
         id: 'asis-framework', kind: 'auto', href: '/analysis',
         check: (c) => {
@@ -446,13 +488,46 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
       },
       { id: 'asis-doc', kind: 'auto', href: docHref('asis'), check: docCheck('asis', ASIS_FIELDS) },
       { id: 'asis-field', kind: 'manual', href: docHref('asis') },
+      { id: 'define-agree', kind: 'manual', href: docHref('asis') },
+    ],
+  },
+  tobe: {
+    step: 'tobe',
+    inputs: ['objectives', 'issues', 'kpis', 'analyses'],
+    fields: TOBE_FIELDS,
+    todos: [
+      {
+        id: 'tobe-link', kind: 'auto', href: '/projects',
+        check: (c) => {
+          const objectives = c.objectives ?? [];
+          if (objectives.length === 0) return fail('noCompanyObjectives');
+          const linked = (c.projectObjectiveIds ?? []).filter((id) => objectives.some((o) => o.id === id));
+          const viaOkr = c.kpi.okrs.flatMap((o) => o.companyObjectiveIds ?? []).filter((id) => objectives.some((o) => o.id === id));
+          const n = new Set([...linked, ...viaOkr]).size;
+          return n > 0 ? pass('projectAligned', { n }) : fail('projectUnaligned');
+        },
+      },
+      { id: 'tobe-doc', kind: 'auto', href: docHref('tobe'), check: docCheck('tobe', TOBE_FIELDS) },
+      { id: 'tobe-agree', kind: 'manual', href: docHref('tobe') },
     ],
   },
   kpi: {
     step: 'kpi',
-    inputs: ['kpis', 'projectKpis', 'okrs'],
+    inputs: ['kpis', 'projectKpis', 'okrs', 'objectives'],
     fields: KPI_FIELDS,
     todos: [
+      {
+        id: 'kpi-definition', kind: 'auto', href: '/deliverables?step=kpi',
+        check: (c) => {
+          const status = c.strategy?.definition?.status ?? kpiDefinitionState(c.pack.pack).status;
+          const customer = c.kpi.kpis.filter((k) => k.origin === 'customerDefined' || k.origin === 'companyAnchor').length;
+          const proposed = c.kpi.kpis.filter((k) => k.origin === 'proposed').length + c.kpi.okrs.filter((o) => o.origin === 'proposed').length;
+          if (status === 'defined' || status === 'partial') {
+            return customer > 0 ? pass('definitionImported', { n: customer, status }) : fail('definitionNotImported', [], { status });
+          }
+          return customer + proposed > 0 ? pass('definitionProposed', { n: customer + proposed, status }) : fail('definitionMissing', [], { status });
+        },
+      },
       {
         id: 'kpi-valid', kind: 'auto', href: '/analysis?tab=kpi',
         check: (c) => {
@@ -501,15 +576,58 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return bad.length ? fail('okrDangling', bad.map((o) => ({ type: 'text' as const, text: o.objective })), { n: bad.length }) : pass('okrLinked', { n: c.kpi.okrs.length });
         },
       },
+      {
+        id: 'kpi-company', kind: 'auto', href: '/deliverables?step=kpi',
+        check: (c) => {
+          if ((c.objectives ?? []).length === 0) return fail('noCompanyObjectives');
+          if (c.kpi.okrs.length === 0) return fail('noOkr');
+          const t = threadOf(c);
+          const bad = c.kpi.okrs.filter((o) => t.gaps.okrsWithoutObjective.includes(o.id));
+          return bad.length ? fail('okrsUnaligned', bad.map((o) => ({ type: 'text' as const, text: o.objective })), { n: bad.length }) : pass('okrsAligned', { n: c.kpi.okrs.length });
+        },
+      },
       { id: 'kpi-doc', kind: 'auto', href: docHref('kpi'), check: docCheck('kpi', KPI_FIELDS) },
       { id: 'kpi-measure', kind: 'manual', href: docHref('kpi') },
     ],
   },
-  usecase: {
-    step: 'usecase',
-    inputs: ['useCases', 'solutions', 'personas'],
-    fields: USECASE_FIELDS,
+  solution: {
+    step: 'solution',
+    inputs: ['solutions', 'useCases', 'personas', 'projectKpis'],
+    fields: SOLUTION_FIELDS,
     todos: [
+      {
+        id: 'sol-type', kind: 'auto', href: '/deliverables?step=solution',
+        check: (c) => {
+          const solutions = kindOf(c.pack, 'solution');
+          if (solutions.length === 0) return fail('noSolutions');
+          const t = threadOf(c);
+          const bad = solutions.filter((s) => !t.solutions.find((x) => x.id === s.id)?.typeConfirmed);
+          return bad.length ? fail('typesUnconfirmed', entityRefs(bad), { n: bad.length }) : pass('typesConfirmed', { n: solutions.length });
+        },
+      },
+      {
+        id: 'sol-contribution', kind: 'auto', href: '/deliverables?step=solution',
+        check: (c) => {
+          const solutions = kindOf(c.pack, 'solution');
+          if (solutions.length === 0) return fail('noSolutions');
+          const t = threadOf(c);
+          const bad = solutions.filter((s) => t.gaps.solutionsWithoutContribution.includes(s.id));
+          return bad.length ? fail('solutionsWithoutContribution', entityRefs(bad), { n: bad.length }) : pass('allSolutionsEstimated', { n: solutions.length });
+        },
+      },
+      {
+        id: 'sol-target', kind: 'auto', href: '/deliverables?step=solution',
+        check: (c) => {
+          if (c.kpi.kpis.length === 0) return fail('noProjectKpis');
+          const t = threadOf(c);
+          const open = c.kpi.kpis.filter((k) => {
+            const r = t.sims.find((x) => x.kpiId === k.id);
+            if (!r) return true;
+            return r.coverage !== null && r.coverage < 1;
+          });
+          return open.length ? fail('kpiGapOpen', open.map((k) => ({ type: 'text' as const, text: k.name })), { n: open.length }) : pass('kpiGapsClosed', { n: c.kpi.kpis.length });
+        },
+      },
       {
         id: 'uc-registered', kind: 'auto', href: '/usecases',
         check: (c) => {
@@ -547,15 +665,41 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return covered ? pass('topIssueCovered', { issue: top.id }) : fail('topIssueUncovered', [{ type: 'entity', id: top.id }]);
         },
       },
-      { id: 'uc-doc', kind: 'auto', href: docHref('usecase'), check: docCheck('usecase', USECASE_FIELDS) },
-      { id: 'uc-review', kind: 'manual', href: docHref('usecase') },
+      { id: 'uc-doc', kind: 'auto', href: docHref('solution'), check: docCheck('solution', SOLUTION_FIELDS) },
+      { id: 'uc-review', kind: 'manual', href: docHref('solution') },
     ],
   },
-  plan: {
-    step: 'plan',
-    inputs: ['initiatives', 'solutions', 'people', 'discussion'],
-    fields: PLAN_FIELDS,
+  deliverable: {
+    step: 'deliverable',
+    inputs: ['solutions', 'initiatives', 'people', 'discussion'],
+    fields: DELIVERABLE_FIELDS,
     todos: [
+      {
+        id: 'dlv-trace', kind: 'auto', href: '/deliverables?step=deliverable',
+        check: (c) => {
+          const t = threadOf(c);
+          if (t.solutions.length === 0) return fail('noSolutions');
+          const g = t.gaps;
+          const refs: CheckRef[] = [
+            ...g.solutionsWithoutKpi.map((id) => ({ type: 'entity' as const, id })),
+            ...g.digitalWithoutUseCase.map((id) => ({ type: 'entity' as const, id })),
+            ...c.kpi.kpis.filter((k) => g.kpisWithoutOkr.includes(k.id) || g.kpisWithoutSolution.includes(k.id)).map((k) => ({ type: 'text' as const, text: k.name })),
+          ];
+          const n = g.solutionsWithoutKpi.length + g.digitalWithoutUseCase.length + g.kpisWithoutOkr.length + g.kpisWithoutSolution.length;
+          return n ? fail('traceBroken', refs, { n }) : pass('traceComplete', { n: t.solutions.length });
+        },
+      },
+      {
+        id: 'dlv-docs', kind: 'auto', href: '/deliverables?step=deliverable',
+        check: (c) => {
+          const t = threadOf(c);
+          const solutions = kindOf(c.pack, 'solution');
+          if (solutions.length === 0) return fail('noSolutions');
+          const doc = { ...c, strategy: c.strategy ?? emptyStrategy(), objectives: c.objectives ?? [], projectObjectiveIds: c.projectObjectiveIds ?? [] };
+          const bad = solutions.filter((s) => !buildSolutionDoc(s, t.solutions.find((x) => x.id === s.id)!, t, doc, 'ja').complete);
+          return bad.length ? fail('docsOpen', entityRefs(bad), { n: bad.length }) : pass('docsComplete', { n: solutions.length });
+        },
+      },
       {
         id: 'plan-coverage', kind: 'auto', href: '/plan',
         check: (c) => {
@@ -612,8 +756,8 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return n > 0 ? pass('planDecided', { n }) : fail('noPlanDecision');
         },
       },
-      { id: 'plan-doc', kind: 'auto', href: docHref('plan'), check: docCheck('plan', PLAN_FIELDS) },
-      { id: 'plan-approve', kind: 'manual', href: docHref('plan') },
+      { id: 'plan-doc', kind: 'auto', href: docHref('deliverable'), check: docCheck('deliverable', DELIVERABLE_FIELDS) },
+      { id: 'plan-approve', kind: 'manual', href: docHref('deliverable') },
     ],
   },
 };

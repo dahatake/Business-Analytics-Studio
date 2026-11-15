@@ -54,8 +54,8 @@ test.describe('project module', () => {
     test(`header preserves selected and focused states in ${scheme} forced colors`, async ({ page }) => {
       await page.emulateMedia({ forcedColors: 'active', colorScheme: scheme });
       await go(page, '/relations', 'en');
-      const current = page.locator('.proj-step[data-step="define"]');
-      const other = page.locator('.proj-step[data-step="asis"]');
+      const current = page.locator('.proj-step[data-step="asis"]');
+      const other = page.locator('.proj-step[data-step="tobe"]');
       const english = page.getByRole('button', { name: 'English', exact: true });
       const japanese = page.getByRole('button', { name: '日本語', exact: true });
       const motion = page.getByTestId('motion-toggle');
@@ -211,8 +211,8 @@ test.describe('project module', () => {
     await go(page, '/home');
     const stepper = page.getByTestId('proj-stepper');
     const current = stepper.locator('[aria-current="step"]');
-    await expect(current).toContainText('課題定義');
-    await expect(page.getByTestId('proj-home-step')).toContainText('課題定義');
+    await expect(current).toContainText('現状分析');
+    await expect(page.getByTestId('proj-home-step')).toContainText('現状分析');
     const box = await current.boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(44);
     expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -220,11 +220,11 @@ test.describe('project module', () => {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
-    await expect(current).toContainText('KPI 測定');
-    await expect(page.getByTestId('proj-home-step')).toContainText('KPI 測定');
+    await expect(current).toContainText('KPI/OKR 定義');
+    await expect(page.getByTestId('proj-home-step')).toContainText('KPI/OKR 定義');
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.press('Space');
-    await expect(current).toContainText('現状分析');
+    await expect(current).toContainText('あるべき姿');
     for (const b of await stepper.getByRole('button').all()) {
       const bb = await b.boundingBox();
       expect(bb!.height).toBeGreaterThanOrEqual(44);

@@ -2,11 +2,12 @@ import { create } from 'zustand';
 import { aiComplete, registerMock, type AiResponse } from '../../ai/client.ts';
 import type { Entity } from '../../data/schema.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
+import { DEFAULT_WEIGHTS } from '../../domain/summary.ts';
 import { makeFormatters, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
-import type { ImprovementStep } from '../../state/projects.ts';
+import { IMPROVEMENT_STEPS, type ImprovementStep } from '../../state/projects.ts';
 import { loc, type Localizable } from '../../state/text.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
-import type { CheckContext } from './deliverables.ts';
+import { evaluateStep, progressOf, type CheckContext } from './deliverables.ts';
 import { vitalCount, type DetailOf, type StepDashboard } from './stepDashboard.ts';
 
 /**
@@ -43,8 +44,27 @@ export interface BriefContent {
   caveats: string[];
 }
 
+export type BriefMaturity = 'hypothesis' | 'evidenced' | 'agreed';
+
+export function briefMaturity(dash: Pick<StepDashboard, 'results' | 'progress'>): BriefMaturity {
+  if (dash.progress.complete) return 'agreed';
+  return dash.results.every((r) => r.todo.kind !== 'auto' || r.done) ? 'evidenced' : 'hypothesis';
+}
+
+/** The steps before `step` whose exit criteria are not all met. */
+export function openStepsBefore(step: ImprovementStep, ctx: CheckContext): ImprovementStep[] {
+  return IMPROVEMENT_STEPS.slice(0, IMPROVEMENT_STEPS.indexOf(step)).filter((s) => !progressOf(evaluateStep(s, ctx)).complete);
+}
+
 export interface StepBrief extends BriefContent {
   step: ImprovementStep;
+  /**
+   * How far the conclusions can be relied on: hypothesis (data checks still open), evidenced (every data check passes)
+   * or agreed (the step's sign-offs are recorded too). A step can be worked on at any maturity.
+   */
+  maturity: BriefMaturity;
+  /** Earlier steps that are not complete: this brief builds on their hypotheses. */
+  openSteps: ImprovementStep[];
   facts: Fact[];
   /** Fact ids each finding rests on (same order as `findings`). */
   findingFacts: string[][];
@@ -122,12 +142,13 @@ const q = (lang: Lang, s: string) => (lang === 'ja' ? `「${s}」` : `"${s}"`);
 const asis: Builder<'asis'> = (d, x, lang) => {
   const n = d.issues.length;
   const nText = x.f('issues', { ja: '課題数', en: 'Issues' }, n, 'count');
+  const question = L(lang, { ja: 'どの課題から、どの原因に手を打てば、KPI/OKR の目標とのギャップを最も縮められるか。', en: 'Which issues and causes should we act on first to close the most of the gap to the KPI/OKR targets?' });
   if (n === 0) {
     return {
       answer: L(lang, { ja: '課題がまだ登録されていないため、優先順位を判断できません。', en: 'No issues are recorded yet, so priorities cannot be set.' }),
       situation: L(lang, { ja: 'この Project には課題のデータがありません。', en: 'The project has no issue data.' }),
       complication: L(lang, { ja: '課題・原因・根拠がないため、現状の評価ができません。', en: 'Without issues, causes and evidence, the current state cannot be assessed.' }),
-      question: L(lang, { ja: '何が最も大きな問題で、その根拠は何か。', en: 'What is the biggest problem, and what is the evidence?' }),
+      question,
       findings: [],
       findingFacts: [],
       actions: [L(lang, { ja: '関係図で課題と原因を登録する', en: 'Record issues and causes on the relations screen' })],
@@ -143,6 +164,8 @@ const asis: Builder<'asis'> = (d, x, lang) => {
   const mism = d.mismatches.length;
   const mText = x.f('mismatches', { ja: '数値の不一致', en: 'Value mismatches' }, mism, 'count');
   const checked = x.f('checkedValues', { ja: '照合した数値', en: 'Values checked' }, d.checkedValues, 'count');
+  const wImp = x.f('weightImpact', { ja: '評価軸の重み: 影響度', en: 'Axis weight: impact' }, DEFAULT_WEIGHTS.impact, 'number');
+  const wFea = x.f('weightFeasibility', { ja: '評価軸の重み: 実現性', en: 'Axis weight: feasibility' }, DEFAULT_WEIGHTS.feasibility, 'number');
   const vital = vitalCount(d.causes);
   const vitalShare = d.causes[vital - 1]?.cumulative ?? 0;
   const firstCause = d.causes.map((c) => x.name(c.id)).find((v) => v !== null);
@@ -151,48 +174,72 @@ const asis: Builder<'asis'> = (d, x, lang) => {
   const findingFacts: string[][] = [];
   let vText = '';
   let sText = '';
+  let score = '';
   if (top) {
+    score = x.f('topScore', { ja: '最優先課題の優先度スコア（100 点満点）', en: 'Top issue priority score (of 100)' }, top.score, 'score');
     const imp = x.f('topImpact', { ja: '最優先課題の影響度', en: 'Top issue impact' }, top.impact, 'score');
     const fea = x.f('topFeasibility', { ja: '最優先課題の実現性', en: 'Top issue feasibility' }, top.feasibility, 'score');
     const second = visible[1];
+    const score2 = second ? x.f('secondScore', { ja: '次点の課題の優先度スコア', en: 'Runner-up priority score' }, second.score, 'score') : '';
     findings.push(L(lang, {
-      ja: `最優先は${q(lang, top.name)}です（影響度 ${imp}・実現性 ${fea}）。${second ? `次点は${q(lang, second.name)}です。` : ''}`,
-      en: `The top priority is ${q(lang, top.name)} (impact ${imp}, feasibility ${fea}).${second ? ` Next is ${q(lang, second.name)}.` : ''}`,
+      ja: `優先順位: 最優先は${q(lang, top.name)}です（スコア ${score}＝影響度 ${imp}・実現性 ${fea}）。${second ? `次点は${q(lang, second.name)}（スコア ${score2}）です。` : ''}`,
+      en: `Priority: the top issue is ${q(lang, top.name)} (score ${score} = impact ${imp}, feasibility ${fea}).${second ? ` Next is ${q(lang, second.name)} (score ${score2}).` : ''}`,
     }));
-    findingFacts.push(['topImpact', 'topFeasibility']);
+    findingFacts.push(['topScore', 'topImpact', 'topFeasibility', ...(second ? ['secondScore'] : [])]);
   }
   if (d.causes.length) {
     vText = x.f('vitalCauses', { ja: '影響の 8 割を占める原因の数', en: 'Causes behind 80% of the impact' }, vital, 'count');
     const cText = x.f('causes', { ja: '原因の数', en: 'Causes' }, d.causes.length, 'count');
     sText = x.f('vitalShare', { ja: '上位原因が占める影響の割合', en: 'Impact share of the top causes' }, vitalShare, 'percent');
     findings.push(L(lang, {
-      ja: `原因 ${cText} 件のうち上位 ${vText} 件が、課題の影響度の ${sText} を占めます（パレート分析）。`,
-      en: `Of ${cText} causes, the top ${vText} account for ${sText} of the issues' impact (Pareto analysis).`,
+      ja: `真因の集中: 原因 ${cText} 件のうち上位 ${vText} 件が、課題の影響度の ${sText} を占めます（パレート分析）。`,
+      en: `Root causes: of ${cText} causes, the top ${vText} account for ${sText} of the issues' impact (Pareto analysis).`,
     }));
     findingFacts.push(['causes', 'vitalCauses', 'vitalShare']);
   }
-  findings.push(L(lang, {
-    ja: `根拠資料のある課題は ${sourced}、原因が特定された課題は ${caused}、KPI で測れる課題は ${measured} です。照合した数値 ${checked} 件のうち不一致は ${mText} 件です。`,
-    en: `${sourced} of issues have a source, ${caused} have a cause and ${measured} have a KPI. Of ${checked} values checked, ${mText} do not match.`,
-  }));
-  findingFacts.push(['sourcedRatio', 'causedRatio', 'measuredRatio', 'checkedValues', 'mismatches']);
+  const gapIssue = visible.find((i) => i.gap);
+  const trackedN = d.issues.filter((i) => i.inProject).length;
+  if (gapIssue?.gap) {
+    const k = d.kpis.find((v) => v.id === gapIssue.gap!.kpiId)!;
+    const kName = x.name(k.id);
+    const rem = x.f('topGap', { ja: '目標までの未達の割合（基準値→目標の差に対して）', en: 'Share of the baseline→target gap still open' }, gapIssue.gap.remaining, 'percent');
+    const cur = x.f('gapCurrent', { ja: 'ギャップのある KPI の現在値', en: 'Current value of the KPI with the gap' }, k.current, 'number', k.unit);
+    const tgt = x.f('gapTarget', { ja: 'ギャップのある KPI の目標値', en: 'Target of the KPI with the gap' }, k.target, 'number', k.unit);
+    const regressed = x.f('regressed', { ja: '基準値より悪化した KPI', en: 'KPIs worse than baseline' }, d.kpis.filter((v) => v.target !== v.baseline && kpiProgress(v) < 0).length, 'count');
+    const tracked = x.f('trackedIssues', { ja: 'Project の KPI/OKR で追う課題', en: 'Issues tracked by a project KPI/OKR' }, trackedN, 'count');
+    const kpiText = kName ? q(lang, kName) : L(lang, { ja: 'その KPI', en: 'its KPI' });
+    findings.push(L(lang, {
+      ja: `KPI/OKR とのギャップ: ${q(lang, gapIssue.name)}は ${kpiText}が現在 ${cur}・目標 ${tgt} で、差の ${rem} が未達です。基準値より悪化した KPI は ${regressed} 個、Project の KPI/OKR で追う課題は ${nText} 件中 ${tracked} 件です。`,
+      en: `Gap to KPI/OKR: for ${q(lang, gapIssue.name)}, ${kpiText} is ${cur} against a target of ${tgt}, with ${rem} of the gap still open. ${regressed} KPIs are worse than baseline; ${tracked} of ${nText} issues are tracked by a project KPI/OKR.`,
+    }));
+    findingFacts.push(['topGap', 'gapCurrent', 'gapTarget', 'regressed', 'trackedIssues', 'issues']);
+  } else {
+    findings.push(L(lang, {
+      ja: `根拠: 根拠資料のある課題は ${sourced}、原因が特定された課題は ${caused}、KPI で測れる課題は ${measured} です。照合した数値 ${checked} 件のうち不一致は ${mText} 件です。`,
+      en: `Evidence: ${sourced} of issues have a source, ${caused} have a cause and ${measured} have a KPI. Of ${checked} values checked, ${mText} do not match.`,
+    }));
+    findingFacts.push(['sourcedRatio', 'causedRatio', 'measuredRatio', 'checkedValues', 'mismatches']);
+  }
   const actions: string[] = [];
   if (ratio('caused') < 1) actions.push(L(lang, { ja: '原因が未特定の課題に原因を紐づける', en: 'Link a cause to every issue without one' }));
   if (ratio('sourced') < 1) actions.push(L(lang, { ja: '根拠資料のない課題に出典を追加する', en: 'Add a source to every issue without one' }));
   if (mism > 0) actions.push(L(lang, { ja: '数値の不一致を議論で確認し、正しい値に直す', en: 'Resolve the value mismatches in a discussion' }));
-  if (ratio('measured') < 1) actions.push(L(lang, { ja: '課題を測る KPI を紐づける', en: 'Link a KPI that measures each issue' }));
+  if (ratio('measured') < 1) actions.push(L(lang, { ja: '課題を測る KPI を紐づけ、目標値を置く', en: 'Link a KPI with a target to each issue' }));
+  if (trackedN < n) actions.push(L(lang, { ja: 'KPI/OKR で追っていない上位課題の KPI を Project の KPI に加える', en: 'Add the KPIs of the untracked top issues to the project KPIs' }));
   if (d.decisions === 0) actions.push(L(lang, { ja: '優先順位の合意を議論で決定として記録する', en: 'Record the agreed priorities as a decision' }));
-  if (!actions.length) actions.push(L(lang, { ja: '優先課題の目標（To-Be）を設定する', en: 'Set the target state (To-Be) for the top issues' }));
-  const caveats = [L(lang, { ja: '影響度・実現性は段階評価の主観スコアで、評価者が変わると順位が変わり得ます。', en: 'Impact and feasibility are subjective ratings; another rater may rank differently.' })];
+  if (!actions.length) actions.push(L(lang, { ja: '上位課題の解決後の姿（To-Be）をユースケースで描く', en: 'Describe the solved state (To-Be) of the top issues as use cases' }));
+  const caveats = [L(lang, { ja: '影響度・実現性は段階評価の主観スコアで、重みも仮置きです。評価者や重みを変えても上位が入れ替わらないか確かめてください。', en: 'Impact and feasibility are subjective ratings and the weights are provisional; check that the top issues hold under another rater or weighting.' })];
   if (!d.causes.length) caveats.push(L(lang, { ja: '原因が登録されていないため、集中すべき原因を特定できません。', en: 'No causes are recorded, so the vital few causes cannot be identified.' }));
+  if (!gapIssue) caveats.push(L(lang, { ja: '目標値のある KPI が課題に紐づいていないため、KPI/OKR とのギャップを測れません。', en: 'No issue has a KPI with a target, so the gap to the KPIs/OKRs cannot be measured.' }));
   if (!d.checkedValues) caveats.push(L(lang, { ja: '課題の記述に KPI と照合できる数値がありません。', en: 'Issue texts state no values that can be checked against the KPIs.' }));
+  const head = top ? L(lang, { ja: `最優先課題は${q(lang, top.name)}（スコア ${score}）です。`, en: `The top issue is ${q(lang, top.name)} (score ${score}). ` }) : '';
   return {
-    answer: firstCause
+    answer: head + (firstCause
       ? L(lang, { ja: `上位 ${vText} 件の原因が影響の ${sText} を占めるため、まず${q(lang, firstCause)}に資源を集中すべきです。`, en: `The top ${vText} causes drive ${sText} of the impact: focus first on ${q(lang, firstCause)}.` })
-      : L(lang, { ja: '原因が特定されていないため、まず上位課題の原因分析から始めるべきです。', en: 'No cause is identified yet: start with a root-cause analysis of the top issues.' }),
+      : L(lang, { ja: '原因が特定されていないため、まず上位課題の真因分析から始めるべきです。', en: 'No cause is identified yet: start with a root-cause analysis of the top issues.' })),
     situation: L(lang, {
-      ja: `${nText} 件の課題を影響度×実現性で順位付けしました${top ? `。最優先は${q(lang, top.name)}です` : ''}。`,
-      en: `${nText} issues are ranked by impact × feasibility${top ? `; the top one is ${q(lang, top.name)}` : ''}.`,
+      ja: `${nText} 件の課題を、明示した評価軸（影響度 ${wImp}・実現性 ${wFea} の重み）で順位付けしました。`,
+      en: `${nText} issues are ranked on an explicit axis (impact weighted ${wImp}, feasibility ${wFea}).`,
     }),
     complication: allEvidence
       ? L(lang, { ja: '根拠・原因・KPI はそろっていますが、すべてに同時に手を打つ資源はありません。', en: 'Evidence, causes and KPIs are in place, but there are not the resources to act on everything at once.' })
@@ -200,7 +247,7 @@ const asis: Builder<'asis'> = (d, x, lang) => {
         ja: `ただし、原因が特定された課題は ${caused}、根拠資料のある課題は ${sourced} にとどまり${mism ? `、数値の不一致が ${mText} 件あります` : 'ます'}。`,
         en: `However, only ${caused} of issues have a cause and ${sourced} have a source${mism ? `, and ${mText} values do not match` : ''}.`,
       }),
-    question: L(lang, { ja: 'どの原因に資源を集中すれば、最も大きな影響を解消できるか。', en: 'Which causes should we focus on to remove the most impact?' }),
+    question,
     findings,
     findingFacts,
     actions: actions.slice(0, 3),
@@ -209,72 +256,82 @@ const asis: Builder<'asis'> = (d, x, lang) => {
 };
 
 const tobe: Builder<'tobe'> = (d, x, lang) => {
-  const comparable = d.kpis.filter((k) => k.target !== k.baseline);
-  const n = x.f('kpis', { ja: '課題に紐づく KPI', en: 'KPIs linked to issues' }, comparable.length, 'count');
-  const objectives = x.f('objectives', { ja: '会社の目標', en: 'Company objectives' }, d.objectives.length, 'count');
+  const ucN = d.useCases.length;
+  const uc = x.f('useCases', { ja: '登録したユースケース', en: 'Registered use cases' }, ucN, 'count');
+  const topN = d.topIssues.length;
+  const coveredN = d.topIssues.filter((i) => i.useCaseIds.length > 0).length;
+  const topText = x.f('topIssues', { ja: '優先順位の上位課題', en: 'Top-priority issues' }, topN, 'count');
+  const covered = x.f('topCovered', { ja: 'ユースケースで解決後の姿を描いた上位課題', en: 'Top issues with a use case' }, coveredN, 'count');
+  const issues = d.topIssues.map((i) => ({ ...i, name: x.name(i.id) }));
+  const lead = issues.find((i) => i.name !== null);
+  const gap = issues.find((i) => i.useCaseIds.length === 0 && i.name !== null);
+  const showcaseUc = lead ? d.useCases.find((u) => u.issueIds.includes(lead.id)) : d.useCases[0];
+  const showcase = showcaseUc ? x.label(showcaseUc.name) : null;
+  const completeN = d.useCases.filter((u) => u.steps >= 3 && u.hasEffect).length;
+  const measuredN = d.useCases.filter((u) => u.kpis > 0).length;
+  const objectivesN = d.objectives.length;
   const linkedN = d.objectives.filter((o) => o.linked).length;
+  const objectives = x.f('objectives', { ja: '会社の目標', en: 'Company objectives' }, objectivesN, 'count');
   const linked = x.f('objectivesLinked', { ja: 'Project が紐づく会社目標', en: 'Objectives the project is linked to' }, linkedN, 'count');
-  if (!comparable.length) {
-    return {
-      answer: L(lang, { ja: '目標値のある KPI がないため、ギャップを測れません。', en: 'No KPI has a target, so the gap cannot be measured.' }),
-      situation: L(lang, { ja: '課題に紐づく KPI に目標値が設定されていません。', en: 'The KPIs linked to the issues have no targets.' }),
-      complication: L(lang, { ja: '目標がないと、成功の定義も優先順位も決まりません。', en: 'Without targets, neither success nor priority is defined.' }),
-      question: L(lang, { ja: 'どこまで改善すれば成功と言えるか。', en: 'How much improvement counts as success?' }),
-      findings: [], findingFacts: [],
-      actions: [L(lang, { ja: 'KPI に基準値・目標値・期限を設定する', en: 'Set a baseline, target and deadline for each KPI' })],
-      caveats: [L(lang, { ja: '目標値のある KPI がありません。', en: 'No KPI with a target.' })],
-    };
-  }
-  const prog = comparable.map((k) => ({ k, p: kpiProgress(k), name: x.name(k.id) }));
-  const avg = x.f('avgProgress', { ja: '目標に対する平均進捗', en: 'Average progress to target' }, mean(prog.map((r) => r.p)), 'percent');
-  const achievedN = prog.filter((r) => r.p >= 1).length;
-  const regressedN = prog.filter((r) => r.p < 0).length;
-  const achieved = x.f('achieved', { ja: '達成済みの KPI', en: 'KPIs achieved' }, achievedN, 'count');
-  const regressed = x.f('regressed', { ja: '基準値より悪化した KPI', en: 'KPIs worse than baseline' }, regressedN, 'count');
-  const worst = prog.filter((r) => r.name !== null).sort((a, b) => a.p - b.p)[0];
-  const worstP = worst ? x.f('worstProgress', { ja: '最も遠い KPI の進捗', en: 'Progress of the furthest KPI' }, worst.p, 'percent') : '';
+  const proposedN = d.proposed.kpis.length + d.proposed.okrs.length;
+  const proposed = x.f('proposed', { ja: '提案した追加 KPI/OKR', en: 'Proposed added KPIs/OKRs' }, proposedN, 'count');
   const findings: string[] = [];
   const findingFacts: string[][] = [];
-  if (worst) {
-    const cur = x.f('worstCurrent', { ja: '最も遠い KPI の現在値', en: 'Current value of the furthest KPI' }, worst.k.current, 'number', worst.k.unit);
-    const tgt = x.f('worstTarget', { ja: '最も遠い KPI の目標値', en: 'Target of the furthest KPI' }, worst.k.target, 'number', worst.k.unit);
+  if (topN) {
     findings.push(L(lang, {
-      ja: `最もギャップが大きいのは${q(lang, worst.name!)}で、進捗は ${worstP}（現在 ${cur}、目標 ${tgt}）です。`,
-      en: `The largest gap is ${q(lang, worst.name!)}: ${worstP} of the way (now ${cur}, target ${tgt}).`,
+      ja: `上位課題の網羅: 上位 ${topText} 件の課題のうち、ユースケースで解決後の姿を描いたのは ${covered} 件です。${gap ? `${q(lang, gap.name!)}はまだ描かれていません。` : ''}`,
+      en: `Coverage: ${covered} of the top ${topText} issues have a use case describing their solved state.${gap ? ` ${q(lang, gap.name!)} has none yet.` : ''}`,
     }));
-    findingFacts.push(['worstProgress', 'worstCurrent', 'worstTarget']);
+    findingFacts.push(['topIssues', 'topCovered']);
   }
-  findings.push(L(lang, {
-    ja: `KPI ${n} 個の平均進捗は ${avg} で、達成済み ${achieved} 個、基準値より悪化 ${regressed} 個です。`,
-    en: `Across ${n} KPIs the average progress is ${avg}; ${achieved} achieved and ${regressed} worse than baseline.`,
-  }));
-  findingFacts.push(['kpis', 'avgProgress', 'achieved', 'regressed']);
-  findings.push(d.objectives.length
-    ? L(lang, { ja: `会社の目標 ${objectives} 件のうち、Project が紐づくのは ${linked} 件です。`, en: `The project is linked to ${linked} of ${objectives} company objectives.` })
-    : L(lang, { ja: '会社の目標が登録されていないため、全社戦略との整合を確認できません。', en: 'No company objectives are recorded, so alignment with the company strategy cannot be checked.' }));
-  findingFacts.push(['objectives', 'objectivesLinked']);
+  if (ucN) {
+    const complete = x.f('useCasesComplete', { ja: '流れと効果が書かれたユースケース', en: 'Use cases with steps and an effect' }, completeN, 'count');
+    const measured = x.f('useCasesMeasured', { ja: 'KPI に結び付くユースケース', en: 'Use cases tied to a KPI' }, measuredN, 'count');
+    findings.push(L(lang, {
+      ja: `ユースケースの質: ${uc} 件のうち、十分な手順と効果が書かれたものは ${complete} 件、KPI に結び付くものは ${measured} 件です。`,
+      en: `Quality: of ${uc} use cases, ${complete} have enough steps and an effect, and ${measured} are tied to a KPI.`,
+    }));
+    findingFacts.push(['useCases', 'useCasesComplete', 'useCasesMeasured']);
+  } else {
+    findings.push(L(lang, { ja: 'ユースケースがまだありません。上位課題ごとに、誰が何をどう変えるかを描いてください。', en: 'No use case yet: describe, for each top issue, who does what differently.' }));
+    findingFacts.push([]);
+  }
+  findings.push(objectivesN
+    ? L(lang, { ja: `経営目標との整合: 会社目標 ${objectives} 件のうち ${linked} 件に紐づき、追加の KPI/OKR を ${proposed} 件提案しています（合意までは仮説）。`, en: `Alignment: the project is linked to ${linked} of ${objectives} company objectives and proposes ${proposed} added KPIs/OKRs (hypotheses until agreed).` })
+    : L(lang, { ja: `経営目標との整合: 会社目標が未登録のため確認できません。追加の KPI/OKR は ${proposed} 件提案しています。`, en: `Alignment: no company objective is recorded, so it cannot be checked. ${proposed} added KPIs/OKRs are proposed.` }));
+  findingFacts.push(['objectives', 'objectivesLinked', 'proposed']);
   const actions: string[] = [];
-  if (worst) actions.push(L(lang, { ja: `${q(lang, worst.name!)}のギャップを埋める打ち手を KPI 設計で具体化する`, en: `Make the gap on ${q(lang, worst.name!)} concrete in the KPI design` }));
-  if (regressedN) actions.push(L(lang, { ja: '悪化した KPI の原因を現状分析に戻って確認する', en: 'Go back to the as-is analysis for the KPIs that got worse' }));
-  if (d.objectives.length && !linkedN) actions.push(L(lang, { ja: 'Project を会社の目標に紐づける', en: 'Link the project to a company objective' }));
+  if (gap) actions.push(L(lang, { ja: `${q(lang, gap.name!)}の解決後の姿をユースケースに登録する`, en: `Register a use case for the solved state of ${q(lang, gap.name!)}` }));
+  if (completeN < ucN) actions.push(L(lang, { ja: '手順や効果が不足しているユースケースを補う', en: 'Complete the use cases that lack steps or an effect' }));
+  if (objectivesN && !linkedN) actions.push(L(lang, { ja: 'Project を会社の目標に紐づける', en: 'Link the project to a company objective' }));
+  actions.push(L(lang, { ja: '実現の前提（何が真であるべきか）を書き、経営層の合意を記録する', en: 'Write what would have to be true and record the executives\' agreement' }));
+  const caveats = [L(lang, { ja: 'ユースケースはあるべき姿の仮説です。顧客や現場で前提を確かめてから確定してください。', en: 'Use cases are hypotheses about the to-be state; test their assumptions with customers and the front line before fixing them.' })];
+  if (proposedN) caveats.push(L(lang, { ja: '提案した追加 KPI/OKR は、顧客が合意するまで仮説として扱います。', en: 'The proposed KPIs/OKRs stay hypotheses until the customer agrees.' }));
+  if (!objectivesN) caveats.push(L(lang, { ja: '会社の目標が未登録です。', en: 'Company objectives are not recorded.' }));
   return {
-    answer: worst
-      ? L(lang, { ja: `最も遠い${q(lang, worst.name!)}（進捗 ${worstP}）のギャップを最優先で埋めるべきです。`, en: `Close the gap on ${q(lang, worst.name!)} first: it is only ${worstP} of the way to target.` })
-      : L(lang, { ja: `KPI の平均進捗は ${avg} です。`, en: `Average KPI progress is ${avg}.` }),
-    situation: L(lang, { ja: `課題に紐づく KPI ${n} 個に目標値があり、平均進捗は ${avg} です。`, en: `${n} KPIs linked to the issues have targets; average progress is ${avg}.` }),
-    complication: regressedN
-      ? L(lang, { ja: `ただし ${regressed} 個は基準値より悪化しており、達成済みは ${achieved} 個にとどまります。`, en: `But ${regressed} have got worse than baseline and only ${achieved} are achieved.` })
-      : L(lang, { ja: `達成済みは ${achieved} 個で、残りのギャップを埋める道筋はまだ示されていません。`, en: `${achieved} are achieved; the path to close the rest is not yet shown.` }),
-    question: L(lang, { ja: 'どの KPI のギャップを優先して埋め、それは会社の目標とつながっているか。', en: 'Which KPI gaps come first, and do they connect to the company objectives?' }),
+    answer: !ucN
+      ? L(lang, lead
+        ? { ja: `${q(lang, lead.name!)}が解決した姿をユースケースで描き、誰の何がどう変わるかを経営層に示すべきです。`, en: `Describe the solved state of ${q(lang, lead.name!)} as a use case and show the executives who does what differently.` }
+        : { ja: 'ユースケースを登録し、誰の何がどう変わるかを経営層に示すべきです。', en: 'Register use cases and show the executives who does what differently.' })
+      : gap
+        ? L(lang, { ja: `${q(lang, gap.name!)}の解決後の姿が欠けています。ユースケースに加えてから経営層の合意を取るべきです。`, en: `The solved state of ${q(lang, gap.name!)} is missing: add it as a use case before seeking executive agreement.` })
+        : L(lang, showcase
+          ? { ja: `上位課題の解決後の姿は${q(lang, showcase)}などで描けています。実現の前提を添えて経営層の合意を取るべきです。`, en: `The solved state of the top issues is described (e.g. ${q(lang, showcase)}): seek executive agreement with what would have to be true.` }
+          : { ja: '上位課題の解決後の姿は描けています。実現の前提を添えて経営層の合意を取るべきです。', en: 'The solved state of the top issues is described: seek executive agreement with what would have to be true.' }),
+    situation: lead
+      ? L(lang, { ja: `現状分析の最優先課題は${q(lang, lead.name!)}です。あるべき姿は、上位 ${topText} 件の課題が解決した状態として描きます。`, en: `The top issue of the as-is analysis is ${q(lang, lead.name!)}. The to-be state describes the top ${topText} issues solved.` })
+      : L(lang, { ja: 'あるべき姿は、優先順位の高い課題が解決した状態として描きます。', en: 'The to-be state describes the top-priority issues solved.' }),
+    complication: !ucN
+      ? L(lang, { ja: 'ただし、解決後に誰の仕事がどう変わるかがまだ描かれておらず、経営層は投資を判断できません。', en: 'But who works differently after the change is not yet described, so executives cannot judge the investment.' })
+      : coveredN < topN
+        ? L(lang, { ja: `ただし、上位 ${topText} 件のうちユースケースで描けているのは ${covered} 件です。`, en: `But only ${covered} of the top ${topText} issues are described by a use case.` })
+        : L(lang, { ja: '経営層が投資を判断するには、変化の姿に加えて、それが成り立つ前提（何が真であるべきか）が必要です。', en: 'To decide, executives need not just the picture of the change but what would have to be true for it.' }),
+    question: L(lang, { ja: '上位課題が解決したとき、誰の仕事がどう変わり、どの経営目標と KPI/OKR が前進するか。', en: 'When the top issues are solved, whose work changes how, and which company objectives and KPIs/OKRs move?' }),
     findings, findingFacts,
-    actions: actions.length ? actions.slice(0, 3) : [L(lang, { ja: 'KPI と OKR の設計に進む', en: 'Move on to the KPI and OKR design' })],
-    caveats: [
-      L(lang, { ja: '進捗＝(現在値−基準値)÷(目標値−基準値)。0 点が任意の尺度（間隔尺度）では比率の解釈に注意が必要です。', en: 'Progress = (current − baseline) ÷ (target − baseline); read it with care on interval scales without a true zero.' }),
-      ...(d.objectives.length ? [] : [L(lang, { ja: '会社の目標が未登録です。', en: 'Company objectives are not recorded.' })]),
-    ],
+    actions: actions.slice(0, 3),
+    caveats,
   };
 };
-
 const kpi: Builder<'kpi'> = (d, x, lang) => {
   const rows = d.kpis;
   const nN = rows.length;
@@ -357,34 +414,46 @@ const solution: Builder<'solution'> = (d, x, lang) => {
   const low = [...sims].sort((a, b) => a.probability - b.probability)[0];
   const findings: string[] = [];
   const findingFacts: string[][] = [];
+  const issuesN = d.issues.length;
+  const solvedN = d.issues.filter((i) => i.solutionIds.length > 0).length;
+  const unsolved = d.issues.filter((i) => !i.solutionIds.length).map((i) => ({ ...i, name: x.name(i.id) })).find((i) => i.name !== null);
+  let unsolvedRank = '';
+  if (issuesN) {
+    const issuesText = x.f('issues', { ja: '課題数', en: 'Issues' }, issuesN, 'count');
+    const solved = x.f('issuesSolved', { ja: '解決策がある課題', en: 'Issues with a solution' }, solvedN, 'count');
+    if (unsolved) unsolvedRank = x.f('unsolvedRank', { ja: '解決策のない最上位課題の順位', en: 'Rank of the top issue without a solution' }, unsolved.rank, 'count');
+    findings.push(L(lang, {
+      ja: `課題の網羅: 課題 ${issuesText} 件のうち、解決策があるのは ${solved} 件です。${unsolved ? `優先順位 ${unsolvedRank} 位の${q(lang, unsolved.name!)}には解決策がありません。` : ''}`,
+      en: `Coverage: ${solved} of ${issuesText} issues have a solution.${unsolved ? ` ${q(lang, unsolved.name!)} (priority rank ${unsolvedRank}) has none.` : ''}`,
+    }));
+    findingFacts.push(['issues', 'issuesSolved', ...(unsolved ? ['unsolvedRank'] : [])]);
+  }
   let lowProb = '';
   if (low) {
     lowProb = x.f('lowProbability', { ja: '最も低い達成確率', en: 'Lowest probability of reaching target' }, low.probability, 'percent');
     const p10 = x.f('lowP10', { ja: '同 KPI の P10', en: 'P10 of that KPI' }, low.p10, 'number', low.unit);
     const p90 = x.f('lowP90', { ja: '同 KPI の P90', en: 'P90 of that KPI' }, low.p90, 'number', low.unit);
     const tgt = x.f('lowTarget', { ja: '同 KPI の目標値', en: 'Target of that KPI' }, low.target, 'number', low.unit);
-    findings.push(L(lang, {
-      ja: `${q(lang, low.label)}は期限時点で P10 ${p10}〜P90 ${p90} の見込みで、目標 ${tgt} に届く確率は ${lowProb} です。`,
-      en: `${q(lang, low.label)} is expected between ${p10} (P10) and ${p90} (P90) at its deadline; the chance of reaching ${tgt} is ${lowProb}.`,
-    }));
-    findingFacts.push(['lowP10', 'lowP90', 'lowTarget', 'lowProbability']);
     const lead = low.bridge.map((b) => ({ ...b, name: x.name(b.solutionId) })).find((b) => b.name !== null);
-    if (lead) {
-      const v = x.f('leadContribution', { ja: '最大寄与の施策の期待効果', en: 'Expected effect of the largest contributor' }, lead.expected, 'number', low.unit);
-      findings.push(L(lang, { ja: `この KPI への最大の寄与は${q(lang, lead.name!)}で、期待効果は ${v} です。`, en: `The largest contributor to it is ${q(lang, lead.name!)}, expected to move it by ${v}.` }));
-      findingFacts.push(['leadContribution']);
-    }
+    const v = lead ? x.f('leadContribution', { ja: '最大寄与の施策の期待効果', en: 'Expected effect of the largest contributor' }, lead.expected, 'number', low.unit) : '';
+    findings.push(L(lang, {
+      ja: `KPI/OKR シミュレーション: ${q(lang, low.label)}は期限時点で P10 ${p10}〜P90 ${p90} の見込みで、目標 ${tgt} に届く確率は ${lowProb} です。${lead ? `最大の寄与は${q(lang, lead.name!)}（期待効果 ${v}）です。` : ''}`,
+      en: `KPI/OKR simulation: ${q(lang, low.label)} is expected between ${p10} (P10) and ${p90} (P90) at its deadline; the chance of reaching ${tgt} is ${lowProb}.${lead ? ` The largest contributor is ${q(lang, lead.name!)} (expected ${v}).` : ''}`,
+    }));
+    findingFacts.push(['lowP10', 'lowP90', 'lowTarget', 'lowProbability', ...(lead ? ['leadContribution'] : [])]);
   }
   const payback = benefitV > 0 ? x.f('portfolioPayback', { ja: '施策全体の単純回収期間', en: 'Simple payback of all solutions' }, costV / benefitV, 'years') : null;
   findings.push(L(lang, {
-    ja: `施策 ${n} 件の投資総額は ${cost}、年間効果は ${benefit}${payback ? `（単純回収 ${payback}）` : ''} です。`,
-    en: `The ${n} solutions cost ${cost} in total for ${benefit} a year${payback ? ` (simple payback ${payback})` : ''}.`,
+    ja: `投資対効果: 施策 ${n} 件の投資総額は ${cost}、年間効果は ${benefit}${payback ? `（単純回収 ${payback}）` : ''} です。`,
+    en: `Return: the ${n} solutions cost ${cost} in total for ${benefit} a year${payback ? ` (simple payback ${payback})` : ''}.`,
   }));
   findingFacts.push(['solutions', 'cost', 'benefit', ...(payback ? ['portfolioPayback'] : [])]);
   const assumptionOnly = d.sims.some((s) => s.warnings.includes('assumptionOnly'));
   const overclaim = d.sims.some((s) => s.warnings.includes('overclaim'));
   return {
-    answer: !sims.length
+    answer: unsolved
+      ? L(lang, { ja: `優先順位 ${unsolvedRank} 位の${q(lang, unsolved.name!)}に解決策がありません。解決策を立て、KPI への効果を見積もるべきです。`, en: `${q(lang, unsolved.name!)} (priority rank ${unsolvedRank}) has no solution: define one and estimate its effect on the KPIs.` })
+      : !sims.length
       ? L(lang, { ja: '効果の見積りがないため、施策で目標に届くかを判断できません。', en: 'Without effect estimates, it cannot be judged whether the solutions reach the targets.' })
       : closedN === d.coverage.length
         ? L(lang, { ja: '現在の施策で全 KPI が P50 で目標に届く見込みです。次は前提の検証を優先すべきです。', en: 'The solutions reach every target at P50: validate the assumptions next.' })
@@ -395,6 +464,7 @@ const solution: Builder<'solution'> = (d, x, lang) => {
     findings: findings.slice(0, 3),
     findingFacts: findingFacts.slice(0, 3),
     actions: [
+      ...(unsolved ? [L(lang, { ja: '解決策のない課題に解決策を立てる', en: 'Define a solution for each issue without one' })] : []),
       ...(estN < nN ? [L(lang, { ja: '効果見積りのない施策に KPI への寄与を入力する', en: 'Enter the KPI contribution of the solutions without one' })] : []),
       ...(closedN < d.coverage.length ? [L(lang, { ja: '目標に届かない KPI に施策を追加するか目標を見直す', en: 'Add solutions or revisit the targets that are out of reach' })] : []),
       ...(assumptionOnly ? [L(lang, { ja: '仮定だけの見積りを実測・ベンチマークで裏づける', en: 'Back the assumption-only estimates with measurements or benchmarks' })] : []),
@@ -440,13 +510,18 @@ const deliverable: Builder<'deliverable'> = (d, x, lang) => {
   if (conflictN) issues.push(L(lang, { ja: `日程の矛盾 ${conflicts} 件`, en: `${conflicts} schedule conflicts` }));
   if (d.solutions.length - okN) issues.push(L(lang, { ja: `回収期間が基準 ${limit} を超える施策`, en: `solutions beyond the ${limit} payback hurdle` }));
   if (d.gaps) issues.push(L(lang, { ja: `つながりの切れ目 ${breaks} 件`, en: `${breaks} breaks in the strategy chain` }));
+  const traceN = d.trace.filter((t) => t.complete).length;
+  const traced = x.f('traced', { ja: '課題から責任者まで追跡できる解決策', en: 'Solutions traceable from issue to owner' }, traceN, 'count');
   const findings = [
-    L(lang, { ja: `実行施策 ${n} 件の平均進捗は ${avg}。担当者のいないものは ${unowned} 件、日程の矛盾は ${conflicts} 件です。`, en: `${n} initiatives average ${avg} progress; ${unowned} have no owner and ${conflicts} have a schedule conflict.` }),
     L(lang, {
-      ja: `施策 ${sols} 件のうち ${ok} 件が回収期間の基準 ${limit} 以内です。${slow ? `最も長いのは${q(lang, slow.name!)}です。` : ''}`,
-      en: `${ok} of ${sols} solutions pay back within the ${limit} hurdle.${slow ? ` The slowest is ${q(lang, slow.name!)}.` : ''}`,
+      ja: `トレーサビリティ: 解決策 ${sols} 件のうち、課題→KPI→（デジタルはユースケース）→施策→責任者まで追跡できるのは ${traced} 件で、経営目標までのつながりの切れ目は ${breaks} 件です。`,
+      en: `Traceability: ${traced} of ${sols} solutions trace from issue to KPI, use case (digital only), initiative and owner; the chain up to the company objectives has ${breaks} breaks.`,
     }),
-    L(lang, { ja: `会社目標→KPI→施策→実行施策のつながりの切れ目は ${breaks} 件です。`, en: `The chain from company objectives to KPIs, solutions and initiatives has ${breaks} breaks.` }),
+    L(lang, {
+      ja: `投資回収: 施策 ${sols} 件のうち ${ok} 件が回収期間の基準 ${limit} 以内です。${slow ? `最も長いのは${q(lang, slow.name!)}です。` : ''}`,
+      en: `Payback: ${ok} of ${sols} solutions pay back within the ${limit} hurdle.${slow ? ` The slowest is ${q(lang, slow.name!)}.` : ''}`,
+    }),
+    L(lang, { ja: `実行体制: 実行施策 ${n} 件の平均進捗は ${avg}。担当者のいないものは ${unowned} 件、日程の矛盾は ${conflicts} 件です。`, en: `Execution: ${n} initiatives average ${avg} progress; ${unowned} have no owner and ${conflicts} have a schedule conflict.` }),
   ];
   return {
     answer: problems === 0
@@ -458,7 +533,7 @@ const deliverable: Builder<'deliverable'> = (d, x, lang) => {
       : L(lang, { ja: `ただし、${issues.join('、')}があります。`, en: `However, there are ${issues.join(', ')}.` }),
     question: L(lang, { ja: 'この計画は実行でき、投資を期限内に回収できるか。', en: 'Can this plan be executed, and will it pay back in time?' }),
     findings,
-    findingFacts: [['initiatives', 'avgProgress', 'unowned', 'conflicts'], ['solutions', 'paybackOk', 'paybackLimit'], ['chainBreaks']],
+    findingFacts: [['solutions', 'traced', 'chainBreaks'], ['solutions', 'paybackOk', 'paybackLimit'], ['initiatives', 'avgProgress', 'unowned', 'conflicts']],
     actions: [
       ...(nN - ownedN ? [L(lang, { ja: '担当者のいない実行施策に担当を決める', en: 'Name an owner for every initiative' })] : []),
       ...(conflictN ? [L(lang, { ja: '依存関係と日程の矛盾を解消する', en: 'Resolve the dependency and date conflicts' })] : []),
@@ -466,7 +541,10 @@ const deliverable: Builder<'deliverable'> = (d, x, lang) => {
       ...(d.gaps ? [L(lang, { ja: 'つながりの切れ目を埋める', en: 'Close the breaks in the chain' })] : []),
       L(lang, { ja: '計画の承認を議論で決定として記録する', en: 'Record the plan approval as a decision' }),
     ].slice(0, 3),
-    caveats: [L(lang, { ja: '回収期間は割引なしの単純計算で、効果は最後の実行施策の終了後に始まると仮定しています。', en: 'Payback is undiscounted and assumes benefits start after the last initiative ends.' })],
+    caveats: [
+      L(lang, { ja: '回収期間は割引なしの単純計算で、効果は最後の実行施策の終了後に始まると仮定しています。', en: 'Payback is undiscounted and assumes benefits start after the last initiative ends.' }),
+      L(lang, { ja: '承認の前に「この計画が失敗したとしたら、なぜか」を関係者で洗い出し（プレモーテム）、日程と費用は類似案件の実績（参照クラス）と比べてください。', en: 'Before approval, ask the team why this plan would have failed (premortem), and compare the dates and costs with the outcomes of similar projects (reference class).' }),
+    ],
   };
 };
 
@@ -480,8 +558,18 @@ export function buildStepBrief(dash: StepDashboard, ctx: CheckContext, lang: Lan
   const build = BUILDERS[dash.step] as Builder<ImprovementStep>;
   const draft = build(dash.detail as DetailOf<ImprovementStep>, x, lang, dash);
   const facts = x.facts;
+  const openSteps = openStepsBefore(dash.step, ctx);
+  if (openSteps.length) {
+    const names = openSteps.map((s) => q(lang, translate(lang, `proj.step.${s}` as MessageKey))).join(lang === 'ja' ? '' : ', ');
+    draft.caveats.push(L(lang, {
+      ja: `前のステップ${names}が未完了のため、その結論は仮説として扱っています。データがそろったら戻って更新してください。`,
+      en: `Earlier steps ${names} are not complete, so their conclusions are treated as hypotheses; go back and update them as data arrives.`,
+    }));
+  }
   return {
     step: dash.step,
+    maturity: briefMaturity(dash),
+    openSteps,
     ...draft,
     facts,
     names: [...x.names],

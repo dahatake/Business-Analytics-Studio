@@ -4,7 +4,7 @@ import { kpiProgress } from '../../domain/kpi.ts';
 import { loc } from '../../state/text.ts';
 import type { EntityOf } from '../../data/schema.ts';
 import { ScrollRegion } from './common.tsx';
-import { vitalCount, type CauseBar, type InitiativeRow, type KpiRow, type SimRow, type SolutionRow } from './stepDashboard.ts';
+import { vitalCount, type CauseBar, type InitiativeRow, type IssueRow, type KpiRow, type SimRow, type SolutionRow } from './stepDashboard.ts';
 
 /*
  * FR-318: one chart per decision of a step (Berinato's "declarative" visuals). Each chart:
@@ -102,6 +102,72 @@ export function CauseParetoChart({ causes, nameOf }: { causes: CauseBar[]; nameO
                 <td className="num">{c.issues}</td>
                 <td className="num">{fmt.percent(c.cumulative)}</td>
                 <td><Glyph ok={i < vital} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    />
+  );
+}
+
+/* ---------- 1b As-is: priority matrix (impact × feasibility) ---------- */
+
+/** Ratings on the 1–5 scale above the midpoint count as high. */
+const MATRIX_MID = 3;
+const QUADRANTS = ['quickWin', 'majorBet', 'fillIn', 'later'] as const;
+export type Quadrant = (typeof QUADRANTS)[number];
+
+export function quadrantOf(i: Pick<IssueRow, 'impact' | 'feasibility'>): Quadrant {
+  const hi = i.impact > MATRIX_MID;
+  const easy = i.feasibility > MATRIX_MID;
+  return hi ? (easy ? 'quickWin' : 'majorBet') : (easy ? 'fillIn' : 'later');
+}
+
+export function PriorityMatrix({ issues, nameOf }: { issues: IssueRow[]; nameOf: NameOf }) {
+  const { t, fmt } = useI18n();
+  if (issues.length === 0) return <p className="muted" data-testid="step-dash-chart-matrix-empty">{t('proj.dash.chart.matrix.empty')}</p>;
+  const by = (q: Quadrant) => issues.filter((i) => quadrantOf(i) === q);
+  return (
+    <ChartFigure
+      id="matrix"
+      title={t('proj.dash.chart.matrix.title', { n: by('quickWin').length, big: by('majorBet').length, total: issues.length })}
+      read={t('proj.dash.chart.matrix.read')}
+      visual={(
+        <div className="step-chart-matrix">
+          <span className="step-chart-matrix-axis is-y">{t('proj.dash.chart.matrix.impactAxis')}</span>
+          <div className="step-chart-matrix-grid">
+            {(['majorBet', 'quickWin', 'later', 'fillIn'] as const).map((q) => (
+              <div key={q} className={`step-chart-quadrant is-${q}`} data-quadrant={q}>
+                <span className="step-chart-quadrant-name">{t(`proj.dash.chart.matrix.${q}` as MessageKey)}</span>
+                <ol className="step-chart-quadrant-list">
+                  {by(q).map((i) => <li key={i.id} data-issue={i.id}>{t('proj.dash.chart.matrix.item', { rank: i.rank, name: nameOf(i.id) })}</li>)}
+                </ol>
+              </div>
+            ))}
+          </div>
+          <span className="step-chart-matrix-axis is-x">{t('proj.dash.chart.matrix.feasibilityAxis')}</span>
+        </div>
+      )}
+      table={(
+        <table className="data-table compact">
+          <thead><tr>
+            <th scope="col" className="num">{t('proj.dash.col.rank')}</th>
+            <th scope="col">{t('proj.dash.col.issue')}</th>
+            <th scope="col" className="num">{t('proj.dash.col.impact')}</th>
+            <th scope="col" className="num">{t('proj.dash.col.feasibility')}</th>
+            <th scope="col" className="num">{t('proj.dash.col.score')}</th>
+            <th scope="col">{t('proj.dash.col.quadrant')}</th>
+          </tr></thead>
+          <tbody>
+            {issues.map((i) => (
+              <tr key={i.id}>
+                <td className="num">{i.rank}</td>
+                <th scope="row">{nameOf(i.id)}</th>
+                <td className="num">{fmt.number(i.impact)}</td>
+                <td className="num">{fmt.number(i.feasibility)}</td>
+                <td className="num">{fmt.number(i.score)}</td>
+                <td>{t(`proj.dash.chart.matrix.${quadrantOf(i)}` as MessageKey)}</td>
               </tr>
             ))}
           </tbody>

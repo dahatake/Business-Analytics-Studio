@@ -144,7 +144,7 @@ test.describe('step deliverables and to-do band', () => {
     expect(box!.y).toBeGreaterThanOrEqual(news!.y + news!.height - 1);
     expect(box!.width).toBeGreaterThan(1000); // full width
     await expect(band).toContainText('ステップ 1/5: 現状分析');
-    await expect(band).toContainText('成果物: 現状分析レポート（課題定義を含む）');
+    await expect(band).toContainText('成果物: 現状分析レポート（優先順位つき課題一覧と KPI/OKR ギャップ）');
     // Demo: the data checks pass; the deliverable fields, the field check and the sponsor's agreement are still open.
     await expect(page.getByTestId('dlv-progress')).toHaveText('8/11 完了');
     await expect(page.getByTestId('dlv-todo-define-sources')).toHaveAttribute('data-done', 'true');
@@ -179,7 +179,7 @@ test.describe('step deliverables and to-do band', () => {
     // The deliverable screen shows the drafted fields as AI (mock) and re-judges edits immediately.
     await page.getByTestId('dlv-open').click();
     await expect(page).toHaveURL(/#\/deliverables\?step=asis/);
-    await expect(page.getByTestId('dlv-name')).toHaveText('現状分析レポート（課題定義を含む）');
+    await expect(page.getByTestId('dlv-name')).toHaveText('現状分析レポート（優先順位つき課題一覧と KPI/OKR ギャップ）');
     const problem = page.getByTestId('dlv-field-problem');
     await expect(problem).toHaveValue(/16 日/);
     await expect(page.getByTestId('dlv-fields').getByText('モック').first()).toBeVisible();
@@ -197,8 +197,8 @@ test.describe('step deliverables and to-do band', () => {
     await go(page, '/home');
     await page.locator('.proj-step[data-step="deliverable"]').click();
     const band = page.getByTestId('dlv-band');
-    await expect(band).toContainText('ステップ 5/5: 要求定義・成果物');
-    await expect(band).toContainText('最終成果物（要求定義書・施策計画）');
+    await expect(band).toContainText('ステップ 5/5: 要求定義・計画');
+    await expect(band).toContainText('成果物: 要求定義書・プロジェクト計画書');
     await expect(page.getByTestId('dlv-todo-plan-schedule')).toHaveAttribute('data-done', 'true');
     await page.getByTestId('dlv-draft').click();
     await expect(page.getByTestId('dlv-draft-field-businessCase')).toContainText('回収');

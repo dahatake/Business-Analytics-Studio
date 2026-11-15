@@ -9,7 +9,7 @@ import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { applyDraft, emptyDeliverables, STEP_DEFS, type CheckContext } from '../src/modules/project/deliverables.ts';
 import { buildDraft } from '../src/modules/project/deliverableDraft.ts';
-import { stepDashboard, tileTone } from '../src/modules/project/stepDashboard.ts';
+import { stepDashboard, tileTone, TOP_ISSUES } from '../src/modules/project/stepDashboard.ts';
 import { emptyStrategy, upsertContribution } from '../src/modules/project/strategy.ts';
 import { briefText, buildStepBrief, parseBrief, requestStepBrief, verifyNumbers } from '../src/modules/project/stepBrief.ts';
 
@@ -89,8 +89,8 @@ describe('step dashboard (FR-317)', () => {
       expect(tile.total, id).toBe(0);
       expect(tileTone(tile, kpi.results), id).toBe('empty');
     }
-    const solution = stepDashboard('solution', c);
-    expect(tileTone(solution.tiles.find((t) => t.id === 'useCases')!, solution.results)).toBe('empty');
+    const tobe = stepDashboard('tobe', c);
+    expect(tileTone(tobe.tiles.find((t) => t.id === 'useCases')!, tobe.results)).toBe('empty');
     expect(stepDashboard('asis', c).inputs.find((i) => i.id === 'discussion')!.count).toBe(0);
   });
 
@@ -112,6 +112,55 @@ describe('step dashboard (FR-317)', () => {
     for (const id of ids) {
       for (const lang of ['ja', 'en'] as const) expect(translate(lang, `proj.dash.tile.${id}` as MessageKey), `${lang} ${id}`).toBeTruthy();
     }
+  });
+});
+
+describe('step deliverables by purpose', () => {
+  it('as-is ranks issues by the stated priority score and shows each one\'s KPI gap', () => {
+    const d = stepDashboard('asis', demoCtx()).detail;
+    if (d.step !== 'asis') throw new Error('step');
+    expect(d.issues.length).toBeGreaterThan(0);
+    d.issues.forEach((i, n) => expect(i.rank).toBe(n + 1));
+    for (let n = 1; n < d.issues.length; n++) expect(d.issues[n - 1]!.score).toBeGreaterThanOrEqual(d.issues[n]!.score);
+    const gaps = d.issues.filter((i) => i.gap);
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const i of gaps) expect(i.gap!.remaining).toBeGreaterThanOrEqual(0);
+  });
+
+  it('every issue needs a solution: removing one solution\'s issue links fails sol-issues and names the issue', () => {
+    const ok = stepDashboard('solution', demoCtx());
+    expect(ok.results.find((r) => r.todo.id === 'sol-issues')!.done).toBe(true);
+    const raw = clone();
+    const sol = raw.entities.find((e) => e.kind === 'solution')! as { issueIds: string[] };
+    const orphans = sol.issueIds.filter((id) => !raw.entities.some((e) => e !== (sol as unknown) && e.kind === 'solution' && (e as { issueIds: string[] }).issueIds.includes(id)));
+    sol.issueIds = [];
+    const d = stepDashboard('solution', demoCtx(loadPack(raw)));
+    const r = d.results.find((x) => x.todo.id === 'sol-issues')!;
+    expect(r.outcome).toMatchObject({ ok: false, code: 'issuesWithoutSolution', vars: { n: orphans.length } });
+    expect(r.outcome!.refs!.map((x) => (x.type === 'text' ? '' : x.id)).sort()).toEqual([...orphans].sort());
+    if (d.detail.step !== 'solution') throw new Error('step');
+    expect(d.detail.issues.filter((i) => i.solutionIds.length === 0).map((i) => i.id).sort()).toEqual([...orphans].sort());
+  });
+
+  it('to-be shows the top issues and which use cases describe their solved state', () => {
+    const c = demoCtx();
+    const d = stepDashboard('tobe', c).detail;
+    if (d.step !== 'tobe') throw new Error('step');
+    expect(d.topIssues.length).toBeLessThanOrEqual(TOP_ISSUES);
+    d.topIssues.forEach((i, n) => expect(i.rank).toBe(n + 1));
+    expect(d.useCases.length).toBe(c.useCases.filter((u) => u.origin === 'registered').length);
+    for (const i of d.topIssues) {
+      for (const id of i.useCaseIds) expect(d.useCases.find((u) => u.id === id)!.issueIds).toContain(i.id);
+    }
+  });
+
+  it('a brief says how mature it is and which earlier steps are still open, so any step can be worked on first', () => {
+    const c = emptyProjectCtx();
+    const b = buildStepBrief(stepDashboard('deliverable', c), c, 'ja', 'internal');
+    expect(b.maturity).toBe('hypothesis');
+    expect(b.openSteps).toEqual(IMPROVEMENT_STEPS.slice(0, -1));
+    expect(b.caveats.join('\n')).toContain(translate('ja', 'proj.step.asis'));
+    expect(buildStepBrief(stepDashboard('asis', c), c, 'en', 'internal').openSteps).toEqual([]);
   });
 });
 

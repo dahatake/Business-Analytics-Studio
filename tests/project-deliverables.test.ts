@@ -184,7 +184,8 @@ describe('step deliverables: validity checks', () => {
     expect(byId('kpi', c)['kpi-valid']!.outcome?.code).toBe('noProjectKpis');
     expect(byId('kpi', c)['kpi-coverage']!.outcome?.code).toBe('issuesNotMeasured');
     expect(byId('kpi', c)['kpi-okr']!.outcome?.code).toBe('noOkr');
-    expect(byId('solution', c)['uc-registered']!.outcome?.code).toBe('noUseCases');
+    expect(byId('tobe', c)['uc-registered']!.outcome?.code).toBe('noUseCases');
+    expect(byId('solution', c)['sol-issues']!.done).toBe(true); // pack data is shared
     expect(byId('solution', c)['sol-type']!.outcome?.code).toBe('typesUnconfirmed');
     expect(byId('solution', c)['sol-contribution']!.outcome?.code).toBe('solutionsWithoutContribution');
     expect(byId('solution', c)['sol-target']!.outcome?.code).toBe('noProjectKpis');
@@ -282,7 +283,7 @@ describe('step deliverables: validity checks', () => {
     const k = byId('kpi', c);
     expect(k['kpi-deadline']!.outcome).toMatchObject({ ok: false, code: 'kpisPastDeadline', vars: { n: 1, today: TODAY } });
     expect(k['kpi-okr']!.outcome).toMatchObject({ ok: false, code: 'okrDangling', vars: { n: 1 } });
-    const u = byId('solution', c);
+    const u = byId('tobe', c);
     expect(u['uc-complete']!.done).toBe(false);
     expect(u['uc-trace']!.done).toBe(false);
   });

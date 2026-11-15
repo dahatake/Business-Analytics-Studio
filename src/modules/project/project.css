@@ -578,6 +578,8 @@
 .step-dash-tile-state { justify-self: start; }
 .step-dash-yes { color: var(--colorPaletteGreenForeground1); }
 .step-dash-no { color: var(--colorPaletteDarkOrangeForeground1); font-weight: var(--fontWeightSemibold); }
+.step-dash-refs { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+.step-dash-refs > .ref { margin: 0; min-height: 24px; }
 .step-dash-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 8px; margin: 0; }
 .step-dash-stat { display: grid; gap: 2px; }
 .step-dash-stat dt { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
@@ -654,6 +656,16 @@
 .step-chart-cell.is-good { background: var(--colorPaletteGreenBackground1); color: var(--colorPaletteGreenForeground1); border: 1px solid var(--colorPaletteGreenBorder2); }
 .step-chart-cell.is-bad { background: var(--colorPaletteRedBackground1); color: var(--colorPaletteRedForeground1); border: 1px solid var(--colorPaletteRedBorder2); }
 .step-chart-data > summary { cursor: pointer; font-size: var(--fontSizeBase200); color: var(--colorBrandForegroundLink); min-height: 24px; display: list-item; }
+.step-chart-matrix { display: grid; grid-template-columns: auto 1fr; grid-template-rows: 1fr auto; gap: 4px 8px; }
+.step-chart-matrix-axis { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
+.step-chart-matrix-axis.is-y { writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; }
+.step-chart-matrix-axis.is-x { grid-column: 2; text-align: center; }
+.step-chart-matrix-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.step-chart-quadrant { min-height: 72px; padding: 6px 8px; border-radius: 2px; border: 1px solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground2); }
+.step-chart-quadrant.is-quickWin { border: 2px solid var(--colorPaletteGreenBorder2); background: var(--colorPaletteGreenBackground1); }
+.step-chart-quadrant.is-majorBet { border: 2px dashed var(--colorBrandStroke1); background: var(--colorBrandBackground2); }
+.step-chart-quadrant-name { display: block; font-size: var(--fontSizeBase200); font-weight: var(--fontWeightSemibold); }
+.step-chart-quadrant-list { margin: 4px 0 0; padding-left: 0; list-style: none; font-size: var(--fontSizeBase200); }
 .step-chart-data[open] > summary { margin-bottom: 4px; }
 @media (max-width: 600px) {
   .step-chart-row { grid-template-columns: 1fr minmax(72px, max-content); }

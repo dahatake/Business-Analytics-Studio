@@ -14,8 +14,8 @@ import { ScrollRegion } from './common.tsx';
 import { inputKey, type TodoResult } from './deliverables.ts';
 import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
-import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, RangeChart, type NameOf } from './stepCharts.tsx';
-import { stepDashboard, tileTone, type DashTile, type DetailOf, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
+import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
+import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
 import './project.css';
 
 const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_STEPS as readonly string[]).includes(s);
@@ -123,15 +123,26 @@ function Summary({ d }: { d: StepDashboard }) {
   );
 }
 
+/** Links to the visible entities of a list, or "no" when there are none; hidden ones are only counted. */
+function Refs({ ids, visible }: { ids: string[]; visible: Visible }) {
+  const { t } = useI18n();
+  if (ids.length === 0) return <YesNo ok={false} />;
+  const shown = ids.filter(visible);
+  return (
+    <span className="step-dash-refs">
+      {shown.map((id) => <EntityRef key={id} id={id} />)}
+      {shown.length < ids.length && <span className="muted">{t('proj.dash.hiddenRefs', { n: ids.length - shown.length })}</span>}
+    </span>
+  );
+}
+
 function AsisDetail({ d, visible, nameOf }: { d: DetailOf<'asis'>; visible: Visible; nameOf: NameOf }) {
   const { t, lang, fmt } = useI18n();
   const issues = d.issues.filter((i) => visible(i.id));
+  const kpis = d.kpis.filter((k) => visible(k.id));
   const mismatches = d.mismatches.filter((m) => m.where.type !== 'issue' || visible(m.where.id));
   return (
     <>
-      <Panel title={t('proj.dash.chart.pareto.panel')} testId="step-dash-pareto" className="span-full">
-        <CauseParetoChart causes={d.causes} nameOf={nameOf} />
-      </Panel>
       <Panel title={t('proj.dash.asis.issues')} testId="step-dash-issues" className="span-full">
         <p className="muted">{t('proj.dash.asis.issuesHint')}</p>
         {d.issues.length === 0 ? <Empty /> : (
@@ -140,22 +151,28 @@ function AsisDetail({ d, visible, nameOf }: { d: DetailOf<'asis'>; visible: Visi
               <thead><tr>
                 <th scope="col" className="num">{t('proj.dash.col.rank')}</th>
                 <th scope="col">{t('proj.dash.col.issue')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.score')}</th>
                 <th scope="col" className="num">{t('proj.dash.col.impact')}</th>
                 <th scope="col" className="num">{t('proj.dash.col.feasibility')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.kpiGap')}</th>
+                <th scope="col">{t('proj.dash.col.tracked')}</th>
                 <th scope="col">{t('proj.dash.col.source')}</th>
                 <th scope="col">{t('proj.dash.col.cause')}</th>
-                <th scope="col">{t('proj.dash.col.kpi')}</th>
+                <th scope="col">{t('proj.dash.col.solution')}</th>
               </tr></thead>
               <tbody>
                 {issues.map((i) => (
-                  <tr key={i.id}>
+                  <tr key={i.id} data-issue={i.id}>
                     <td className="num">{i.rank}</td>
                     <th scope="row"><EntityRef id={i.id} /></th>
+                    <td className="num">{fmt.number(i.score)}</td>
                     <td className="num">{fmt.number(i.impact)}</td>
                     <td className="num">{fmt.number(i.feasibility)}</td>
+                    <td className="num">{i.gap ? fmt.percent(i.gap.remaining) : '–'}</td>
+                    <td><YesNo ok={i.inProject} /></td>
                     <td><YesNo ok={i.sourced} /></td>
                     <td><YesNo ok={i.caused} /></td>
-                    <td><YesNo ok={i.measured} /></td>
+                    <td><YesNo ok={i.solutionIds.length > 0} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -163,6 +180,16 @@ function AsisDetail({ d, visible, nameOf }: { d: DetailOf<'asis'>; visible: Visi
           </ScrollRegion>
         )}
         <HiddenNote n={d.issues.length - issues.length} />
+      </Panel>
+      <Panel title={t('proj.dash.chart.matrix.panel')} testId="step-dash-matrix" className="span-full">
+        <PriorityMatrix issues={issues} nameOf={nameOf} />
+      </Panel>
+      <Panel title={t('proj.dash.chart.pareto.panel')} testId="step-dash-pareto" className="span-full">
+        <CauseParetoChart causes={d.causes} nameOf={nameOf} />
+      </Panel>
+      <Panel title={t('proj.dash.asis.kpis')} testId="step-dash-gaps" className="span-full">
+        {d.kpis.length === 0 ? <Empty text="proj.dash.asis.noKpis" /> : <GapChart kpis={kpis} nameOf={nameOf} />}
+        <HiddenNote n={d.kpis.length - kpis.length} />
       </Panel>
       <Panel title={t('proj.dash.asis.mismatches')} testId="step-dash-mismatches" className="span-full">
         {d.mismatches.length === 0 ? (
@@ -193,11 +220,131 @@ function AsisDetail({ d, visible, nameOf }: { d: DetailOf<'asis'>; visible: Visi
   );
 }
 
-function TobeDetail({ d, visible, nameOf }: { d: DetailOf<'tobe'>; visible: Visible; nameOf: NameOf }) {
-  const { t } = useI18n();
-  const kpis = d.kpis.filter((k) => visible(k.id));
+function KpiTable({ rows, label }: { rows: KpiRow[]; label: string }) {
+  const { t, lang, fmt } = useI18n();
+  return (
+    <ScrollRegion label={label}>
+      <table className="data-table compact">
+        <thead><tr>
+          <th scope="col">{t('proj.dash.col.kpi')}</th>
+          <th scope="col" className="num">{t('proj.dash.col.baseline')}</th>
+          <th scope="col" className="num">{t('proj.dash.col.current')}</th>
+          <th scope="col" className="num">{t('proj.dash.col.target')}</th>
+          <th scope="col" className="num">{t('proj.dash.col.progress')}</th>
+          <th scope="col">{t('proj.dash.col.deadline')}</th>
+          <th scope="col">{t('proj.dash.col.valid')}</th>
+          <th scope="col">{t('proj.dash.col.okr')}</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((k) => {
+            const unit = loc(k.unit, lang);
+            return (
+              <tr key={k.id}>
+                <th scope="row">{loc(k.name, lang)}</th>
+                <td className="num">{fmt.number(k.baseline)} {unit}</td>
+                <td className="num">{fmt.number(k.current)} {unit}</td>
+                <td className="num">{fmt.number(k.target)} {unit}</td>
+                <td className="num">{k.target === k.baseline ? '–' : fmt.percent(kpiProgress(k))}</td>
+                <td>{k.deadline ? fmt.date(k.deadline) : '–'} {!k.ahead && <OkNg ok={false} />}</td>
+                <td><OkNg ok={k.valid} /></td>
+                <td><YesNo ok={k.inOkr} /></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </ScrollRegion>
+  );
+}
+
+function OkrTable({ rows, label }: { rows: OkrRow[]; label: string }) {
+  const { t, lang } = useI18n();
+  return (
+    <ScrollRegion label={label}>
+      <table className="data-table compact">
+        <thead><tr>
+          <th scope="col">{t('proj.dash.col.okr')}</th>
+          <th scope="col" className="num">{t('proj.dash.col.keyResults')}</th>
+          <th scope="col">{t('proj.dash.col.kpi')}</th>
+          <th scope="col">{t('proj.dash.col.objective')}</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((o) => (
+            <tr key={o.id}>
+              <th scope="row">{loc(o.objective, lang)}</th>
+              <td className="num">{o.keyResults}</td>
+              <td><YesNo ok={o.linked} /></td>
+              <td><YesNo ok={o.aligned} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </ScrollRegion>
+  );
+}
+
+function TobeDetail({ d, visible }: { d: DetailOf<'tobe'>; visible: Visible }) {
+  const { t, lang, fmt } = useI18n();
+  const top = d.topIssues.filter((i) => visible(i.id));
+  const ucs = d.useCases.filter((u) => visible(u.id));
+  const hasProposed = d.proposed.kpis.length + d.proposed.okrs.length > 0;
   return (
     <>
+      <Panel title={t('proj.dash.tobe.topIssues')} testId="step-dash-top-issues" className="span-full">
+        <p className="muted">{t('proj.dash.tobe.topIssuesHint')}</p>
+        {d.topIssues.length === 0 ? <Empty text="proj.dash.tobe.noIssues" /> : (
+          <ScrollRegion label={t('proj.dash.tobe.topIssues')}>
+            <table className="data-table compact">
+              <thead><tr>
+                <th scope="col" className="num">{t('proj.dash.col.rank')}</th>
+                <th scope="col">{t('proj.dash.col.issue')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.score')}</th>
+                <th scope="col">{t('proj.dash.col.useCases')}</th>
+              </tr></thead>
+              <tbody>
+                {top.map((i) => (
+                  <tr key={i.id} data-issue={i.id} data-covered={i.useCaseIds.length > 0}>
+                    <td className="num">{i.rank}</td>
+                    <th scope="row"><EntityRef id={i.id} /></th>
+                    <td className="num">{fmt.number(i.score)}</td>
+                    <td><Refs ids={i.useCaseIds} visible={visible} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollRegion>
+        )}
+        <HiddenNote n={d.topIssues.length - top.length} />
+      </Panel>
+      <Panel title={t('proj.dash.tobe.useCases')} testId="step-dash-use-cases" className="span-full">
+        {d.useCases.length === 0 ? <Empty text="proj.dash.tobe.noUseCases" /> : (
+          <ScrollRegion label={t('proj.dash.tobe.useCases')}>
+            <table className="data-table compact">
+              <thead><tr>
+                <th scope="col">{t('proj.dash.col.useCase')}</th>
+                <th scope="col">{t('proj.dash.col.persona')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.steps')}</th>
+                <th scope="col">{t('proj.dash.col.effect')}</th>
+                <th scope="col">{t('proj.dash.col.issue')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.kpis')}</th>
+              </tr></thead>
+              <tbody>
+                {ucs.map((u) => (
+                  <tr key={u.id}>
+                    <th scope="row">{loc(u.name, lang)}</th>
+                    <td>{t(`persona.${u.persona}` as MessageKey)}</td>
+                    <td className="num">{u.steps}</td>
+                    <td><YesNo ok={u.hasEffect} /></td>
+                    <td><Refs ids={u.issueIds} visible={visible} /></td>
+                    <td className="num">{u.kpis}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollRegion>
+        )}
+        <HiddenNote n={d.useCases.length - ucs.length} />
+      </Panel>
       <Panel title={t('proj.dash.tobe.objectives')} testId="step-dash-objectives" className="span-full">
         {d.objectives.length === 0 ? <Empty text="proj.dash.tobe.noObjectives" /> : (
           <ScrollRegion label={t('proj.dash.tobe.objectives')}>
@@ -210,16 +357,18 @@ function TobeDetail({ d, visible, nameOf }: { d: DetailOf<'tobe'>; visible: Visi
           </ScrollRegion>
         )}
       </Panel>
-      <Panel title={t('proj.dash.tobe.kpis')} testId="step-dash-gaps" className="span-full">
-        {d.kpis.length === 0 ? <Empty /> : <GapChart kpis={kpis} nameOf={nameOf} />}
-        <HiddenNote n={d.kpis.length - kpis.length} />
+      <Panel title={t('proj.dash.tobe.proposed')} testId="step-dash-proposed" className="span-full">
+        <p className="muted">{t('proj.dash.tobe.proposedHint')}</p>
+        {!hasProposed && <Empty text="proj.dash.tobe.noProposed" />}
+        {d.proposed.kpis.length > 0 && <KpiTable rows={d.proposed.kpis} label={t('proj.dash.tobe.proposed')} />}
+        {d.proposed.okrs.length > 0 && <OkrTable rows={d.proposed.okrs} label={t('proj.dash.kpi.okrs')} />}
       </Panel>
     </>
   );
 }
 
 function KpiDetail({ d }: { d: DetailOf<'kpi'> }) {
-  const { t, lang, fmt } = useI18n();
+  const { t } = useI18n();
   return (
     <>
       <Panel title={t('proj.dash.chart.quality.panel')} testId="step-dash-quality" className="span-full">
@@ -227,63 +376,10 @@ function KpiDetail({ d }: { d: DetailOf<'kpi'> }) {
       </Panel>
       <Panel title={t('proj.dash.kpi.kpis')} testId="step-dash-kpis" className="span-full">
         <p className="muted">{t('proj.dash.kpi.definition', { status: t(`sol.def.status.${d.definition}` as MessageKey) })}</p>
-        {d.kpis.length === 0 ? <Empty /> : (
-          <ScrollRegion label={t('proj.dash.kpi.kpis')}>
-            <table className="data-table compact">
-              <thead><tr>
-                <th scope="col">{t('proj.dash.col.kpi')}</th>
-                <th scope="col" className="num">{t('proj.dash.col.baseline')}</th>
-                <th scope="col" className="num">{t('proj.dash.col.current')}</th>
-                <th scope="col" className="num">{t('proj.dash.col.target')}</th>
-                <th scope="col" className="num">{t('proj.dash.col.progress')}</th>
-                <th scope="col">{t('proj.dash.col.deadline')}</th>
-                <th scope="col">{t('proj.dash.col.valid')}</th>
-                <th scope="col">{t('proj.dash.col.okr')}</th>
-              </tr></thead>
-              <tbody>
-                {d.kpis.map((k) => {
-                  const unit = loc(k.unit, lang);
-                  return (
-                    <tr key={k.id}>
-                      <th scope="row">{loc(k.name, lang)}</th>
-                      <td className="num">{fmt.number(k.baseline)} {unit}</td>
-                      <td className="num">{fmt.number(k.current)} {unit}</td>
-                      <td className="num">{fmt.number(k.target)} {unit}</td>
-                      <td className="num">{k.target === k.baseline ? '–' : fmt.percent(kpiProgress(k))}</td>
-                      <td>{k.deadline ? fmt.date(k.deadline) : '–'} {!k.ahead && <OkNg ok={false} />}</td>
-                      <td><OkNg ok={k.valid} /></td>
-                      <td><YesNo ok={k.inOkr} /></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </ScrollRegion>
-        )}
+        {d.kpis.length === 0 ? <Empty /> : <KpiTable rows={d.kpis} label={t('proj.dash.kpi.kpis')} />}
       </Panel>
       <Panel title={t('proj.dash.kpi.okrs')} testId="step-dash-okrs" className="span-full">
-        {d.okrs.length === 0 ? <Empty /> : (
-          <ScrollRegion label={t('proj.dash.kpi.okrs')}>
-            <table className="data-table compact">
-              <thead><tr>
-                <th scope="col">{t('proj.dash.col.okr')}</th>
-                <th scope="col" className="num">{t('proj.dash.col.keyResults')}</th>
-                <th scope="col">{t('proj.dash.col.kpi')}</th>
-                <th scope="col">{t('proj.dash.col.objective')}</th>
-              </tr></thead>
-              <tbody>
-                {d.okrs.map((o) => (
-                  <tr key={o.id}>
-                    <th scope="row">{loc(o.objective, lang)}</th>
-                    <td className="num">{o.keyResults}</td>
-                    <td><YesNo ok={o.linked} /></td>
-                    <td><YesNo ok={o.aligned} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollRegion>
-        )}
+        {d.okrs.length === 0 ? <Empty /> : <OkrTable rows={d.okrs} label={t('proj.dash.kpi.okrs')} />}
       </Panel>
     </>
   );
@@ -329,8 +425,37 @@ function SolutionsTable({ rows, visible, limit, title }: { rows: SolutionRow[]; 
 
 function SolutionDetail({ d, visible, nameOf }: { d: DetailOf<'solution'>; visible: Visible; nameOf: NameOf }) {
   const { t, lang, fmt } = useI18n();
+  const issues = d.issues.filter((i) => visible(i.id));
   return (
     <>
+      <Panel title={t('proj.dash.sol.issues')} testId="step-dash-issue-solutions" className="span-full">
+        <p className="muted">{t('proj.dash.sol.issuesHint')}</p>
+        {d.issues.length === 0 ? <Empty text="proj.dash.tobe.noIssues" /> : (
+          <ScrollRegion label={t('proj.dash.sol.issues')}>
+            <table className="data-table compact">
+              <thead><tr>
+                <th scope="col" className="num">{t('proj.dash.col.rank')}</th>
+                <th scope="col">{t('proj.dash.col.issue')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.score')}</th>
+                <th scope="col">{t('proj.dash.col.solution')}</th>
+                <th scope="col">{t('proj.dash.col.useCases')}</th>
+              </tr></thead>
+              <tbody>
+                {issues.map((i) => (
+                  <tr key={i.id} data-issue={i.id} data-solved={i.solutionIds.length > 0}>
+                    <td className="num">{i.rank}</td>
+                    <th scope="row"><EntityRef id={i.id} /></th>
+                    <td className="num">{fmt.number(i.score)}</td>
+                    <td><Refs ids={i.solutionIds} visible={visible} /></td>
+                    <td><Refs ids={i.useCaseIds} visible={visible} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollRegion>
+        )}
+        <HiddenNote n={d.issues.length - issues.length} />
+      </Panel>
       <Panel title={t('proj.dash.chart.range.panel')} testId="step-dash-range" className="span-full">
         <RangeChart sims={d.sims} />
       </Panel>
@@ -371,8 +496,41 @@ function SolutionDetail({ d, visible, nameOf }: { d: DetailOf<'solution'>; visib
 function DeliverableDetail({ d, visible, nameOf, today }: { d: DetailOf<'deliverable'>; visible: Visible; nameOf: NameOf; today: string }) {
   const { t, fmt } = useI18n();
   const rows = d.initiatives.filter((i) => visible(i.id));
+  const trace = d.trace.filter((r) => visible(r.solutionId));
   return (
     <>
+      <Panel title={t('proj.dash.dlv.trace')} testId="step-dash-trace" className="span-full">
+        <p className="muted">{t('proj.dash.dlv.traceHint')}</p>
+        {d.trace.length === 0 ? <Empty /> : (
+          <ScrollRegion label={t('proj.dash.dlv.trace')}>
+            <table className="data-table compact">
+              <thead><tr>
+                <th scope="col">{t('proj.dash.col.solution')}</th>
+                <th scope="col">{t('proj.dash.col.issue')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.kpis')}</th>
+                <th scope="col">{t('proj.dash.col.useCases')}</th>
+                <th scope="col">{t('proj.dash.col.initiative')}</th>
+                <th scope="col" className="num">{t('proj.dash.col.owned')}</th>
+                <th scope="col">{t('proj.dash.col.traced')}</th>
+              </tr></thead>
+              <tbody>
+                {trace.map((r) => (
+                  <tr key={r.solutionId} data-solution={r.solutionId} data-complete={r.complete}>
+                    <th scope="row"><EntityRef id={r.solutionId} /> <span className="muted">{t(`sol.type.${r.type}` as MessageKey)}</span></th>
+                    <td><Refs ids={r.issueIds} visible={visible} /></td>
+                    <td className="num">{r.kpiIds.length}</td>
+                    <td>{r.type === 'digital' ? <Refs ids={r.useCaseIds} visible={visible} /> : '–'}</td>
+                    <td><Refs ids={r.initiativeIds} visible={visible} /></td>
+                    <td className="num">{t('proj.dash.ratio', { value: fmt.number(r.owned), total: fmt.number(r.initiativeIds.length) })}</td>
+                    <td><OkNg ok={r.complete} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollRegion>
+        )}
+        <HiddenNote n={d.trace.length - trace.length} />
+      </Panel>
       <Panel title={t('proj.dash.dlv.initiatives')} testId="step-dash-initiatives" className="span-full">
         <GanttChart rows={d.initiatives} today={today} nameOf={nameOf} />
         {d.initiatives.length > 0 && (
@@ -415,7 +573,7 @@ function DeliverableDetail({ d, visible, nameOf, today }: { d: DetailOf<'deliver
 function StepDetailPanels({ d, visible, nameOf, today }: { d: StepDetail; visible: Visible; nameOf: NameOf; today: string }) {
   switch (d.step) {
     case 'asis': return <AsisDetail d={d} visible={visible} nameOf={nameOf} />;
-    case 'tobe': return <TobeDetail d={d} visible={visible} nameOf={nameOf} />;
+    case 'tobe': return <TobeDetail d={d} visible={visible} />;
     case 'kpi': return <KpiDetail d={d} />;
     case 'solution': return <SolutionDetail d={d} visible={visible} nameOf={nameOf} />;
     case 'deliverable': return <DeliverableDetail d={d} visible={visible} nameOf={nameOf} today={today} />;

@@ -493,7 +493,7 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
   },
   tobe: {
     step: 'tobe',
-    inputs: ['objectives', 'issues', 'kpis', 'analyses'],
+    inputs: ['objectives', 'issues', 'kpis', 'useCases', 'personas', 'projectKpis', 'okrs'],
     fields: TOBE_FIELDS,
     todos: [
       {
@@ -507,7 +507,45 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return n > 0 ? pass('projectAligned', { n }) : fail('projectUnaligned');
         },
       },
+      {
+        id: 'uc-registered', kind: 'auto', href: '/usecases',
+        check: (c) => {
+          const n = c.useCases.filter((u) => u.origin === 'registered').length;
+          return n > 0 ? pass('useCasesRegistered', { n }) : fail('noUseCases');
+        },
+      },
+      {
+        id: 'uc-complete', kind: 'auto', href: '/usecases',
+        check: (c) => {
+          const ucs = c.useCases.filter((u) => u.origin === 'registered');
+          if (ucs.length === 0) return fail('noUseCases');
+          const bad = ucs.filter((u) => u.steps.length < 3 || !u.effect || textOf(u.effect).every((s) => !s.trim()));
+          return bad.length ? fail('useCasesThin', bad.map((u) => ({ type: 'text' as const, text: u.name })), { n: bad.length }) : pass('useCasesComplete', { n: ucs.length });
+        },
+      },
+      {
+        id: 'uc-trace', kind: 'auto', href: '/usecases',
+        check: (c) => {
+          const ucs = c.useCases.filter((u) => u.origin === 'registered');
+          if (ucs.length === 0) return fail('noUseCases');
+          const projectKpis = new Set(c.kpi.kpis.map((k) => k.id));
+          const linked = (id: string) => projectKpis.has(id) || ['issue', 'kpi', 'solution'].includes(c.pack.byId.get(id)?.kind ?? '');
+          const bad = ucs.filter((u) => !u.relatedIds.some(linked));
+          return bad.length ? fail('useCasesUnlinked', bad.map((u) => ({ type: 'text' as const, text: u.name })), { n: bad.length }) : pass('useCasesLinked', { n: ucs.length });
+        },
+      },
+      {
+        id: 'uc-top-issue', kind: 'auto', href: '/usecases',
+        check: (c) => {
+          const top = rankedIssues(c.pack)[0];
+          if (!top) return fail('noIssues');
+          const solutions = kindOf(c.pack, 'solution').filter((s) => s.issueIds.includes(top.id)).map((s) => s.id);
+          const covered = c.useCases.some((u) => u.origin === 'registered' && u.relatedIds.some((id) => id === top.id || solutions.includes(id)));
+          return covered ? pass('topIssueCovered', { issue: top.id }) : fail('topIssueUncovered', [{ type: 'entity', id: top.id }]);
+        },
+      },
       { id: 'tobe-doc', kind: 'auto', href: docHref('tobe'), check: docCheck('tobe', TOBE_FIELDS) },
+      { id: 'uc-review', kind: 'manual', href: docHref('tobe') },
       { id: 'tobe-agree', kind: 'manual', href: docHref('tobe') },
     ],
   },
@@ -592,9 +630,19 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
   },
   solution: {
     step: 'solution',
-    inputs: ['solutions', 'useCases', 'personas', 'projectKpis'],
+    inputs: ['issues', 'solutions', 'projectKpis', 'useCases'],
     fields: SOLUTION_FIELDS,
     todos: [
+      {
+        id: 'sol-issues', kind: 'auto', href: '/relations',
+        check: (c) => {
+          const issues = kindOf(c.pack, 'issue');
+          if (issues.length === 0) return fail('noIssues');
+          const solutions = kindOf(c.pack, 'solution');
+          const bad = rankedIssues(c.pack).filter((i) => !solutions.some((s) => s.issueIds.includes(i.id)));
+          return bad.length ? fail('issuesWithoutSolution', entityRefs(bad), { n: bad.length }) : pass('allIssuesSolved', { n: issues.length });
+        },
+      },
       {
         id: 'sol-type', kind: 'auto', href: '/deliverables?step=solution',
         check: (c) => {
@@ -628,45 +676,8 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return open.length ? fail('kpiGapOpen', open.map((k) => ({ type: 'text' as const, text: k.name })), { n: open.length }) : pass('kpiGapsClosed', { n: c.kpi.kpis.length });
         },
       },
-      {
-        id: 'uc-registered', kind: 'auto', href: '/usecases',
-        check: (c) => {
-          const n = c.useCases.filter((u) => u.origin === 'registered').length;
-          return n > 0 ? pass('useCasesRegistered', { n }) : fail('noUseCases');
-        },
-      },
-      {
-        id: 'uc-complete', kind: 'auto', href: '/usecases',
-        check: (c) => {
-          const ucs = c.useCases.filter((u) => u.origin === 'registered');
-          if (ucs.length === 0) return fail('noUseCases');
-          const bad = ucs.filter((u) => u.steps.length < 3 || !u.effect || textOf(u.effect).every((s) => !s.trim()));
-          return bad.length ? fail('useCasesThin', bad.map((u) => ({ type: 'text' as const, text: u.name })), { n: bad.length }) : pass('useCasesComplete', { n: ucs.length });
-        },
-      },
-      {
-        id: 'uc-trace', kind: 'auto', href: '/usecases',
-        check: (c) => {
-          const ucs = c.useCases.filter((u) => u.origin === 'registered');
-          if (ucs.length === 0) return fail('noUseCases');
-          const projectKpis = new Set(c.kpi.kpis.map((k) => k.id));
-          const linked = (id: string) => projectKpis.has(id) || ['issue', 'kpi', 'solution'].includes(c.pack.byId.get(id)?.kind ?? '');
-          const bad = ucs.filter((u) => !u.relatedIds.some(linked));
-          return bad.length ? fail('useCasesUnlinked', bad.map((u) => ({ type: 'text' as const, text: u.name })), { n: bad.length }) : pass('useCasesLinked', { n: ucs.length });
-        },
-      },
-      {
-        id: 'uc-top-issue', kind: 'auto', href: '/usecases',
-        check: (c) => {
-          const top = rankedIssues(c.pack)[0];
-          if (!top) return fail('noIssues');
-          const solutions = kindOf(c.pack, 'solution').filter((s) => s.issueIds.includes(top.id)).map((s) => s.id);
-          const covered = c.useCases.some((u) => u.origin === 'registered' && u.relatedIds.some((id) => id === top.id || solutions.includes(id)));
-          return covered ? pass('topIssueCovered', { issue: top.id }) : fail('topIssueUncovered', [{ type: 'entity', id: top.id }]);
-        },
-      },
       { id: 'uc-doc', kind: 'auto', href: docHref('solution'), check: docCheck('solution', SOLUTION_FIELDS) },
-      { id: 'uc-review', kind: 'manual', href: docHref('solution') },
+      { id: 'sol-review', kind: 'manual', href: docHref('solution') },
     ],
   },
   deliverable: {

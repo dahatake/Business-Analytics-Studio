@@ -4,6 +4,7 @@ import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { isUseApproved, preflight } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useActiveProject } from '../../state/projects.ts';
+import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import type { Audience } from '../../state/settings.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
@@ -114,8 +115,23 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ch
         <div className="step-brief-col" data-testid="step-dash-brief-rule">
           <div className="step-brief-head">
             <Badge appearance="tint" color="informative">{t('proj.dash.brief.rule')}</Badge>
+            <Badge appearance="outline" color={brief.maturity === 'agreed' ? 'success' : brief.maturity === 'evidenced' ? 'brand' : 'warning'} data-testid="step-dash-brief-maturity" data-maturity={brief.maturity}>
+              {t(`proj.dash.brief.maturity.${brief.maturity}`)}
+            </Badge>
             <span className="muted">{t('proj.dash.brief.ruleHint', { n: brief.facts.length })}</span>
           </div>
+          <p className="muted" data-testid="step-dash-brief-maturity-hint">{t(`proj.dash.brief.maturity.${brief.maturity}Hint`)}</p>
+          {brief.openSteps.length > 0 && (
+            <p className="step-brief-open" data-testid="step-dash-brief-open">
+              {t('proj.dash.brief.openSteps')}{' '}
+              {brief.openSteps.map((s, i) => (
+                <span key={s}>
+                  {i > 0 && t('proj.dash.brief.sep')}
+                  <a href={hrefFor('/step', { step: s })} onClick={revisitRouteTarget} data-step={s}>{t(`proj.step.${s}`)}</a>
+                </span>
+              ))}
+            </p>
+          )}
           <BriefBody content={brief} brief={brief} prefix="step-dash-brief" />
           <details className="step-chart-data" data-testid="step-dash-brief-ledger">
             <summary>{t('proj.dash.brief.ledger', { n: brief.facts.length })}</summary>

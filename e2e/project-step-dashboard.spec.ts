@@ -102,7 +102,7 @@ test.describe('step dashboard', () => {
   test('each step shows its decision chart, a data table alternative and a rule-based executive summary', async ({ page }) => {
     await go(page, '/step?step=asis');
     const charts: Record<(typeof STEPS)[number], string[]> = {
-      asis: ['pareto'], tobe: ['gap'], kpi: ['quality'], solution: ['range', 'bridge'], deliverable: ['gantt', 'payback'],
+      asis: ['matrix', 'pareto', 'gap'], tobe: [], kpi: ['quality'], solution: ['range', 'bridge'], deliverable: ['gantt', 'payback'],
     };
     for (const step of STEPS) {
       await page.getByTestId('proj-stepper').locator(`[data-step="${step}"]`).click();
@@ -110,6 +110,7 @@ test.describe('step dashboard', () => {
       const brief = page.getByTestId('step-dash-brief');
       await expect(brief.getByTestId('step-dash-brief-answer')).not.toBeEmpty();
       await expect(brief.getByTestId('step-dash-brief-ledger')).toBeVisible();
+      await expect(brief.getByTestId('step-dash-brief-maturity')).toHaveAttribute('data-maturity', /^(hypothesis|evidenced|agreed)$/);
       for (const id of charts[step]) {
         const chart = page.getByTestId(`step-dash-chart-${id}`);
         const empty = page.getByTestId(`step-dash-chart-${id}-empty`);

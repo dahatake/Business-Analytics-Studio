@@ -53,4 +53,10 @@ export const stgJa = {
   'stg.issues': '課題の優先順位と関連データ',
   'stg.objectiveLinks': '事業目標と課題の直接リンク',
   'stg.at': '作成：{at}／{provider}',
+  'stg.field': '項目',
+  'stg.field.description': '説明',
+  'stg.field.kpiIds': '関連KPI',
+  'stg.field.issueIds': '対象の課題',
+  'stg.field.impact': '影響度（1〜5）',
+  'stg.field.feasibility': '実現性（1〜5）',
 };

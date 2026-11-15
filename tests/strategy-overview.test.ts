@@ -7,7 +7,7 @@ import { emptyDeliverables, type AppCheckContext } from '../src/modules/project/
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
 import {
-  availableAxes, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
+  availableAxes, humanizeProposal, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
   validateOverviewProposal, type OverviewProposal,
 } from '../src/modules/project/overviewModel.ts';
 
@@ -100,6 +100,26 @@ describe('validated draft and approval updates', () => {
     expect(() => validateOverviewProposal({ ...p, patches: [p.patches[0], p.patches[0]] }, ctx)).toThrow('duplicate');
     expect(() => validateOverviewProposal({ ...p, patches: [{ ...p.patches[0], kpiIds: ['kpi-unknown'] }] }, ctx)).toThrow('relationship');
     expect(() => validateOverviewProposal({ ...p, findings: [{ text: 'x', refs: ['private-unknown'] }] }, ctx)).toThrow('hidden evidence');
+  });
+
+  it('accepts key result references, one-metric gaps and figures written in the business text, but not other derived figures', () => {
+    const ctx = context(), p = proposal(ctx);
+    const kpi = entitiesOf('kpi', ctx.pack).find((k) => k.current !== k.target)!;
+    const gap = Math.abs(kpi.current - kpi.target);
+    ctx.pack.pack.entities.push({ ...kpi, id: 'kpi-text-figure', description: { ja: '出荷後 77 日以内', en: 'within 77 days' } });
+    expect(() => validateOverviewProposal({ ...p, answer: `Gap ${gap}, measured within 77 days.`, findings: [{ text: 'Key result.', refs: [ctx.kpi.okrs[0]!.keyResults[0]!.id] }] }, ctx)).not.toThrow();
+    expect(() => validateOverviewProposal({ ...p, answer: `Sum ${kpi.current + kpi.target + kpi.baseline + 0.37}.` }, ctx)).toThrow('Unverified figures');
+  });
+
+  it('replaces internal IDs written in prose with item names, keeping refs and stored text per language', () => {
+    const ctx = context(), p = proposal(ctx), issue = entitiesOf('issue', ctx.pack)[0]!;
+    const h = humanizeProposal({ ...p, answer: `Start with ${issue.id}.`, patches: [{ ...p.patches[0]!, description: { ja: `${issue.id}を検証`, en: `Validate ${issue.id}-x and ${issue.id}` } }] }, ctx, 'en');
+    expect(h.answer).toBe(`Start with "${issue.name.en}".`);
+    expect(h.patches[0]!.description).toEqual({ ja: `「${issue.name.ja}」を検証`, en: `Validate ${issue.id}-x and "${issue.name.en}"` });
+    expect(h.patches[0]!.refs).toEqual([issue.id]);
+    const ja = humanizeProposal({ ...p, answer: `${issue.name.ja}（${issue.id}）はimpact5、costJpyを確認` }, ctx, 'ja');
+    expect(ja.answer).toBe(`${issue.name.ja}は影響度5、投資額を確認`);
+    expect(humanizeProposal({ ...p, answer: 'High impact; check costJpy.' }, ctx, 'en').answer).toBe('High impact; check investment.');
   });
 
   it('draft construction never mutates data; a batch applies once and preserves protected numeric data', async () => {

@@ -4,7 +4,9 @@ import { Checkmark20Regular, Dismiss20Regular, Sparkle20Regular } from '@fluentu
 import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded, loadPack } from '../../data/pack.ts';
-import { useI18n } from '../../i18n/index.ts';
+import type { LText } from '../../data/schema.ts';
+import { useI18n, type Formatters, type Lang } from '../../i18n/index.ts';
+import { loc } from '../../state/text.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, IMPROVEMENT_STEPS, useCurrentScope, type ImprovementStep } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
@@ -18,7 +20,7 @@ import { ScrollRegion } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
 import {
-  availableAxes, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
+  availableAxes, humanizeProposal, itemNames, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
   useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyMap,
 } from './overviewModel.ts';
 import { BriefBody } from './StepBriefPanel.tsx';
@@ -80,15 +82,16 @@ function StrategyVisual({ map }: { map: StrategyMap }) {
   );
 }
 
-function ProposalBody({ proposal }: { proposal: OverviewProposal }) {
+function ProposalBody({ proposal, ctx }: { proposal: OverviewProposal; ctx: CheckContext }) {
   const { t } = useI18n();
+  const names = useMemo(() => itemNames(ctx), [ctx]);
   return (
     <div className="strategy-proposal">
       <p className="step-brief-answer">{proposal.answer}</p>
       <h3>{t('proj.dash.brief.findings')}</h3>
-      <ol>{proposal.findings.map((f, i) => <li key={i}>{f.text}<Evidence ids={f.refs} /></li>)}</ol>
+      <ol>{proposal.findings.map((f, i) => <li key={i}>{f.text}<Evidence ids={f.refs} names={names} /></li>)}</ol>
       <h3>{t('proj.dash.brief.actions')}</h3>
-      <ol>{proposal.actions.map((f, i) => <li key={i}>{f.text}<Evidence ids={f.refs} /></li>)}</ol>
+      <ol>{proposal.actions.map((f, i) => <li key={i}>{f.text}<Evidence ids={f.refs} names={names} /></li>)}</ol>
       <h3>{t('proj.dash.brief.caveats')}</h3>
       <ul>{proposal.caveats.map((c, i) => <li key={i}>{c}</li>)}</ul>
       <p>{t('stg.axis')}: {t(`stg.axis.${proposal.axis}`)} — {proposal.axisReason}</p>
@@ -96,42 +99,68 @@ function ProposalBody({ proposal }: { proposal: OverviewProposal }) {
   );
 }
 
-function Evidence({ ids }: { ids: string[] }) {
+type Names = Map<string, (l: Lang) => string>;
+
+function Evidence({ ids, names }: { ids: string[]; names?: Names }) {
+  const { lang } = useI18n();
   return <span className="strategy-refs">{ids.map((id) => {
-    return loaded.byId.has(id) ? <EntityRef key={id} id={id} /> : <span key={id}>{id}</span>;
+    return loaded.byId.has(id) ? <EntityRef key={id} id={id} /> : <span key={id}>{names?.get(id)?.(lang) ?? id}</span>;
   })}</span>;
+}
+
+const PATCH_FIELDS = ['description', 'kpiIds', 'issueIds', 'impact', 'feasibility'] as const;
+
+/** fmt.date takes a JST calendar date, so derive it before adding the time. */
+const stamp = (at: string, fmt: Formatters) => `${fmt.date(new Date(at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }))} ${fmt.time(new Date(at))}`;
+
+function fieldText(value: unknown, names: Names, lang: Lang, unknown: string): string {
+  if (Array.isArray(value)) return value.length ? value.map((id: string) => names.get(id)?.(lang) ?? id).join(lang === 'ja' ? '、' : ', ') : unknown;
+  if (value && typeof value === 'object') return loc(value as LText, lang);
+  return value === undefined || value === null || value === '' ? unknown : String(value);
 }
 
 function DraftDiff({ draft, ctx, stale }: { draft: OverviewDraft; ctx: CheckContext; stale: boolean }) {
   const { t, lang } = useI18n();
+  const names = useMemo(() => itemNames(ctx), [ctx]);
   const replacements = new Map((stale ? [] : proposalEntities(draft.proposal, ctx)).map((e) => [e.id, e]));
   const preview = { ...ctx, pack: loadPack({ ...ctx.pack.pack, entities: ctx.pack.pack.entities.map((e) => replacements.get(e.id) ?? e) }) };
+  const name = (id: string) => names.get(id)?.(lang) ?? id;
+  const links = (xs: OverviewProposal['objectiveIssues']) => xs.length
+    ? <ul>{xs.map((x) => <li key={`${x.objectiveId}-${x.issueId}`}>{name(x.objectiveId)} → {name(x.issueId)}: {x.reason}</li>)}</ul>
+    : <p>{t('stg.noLinks')}</p>;
   return (
     <>
-      <ProposalBody proposal={draft.proposal} />
+      <ProposalBody proposal={draft.proposal} ctx={ctx} />
       {!stale && <StrategyVisual map={strategyMap(preview, { objectiveIssues: draft.proposal.objectiveIssues }, draft.proposal.axis, lang)} />}
       <h3>{t('stg.before')} → {t('stg.after')}</h3>
       {!draft.proposal.patches.length && <p>{t('stg.noPatches')}</p>}
       {draft.proposal.patches.map((p) => {
         const e = ctx.pack.byId.get(p.id);
         if (!e) return null;
-        const before = Object.fromEntries(Object.keys(p).filter((k) => !['id', 'reason', 'refs'].includes(k)).map((k) => [k, e[k as keyof typeof e]]));
-        const { id: _id, reason: _reason, refs: _refs, ...after } = p;
+        const fields = PATCH_FIELDS.filter((k) => p[k] !== undefined);
         return (
           <section className="strategy-diff" key={p.id} data-testid="strategy-diff">
             <h4>{e.name[lang]}</h4>
-            <div className="strategy-diff-columns">
-              <div><strong>{t('stg.before')}</strong><pre>{JSON.stringify(before, null, 2)}</pre></div>
-              <div><strong>{t('stg.after')}</strong><pre>{JSON.stringify(after, null, 2)}</pre></div>
-            </div>
-            <p>{t('stg.reason')}: {p.reason}</p><Evidence ids={p.refs} />
+            <table className="strategy-diff-table">
+              <thead><tr><th scope="col">{t('stg.field')}</th><th scope="col">{t('stg.before')}</th><th scope="col">{t('stg.after')}</th></tr></thead>
+              <tbody>{fields.map((k) => {
+                const before = fieldText(e[k as keyof typeof e], names, lang, t('stg.unknown'));
+                const after = fieldText(p[k], names, lang, t('stg.unknown'));
+                return (
+                  <tr key={k} className={before === after ? undefined : 'changed'}>
+                    <th scope="row">{t(`stg.field.${k}`)}</th><td>{before}</td><td>{after}</td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+            <p>{t('stg.reason')}: {p.reason}</p><Evidence ids={p.refs} names={names} />
           </section>
         );
       })}
       <h3>{t('stg.objectiveLinks')}</h3>
       <div className="strategy-diff-columns">
-        <div><strong>{t('stg.before')}</strong><pre>{JSON.stringify(useOverview.getState().value.objectiveIssues, null, 2)}</pre></div>
-        <div><strong>{t('stg.after')}</strong><pre>{JSON.stringify(draft.proposal.objectiveIssues, null, 2)}</pre></div>
+        <div><strong>{t('stg.before')}</strong>{links(useOverview.getState().value.objectiveIssues)}</div>
+        <div><strong>{t('stg.after')}</strong>{links(draft.proposal.objectiveIssues)}</div>
       </div>
     </>
   );
@@ -196,7 +225,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       const result = await aiLive({ ...request, personConfirmed: decision.personConfirmed }, abort.current.signal);
       current();
       if (!alive.current) return;
-      const proposal = validateOverviewProposal(JSON.parse(result.text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')), ctx);
+      const proposal = humanizeProposal(validateOverviewProposal(JSON.parse(result.text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')), ctx), ctx, lang);
       set((v) => ({ ...v, draft: { proposal, baseline, lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy } }));
       await flushDeviceStorage();
     } catch (e) { fail(e); }
@@ -273,7 +302,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       </Panel>
       {draft && <Panel title={t('stg.draft')} testId="strategy-draft" className="span-full">
         <Badge appearance="tint" color="warning">{t('stg.draft')}</Badge>
-        <p>{t('stg.at', { at: draft.at, provider: t(`ai.provider.${draft.provider}`) })}</p>
+        <p>{t('stg.at', { at: stamp(draft.at, fmt), provider: t(`ai.provider.${draft.provider}`) })}</p>
         {stale && <p role="alert" data-testid="strategy-stale">{t('stg.stale')}</p>}
         <DraftDiff draft={draft} ctx={ctx} stale={stale} />
         <div className="strategy-controls">
@@ -283,8 +312,8 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       </Panel>}
       {approved && <Panel title={t('stg.approved')} testId="strategy-approved" className="span-full">
         {approved.baseline !== baseline && <p>{t('stg.stale')}</p>}
-        <p>{t('stg.at', { at: approved.at, provider: t(`ai.provider.${approved.provider}`) })}</p>
-        <ProposalBody proposal={approved.proposal} />
+        <p>{t('stg.at', { at: stamp(approved.at, fmt), provider: t(`ai.provider.${approved.provider}`) })}</p>
+        <ProposalBody proposal={approved.proposal} ctx={ctx} />
       </Panel>}
       {analysis && <Panel title={t('stg.analysis')} testId="executive-summary" className="span-full">
         <p className="muted">{t('stg.analysisHint')}</p>

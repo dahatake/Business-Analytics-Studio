@@ -54,4 +54,10 @@ export const stgEn: Record<keyof typeof stgJa, string> = {
   'stg.issues': 'Issue priorities and related data',
   'stg.objectiveLinks': 'Direct objective-to-issue relationships',
   'stg.at': 'Created: {at} / {provider}',
+  'stg.field': 'Field',
+  'stg.field.description': 'Description',
+  'stg.field.kpiIds': 'Related KPIs',
+  'stg.field.issueIds': 'Issues addressed',
+  'stg.field.impact': 'Impact (1–5)',
+  'stg.field.feasibility': 'Feasibility (1–5)',
 };

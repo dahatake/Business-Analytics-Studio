@@ -14,7 +14,10 @@
 .strategy-refs { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
 .strategy-diff { border-top: 1px solid var(--colorNeutralStroke2); padding-block: 16px; }
 .strategy-diff-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.strategy-diff-columns pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.strategy-diff-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.strategy-diff-table th, .strategy-diff-table td { text-align: start; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--colorNeutralStroke2); overflow-wrap: anywhere; }
+.strategy-diff-table thead th:first-child, .strategy-diff-table tbody th { width: 9em; }
+.strategy-diff-table tr.changed td:last-child { background: var(--colorBrandBackground2); }
 .strategy-ranking-row { margin-block: 16px; }
 .screen-overview details > summary { min-height: 44px; padding-block: 10px; cursor: pointer; }
 .strategy-proposal li { margin-block: 12px; }

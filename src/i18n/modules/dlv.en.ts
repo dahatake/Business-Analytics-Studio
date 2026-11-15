@@ -31,6 +31,7 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
   'dlv.draft.applied': '{n} fields applied',
   'dlv.draft.none': 'There is nothing to apply',
   'dlv.draft.failed': 'The draft could not be created. Please try again.',
+  'dlv.draft.liveFailed': 'Live generation failed ({detail}). No mock was substituted and nothing was applied to the deliverable.',
   'dlv.draft.close': 'Close',
   'dlv.task.title': 'Recommendations by task',
   'dlv.task.note': 'These are drafts. Approving saves the recommendation, but does not change the underlying data or sign off the task. Check the evidence and missing information. Generate a new proposal if the data changes.',

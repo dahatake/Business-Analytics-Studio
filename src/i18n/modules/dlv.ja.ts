@@ -30,6 +30,7 @@ export const dlvJa = {
   'dlv.draft.applied': '{n} 項目を反映しました',
   'dlv.draft.none': '反映できる項目がありません',
   'dlv.draft.failed': 'ドラフトを作れませんでした。もう一度試してください。',
+  'dlv.draft.liveFailed': '実接続での生成に失敗しました（{detail}）。モックへの切り替えや成果物への反映は行っていません。',
   'dlv.draft.close': '閉じる',
   'dlv.task.title': 'タスクごとの提案',
   'dlv.task.note': '提案はドラフトです。承認すると提案の内容を確定して保存しますが、元データの変更や人の確認は行いません。根拠と不足情報を確認してください。データが変わった場合は提案を作り直してください。',

@@ -716,10 +716,10 @@ describe('D-12 packBuild through the relay', () => {
   const packBody = (extra: Record<string, unknown> = {}) => ({ use: 'packBuild', provider: 'foundry', lang: 'ja', prompt: '顧客パックを作ってください', context: '', maxOutputTokens: 16000, timeoutMs: 300000, ...extra });
 
   const fakeCopilot = (answer = '{"entities":[]}') => {
-    const calls: { model: string; system: string; prompt: string }[] = [];
+    const calls: { model: string; system: string; prompt: string; timeoutMs: number }[] = [];
     const service = {
       status: async () => ({ available: true, authenticated: true, login: 'octocat', models: [{ id: 'gpt-5', name: 'GPT-5', multiplier: 1 }] }),
-      complete: async (i: { model: string; system: string; prompt: string }) => {
+      complete: async (i: { model: string; system: string; prompt: string; timeoutMs: number }) => {
         calls.push(i);
         return { text: answer, inputTokens: 10, outputTokens: 20, premiumRequests: 1 };
       },
@@ -761,7 +761,7 @@ describe('D-12 packBuild through the relay', () => {
   });
 
   it('D-23 deliverable drafts use hypothesis-safe instructions for both providers', async () => {
-    const body = { use: 'deliverableDraft', provider: 'foundry', lang: 'ja', prompt: 'synthetic', context: '', maxOutputTokens: 8000, timeoutMs: 60_000 };
+    const body = { use: 'deliverableDraft', provider: 'foundry', lang: 'ja', prompt: 'synthetic', context: '', maxOutputTokens: 8000, timeoutMs: 300_000 };
     vault.set('foundryKey', FAKE_KEY);
     await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig });
     seen = [];
@@ -770,12 +770,15 @@ describe('D-12 packBuild through the relay', () => {
     expect(sent.messages[0]!.content).toContain('仮説');
     expect(sent.messages[0]!.content).toContain('検証方法');
     expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 8001 }), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', { ...body, timeoutMs: 300_001 }), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', { ...body, use: 'explain', maxOutputTokens: 100 }), { config: testConfig })).status).toBe(400);
 
     const { calls, service } = fakeCopilot('synthetic');
     expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
     expect((await call(req('POST', '/relay/ai', { ...body, provider: 'copilotSdk', lang: 'en' }), { copilot: service })).status).toBe(200);
     expect(calls[0]!.system).toContain('hypotheses');
     expect(calls[0]!.system).toContain('Never invent');
+    expect(calls[0]!.timeoutMs).toBe(300_000);
     await call(req('DELETE', '/relay/copilot'));
   });
 

@@ -455,7 +455,11 @@ export function DraftDialog() {
       }
     } catch (error) {
       if (useDeliverables.getState().scope === scope && useProjTransient.getState().draftStep === step) {
-        const message = error instanceof AiLiveError ? error.reasons.map((r) => t(reasonKey(r))).join(' ') : error instanceof Error ? error.message : String(error);
+        const message = error instanceof AiLiveError
+          ? error.reasons.includes('liveFailed')
+            ? t('dlv.draft.liveFailed', { detail: error.message })
+            : error.reasons.map((r) => t(reasonKey(r))).join(' ')
+          : error instanceof Error ? error.message : String(error);
         setState({ status: 'error', message });
       }
     }

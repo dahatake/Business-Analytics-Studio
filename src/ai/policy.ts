@@ -190,6 +190,9 @@ export const RECOMMEND_MAX_PROMPT_CHARS = 32_000;
 /** D-20: per-call timeout for suggestions; a model reading attached PDFs answers slower than a plain prompt. */
 export const RECOMMEND_TIMEOUT_MS = 90_000;
 
+/** A deliverable includes all document fields and eight labelled lines per task, up to 8,000 output tokens. */
+export const DELIVERABLE_DRAFT_TIMEOUT_MS = 300_000;
+
 /**
  * PARAM-148: calls one pack generation may make (2 generation stages + 1 five-method analysis + up to 2×4 re-runs
  * after Work IQ follow-up rounds + up to 3 fix rounds + up to 2 retries of a failed or unreadable answer = 16).

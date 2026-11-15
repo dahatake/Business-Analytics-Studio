@@ -445,6 +445,30 @@ describe('Draft with Copilot', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it('lets a complete Copilot draft take longer than the generic 60-second timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const input = { step: 'asis', ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
+      const text = [
+        ...STEP_DEFS.asis.fields.map((f) => `### ${f.id}\nfield`),
+        ...STEP_DEFS.asis.todos.map((todo) => `### task-${todo.id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n検証: 記録を照合\n影響: 要試算`),
+      ].join('\n');
+      setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true }));
+      setLiveTransport((call) => new Promise((resolve, reject) => {
+        setTimeout(() => {
+          if (call.timeoutMs < 75_000) reject(Object.assign(new Error('relay 504 timeout'), { status: 504 }));
+          else resolve({ text, inputTokens: 100, outputTokens: 100 });
+        }, Math.min(call.timeoutMs, 75_000));
+      }));
+      const result = expect(requestDeliverableDraft(input, {
+        ...draftRequest(input), userConfirmed: true, personConfirmed: true,
+      })).resolves.toMatchObject({ response: { mode: 'live' }, fields: { problem: 'field' } });
+      await Promise.all([result, vi.advanceTimersByTimeAsync(75_000)]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('accepts complete live sections for every step and rejects incomplete responses', async () => {
     setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true }));
     for (const step of IMPROVEMENT_STEPS) {

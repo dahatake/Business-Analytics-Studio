@@ -1,4 +1,5 @@
 import { aiLive, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import type { Entity, EntityOf } from '../../data/schema.ts';
 import { makeFormatters, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { personaLabel } from '../../state/personas.ts';
@@ -402,7 +403,7 @@ export function draftEntities(ctx: CheckContext, audience: Audience = 'internal'
 }
 
 export function draftRequest(input: DraftInput): AiRequest {
-  return { use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input), entities: draftEntities(input.ctx, input.audience) };
+  return { use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input), entities: draftEntities(input.ctx, input.audience), timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS };
 }
 
 export async function requestDeliverableDraft(input: DraftInput, request: AiRequest): Promise<{ response: AiResponse; fields: Record<string, string>; tasks: Record<string, string> }> {

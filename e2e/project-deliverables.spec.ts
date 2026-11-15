@@ -271,7 +271,7 @@ test.describe('step deliverables and to-do band', () => {
     let calls = 0;
     await page.route('**/relay/ai', async (route) => {
       calls += 1;
-      await route.fulfill({ status: 502, json: { error: 'testFailure' } });
+      await route.fulfill({ status: 504, json: { error: 'timeout' } });
     });
     await page.getByTestId('dlv-draft').click();
     await page.getByTestId('dlv-draft-generate').click();
@@ -285,7 +285,10 @@ test.describe('step deliverables and to-do band', () => {
     await page.getByTestId('dlv-draft-generate').click();
     await confirm.getByTestId('ai-live-person-check').check();
     await confirm.getByTestId('ai-live-send').click();
-    await expect(page.getByTestId('dlv-draft-dialog').getByRole('alert')).toBeVisible();
+    const alert = page.getByTestId('dlv-draft-dialog').getByRole('alert');
+    await expect(alert).toContainText('relay 504 timeout');
+    await expect(alert).toContainText('モックへの切り替えや成果物への反映は行っていません');
+    await expect(alert).not.toContainText('モックで応答しました');
     expect(calls).toBe(1);
     await expect(page.getByTestId('dlv-draft-mode')).toHaveCount(0);
     await expect(page.getByTestId('dlv-draft-apply')).toBeDisabled();

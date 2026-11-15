@@ -14,6 +14,7 @@ import { ScrollRegion } from './common.tsx';
 import { inputKey, type TodoResult } from './deliverables.ts';
 import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
+import { StrategyOverview } from './StrategyOverview.tsx';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
 import './project.css';
@@ -650,6 +651,7 @@ export function StepDashboardScreen() {
           </Button>
         )}
       />
+      <StrategyOverview ctx={ctx} step={step} />
       <StepBriefPanel d={d} ctx={ctx} audience={audience} />
       <Summary d={d} />
       <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">

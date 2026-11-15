@@ -1,0 +1,302 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Badge, Button, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
+import { Checkmark20Regular, Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
+import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
+import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
+import { loaded, loadPack } from '../../data/pack.ts';
+import { useI18n } from '../../i18n/index.ts';
+import { commitPackChanges } from '../../state/packEdits.ts';
+import { currentScope, IMPROVEMENT_STEPS, useCurrentScope, type ImprovementStep } from '../../state/projects.ts';
+import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
+import { useSettings } from '../../state/settings.ts';
+import { EntityRef } from '../../ui/EntityRef.tsx';
+import { Panel } from '../../ui/Panel.tsx';
+import { wrap } from '../../ui/textWrap.ts';
+import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { useAiSettings } from '../ai/settingsStore.ts';
+import { ScrollRegion } from './common.tsx';
+import type { AppCheckContext as CheckContext } from './deliverables.ts';
+import { todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
+import {
+  availableAxes, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
+  useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyMap,
+} from './overviewModel.ts';
+import { BriefBody } from './StepBriefPanel.tsx';
+import { buildStepBrief } from './stepBrief.ts';
+import { stepDashboard } from './stepDashboard.ts';
+import { useProjUi } from './stores.ts';
+import './overview.css';
+
+const LANES = ['objective', 'okr', 'kpi', 'issue', 'solution'] as const;
+const WIDTH = 250, NODE_WIDTH = 216;
+
+function StrategyVisual({ map }: { map: StrategyMap }) {
+  const { t, fmt } = useI18n();
+  const layout = useMemo(() => {
+    const positions = new Map<string, { x: number; y: number; h: number; lines: string[] }>();
+    let height = 130;
+    LANES.forEach((lane, col) => {
+      let y = 48;
+      map.nodes.filter((n) => n.lane === lane).forEach((n) => {
+        const lines = wrap(n.label, 17);
+        const h = Math.max(70, lines.length * 18 + 36);
+        positions.set(n.id, { x: 12 + col * WIDTH, y, h, lines });
+        y += h + 20;
+      });
+      height = Math.max(height, y);
+    });
+    return { positions, height };
+  }, [map]);
+  return (
+    <ScrollRegion label={t('stg.map')}>
+      <svg className="strategy-map" viewBox={`0 0 ${WIDTH * LANES.length} ${layout.height}`} role="img" aria-label={t('stg.map')} data-testid="strategy-map">
+        <title>{t('stg.map')}</title>
+        <desc>{t('stg.mapWhy')}</desc>
+        {LANES.map((lane, col) => (
+          <g key={lane}>
+            <text x={12 + col * WIDTH} y={24} className="strategy-lane">{t(`stg.lane.${lane}`)}</text>
+            {!map.nodes.some((n) => n.lane === lane) && <text x={12 + col * WIDTH} y={68} className="strategy-empty">{t('stg.empty')}</text>}
+          </g>
+        ))}
+        {map.links.map((l) => {
+          const a = layout.positions.get(l.source)!;
+          const b = layout.positions.get(l.target)!;
+          const x = a.x + NODE_WIDTH, y = a.y + a.h / 2, by = b.y + b.h / 2;
+          const mid = (x + b.x) / 2;
+          return <path key={`${l.source}-${l.target}`} data-source={l.source} data-target={l.target} className={`strategy-link${l.direct ? ' direct' : ''}`} d={`M${x},${y} C${mid},${y} ${mid},${by} ${b.x},${by}`} />;
+        })}
+        {map.nodes.map((n) => {
+          const p = layout.positions.get(n.id)!;
+          return (
+            <g key={n.id} transform={`translate(${p.x},${p.y})`} data-node={n.id} data-lane={n.lane}>
+              <rect width={NODE_WIDTH} height={p.h} rx={8} className={`strategy-node ${n.lane}`} />
+              <text x={10} y={22} className="strategy-label">{p.lines.map((line, i) => <tspan key={i} x={10} dy={i ? 18 : 0}>{line}</tspan>)}</text>
+              <text x={10} y={p.h - 10} className="strategy-score">{n.score === null ? t('stg.unknown') : `${t('stg.score')}: ${fmt.number(n.score)}`}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </ScrollRegion>
+  );
+}
+
+function ProposalBody({ proposal }: { proposal: OverviewProposal }) {
+  const { t } = useI18n();
+  return (
+    <div className="strategy-proposal">
+      <p className="step-brief-answer">{proposal.answer}</p>
+      <h3>{t('proj.dash.brief.findings')}</h3>
+      <ol>{proposal.findings.map((f, i) => <li key={i}>{f.text}<Evidence ids={f.refs} /></li>)}</ol>
+      <h3>{t('proj.dash.brief.actions')}</h3>
+      <ol>{proposal.actions.map((f, i) => <li key={i}>{f.text}<Evidence ids={f.refs} /></li>)}</ol>
+      <h3>{t('proj.dash.brief.caveats')}</h3>
+      <ul>{proposal.caveats.map((c, i) => <li key={i}>{c}</li>)}</ul>
+      <p>{t('stg.axis')}: {t(`stg.axis.${proposal.axis}`)} — {proposal.axisReason}</p>
+    </div>
+  );
+}
+
+function Evidence({ ids }: { ids: string[] }) {
+  return <span className="strategy-refs">{ids.map((id) => {
+    return loaded.byId.has(id) ? <EntityRef key={id} id={id} /> : <span key={id}>{id}</span>;
+  })}</span>;
+}
+
+function DraftDiff({ draft, ctx, stale }: { draft: OverviewDraft; ctx: CheckContext; stale: boolean }) {
+  const { t, lang } = useI18n();
+  const replacements = new Map((stale ? [] : proposalEntities(draft.proposal, ctx)).map((e) => [e.id, e]));
+  const preview = { ...ctx, pack: loadPack({ ...ctx.pack.pack, entities: ctx.pack.pack.entities.map((e) => replacements.get(e.id) ?? e) }) };
+  return (
+    <>
+      <ProposalBody proposal={draft.proposal} />
+      {!stale && <StrategyVisual map={strategyMap(preview, { objectiveIssues: draft.proposal.objectiveIssues }, draft.proposal.axis, lang)} />}
+      <h3>{t('stg.before')} → {t('stg.after')}</h3>
+      {!draft.proposal.patches.length && <p>{t('stg.noPatches')}</p>}
+      {draft.proposal.patches.map((p) => {
+        const e = ctx.pack.byId.get(p.id);
+        if (!e) return null;
+        const before = Object.fromEntries(Object.keys(p).filter((k) => !['id', 'reason', 'refs'].includes(k)).map((k) => [k, e[k as keyof typeof e]]));
+        const { id: _id, reason: _reason, refs: _refs, ...after } = p;
+        return (
+          <section className="strategy-diff" key={p.id} data-testid="strategy-diff">
+            <h4>{e.name[lang]}</h4>
+            <div className="strategy-diff-columns">
+              <div><strong>{t('stg.before')}</strong><pre>{JSON.stringify(before, null, 2)}</pre></div>
+              <div><strong>{t('stg.after')}</strong><pre>{JSON.stringify(after, null, 2)}</pre></div>
+            </div>
+            <p>{t('stg.reason')}: {p.reason}</p><Evidence ids={p.refs} />
+          </section>
+        );
+      })}
+      <h3>{t('stg.objectiveLinks')}</h3>
+      <div className="strategy-diff-columns">
+        <div><strong>{t('stg.before')}</strong><pre>{JSON.stringify(useOverview.getState().value.objectiveIssues, null, 2)}</pre></div>
+        <div><strong>{t('stg.after')}</strong><pre>{JSON.stringify(draft.proposal.objectiveIssues, null, 2)}</pre></div>
+      </div>
+    </>
+  );
+}
+
+/** Shared across the replacement overview and every improvement-step dashboard. */
+export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: CheckContext; step: ImprovementStep; analysis?: boolean }) {
+  const { t, lang, fmt } = useI18n();
+  const audience = useSettings((s) => s.audience);
+  const scope = useCurrentScope();
+  const state = useOverview((s) => s.value);
+  const set = useOverview((s) => s.set);
+  const ctx = useMemo(() => overviewContext(raw, audience), [raw, audience]);
+  const axes = availableAxes(ctx);
+  const recommended = recommendedAxis(ctx);
+  const axis = state.axis && axes.includes(state.axis) ? state.axis : recommended;
+  const descending = state.descending !== false;
+  const map = useMemo(() => strategyMap(ctx, audience === 'internal' ? state : { objectiveIssues: [] }, axis, lang, descending), [ctx, state, axis, lang, descending, audience]);
+  const baseline = overviewBaseline(raw, state);
+  const draft = state.draft?.audience === audience ? state.draft : undefined;
+  const approved = state.approved?.audience === audience && state.approved.lang === lang ? state.approved : undefined;
+  const stale = !!draft && (draft.baseline !== baseline || draft.lang !== lang);
+  const { dialog, confirmLive } = useLiveConfirm();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const latest = useRef({ raw, state, scope, audience, lang });
+  latest.current = { raw, state, scope, audience, lang };
+  const alive = useRef(true);
+  const abort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; abort.current?.abort(); };
+  }, []);
+  useEffect(() => { abort.current?.abort(); setError(null); setSaved(false); }, [scope, audience, lang]);
+  const current = () => {
+    const x = latest.current;
+    if (currentScope() !== scope || x.scope !== scope || x.audience !== audience || x.lang !== lang || overviewBaseline(x.raw, useOverview.getState().value) !== baseline) throw new Error(t('stg.stale'));
+  };
+  const fail = (e: unknown) => {
+    if (!alive.current) return;
+    const message = e instanceof AiLiveError ? e.reasons.map((r) => t(reasonKey(r))).join(', ') + `: ${e.message}` : e instanceof Error ? e.message : String(e);
+    setError(message);
+  };
+  const generate = async () => {
+    setBusy(true); setError(null); setSaved(false);
+    const provider = useAiSettings.getState().provider;
+    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang), scope, userConfirmed: true };
+    try {
+      const pf = preflight(request);
+      if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
+      const decision = await confirmLive({
+        use: 'ai.use.strategyOverview', scope: t('stg.scope'), itemCount: map.nodes.length,
+        internalCount: ctx.pack.pack.entities.filter((e) => e.classification === 'internal').length, personCount: 0,
+        estimatedCostJpy: pf.estimatedCostJpy, monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: Math.min(10_000, useAiSettings.getState().monthlyBudgetJpy),
+        contentPreview: request.prompt, freeTextMayContainPersons: true, storesResponse: true,
+      });
+      if (!decision.ok || !alive.current) return;
+      current();
+      if (useAiSettings.getState().provider !== provider) throw new Error(t('stg.stale'));
+      abort.current = new AbortController();
+      const result = await aiLive({ ...request, personConfirmed: decision.personConfirmed }, abort.current.signal);
+      current();
+      if (!alive.current) return;
+      const proposal = validateOverviewProposal(JSON.parse(result.text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')), ctx);
+      set((v) => ({ ...v, draft: { proposal, baseline, lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy } }));
+      await flushDeviceStorage();
+    } catch (e) { fail(e); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const approve = async () => {
+    if (!draft) return;
+    setBusy(true); setError(null); setSaved(false);
+    try {
+      current();
+      if (stale) throw new Error(t('stg.stale'));
+      const proposal = validateOverviewProposal(draft.proposal, ctx);
+      const entities = proposalEntities(proposal, ctx);
+      await commitPackChanges(entities.map((entity) => ({ op: 'upsert' as const, entity })), scope, raw.pack);
+      if (currentScope() !== scope) throw new Error(t('stg.stale'));
+      const { draft: _draft, ...rest } = useOverview.getState().value;
+      const next = { ...rest, axis: proposal.axis, objectiveIssues: proposal.objectiveIssues };
+      const approvedBaseline = overviewBaseline({ ...raw, pack: loaded }, next);
+      set({ ...next, approved: { ...draft, baseline: approvedBaseline, by: useProjUi.getState().editor.trim() } });
+      await flushDeviceStorage();
+      if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
+      if (alive.current) setSaved(true);
+    } catch (e) { fail(e); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const d = useMemo(() => stepDashboard(step, ctx), [step, ctx]);
+  const limit = usePaybackLimit();
+  const linked = new Set(map.links.flatMap((l) => [l.source, l.target]));
+  return (
+    <>
+      <Panel title={t('stg.next')} testId="strategy-next" className="span-full strategy-next">
+        {d.next ? <a href={todoHref(d.next)} onClick={revisitRouteTarget}>{todoLabel(t, d.next.todo.id, limit)}</a> : <p>{t('stg.complete')}</p>}
+      </Panel>
+      <Panel title={t('stg.map')} rationale="stg.mapWhy" testId="strategy-panel" className="span-full">
+        <div className="strategy-controls">
+          <label>{t('stg.axis')}<Select aria-label={t('stg.axis')} data-testid="strategy-axis" value={axis} onChange={(_, data) => set((v) => ({ ...v, axis: data.value as OverviewAxis }))}>
+            {axes.map((a) => <option key={a} value={a}>{t(`stg.axis.${a}`)}</option>)}
+          </Select></label>
+          <label>{t('stg.sort')}<Select aria-label={t('stg.sort')} data-testid="strategy-sort" value={descending ? 'desc' : 'asc'} onChange={(_, data) => set((v) => ({ ...v, descending: data.value === 'desc' }))}>
+            <option value="desc">{t('stg.desc')}</option><option value="asc">{t('stg.asc')}</option>
+          </Select></label>
+          <Button icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} appearance="primary" onClick={() => void generate()} disabled={busy || !map.nodes.length} data-testid="strategy-optimize">{t('stg.optimize')}</Button>
+        </div>
+        <p>{t('stg.recommended', { axis: t(`stg.axis.${recommended}`) })}</p>
+        <p className="muted">{t(`stg.axisHint.${axis}`)}</p>
+        <p className="muted">{t('stg.mapWhy')}</p>
+        <StrategyVisual map={map} />
+        <p data-testid="strategy-gaps">{t('stg.gaps', { n: map.nodes.filter((n) => !linked.has(n.id)).length })}</p>
+        <details>
+          <summary>{t('stg.details')}</summary>
+          <ScrollRegion label={t('stg.links')}>
+            <table className="data-table compact">
+              <thead><tr><th>{t('stg.lane.objective')}</th><th>{t('stg.links')}</th></tr></thead>
+              <tbody>{map.nodes.map((n) => <tr key={n.id}><th scope="row">{n.label}</th><td>{map.links.filter((l) => l.source === n.id || l.target === n.id).map((l) => {
+                const a = map.nodes.find((x) => x.id === l.source)!, b = map.nodes.find((x) => x.id === l.target)!;
+                return <div key={`${l.source}-${l.target}`}>{a.label} → {b.label}</div>;
+              })}{!linked.has(n.id) && t('stg.noLinks')}</td></tr>)}</tbody>
+            </table>
+          </ScrollRegion>
+        </details>
+        <p className="muted">{t('stg.liveHint')} <a href={hrefFor('/ai-settings')}>{t('ai.nav.settings')}</a></p>
+        <p className="muted">{t('stg.budget')}</p>
+        {error && <MessageBar intent="error" data-testid="strategy-error"><MessageBarBody>{t('stg.error', { message: error })}</MessageBarBody></MessageBar>}
+        {saved && <p role="status" data-testid="strategy-saved">{t('stg.saved')}</p>}
+      </Panel>
+      <Panel title={t('stg.issues')} testId="strategy-ranking" className="span-full">
+        <ol>{map.nodes.filter((n) => n.lane === 'issue').map((n) => {
+          const issue = ctx.pack.byId.get(n.ref)!;
+          return <li key={n.id} data-issue={n.ref} data-score={n.score ?? 'unknown'} className="strategy-ranking-row">
+            <EntityRef id={n.ref} /> — {t('stg.score')}: {n.score === null ? t('stg.unknown') : fmt.number(n.score)}
+            <p>{issue.description[lang]}</p><Evidence ids={issue.sourceIds.filter((id) => ctx.pack.byId.has(id))} />
+          </li>;
+        })}</ol>
+      </Panel>
+      {draft && <Panel title={t('stg.draft')} testId="strategy-draft" className="span-full">
+        <Badge appearance="tint" color="warning">{t('stg.draft')}</Badge>
+        <p>{t('stg.at', { at: draft.at, provider: t(`ai.provider.${draft.provider}`) })}</p>
+        {stale && <p role="alert" data-testid="strategy-stale">{t('stg.stale')}</p>}
+        <DraftDiff draft={draft} ctx={ctx} stale={stale} />
+        <div className="strategy-controls">
+          <Button appearance="primary" icon={<Checkmark20Regular />} disabled={busy || stale} onClick={() => void approve()} data-testid="strategy-confirm">{t('stg.confirm')}</Button>
+          <Button icon={<Dismiss20Regular />} disabled={busy} onClick={() => set((v) => { const { draft: _draft, ...rest } = v; return rest; })}>{t('stg.discard')}</Button>
+        </div>
+      </Panel>}
+      {approved && <Panel title={t('stg.approved')} testId="strategy-approved" className="span-full">
+        {approved.baseline !== baseline && <p>{t('stg.stale')}</p>}
+        <p>{t('stg.at', { at: approved.at, provider: t(`ai.provider.${approved.provider}`) })}</p>
+        <ProposalBody proposal={approved.proposal} />
+      </Panel>}
+      {analysis && <Panel title={t('stg.analysis')} testId="executive-summary" className="span-full">
+        <p className="muted">{t('stg.analysisHint')}</p>
+        {IMPROVEMENT_STEPS.map((s) => {
+          const dash = stepDashboard(s, ctx), brief = buildStepBrief(dash, ctx, lang, audience);
+          return <details key={s} open={s === step}>
+            <summary>{t(`proj.step.${s}`)} — {t(`proj.dash.brief.maturity.${brief.maturity}`)}</summary>
+            <BriefBody content={brief} brief={brief} prefix={`strategy-brief-${s}`} />
+          </details>;
+        })}
+      </Panel>}
+      {dialog}
+    </>
+  );
+}

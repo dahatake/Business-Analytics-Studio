@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { activatePack, loaded, packOrigin, type LoadedPack } from '../data/pack.ts';
+import { activatePack, loaded, loadPack, packOrigin, type LoadedPack } from '../data/pack.ts';
 import { importedPackMeta, loadImportedPack, saveImportedPack } from '../data/packStore.ts';
 import { samplePack } from '../data/sample.ts';
 import type { Entity, EntityKind, Region } from '../data/schema.ts';
@@ -147,5 +147,34 @@ export async function commitPackChange(change: PackChange): Promise<void> {
     store.set(mergeEdit(store.value, change));
     activatePack(applyPackEdits(baseRaw, usePackEdits.getState().value), packOrigin);
   }
+  usePackVersion.setState((s) => ({ version: s.version + 1 }));
+}
+
+/** Strategy approval applies the complete validated batch once, never a partially applied proposal. */
+export async function commitPackChanges(changes: PackChange[], expectedScope: string, expectedPack: LoadedPack): Promise<void> {
+  const assertCurrent = () => {
+    if (currentScope() !== expectedScope || loaded !== expectedPack) throw new Error('Strategy draft conflicts with the current work target or pack');
+  };
+  assertCurrent();
+  if (!changes.length) return;
+  const origin = packOrigin;
+  const raw = origin.kind === 'imported' ? await loadImportedPack(origin.projectId) : baseRaw;
+  assertCurrent();
+  if (raw === null) throw new Error('Imported customer pack is missing from device storage');
+  const edits = changes.reduce(mergeEdit, origin.kind === 'imported' ? emptyEdits() : usePackEdits.getState().value);
+  const next = applyPackEdits(raw, edits);
+  const validated = loadPack(next);
+  const priorErrors = new Set(expectedPack.issues.map((i) => `${i.path}:${i.message}`));
+  if (validated.issues.some((i) => !priorErrors.has(`${i.path}:${i.message}`))) throw new Error('Strategy updates introduce invalid data or dangling references');
+  if (origin.kind === 'imported') {
+    const meta = importedPackMeta(origin.projectId);
+    if (!meta) throw new Error('Imported customer pack metadata is missing');
+    await saveImportedPack({ ...meta, entities: validated.pack.entities.length }, next);
+    // A target may have changed while storage was saving. Never activate it in another project.
+    if (currentScope() !== expectedScope || loaded !== expectedPack) throw new Error('Pack saved to its original project; work target changed before strategy approval completed');
+  } else {
+    usePackEdits.getState().set(edits);
+  }
+  activatePack(next, origin);
   usePackVersion.setState((s) => ({ version: s.version + 1 }));
 }

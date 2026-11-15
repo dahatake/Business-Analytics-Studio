@@ -164,7 +164,14 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
   const prices = settings.prices ?? null;
   const estimatedCostJpy = prices ? estimateCostJpy(estimatedInputTokens, maxOutputTokens, prices) : null;
   const limits: Limits = { ...AI_LIMITS, monthlyBudgetJpy: settings.monthlyBudgetJpy ?? AI_LIMITS.monthlyBudgetJpy };
-  const budget = checkBudget(readLedger(), now, { use: req.use, estimatedInputTokens, maxOutputTokens, estimatedCostJpy }, limits);
+  const ledger = readLedger();
+  const budgetRequest = { use: req.use, estimatedInputTokens, maxOutputTokens, estimatedCostJpy };
+  let budget = checkBudget(ledger, now, budgetRequest, limits);
+  if (req.use === 'strategyOverview') {
+    const providerBudget = checkBudget(ledger.filter((r) => !r.provider || r.provider === (settings.provider ?? 'foundry')), now, budgetRequest,
+      { ...limits, monthlyBudgetJpy: Math.min(limits.monthlyBudgetJpy, 10_000) });
+    if (!providerBudget.allowed) budget = { ...budget, allowed: false, level: 'stop', reasons: [...new Set([...budget.reasons, ...providerBudget.reasons])] };
+  }
   const gate = evaluateGate({
     use: req.use,
     provider: settings.provider ?? 'foundry',

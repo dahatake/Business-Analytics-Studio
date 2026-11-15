@@ -23,7 +23,7 @@
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
   | 'explain' | 'presentation' | 'aiUsageAnalysis' | 'review' | 'import' | 'storyVideo' | 'connectionTest'
-  | 'research' | 'brandResearch' | 'packBuild' | 'alignmentProposal' | 'deliverableDraft' | 'stepBrief';
+  | 'research' | 'brandResearch' | 'packBuild' | 'alignmentProposal' | 'deliverableDraft' | 'stepBrief' | 'strategyOverview';
 
 export type Provider = 'foundry' | 'copilotSdk';
 
@@ -116,6 +116,14 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-22 (2026-11-15)',
   },
+  strategyOverview: {
+    provider: ['foundry', 'copilotSdk'],
+    data: 'Audience-visible business objectives, KPI/OKR definitions, issue/cause/solution/source data, confirmed strategy links and contribution estimates. No person entities, attachment bytes, unrelated project data or secret settings. Free text may contain personal information.',
+    enableCondition: 'Live switch + configured provider + per-send content/ownership/cost confirmation; validated draft and explicit human approval before data updates. Known provider charges capped at 10,000 JPY/month or the lower app budget; unknown external charges cannot be capped.',
+    costCapJpy: 10_000,
+    openQuestions: [],
+    decidedBy: 'docs/decision-guide.md D-24 (2026-11-16)',
+  },
 };
 
 export function isApproved(row: UseApproval): boolean {
@@ -162,6 +170,7 @@ export interface PerCallLimits {
  * the monthly budget still applies to every use (Q-051, D-3).
  */
 export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
+  strategyOverview: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
   connectionTest: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 200, maxOutputTokens: 256 },
   explain: {
     dailyCalls: AI_LIMITS.dailyCalls,

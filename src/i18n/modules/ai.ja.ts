@@ -225,6 +225,7 @@ export const aiJa = {
   'ai.use.brandResearch': 'ブランドの調査',
   'ai.use.deliverableDraft': '成果物のドラフト作成',
   'ai.use.stepBrief': 'ステップのエグゼクティブサマリー',
+  'ai.use.strategyOverview': '戦略概要の最適化',
   'ai.use.packBuild': '顧客パックの作成',
   'ai.use.alignmentProposal': '企業と Project の整合案',
   'ai.usage.title': '利用量と予算',

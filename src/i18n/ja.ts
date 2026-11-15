@@ -241,13 +241,6 @@ export const coreJa = {
   'unit.millionYenPerMonth': '百万円/月',
   'unit.tCo2PerMonth': 't-CO2/月',
 
-  'overview.title': '経営サマリー',
-  'overview.subtitle': '{company} ・ {date} 時点',
-  'overview.summary': 'エグゼクティブサマリー',
-  'overview.summaryNote': 'データから自動で作成（AI は使っていません）',
-  'overview.kpis': 'KPI の目標と達成度',
-  'overview.priority': '優先順位（影響度 × 実現性）',
-  'overview.ranking': '課題のランキング',
 
   'summary.topIssue': '{company} の最優先の課題は「{issue}」（スコア {score}）です。「{solution}」で年 {benefit} の効果を見込みます。',
   'summary.topIssueNoSolution': '{company} の最優先の課題は「{issue}」（スコア {score}）です。',
@@ -274,8 +267,6 @@ export const coreJa = {
   'priority.q.fillIn': '余力で進める',
   'priority.q.deprioritize': '後回し',
   'priority.score': 'スコア {score}',
-  'priority.weightImpact': '影響度の重み: {value}',
-  'priority.weightFeasibility': '実現性の重み: {value}',
 
   'compare.before': '最適化前',
   'compare.after': '最適化後',
@@ -493,10 +484,6 @@ export const coreJa = {
   'settings.validation.issues': '{count} 件の項目がスキーマに合わず、無効にしています。',
 
   'visual.why': 'この表現を選んだ理由',
-  'visual.summary': '経営層が最初に読む結論を、データから作った 2〜3 文で示します。数値の元は下の各図にあります。',
-  'visual.kpi': '達成割合が意味を持つ KPI はリングゲージ、0 に意味のない指標（eNPS など）は数直線（ブレットチャート）で示します。どちらも名前・実績・目標・単位・望ましい方向を並べて表示します。',
-  'visual.priority': '2 つの評価軸（影響度・実現性）の組み合わせで判断するため、2×2 の散布図にしました。円の大きさは関係する解決策の年間効果です。',
-  'visual.ranking': '重みを変えたときの順位の入れ替わりを追えるよう、順位つきの一覧にして並び替えを動きで示します。',
   'visual.chain': '顧客 → 案件 → 成果物 → 請求 は順序のある段階なので、段階ごとの列（レーン）に並べてつながりを線で示します。',
   'visual.graph': '種類の異なる項目の多対多の関係は、中心からの段数で広がる関係グラフが向いています。',
   'visual.relationTable': '図を使わずに関係を確認できる代替の表です。',

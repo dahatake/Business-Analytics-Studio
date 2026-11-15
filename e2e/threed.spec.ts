@@ -19,20 +19,14 @@ const canvas = (page: Page) => page.getByTestId('td-canvas');
 const viewport = (page: Page) => page.getByTestId('td-viewport');
 
 test.describe('Contextual 2D / 3D views', () => {
-  test('removes standalone navigation and switches overview KPIs without replacing the summary', async ({ page }) => {
+  test('the replacement strategic overview has no legacy KPI tower or standalone 3D navigation', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
     await expect(page.locator('.rail a[href="#/twin3d"]')).toHaveCount(0);
-    await expect(page.getByTestId('kpi-panel')).toBeVisible();
+    await expect(page.getByTestId('strategy-panel')).toBeVisible();
     await expect(canvas(page)).toHaveCount(0);
-    const control = page.getByTestId('td-viewswitch');
-    await expect(control.getByRole('radio', { name: '2D', exact: true })).toBeChecked();
-    await control.getByRole('radio', { name: '3D', exact: true }).check();
-    await firstFrame(page);
+    await expect(page.getByTestId('td-viewswitch')).toHaveCount(0);
     await expect(page.getByTestId('executive-summary')).toBeVisible();
-    await expect(page.getByTestId('kpi-panel')).toBeHidden();
-    await control.getByRole('radio', { name: '2D', exact: true }).check();
-    await expect(page.getByTestId('kpi-panel')).toBeVisible();
-    await expect(canvas(page)).toHaveCount(0);
+    expect(await scan(page)).toEqual([]);
   });
 
   test('map switching preserves the entity selection, filters and original 2D map', async ({ page }) => {

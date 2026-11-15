@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { JAPANESE, open, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, deviceSnapshot, open, seedDeviceData, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 // The relay (keys, connection, per-use interval) is shared by every test of this preview server, so this file runs in
 // order in one worker. The live tests need the preview server started with BAS_RELAY_TEST_OUTBOUND=1 (see below).
@@ -10,6 +10,85 @@ test.describe.configure({ mode: 'default' });
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const FAKE_KEY = 'sk-e2e-FAKE-0123456789-do-not-use';
+
+test.describe('Strategic overview optimization', () => {
+  test.describe.configure({ mode: 'serial' });
+  for (const provider of ['foundry', 'copilotSdk'] as const) {
+    test(`${provider}: real transport draft is not applied until approval, then survives reload`, async ({ page }) => {
+      let calls = 0;
+      let kpiData: { kpis: { current: number }[]; okrs: unknown[] } | null = null;
+      await page.route('**/relay/status', (route) => route.fulfill({ json: {
+        secrets: { foundryKey: true, speechKey: false },
+        connection: { endpoint: 'https://example.openai.azure.com', deployment: 'test', apiVersion: '2025-04-01-preview' },
+        connectionVerifiedAt: '2026-11-16T00:00:00Z', keyProtection: null, copilot: { model: 'gpt-5' }, workiq: null,
+      } }));
+      await page.route('**/relay/ai', async (route) => {
+        const request = route.request().postDataJSON();
+        expect(request.use).toBe('strategyOverview');
+        expect(request.provider).toBe(provider);
+        expect(request.context).toBe('');
+        expect(request.prompt).not.toContain('"kind":"person"');
+        calls++;
+        const raw = JSON.parse(request.prompt.slice(request.prompt.lastIndexOf('\n') + 1));
+        kpiData = raw.kpiOkr;
+        const issue = raw.items.find((e: { kind: string }) => e.kind === 'issue');
+        await route.fulfill({ json: { text: JSON.stringify({
+          answer: 'Validate the operational bottleneck before investing.',
+          findings: [{ text: 'The intervention must serve a measured outcome.', refs: [issue.id] }],
+          actions: [{ text: 'Confirm the cause with source evidence.', refs: [issue.id] }],
+          caveats: ['Causal impact remains a hypothesis.'],
+          axis: 'impact', axisReason: 'Use recorded business impact.',
+          objectiveIssues: [], patches: [{
+            id: issue.id, description: { ja: '運用ボトルネックの仮説を検証する。', en: 'Validate the operational bottleneck hypothesis.' },
+            impact: 5, reason: 'Prioritize the source-linked bottleneck.', refs: [issue.id],
+          }],
+        }), inputTokens: 500, outputTokens: 300 } });
+      });
+      await open(page, '/ai-settings', { lang: 'en' });
+      await page.getByTestId(provider === 'foundry' ? 'ai-provider-foundry' : 'ai-provider-copilot').check();
+      await page.getByTestId('ai-live-switch').check();
+      await page.goto('/#/');
+      const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
+      await page.getByTestId('strategy-optimize').click();
+      await expect(page.getByTestId('ai-live-confirm')).toBeVisible();
+      expect(calls).toBe(0);
+      await page.getByTestId('ai-live-person-check').check();
+      await page.getByTestId('ai-live-send').click();
+      await expect(page.getByTestId('strategy-draft')).toBeVisible();
+      await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+      expect((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']).toEqual(before);
+      expect(calls).toBe(1);
+      await page.reload();
+      await expect(page.getByTestId('strategy-draft')).toBeVisible();
+      const originalKpis = JSON.stringify(kpiData);
+      const changedKpis = JSON.parse(originalKpis);
+      changedKpis.kpis[0].current += 1;
+      await seedDeviceData(page, { 'bas.scope.demo.proj.kpi': JSON.stringify(changedKpis) });
+      await page.reload();
+      await expect(page.getByTestId('strategy-stale')).toBeVisible();
+      await expect(page.getByTestId('strategy-confirm')).toBeDisabled();
+      await seedDeviceData(page, { 'bas.scope.demo.proj.kpi': originalKpis });
+      await page.reload();
+      await expect(page.getByTestId('strategy-confirm')).toBeEnabled();
+      await page.getByTestId('strategy-confirm').click();
+      await expect(page.getByTestId('strategy-saved')).toBeVisible();
+      await expect(page.getByTestId('strategy-draft')).toHaveCount(0);
+      await expect(page.getByTestId('strategy-ranking')).toContainText('Validate the operational bottleneck hypothesis.');
+      await page.reload();
+      await expect(page.getByTestId('strategy-approved')).toBeVisible();
+      await expect(page.getByTestId('strategy-ranking')).toContainText('Validate the operational bottleneck hypothesis.');
+      expect(calls).toBe(1);
+      expect(await scan(page)).toEqual([]);
+    });
+  }
+
+  test('disabled live connection fails explicitly without a mock or data mutation', async ({ page }) => {
+    await open(page, '/', { lang: 'en' });
+    await page.getByTestId('strategy-optimize').click();
+    await expect(page.getByTestId('strategy-error')).toContainText('real connection');
+    await expect(page.getByTestId('strategy-draft')).toHaveCount(0);
+  });
+});
 
 /** The relay refuses a connection test within 5 s of the previous one (429) and each attempt clears the consent, so retry both. */
 async function saveVerifiedConnection(scope: Page | ReturnType<Page['getByTestId']>, verified: string) {
@@ -267,12 +346,12 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(18);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(12);
-    // D-1 "explain", D-12 "packBuild", D-13 "connectionTest", D-17 "alignmentProposal", D-20 "recommend" and D-22 "stepBrief" (in table order).
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(6);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(19);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(11);
+    // Earlier approved uses (incl. D-23 "deliverableDraft") plus D-24 "strategyOverview" (last in table order).
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(8);
     await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'recommend');
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'stepBrief');
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'strategyOverview');
 
     await page.goto('/#/assistant');
     await page.getByTestId('ai-chat-input').fill('lead time');

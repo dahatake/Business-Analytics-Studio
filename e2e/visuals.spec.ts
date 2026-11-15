@@ -2,31 +2,35 @@ import { expect, test } from '@playwright/test';
 import { open } from './helpers.ts';
 
 test.describe('F-3.3 visuals', () => {
-  test('KPI: every card shows name, actual, target, unit and direction; ring vs bullet by rule with a visible reason', async ({ page }) => {
+  test('strategy overview replaces KPI cards with a consistent objective-to-solution map', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
-    const cards = page.locator('.kpi-card');
-    await expect(cards).toHaveCount(6);
-    for (const kpi of await cards.all()) {
-      await expect(kpi.locator('.kpi-name')).not.toBeEmpty();
-      await expect(kpi).toContainText('Actual');
-      await expect(kpi).toContainText('Target');
-      await expect(kpi.locator('.kpi-unit').first()).not.toBeEmpty();
-      await expect(kpi.locator('.kpi-direction')).toHaveText(/Higher is better|Lower is better/);
-    }
-    await expect(page.locator('.kpi-card[data-visual="ring"]')).toHaveCount(5);
-    const bullet = page.locator('.kpi-card[data-visual="bullet"]');
-    await expect(bullet).toHaveAttribute('data-kpi-id', 'kpi-engagement');
-    await expect(bullet.getByTestId('kpi-reason')).toContainText('interval scale');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Strategic overview');
+    await expect(page.locator('.kpi-card')).toHaveCount(0);
+    await expect(page.getByTestId('strategy-map')).toBeVisible();
+    await expect(page.getByTestId('strategy-map').locator('[data-lane="issue"]')).toHaveCount(5);
+    await expect(page.getByTestId('strategy-map').locator('[data-lane="solution"]')).toHaveCount(5);
+    await expect(page.getByTestId('strategy-next')).not.toBeEmpty();
   });
 
-  test('priority weights re-rank issues (interactive)', async ({ page }) => {
+  test('priority criterion and ordering re-rank issues and persist across all five steps', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
-    const first = page.locator('.ranking-row').first();
-    await expect(first).toContainText('Long order-to-ship lead time');
-    const impact = page.getByRole('slider', { name: /Impact weight/ });
-    await impact.focus();
-    for (let i = 0; i < 12; i++) await page.keyboard.press('ArrowLeft');
-    await expect(first).toContainText('Slow invoicing and collection');
+    await page.getByTestId('strategy-axis').selectOption('impact');
+    const rows = page.getByTestId('strategy-ranking').locator('[data-issue]');
+    const scores = () => rows.evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-score'))));
+    const desc = await scores();
+    expect(desc).toEqual([...desc].sort((a, b) => b - a));
+    await page.getByTestId('strategy-sort').selectOption('asc');
+    const asc = await scores();
+    expect(asc).toEqual([...asc].sort((a, b) => a - b));
+    expect(asc).not.toEqual(desc);
+    for (const step of ['asis', 'tobe', 'kpi', 'solution', 'deliverable']) {
+      await page.goto(`/#/step?step=${step}`);
+      await expect(page.getByTestId('strategy-axis')).toHaveValue('impact');
+      await expect(page.getByTestId('strategy-sort')).toHaveValue('asc');
+      await expect(page.getByTestId('strategy-map')).toBeVisible();
+    }
+    await page.reload();
+    await expect(page.getByTestId('strategy-axis')).toHaveValue('impact');
   });
 
   test('before/after share unit, period, scope and a zero-based axis; raw numbers are shown', async ({ page }) => {
@@ -70,8 +74,8 @@ test.describe('F-3.3 visuals', () => {
 
   test('every visual explains why it was chosen', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
-    await page.getByTestId('kpi-panel').getByRole('button', { name: 'Why this visual' }).click();
-    await expect(page.getByText(/number line \(bullet chart\)/)).toBeVisible();
+    await page.getByTestId('strategy-panel').getByRole('button', { name: 'Why this visual' }).click();
+    await expect(page.getByRole('dialog').or(page.locator('.rationale-surface'))).toContainText('Equal-width curves');
   });
 });
 

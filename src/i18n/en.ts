@@ -242,13 +242,6 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'unit.millionYenPerMonth': 'million JPY/month',
   'unit.tCo2PerMonth': 't-CO2/month',
 
-  'overview.title': 'Executive overview',
-  'overview.subtitle': '{company} · as of {date}',
-  'overview.summary': 'Executive summary',
-  'overview.summaryNote': 'Generated from data (no AI used)',
-  'overview.kpis': 'KPI targets and attainment',
-  'overview.priority': 'Priority (impact × feasibility)',
-  'overview.ranking': 'Issue ranking',
 
   'summary.topIssue': 'The top issue for {company} is "{issue}" (score {score}). "{solution}" is expected to deliver {benefit} a year.',
   'summary.topIssueNoSolution': 'The top issue for {company} is "{issue}" (score {score}).',
@@ -275,8 +268,6 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'priority.q.fillIn': 'Fill-ins',
   'priority.q.deprioritize': 'Deprioritize',
   'priority.score': 'Score {score}',
-  'priority.weightImpact': 'Impact weight: {value}',
-  'priority.weightFeasibility': 'Feasibility weight: {value}',
 
   'compare.before': 'Before',
   'compare.after': 'After',
@@ -494,10 +485,6 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'settings.validation.issues': '{count} item(s) do not match the schema and are disabled.',
 
   'visual.why': 'Why this visual',
-  'visual.summary': 'The conclusion executives read first, in 2–3 sentences generated from the data. The numbers come from the visuals below.',
-  'visual.kpi': 'KPIs whose attainment ratio is meaningful use a ring gauge; metrics without a meaningful zero (such as eNPS) use a number line (bullet chart). Both always show name, actual, target, unit and desired direction.',
-  'visual.priority': 'The decision combines two criteria (impact and feasibility), so a 2×2 scatter plot is used. Bubble size is the annual benefit of related solutions.',
-  'visual.ranking': 'A ranked list shows how order changes as weights change; reordering is animated.',
   'visual.chain': 'Customer → deal → deliverable → invoice are ordered stages, so each stage is a lane and links show the connections.',
   'visual.graph': 'Many-to-many relationships between different kinds suit a graph that expands by hops from the center.',
   'visual.relationTable': 'An alternative table for checking relationships without the diagram.',

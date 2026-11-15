@@ -15,7 +15,7 @@ const allTrue = { liveEnabled: true, userConfirmed: true, configured: true, budg
 describe('C-03 table (D-1: staged approval)', () => {
   it('approves the specified uses and providers; every other use stays blocked even with every switch on', () => {
     const approved = (Object.keys(C03_TABLE) as AiUse[]).filter((u) => isApproved(C03_TABLE[u]));
-    expect(approved).toEqual(['recommend', 'explain', 'connectionTest', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief']);
+    expect(approved).toEqual(['recommend', 'explain', 'connectionTest', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief', 'strategyOverview']);
     expect(C03_TABLE.explain.provider).toBe('foundry');
     expect(C03_TABLE.recommend.provider).toEqual(['foundry', 'copilotSdk']);
     expect(C03_TABLE.packBuild.provider).toEqual(['foundry', 'copilotSdk']);
@@ -51,6 +51,19 @@ describe('C-03 table (D-1: staged approval)', () => {
 });
 
 describe('budget guard (PARAM-113〜119, D-3)', () => {
+  it('strategy optimization checks the provider-wide 10,000 JPY ceiling and the lower app ceiling', () => {
+    localStorage.clear();
+    const now = new Date('2026-11-16T00:00:00Z');
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true, monthlyBudgetJpy: 100_000 }));
+    localStorage.setItem('bas.ai.ledger', JSON.stringify([{ at: '2026-11-01T00:00:00Z', use: 'packBuild', provider: 'foundry', inputTokens: 0, outputTokens: 0, costJpy: 10_001 }]));
+    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x', userConfirmed: true }, now).allowed).toBe(false);
+    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true, monthlyBudgetJpy: 100_000 }));
+    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x', userConfirmed: true }, now).allowed).toBe(true);
+    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true, monthlyBudgetJpy: 1000 }));
+    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x', userConfirmed: true }, now).allowed).toBe(false);
+    localStorage.clear();
+    setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
+  });
   const rec = (at: string, use = 'explain', costJpy = 0): UsageRecord => ({ at, use, inputTokens: 0, outputTokens: 0, costJpy });
   const req = { use: 'explain', estimatedInputTokens: 100, maxOutputTokens: 1000, estimatedCostJpy: 10 };
 

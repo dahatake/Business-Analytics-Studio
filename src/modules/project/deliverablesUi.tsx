@@ -45,7 +45,8 @@ export function useCheckContext(): AppCheckContext {
   const isDemo = useProjects((s) => s.target.kind === 'demo');
   const { project, company } = useActiveProject();
   const companyId = company?.id ?? '';
-  const objectives = useMemo(() => companyObjectives(companyId), [companyId]);
+  const anchorVersion = company?.anchorRef?.version;
+  const objectives = useMemo(() => companyObjectives(companyId), [companyId, anchorVersion]);
   const alignments = project?.alignments;
   return useMemo(() => ({
     pack: loaded, discussion, kpi, analysis, useCases, deliverables: normalizeDeliverables(raw), today: isDemo ? PARAMS.asOfDate : todayIn(),

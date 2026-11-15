@@ -14,7 +14,7 @@ import type { StepDashboard } from './stepDashboard.ts';
 import { briefEntities, buildStepBrief, factText, requestStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
 
 /** SCQA and the pyramid below the answer; shared by the rule-based and the generated brief. */
-function BriefBody({ content, brief, prefix }: { content: BriefContent; brief?: StepBrief; prefix: string }) {
+export function BriefBody({ content, brief, prefix }: { content: BriefContent; brief?: StepBrief; prefix: string }) {
   const { t, lang } = useI18n();
   const byId = new Map((brief?.facts ?? []).map((f) => [f.id, f]));
   return (

@@ -95,7 +95,7 @@ export function materialChars(i: Pick<PackGenInput, 'materials' | 'researchNote'
 
 /* ---------- Dependencies (the dialog wires aiLive and the relay; tests inject stubs) ---------- */
 
-export interface SitePageLike { url: string; title: string; description: string; themeColor: string | null; text: string; fetchedAt: string }
+export interface SitePageLike { url: string; title: string; description: string; themeColor: string | null; text: string; fetchedAt: string; purposeTerms?: string[] }
 export interface NewsLike { title: string; url: string; source: string; publishedAt: string }
 export interface WorkIqQuery {
   company: string; project: string; purpose: string; focus: string; asOf: string; lang: Lang;
@@ -108,7 +108,8 @@ export interface WorkIqQuery {
 }
 export interface WorkIqLike { question: string; answer: string; citations: { title: string; url: string }[]; sensitivity: string | null; fetchedAt: string }
 /** `searches`: the ladder wordings a merged section already searched (the follow-up rounds do not ask them again). */
-export type WorkIqSectionLike = (WorkIqLike & { key: string; searches?: readonly string[] }) | { key: string; error: string };
+/** `deepRead`: the section's top Microsoft 365 files that Work IQ read in full (Work IQ CLI `expand`). */
+export type WorkIqSectionLike = (WorkIqLike & { key: string; searches?: readonly string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };
 
 /** Every Work IQ section the generator asks for first: the internal facts a business discussion needs. */
 export const WORKIQ_GEN_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
@@ -167,7 +168,8 @@ export interface GenDeps {
   complete: (prompt: string, signal: AbortSignal, stage: GenStage) => Promise<CallResult>;
   /** Pause before repeating a failed model call (default 5 s; tests use 0). */
   retryDelayMs?: number;
-  fetchSite?: (url: string, signal: AbortSignal) => Promise<{ pages: SitePageLike[]; failed: { url: string; error: string }[] }>;
+  /** `terms`: the project purpose's terms; the relay uses them only to choose which of the site's own links to read. */
+  fetchSite?: (url: string, signal: AbortSignal, terms?: readonly string[]) => Promise<{ pages: SitePageLike[]; failed: { url: string; error: string }[] }>;
   fetchNews?: (company: string, lang: Lang, signal: AbortSignal, topic?: string) => Promise<{ provider: string; fetchedAt: string; articles: NewsLike[] }>;
   /** D-14: Microsoft Work IQ through the relay (wired by the dialog for Microsoft Foundry only). One answer, or one per section. */
   fetchWorkIq?: (query: WorkIqQuery, signal: AbortSignal) => Promise<WorkIqLike | WorkIqSectionLike[]>;
@@ -214,6 +216,10 @@ export interface RetrievedItem {
   question?: string;
   citations?: { title: string; url: string }[];
   sensitivity?: string | null;
+  /** Official-site page read because its link named these terms of the project purpose. */
+  purposeTerms?: string[];
+  /** Work IQ: files of this section read in full after the searches (and the error when that read failed). */
+  deepRead?: { files: number; followUp?: boolean; error?: string };
 }
 
 export interface GenerationReport {
@@ -334,14 +340,17 @@ export function materialSources(input: PackGenInput, pages: SitePageLike[], news
   pages.forEach((p, i) => {
     const sourceId = `source-web-${i + 1}`;
     const title = p.title || hostOf(p.url);
+    const purpose = p.purposeTerms?.length
+      ? (input.lang === 'ja' ? `Project の目的に関わる公式ページ（リンクの語: ${p.purposeTerms.join('、')}）` : `Official page on the project purpose (link named: ${p.purposeTerms.join(', ')})`)
+      : '';
     out.push({
-      item: { sourceId, kind: 'web', title, url: p.url, fetchedAt: p.fetchedAt },
+      item: { sourceId, kind: 'web', title, url: p.url, fetchedAt: p.fetchedAt, ...(p.purposeTerms?.length ? { purposeTerms: p.purposeTerms } : {}) },
       entity: {
         id: sourceId, kind: 'source', name: lt(clip(title, 120)), description: lt(clip(p.description || `${hostOf(p.url)}`, 300)),
         world: 'digital', type: 'data', classification: 'shareable', author: 'ai', sourceIds: [],
         publisher: lt(hostOf(p.url)), url: p.url, accessedDate: isoDay(p.fetchedAt), origin: 'web',
       },
-      body: [p.description, p.themeColor ? `theme-color: ${p.themeColor}` : '', p.text].filter(Boolean).join('\n'),
+      body: [purpose, p.description, p.themeColor ? `theme-color: ${p.themeColor}` : '', p.text].filter(Boolean).join('\n'),
     });
   });
   news.forEach((a, i) => {
@@ -417,13 +426,15 @@ function sectionLabel(key: string, ja: boolean): string {
 }
 
 /** Answered sections only; the legacy single answer becomes section "1". */
-export function workIqAnswers(workiq: WorkIqLike | WorkIqSectionLike[] | null): (WorkIqLike & { key: string; searches?: readonly string[] })[] {
+type WorkIqSectionAnswerLike = Exclude<WorkIqSectionLike, { error: string }>;
+
+export function workIqAnswers(workiq: WorkIqLike | WorkIqSectionLike[] | null): WorkIqSectionAnswerLike[] {
   if (!workiq) return [];
   const list: WorkIqSectionLike[] = Array.isArray(workiq) ? workiq : [{ ...workiq, key: '1' }];
-  return list.filter((s): s is WorkIqLike & { key: string; searches?: readonly string[] } => !('error' in s) && typeof s.answer === 'string' && s.answer.trim() !== '');
+  return list.filter((s): s is WorkIqSectionAnswerLike => !('error' in s) && typeof s.answer === 'string' && s.answer.trim() !== '');
 }
 
-function workIqEntry(input: PackGenInput, workiq: WorkIqLike & { key: string }): MaterialEntry {
+function workIqEntry(input: PackGenInput, workiq: WorkIqSectionAnswerLike): MaterialEntry {
   const ja = input.lang === 'ja';
   // Entity ids are lower-case kebab (schema): a merged section key such as dataCatalog becomes data-catalog.
   const sourceId = `source-workiq-${workiq.key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
@@ -436,6 +447,7 @@ function workIqEntry(input: PackGenInput, workiq: WorkIqLike & { key: string }):
     item: {
       sourceId, kind: 'workiq', title, locator: 'Microsoft Work IQ', fetchedAt: workiq.fetchedAt,
       question: workiq.question, citations: workiq.citations, sensitivity: workiq.sensitivity,
+      ...(workiq.deepRead ? { deepRead: workiq.deepRead } : {}),
     },
     entity: {
       id: sourceId, kind: 'source', name: lt(clip(title, 120)),
@@ -1226,7 +1238,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   let newsFetchedAt = startedAt;
   if (input.officialUrl.trim() && deps.fetchSite) {
     try {
-      const r = await deps.fetchSite(input.officialUrl.trim(), signal);
+      const r = await deps.fetchSite(input.officialUrl.trim(), signal, purposeTerms(input));
       pages = r.pages;
       for (const f of r.failed) retrievalErrors.push({ what: 'site', url: f.url, error: f.error });
     } catch (err) {

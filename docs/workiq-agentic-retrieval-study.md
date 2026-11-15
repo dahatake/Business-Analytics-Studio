@@ -25,6 +25,7 @@ Agentic Retrieval（[Microsoft Learn](https://learn.microsoft.com/en-us/azure/se
 | セマンティック再ランク | なし（Work IQ の順のまま、区分ごとに 6,000 文字で切る） | Work IQ はスコアを返すか（§5.4）、順位の統合（§5.6） |
 | 統合と重複除去 | なし（同じ資料を複数の区分で送る） | 重複の量（§5.5） |
 | 活動ログ | 検索文・引用を `extensions.generation` に記録 | そのまま使う |
+| 会話履歴を使うクエリ計画・反復検索（第 4 回で追加） | 短い検索文だけを送る。上位の資料は抜粋のまま | §11 |
 
 判断の基準（計測前に決めたもの。数値のしきい値は事前に固定していない）: 速度は「生成AIへの送信を増やさずに作成時間が縮む」こと、適合性は「同じ文字数の予算で関連する資料が減らない」こと。どちらかを満たさない構成要素は実装しない。
 
@@ -316,7 +317,7 @@ node scripts/workiq-bench.ts pipeline --project <pj-id> --rounds 3              
 | 最初の一括取得が一時的なエラー（`workiqUnavailable`・`workiqBusy`・`workiqTimeout` など）で失敗したら、間を置いてもう 1 回試す。それでも失敗した場合も追加取得は続ける。追加取得を打ち切る（`workIqUnavailable`）のは、サインイン・権限・EULA など、次の検索でも同じく失敗する場合だけにする | [packGenerate.ts](../src/modules/project/packGenerate.ts) |
 | 会社名だけで検索したニュースを、この PC の中で並べ替える。目的・重点・Project 名の語を含む見出しを先にし、それ以外は背景として 3 件まで送る。送らなかった見出しは報告の `offPurposeNews` に残す。生成の規則では、目的と関係しない出来事を、ニュースだけを根拠に課題にすることを禁じた | 同上 |
 
-送信先は変わらない。目的の文が送られるのは Work IQ（社内）だけで、ニュースと公開 Web には従来どおり会社名と、確認済みの話題だけを送る。
+送信先は変わらない。目的の文が送られるのは Work IQ（社内）だけで、ニュースと公開 Web には従来どおり会社名と、確認済みの話題だけを送る（公式サイトの巡回で目的の語を使う変更は §10.5。語は中継の中だけで使う）。
 
 ### 10.3 検証
 
@@ -339,4 +340,86 @@ node scripts/workiq-bench.ts pipeline --project <pj-id> --rounds 3              
   - `purpose` 区分に目的の固有名（例: Viva Engage）の出典があること。
   - `offPurposeNews` に障害などの見出しが入っていること。
 - `ask` での代替は Copilot の要約なので、`retrieve` より情報が少なく、出典は回答中のリンクだけになる。
-- 公開サイトの巡回の順位づけは、まだ目的を見ていない（[server/site.ts](../server/site.ts)）。
+
+### 10.5 追加: 公式サイトの巡回も目的で選ぶ
+
+§10.1 の作成記録では、公式サイトの 6 ページが Education と Investor のページだった（URL の型だけで選んでいたため）。
+
+| 変更 | 場所 |
+|---|---|
+| 生成側が目的・重点・Project 名の語（`purposeTerms`。会社名は除く）を中継に渡す。中継は、リンクの文字・title・画像の alt・URL のパスにその語を含むリンクを、6 ページのうち最大 2 ページ（`SITE_PURPOSE_PAGES`）まで先に読む。語の重みは、そのサイトのリンクに出てくる数の逆数（IDF の考え方。大企業のサイトの「ai」のように、どのリンクにも出る語は軽い）。英字の語は単語単位で照合する（「ai」は「mail」に当たらない） | `rankedLinks`・`fetchSitePages`（[server/site.ts](../server/site.ts)） |
+| 目的で選んだページは `purposeTerms` を持ち、資料の本文の先頭に「Project の目的に関わる公式ページ（リンクの語: …）」と書く。報告の `retrieved` にも残す | [packGenerate.ts](../src/modules/project/packGenerate.ts) |
+| 追跡用の `icid`・`ocid` を URL から除く（同じページを 2 回読んでいた） | [server/site.ts](../server/site.ts) |
+
+ページ数の上限（D-19・PARAM-145 の 6 ページ・試行 10）は変えていない。目的の語は中継の中でリンクを選ぶためだけに使い、サイトには送らない（サイトに届くのは、そのサイトが自分で載せているリンクへの GET だけ）。
+
+実サイトでの確認（2026-11-13、この Project の入力そのもの。入口 `https://www.microsoft.com/ja-jp`、語 26 個）:
+
+| | 目的の語なし（従来） | 目的の語あり |
+|---|---|---|
+| 読んだページ | 入口、Education 3、Investor 2 | 入口、Copilot、Copilot 法人向けオンボーディング、Education 2、Investor 1 |
+| 時間 | 2.5 秒 | 2.3 秒 |
+
+最初の実装（語の数で並べる）では、「ai」「copilot」を含む Security Copilot のページが選ばれた。IDF の重みに変えて、目的（AI と Copilot の価値を伝える）に近いページになった。Innovation Hub・Viva Engage のページへのリンクは、入口と目的で読んだ 2 ページのどれにも無かった（同日に確認）。公開サイトからは取れないので、Work IQ の `purpose` 区分で補う。
+
+単体テスト（`tests/pack-generate.test.ts`・`tests/ai-relay.test.ts`）: リンクの文字・alt・title・パスでの照合、英字の単語単位の照合、6 ページの上限の中で目的のページが最大 2 ページであること、語が無いときは従来と同じページを読むこと、中継が語を整えて渡すこと、生成側が語を渡し、資料と報告に印を付けること。
+
+## 11. 第 4 回（2026-11-13）: Agentic Retrieval の残りの構成要素を、CLI だけでできる形で
+
+依頼: 「[Agentic Retrieval](https://learn.microsoft.com/en-us/azure/search/agentic-retrieval-overview) のアーキテクチャから、BAS の現在の実装で品質が上がるものを実装する。Work IQ は CLI しか使えない」。
+
+### 11.1 生の記録から分かったこと（CLI 1.0.0 の MCP を直接呼んだ。課金のない `tools/list` のみ）
+
+- `tools/list` は 3 回（0・15・30 秒後）とも `accept_eula, ask, list_agents, get_debug_link` だけで、`retrieve` が無い。stderr: `[MCP Proxy] Failed to fetch remote tools: Response status code does not indicate success: 502 (Bad Gateway). Entity tools will not be available in this session.` → `retrieve` はサーバー側から配られる道具で、配布が失敗しているとき、CLI を再起動しても出てこない。今の実運用の経路は、§10 で入れた `ask` での代替である。
+- `ask` の入力: `question`（必須）、`fileUrls`（「OneDrive or SharePoint file URLs to use as context」）、`conversationId`、`agentId`。戻り値は `structuredContent: { answer, conversationId }`。
+
+### 11.2 対応づけと判断
+
+| Agentic Retrieval の構成要素 | CLI でできるか | 判断 |
+|---|---|---|
+| 会話履歴を使うクエリ計画 | 検索文に背景を添える | **実装**: 各検索（`ask` の代替のとき）に Project の目的・重点・基準日と「基準日に近い事実を優先し、日付を付ける」を背景として付ける（`workIqAskQuestion`）。「KPI と OKR の定義」のような短い検索が、一般論ではなくこの Project の目的について読まれる |
+| 反復検索（足りなければもう一度） | `ask` の `fileUrls` | **実装（精読）**: 計画した検索と統合のあと、目的の区分と KPI・案件・課題・業務の流れ…の順に最大 4 区分、上位の OneDrive・SharePoint のファイル各 3 件を `ask` に渡して読ませ、数値（単位・期間）・日付・担当を抜き出す（`deepReadPlan`・`workIqDeepReadQuestion`・`withDeepRead`）。同じファイルは最初の区分で 1 回だけ。結果は区分の資料の先頭に置き、既存の項目予算 9,000 文字の中で最大 3,000 文字（D-15 の予算と生成の見積もりは変えない） |
+| 活動ログ | 報告 | **実装**: 区分ごとに `deepRead: { files, error? }` を報告の `retrieved` に残す |
+| セマンティック再ランク（L2） | 不可 → **§12 で実装** | 当時の判断: Work IQ はスコアを返さない（§5.4）。`ask` の代替では資料ごとの本文も無い。→ `retrieve` の復旧後、`searchMetadata.searchTerms` と結果ごとの本文が返ることを確かめ、語の含有率で並べ替える（§12.2） |
+| 知識ソースの選択 | 不可 → **§12 で実装** | 当時の判断: `retrieve`（当時は配られていない）も `ask` も、ソースを選ぶ引数を公開していない。→ 復旧した `retrieve` に `capabilities` があった（§12.1） |
+| `conversationId` での追い質問 | 可能だが並列で危険 → **§12 で実装** | 当時の判断: 1 つの会話に並列で質問すると順序が保証されない。→ 精読が「見つからない」ときだけ、その会話で 1 回だけ順に聞く（同じ会話で重ならない。§12.2） |
+| 並列数を 4 より上げる | 未計測 → **§12 で計測・実装** | 当時の判断: 429 の危険を計測していない（§7）。→ 6 並列で失敗なし、8 並列で失敗を計測し、4 から始めて 6 まで上げ、失敗で半分にする（§12.1・§12.2） |
+
+データの扱い（D-14）: 精読で Work IQ に渡すのは、Work IQ 自身が引用として返した OneDrive・SharePoint のリンクだけで、新しい送り先は無い（[src/ai/policy.ts](../src/ai/policy.ts) の `WORKIQ_SOURCE.data` に追記）。
+
+### 11.3 検証
+
+- 単体テスト（`tests/ai-relay.test.ts`・`tests/pack-generate.test.ts`）: ファイルのリンクだけを精読の対象にする（メール・会議・Teams・サイトのページ・http・他のドメインは除く）、目的の区分が先・同じファイルは 1 回・最大 4 区分・失敗した区分は飛ばす、精読の結果が区分の先頭に予算内で入り引用が増える、「見つからない」と失敗では検索の結果がそのまま残る、`retrieve` の経路と `ask` の代替の両方で精読の `fileUrls` が送られ背景の 1 行が付く、`deepRead` が報告に残る。`npm run typecheck` と `npx vitest run`（46 ファイル・777 件）が成功。
+- 実サービスでの前後比較は**できていない**: 同日、`retrieve` の配布は 502、`ask` も 23 秒後に「エンドポイントへの接続でネットワーク エラー」（2 回試した）。Work IQ の復旧後に同じ Project を作り直し、報告の `retrieved[].deepRead`（読んだファイル数・エラー）と、精読で増えた数値・日付・担当の数を §10 の作成と比べる。
+
+## 12. 第 5 回（2026-11-15）: Work IQ の復旧後、実サービスで計測して残りの 4 項目を実装
+
+依頼: 「Work IQ が復旧したので、Work IQ 関連の実装をやり直し、見送った 4 項目（ローカルの再ランク・ソースの選択・同じ会話での追い質問・並列数を 4 より上げる）も実装する」。方針: CLI の MCP を直接呼んで生の応答を計測し、計測で裏づけられたものだけを実装する。計測に使った M365 の本文は git の外（`logs/`）に置き、計測後に消した。
+
+### 12.1 生の記録から分かったこと（CLI 1.0.0・実際の Project の目的で）
+
+- `tools/list` は 15 個に戻った（stderr: `[MCP Proxy] Registered 11 remote tools`）。`retrieve` の入力は `query`・`strategy`（`grounding` | `copilot`）・`timeZone`・`capabilities`（`People`・`Meetings`・`OneDriveAndSharePoint`・`Email`・`TeamsMessages`・`Dataverse`・`GraphConnectors`）ほか。
+- 応答: `results[]`（各 `markdown`・`webUrl`・`entityType`・`resourceMetadata`・`sensitivityLabel`）、`searchMetadata: { types, totalResults, searchTerms[] }`。スコアは今も無いが、Work IQ が実際に検索した語（`searchTerms`）が返る。
+- ソースの選択: 同じ質問で、ソース指定なし 5 件・`Email` だけ 4 件・`OneDriveAndSharePoint` だけ 11 件、重複を除いた合計 18 件（指定なしの 3.6 倍）。`Meetings`・`TeamsMessages` も結果を返した。`People` は 0 件。`strategy: 'copilot'` は「An error occurred invoking 'retrieve'」で失敗。
+- 並列数: 8 並列で 8 件中 2 件がちょうど 30 秒で汎用エラー（壁時計 30.1 秒）。同じ 8 件を 4 並列で失敗 0（29.4 秒、1 件 8–15 秒）。6 並列で 12 件、失敗 0（26 秒、1 件 9–17 秒）。
+- 精読（`ask` の `fileUrls`）: `Doc.aspx`（docx）は読めた。`_layouts/15/viewer.aspx` のファイル（HTML・PDF）は「読めない」と答えた。
+- 追い質問: 2 ファイルの精読が「見つからない」と答えた会話に、同じ `conversationId` で「添付以外の Microsoft 365 の情報も含めて同じ点を探して」と聞くと、根拠のリンク付きで 7 件の事実を返した（51 秒）。
+- `fetch_blob`（4 MB までのファイルの中身）もあるが、PDF をこちらで解析する新しいデータの扱いになるため使わない。
+
+### 12.2 判断と実装
+
+| 項目 | 計測の根拠 | 実装 |
+|---|---|---|
+| 知識ソースの選択 | 指定ごとに別の資料が返り、合計が 3.6 倍 | `retrieve` の経路で、目的の概念の最初の 4 件を、`OneDriveAndSharePoint`・`Email`・`Meetings`・`TeamsMessages` ごとにもう 1 回ずつ検索する（`workIqPlan` の `sources`、`capabilities` で送る）。`People`（0 件）と `copilot`（失敗）は使わない。`ask` の代替には引数が無いので従来どおり |
+| ローカルの再ランク（L2） | スコアは無いが `searchTerms` と結果ごとの本文が返る | 区分ごとの RRF に、その区分の検索語（Work IQ の `searchTerms`、無ければ検索文の語）を資料の題と本文がどれだけ含むかを、語の珍しさ（IDF）で重みづけて足す（`termCoverage`、重み 1/(60+1) = 検索 1 つでの 1 位と同じ）。ソースごとの検索では各ソースの 1 位どうしが同点になるため、その順を決める。どの区分に資料を割り当てるかは RRF のまま |
+| 同じ会話での追い質問 | 「見つからない」の会話で追い質問すると見つかった | 精読が「見つからない」のときだけ、同じ `conversationId` で Microsoft 365 全体から同じ点を 1 回だけ探す（`workIqDeepReadFollowUp`）。1 つの会話の中では順番に聞くので重ならない。見出しを「上位のファイル n 件に無かったため、同じ会話で Microsoft 365 全体から探した事実」に変え、報告に `deepRead.followUp: true` を残す |
+| 並列数を 4 より上げる | 6 並列は失敗 0、8 並列は 25 % 失敗 | 4 から始め、15 秒以内の成功が並列数と同じ回数続くたびに 1 増やして最大 6、一時的な失敗（再試行の対象）で半分（最小 2）にする（`AdaptiveLimit`・`inAdaptivePool`、TCP と同じ加算増加・乗算減少） |
+| 精読の対象 | viewer.aspx・PDF は読めない | `.pdf` と `/:b:/` の共有リンクも精読の対象から外す（viewer.aspx は既に外していた）。検索の本文はそのまま使う |
+
+データの扱い（D-14）: 送り先は変わらない。ソースの指定と追い質問は、同じ Work IQ CLI に送る引数が増えるだけである。
+
+### 12.3 検証
+
+- 単体テスト（`tests/ai-relay.test.ts`）: ソースごとの検索が目的の概念 1 件 × 4 ソース増え `capabilities` が付く（偽の CLI もソース指定のときはファイルを `OneDriveAndSharePoint` からだけ返す）、`searchTerms` を多く含む資料が同点の RRF で先に来る（無いときは検索文の語で）、`queryTerms`・`termCoverage`、並列数が速い成功で増え失敗で半分になり上限・下限を守る、`inAdaptivePool` が並列数を超えない、精読が「見つからない」と答えたときだけ同じ会話で追い質問して見出しと `deepRead.followUp` が変わる、PDF・viewer.aspx を精読しない。`npm run typecheck` と `npx vitest run`（46 ファイル・780 件）が成功。
+- 実サービス（2026-11-15、§11 と同じ Project・同じ 8 観点・`expand`。Work IQ だけで、モデルは呼ばない）: 計画した検索 56 件（うちソース指定 16 件）、9 区分すべて成功（エラー 0）、引用の重複なし 62 件、精読は 4 区分（すべて事実が見つかったため追い質問は 0 回）、壁時計 267 秒。復旧前の作成は Work IQ が使えず（`stopReasons: workIqUnavailable`）、分析の準備の 8 項目中 1 項目だけが満たされていた。
+- 限界: 並列数の上限 6 は 1 回の計測による（8 で失敗した）。追い質問の効果は 1 件の会話で確かめただけで、今回の実行では起きなかった。ソースごとの検索の効果（3.6 倍）は 1 つの質問での計測である。モデルを含む作成全体の前後比較（分析の準備の項目数）は、アプリで Project を作り直して報告の `retrieved[].deepRead` と準備の項目を比べる。

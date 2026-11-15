@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WORKIQ_ITEM_MAX_CHARS, WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
 import { REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
-import { WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer } from './workiq.ts';
+import { WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer, type WorkIqSource } from './workiq.ts';
 
 /**
  * D-14 (user, 2026-11-11), second route: Microsoft's own Work IQ CLI (`@microsoft/workiq`) as a local MCP stdio server.
@@ -167,7 +167,7 @@ interface RetrieveEntry {
 }
 
 /** The `retrieve` payload as entries in Work IQ's order; tool errors and the EULA gate are thrown as WorkIqError. */
-function readRetrieve(result: unknown): { markdown: string; entries: RetrieveEntry[] } {
+function readRetrieve(result: unknown): { markdown: string; entries: RetrieveEntry[]; terms: string[] } {
   if (!isObj(result)) throw new WorkIqError('badWorkiqResponse');
   const payload = retrievalPayload(result);
   if (!payload && needsEula(result)) throw new WorkIqError('workiqEulaRequired');
@@ -184,12 +184,14 @@ function readRetrieve(result: unknown): { markdown: string; entries: RetrieveEnt
       body: isResult && allowed && typeof hit.markdown === 'string' ? hit.markdown.trim() : '', result: isResult,
     };
   };
+  const meta = isObj(payload.searchMetadata) ? payload.searchMetadata : {};
   return {
     markdown: typeof payload.markdown === 'string' ? payload.markdown.trim() : '',
     entries: [
       ...(Array.isArray(payload.retrievalHits) ? payload.retrievalHits : []).filter(isObj).map((h) => entry(h, false)),
       ...(Array.isArray(payload.results) ? payload.results : []).filter(isObj).map((h) => entry(h, true)),
     ],
+    terms: Array.isArray(meta.searchTerms) ? meta.searchTerms.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map((t) => t.trim().toLowerCase()) : [],
   };
 }
 
@@ -217,12 +219,40 @@ export interface ItemSearches {
 }
 
 const RRF_K = 60;
+/** A source that matches every search term weighs as much as one more first place in a search (RRF 1/(k+1)). */
+const RERANK_WEIGHT = 1 / (RRF_K + 1);
+
+/** Search terms of a query when Work IQ reports none: Latin words, katakana and kanji runs. */
+export function queryTerms(query: string): string[] {
+  return [...new Set(query.toLowerCase().match(/[a-z0-9][a-z0-9+#.-]{2,}|[ァ-ヶー]{2,}|[一-龯々]{2,}/g) ?? [])];
+}
+
+/**
+ * Local L2 rerank (Agentic Retrieval's semantic ranker, as far as the CLI allows): Work IQ gives no score, but each
+ * `retrieve` answer names the terms it searched (`searchMetadata.searchTerms`, seen 2026-11-15) and each result has its
+ * own text. The share of the item's terms, weighted by rarity across all candidates, that a source's title and text
+ * contain. Ties of RRF are common once the same concept is searched source by source (first in mail and first in files
+ * score alike), and the item budget keeps only the first sources.
+ */
+export function termCoverage(text: string, terms: readonly string[], idf: (t: string) => number): number {
+  if (!terms.length) return 0;
+  const lower = text.toLowerCase();
+  let have = 0;
+  let all = 0;
+  for (const t of terms) {
+    const w = idf(t);
+    all += w;
+    if (lower.includes(t)) have += w;
+  }
+  return all > 0 ? have / all : 0;
+}
 
 /**
  * Foundry IQ–style merge of a planned fan-out (docs/workiq-agentic-retrieval-study.md). Work IQ returns no relevance
  * score, so the searches of each readiness item are fused by reciprocal rank; a source found for several items goes to
  * the one where it ranks highest, and is sent once (59 % of the hits of the 32 planned searches were duplicates in the
- * study). Each item keeps its best sources within `maxChars`, in the same "[n] title (kind, date) <url>" form as a
+ * study). Within an item, sources are then reranked by how much of the item's search terms they contain (termCoverage).
+ * Each item keeps its best sources within `maxChars`, in the same "[n] title (kind, date) <url>" form as a
  * single search. An item whose searches all failed is reported as `{ key, error }`.
  */
 export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars = WORKIQ_SECTION_MAX_CHARS): WorkIqSectionAnswer[] {
@@ -231,6 +261,7 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
   const scores = new Map<string, number[]>();
   const answered = items.map(() => 0);
   const firstError = items.map((): WorkIqErrorCode | null => null);
+  const terms = items.map(() => new Set<string>());
   items.forEach((item, i) => item.results.forEach((r) => {
     const code = retrieveError(r);
     if (code) {
@@ -239,6 +270,7 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
     }
     answered[i]!++;
     const read = readRetrieve(r);
+    for (const t of read.terms) terms[i]!.add(t);
     const list: Candidate[] = read.markdown ? [{ id: `md:${read.markdown}`, url: null, title: '', kind: '', date: null, label: null, body: read.markdown, result: true }] : [];
     for (const e of read.entries) if (e.url && !list.some((c) => c.id === e.url!.href)) list.push({ ...e, id: e.url.href });
     list.forEach((c, rank) => {
@@ -253,9 +285,18 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
     });
   }));
   const owner = new Map([...scores].map(([id, sc]) => [id, sc.indexOf(Math.max(...sc))]));
+  const textOf = (c: Candidate) => `${c.title}\n${c.body}`.toLowerCase();
+  const pool = [...best.values()].map(textOf);
+  const df = new Map<string, number>();
+  const idf = (t: string) => {
+    if (!df.has(t)) df.set(t, pool.filter((x) => x.includes(t)).length);
+    return Math.log(1 + pool.length / (1 + df.get(t)!));
+  };
   return items.map((item, i): WorkIqSectionAnswer => {
     if (answered[i] === 0) return { key: item.key, error: firstError[i] ?? 'workiqUnavailable' };
-    const mine = [...scores].filter(([id]) => owner.get(id) === i).sort((a, b) => b[1][i]! - a[1][i]!).map(([id]) => best.get(id)!);
+    const itemTerms = terms[i]!.size ? [...terms[i]!] : queryTerms(item.queries.join(' '));
+    const final = (id: string) => scores.get(id)![i]! + RERANK_WEIGHT * termCoverage(textOf(best.get(id)!), itemTerms, idf);
+    const mine = [...scores.keys()].filter((id) => owner.get(id) === i).map((id) => ({ id, s: final(id) })).sort((a, b) => b.s - a.s).map(({ id }) => best.get(id)!);
     const parts: string[] = [];
     const citations: WorkIqCitation[] = [];
     const labels: string[] = [];
@@ -551,9 +592,68 @@ export interface WorkIqCliServiceOptions {
 
 /**
  * Searches in flight in the pack-search session. Measured 2026-11-12 (docs/workiq-agentic-retrieval-study.md): four at a
- * time kept the per-search latency of two (median 12 s) and halved the wall time.
+ * time kept the per-search latency of two (median 12 s) and halved the wall time. Measured 2026-11-15 on a real project:
+ * six at a time answered 12 searches in 26 s with no failure (9–17 s each), eight at a time failed 2 of 8 at Work IQ's
+ * 30 s limit. A pack search starts at four, climbs to six while searches stay fast, and halves after a transient failure.
  */
 export const WORKIQ_CLI_CONCURRENCY = 4;
+export const WORKIQ_CLI_MAX_CONCURRENCY = 6;
+const WORKIQ_CLI_MIN_CONCURRENCY = 2;
+/** A search slower than this shows no room for one more in flight (the 4-at-a-time searches took 8–15 s). */
+const FAST_SEARCH_MS = 15_000;
+
+/** Additive increase, multiplicative decrease of the searches in flight (as TCP does for its window). */
+export class AdaptiveLimit {
+  limit: number;
+  readonly min: number;
+  readonly max: number;
+  readonly fastMs: number;
+  private streak = 0;
+  constructor(start = WORKIQ_CLI_CONCURRENCY, min = WORKIQ_CLI_MIN_CONCURRENCY, max = WORKIQ_CLI_MAX_CONCURRENCY, fastMs = FAST_SEARCH_MS) {
+    this.limit = start;
+    this.min = min;
+    this.max = max;
+    this.fastMs = fastMs;
+  }
+
+  /** One finished attempt: a transient failure halves the limit; `limit` fast successes in a row raise it by one. */
+  record(ok: boolean, ms: number) {
+    if (!ok) {
+      this.limit = Math.max(this.min, Math.floor(this.limit / 2));
+      this.streak = 0;
+    } else if (ms > this.fastMs) {
+      this.streak = 0;
+    } else if (++this.streak >= this.limit) {
+      this.limit = Math.min(this.max, this.limit + 1);
+      this.streak = 0;
+    }
+  }
+}
+
+/** Like inPool, with at most `lim.limit` in flight, read again whenever one finishes. */
+export function inAdaptivePool<T, R>(items: readonly T[], lim: AdaptiveLimit, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  if (!items.length) return Promise.resolve(out);
+  return new Promise((resolve, reject) => {
+    let next = 0;
+    let running = 0;
+    let done = 0;
+    const pump = () => {
+      while (running < Math.max(1, lim.limit) && next < items.length) {
+        const i = next++;
+        running++;
+        fn(items[i]!, i).then((r) => {
+          out[i] = r;
+          running--;
+          if (++done === items.length) resolve(out);
+          else pump();
+        }, reject);
+      }
+    };
+    pump();
+  });
+}
+
 export const WORKIQ_SESSION_IDLE_MS = 300_000;
 /**
  * Failures worth trying again in the same session: Work IQ's generic "An error occurred invoking 'retrieve'" (seen after
@@ -578,11 +678,132 @@ const MAX_ASK_CITATIONS = 20;
 
 type SearchTool = 'retrieve' | 'ask';
 
-/** The `ask` request for one planned search: facts with their source, from Microsoft 365 only. */
-export function workIqAskQuestion(query: string, lang: 'ja' | 'en'): string {
+/** The project behind a pack search, given to `ask` so Copilot reads a short search in its context. */
+export type AskContext = Pick<WorkIqQuestion, 'purpose' | 'focus' | 'asOf'>;
+
+function askBackground(ctx: AskContext | undefined, lang: 'ja' | 'en'): string {
+  if (!ctx) return '';
   return lang === 'ja'
-    ? `私がアクセスできる Microsoft 365 の情報（メール・会議・Teams のチャット・OneDrive と SharePoint のファイル）から、次の件について事実だけを箇条書きで答えてください。各事実に根拠の文書・会議・メールの名前・日付・リンクを付け、推測や一般論は書かず、見つからなければ「見つからない」と書いてください。\n対象: ${query}`
-    : `From the Microsoft 365 information I can access (mail, meetings, Teams chats, OneDrive and SharePoint files), list only facts about the following, each with the name, date and link of the document, meeting or mail behind it. Do not guess or generalise; write "not found" when nothing is found.\nSubject: ${query}`;
+    ? `\n背景（質問の解釈にだけ使い、背景そのものは答えに書かない）: Project の目的: ${ctx.purpose}${ctx.focus ? `、重点: ${ctx.focus}` : ''}。基準日: ${ctx.asOf}。基準日に近い情報を優先し、各事実の日付を書いてください。`
+    : `\nBackground (only for reading the request; do not repeat it in the answer): project purpose: ${ctx.purpose}${ctx.focus ? `; focus: ${ctx.focus}` : ''}. As of ${ctx.asOf}. Prefer information close to that date and give each fact its date.`;
+}
+
+/**
+ * The `ask` request for one planned search: facts with their source, from Microsoft 365 only. With the project context
+ * (Agentic Retrieval's query planning with conversation history), a short search such as "KPI and OKR definitions"
+ * is read as being about this project's purpose and date rather than in general.
+ */
+export function workIqAskQuestion(query: string, lang: 'ja' | 'en', ctx?: AskContext): string {
+  return lang === 'ja'
+    ? `私がアクセスできる Microsoft 365 の情報（メール・会議・Teams のチャット・OneDrive と SharePoint のファイル）から、次の件について事実だけを箇条書きで答えてください。各事実に根拠の文書・会議・メールの名前・日付・リンクを付け、推測や一般論は書かず、見つからなければ「見つからない」と書いてください。\n対象: ${query}${askBackground(ctx, lang)}`
+    : `From the Microsoft 365 information I can access (mail, meetings, Teams chats, OneDrive and SharePoint files), list only facts about the following, each with the name, date and link of the document, meeting or mail behind it. Do not guess or generalise; write "not found" when nothing is found.\nSubject: ${query}${askBackground(ctx, lang)}`;
+}
+
+/**
+ * Deep read (Agentic Retrieval's iterative search, done with the CLI's own `ask` and its `fileUrls`): after the planned
+ * searches, the best-ranked Microsoft 365 files of the purpose and the readiness items are given to `ask`, which reads
+ * them whole and extracts the figures, dates and owners a search excerpt or a Copilot summary leaves out. Purpose first
+ * (the project's own question), then the items whose facts are figures. One `ask` takes about a minute; four run at once.
+ */
+export const MAX_DEEP_READS = 4;
+export const DEEP_READ_FILES = 3;
+export const DEEP_READ_MAX_CHARS = 3_000;
+export const DEEP_READ_ORDER: readonly string[] = ['purpose', 'kpi', 'engagements', 'issues', 'workflow', 'dataCatalog', 'customers', 'org', 'locations'];
+
+/**
+ * A OneDrive or SharePoint document link (`ask` reads files, not mail, meetings or site pages). PDF and HTML files are
+ * left out: on 2026-11-15 Copilot answered "cannot read" for a PDF and an HTML file given as `fileUrls` (both opened
+ * through `_layouts/15/viewer.aspx`), and read a .docx (`Doc.aspx`) in the same test.
+ */
+export function isM365FileUrl(raw: string): boolean {
+  const url = httpsUrl(raw);
+  if (!url) return false;
+  const host = url.hostname.toLowerCase();
+  if (!host.endsWith('.sharepoint.com') && host !== 'onedrive.live.com' && host !== '1drv.ms') return false;
+  const path = decodeURIComponent(url.pathname);
+  return /\.(docx?|pptx?|xlsx?|txt|md|csv|loop|vsdx?)$/i.test(path) || /\/:[wpxo]:\//i.test(path) || /\/Doc\d?\.aspx$/i.test(path) || host === '1drv.ms';
+}
+
+/** Which sections get a deep read, and of which files: each file is read once, for the first section in DEEP_READ_ORDER that cites it. */
+export function deepReadPlan(sections: readonly WorkIqSectionAnswer[], max = MAX_DEEP_READS, perRead = DEEP_READ_FILES): { key: string; files: string[] }[] {
+  const used = new Set<string>();
+  const out: { key: string; files: string[] }[] = [];
+  for (const key of DEEP_READ_ORDER) {
+    if (out.length >= max) break;
+    const s = sections.find((x) => x.key === key);
+    if (!s || 'error' in s) continue;
+    const files = s.citations.map((c) => c.url).filter((u) => isM365FileUrl(u) && !used.has(u)).slice(0, perRead);
+    if (!files.length) continue;
+    for (const f of files) used.add(f);
+    out.push({ key, files });
+  }
+  return out;
+}
+
+/** What a deep read extracts: the project purpose for `purpose`, the readiness wordings for an item. */
+export function workIqDeepReadQuestion(key: string, q: WorkIqQuestion): string {
+  const ja = q.lang === 'ja';
+  const req = REQUIREMENTS.find((r) => r.key === key);
+  const need = req ? req.ladder[q.lang].join(ja ? '／' : ' / ') : `${q.purpose}${q.focus ? (ja ? `（重点: ${q.focus}）` : ` (focus: ${q.focus})`) : ''}`;
+  return ja
+    ? `添付したファイルだけを読み、「${q.project}」（${q.company}）について、次に当たる記述を箇条書きで抜き出してください。数値は単位と期間、日付、担当、固有名を落とさないでください。各項目の末尾に根拠のファイル名を付けてください。書かれていないことは推測せず、該当が無ければ「見つからない」とだけ書いてください。\n知りたいこと: ${need}${askBackground(q, 'ja')}`
+    : `Read only the attached files and list, as bullets, what they say about "${q.project}" (${q.company}) on the following. Keep figures with unit and period, dates, owners and names. End each bullet with the file name it comes from. Do not guess; if nothing applies, write only "not found".\nWhat to find: ${need}${askBackground(q, 'en')}`;
+}
+
+/**
+ * The second turn of a deep read that found nothing (Agentic Retrieval's "search again when the first pass is not
+ * enough", in the same `ask` conversation so Copilot keeps the question and the files). On 2026-11-15 a deep read of two
+ * files answered "not found"; this turn on its conversationId found the figure in an HTML report it could not read as a
+ * file, with its link.
+ */
+export function workIqDeepReadFollowUp(lang: 'ja' | 'en'): string {
+  return lang === 'ja'
+    ? '添付したファイルには書かれていなかったので、添付以外の、私がアクセスできる Microsoft 365 の情報（メール・会議・Teams のチャット・OneDrive と SharePoint のファイル）から同じ点を探してください。各事実に根拠の名前・日付・リンクを付け、推測せず、見つからなければ「見つからない」とだけ書いてください。'
+    : 'The attached files do not state it. Look for the same points in the other Microsoft 365 information I can access (mail, meetings, Teams chats, OneDrive and SharePoint files). Give each fact the name, date and link behind it; do not guess; if nothing is found, write only "not found".';
+}
+
+/** The facts a deep-read `ask` answered, without the summary note; empty for "not found" or no answer. */
+export function deepReadText(result: Json | WorkIqError): string {
+  if (result instanceof WorkIqError) return '';
+  const payload = retrievalPayload(result);
+  const text = (typeof payload?.markdown === 'string' ? payload.markdown : '').replace(/^\s*(?:（Work IQ ask[^）\n]*）|\(Microsoft 365 Copilot summary[^)\n]*\))\s*/, '').trim();
+  return !text || /^(?:見つからない|notfound)[。.]?$/i.test(text.replace(/[\s「」"]+/g, '')) ? '' : text;
+}
+
+/** The `ask` conversation a result belongs to (askAsRetrieval keeps it), to ask a follow-up in it. */
+function conversationOf(result: Json | WorkIqError): string | null {
+  if (result instanceof WorkIqError) return null;
+  const id = retrievalPayload(result)?.conversationId;
+  return typeof id === 'string' && /^[\w-]{1,200}$/.test(id) ? id : null;
+}
+
+/** A deep-read answer put first in its section, the search results after it within the item budget. */
+export function withDeepRead(section: WorkIqSectionAnswer, files: readonly string[], result: Json | WorkIqError, lang: 'ja' | 'en', maxChars = WORKIQ_ITEM_MAX_CHARS, followUp = false): WorkIqSectionAnswer {
+  if ('error' in section) return section;
+  const code = retrieveError(result);
+  const read = { files: files.length, ...(followUp ? { followUp: true } : {}) };
+  if (code) return { ...section, deepRead: { ...read, error: code } };
+  const payload = retrievalPayload(result as Json);
+  const text = deepReadText(result);
+  if (!text) return { ...section, deepRead: read };
+  const titled = files.map((f) => `- ${section.citations.find((c) => c.url === f)?.title || new URL(f).pathname.split('/').pop()} <${f}>`);
+  const head = followUp
+    ? (lang === 'ja' ? `重点資料の精読（上位のファイル ${files.length} 件に無かったため、同じ会話で Microsoft 365 全体から探した事実）:` : `Deep read (not in the top ${files.length} files, so asked again over all of Microsoft 365 in the same conversation):`)
+    : (lang === 'ja' ? `重点資料の精読（Work IQ ask が上位のファイル ${files.length} 件を読んで抜き出した事実）:` : `Deep read (facts Work IQ ask extracted from the top ${files.length} files):`);
+  const body = clipText([head, ...titled, text].join('\n'), DEEP_READ_MAX_CHARS);
+  const rest = clipText(section.answer, Math.max(0, maxChars - body.length - 2));
+  const citations = [...section.citations];
+  for (const h of Array.isArray(payload?.retrievalHits) ? payload.retrievalHits.filter(isObj) : []) {
+    const url = httpsUrl(h.webUrl);
+    if (!url || citations.length >= MAX_CITATIONS || citations.some((c) => c.url === url.href)) continue;
+    citations.push({ title: hitMeta(h).title ?? url.hostname, url: url.href });
+  }
+  return { ...section, answer: rest ? `${body}\n\n${rest}` : body, citations, deepRead: read };
+}
+
+function clipText(s: string, n: number): string {
+  if (n <= 0) return '';
+  return s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s;
 }
 
 /**
@@ -605,7 +826,8 @@ export function askAsRetrieval(result: unknown, lang: 'ja' | 'en'): Json | WorkI
     hits.push({ webUrl: url.href, ...(title ? { resourceMetadata: { document: { title } } } : {}) });
   }
   const note = lang === 'ja' ? '（Work IQ ask による Microsoft 365 Copilot の要約回答）' : '(Microsoft 365 Copilot summary via Work IQ ask)';
-  return { structuredContent: { [RETRIEVAL_KEY]: { markdown: answer ? `${note}\n${answer}` : '', retrievalHits: hits, stoppedReason: 'completed' } } };
+  const conversationId = typeof sc.conversationId === 'string' ? sc.conversationId : undefined;
+  return { structuredContent: { [RETRIEVAL_KEY]: { markdown: answer ? `${note}\n${answer}` : '', retrievalHits: hits, stoppedReason: 'completed', ...(conversationId ? { conversationId } : {}) } } };
 }
 
 /** One Work IQ CLI call at a time per relay, like the REST route. */
@@ -711,23 +933,30 @@ export class WorkIqCliService {
 
   /**
    * One search in the session (`retrieve`, or `ask` when the process lacks it), tried up to twice more after a transient
-   * failure (a dead session is restarted).
+   * failure (a dead session is restarted). With `files`, a deep read: `ask` with those `fileUrls` and `query` as the
+   * whole question, whichever search tool the session has; with `conversationId`, a further turn of that `ask`
+   * conversation. `sources` limits a `retrieve` to those Microsoft 365 sources. Each attempt is reported to `limit`.
    */
-  private async retrieveInSession(query: string, timeZone: string, lang: 'ja' | 'en', signal?: AbortSignal, retries: number = RETRY_BACKOFF.length): Promise<Json | WorkIqError> {
+  private async retrieveInSession(query: string, timeZone: string, lang: 'ja' | 'en', signal?: AbortSignal, retries: number = RETRY_BACKOFF.length, opts: { ctx?: AskContext; files?: readonly string[]; conversationId?: string; sources?: readonly WorkIqSource[]; limit?: AdaptiveLimit } = {}): Promise<Json | WorkIqError> {
     for (let attempt = 0; ; attempt++) {
       let r: Json | WorkIqError;
+      const t0 = Date.now();
       try {
         const s = await this.openSession(signal);
-        if (this.searchTool === 'ask') {
-          const answer = await s.request('tools/call', { name: 'ask', arguments: { question: workIqAskQuestion(query, lang) } }, Math.max(this.timeoutMs, ASK_TIMEOUT_MS), signal);
+        if (opts.files || opts.conversationId || this.searchTool === 'ask') {
+          const args = opts.conversationId ? { question: query, conversationId: opts.conversationId }
+            : opts.files ? { question: query, fileUrls: [...opts.files] } : { question: workIqAskQuestion(query, lang, opts.ctx) };
+          const answer = await s.request('tools/call', { name: 'ask', arguments: args }, Math.max(this.timeoutMs, ASK_TIMEOUT_MS), signal);
           r = answer instanceof WorkIqError ? answer : askAsRetrieval(answer, lang);
         } else {
-          r = await s.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding', timeZone } }, this.timeoutMs, signal);
+          const capabilities = opts.sources?.length ? { capabilities: opts.sources.map((name) => ({ name })) } : {};
+          r = await s.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding', timeZone, ...capabilities } }, this.timeoutMs, signal);
         }
       } catch (error) {
         r = error instanceof WorkIqError ? error : new WorkIqError('workiqUnavailable');
       }
       const code = retrieveError(r);
+      if (!code || RETRIED.has(code)) opts.limit?.record(!code, Date.now() - t0);
       if (attempt >= retries || !code || !RETRIED.has(code) || signal?.aborted) return r;
       await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs * RETRY_BACKOFF[attempt]!));
     }
@@ -735,12 +964,15 @@ export class WorkIqCliService {
 
   /**
    * The pack searches (server/workiq.ts workIqPlan): the requested sections, with `expand` every readiness ladder
-   * wording and the purpose concepts as well, and the follow-up topics. They run four at a time in one MCP session that
+   * wording and the purpose concepts as well (through `retrieve`, the first concepts also once per Microsoft 365 source),
+   * and the follow-up topics. They run four to six at a time (AdaptiveLimit) in one MCP session that
    * stays open between the calls of a generation. Without `expand` each search is its own section, as before; with it,
    * the searches of each readiness item are merged into one section (mergeByItem) and the purpose searches into a
    * `purpose` section. When the session has to use `ask`, the ladder wordings are left out (each `ask` already answers
    * broadly and takes about a minute). A section that fails is reported in its place; sign-in, permission and EULA
-   * failures stop the run because every other section would fail the same way.
+   * failures stop the run because every other section would fail the same way. With `expand`, the top files of the
+   * purpose and up to three readiness items are then read in full (deepReadPlan), and a read that finds nothing is
+   * asked again over all of Microsoft 365 in its conversation; every `ask` carries the project purpose and date as background.
    */
   askSections(question: WorkIqQuestion, signal?: AbortSignal): Promise<WorkIqSectionAnswer[]> {
     return this.run(async () => {
@@ -752,8 +984,9 @@ export class WorkIqCliService {
         } catch {
           // Reported by the searches below, which try to start the session again.
         }
-        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve' });
-        raw = await inPool(plan, WORKIQ_CLI_CONCURRENCY, (p) => this.retrieveInSession(p.query, question.timeZone, question.lang, signal));
+        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve', sources: this.searchTool === 'retrieve' });
+        const limit = new AdaptiveLimit();
+        raw = await inAdaptivePool(plan, limit, (p) => this.retrieveInSession(p.query, question.timeZone, question.lang, signal, undefined, { ctx: question, sources: p.sources, limit }));
       } finally {
         this.keepSessionIdle();
       }
@@ -786,7 +1019,33 @@ export class WorkIqCliService {
       });
       const purposeIdx = plan.flatMap((p, i) => (p.kind === 'purpose' ? [i] : []));
       if (purposeIdx.length) items.push({ key: 'purpose', queries: purposeIdx.map((i) => plan[i]!.query), wordings: [], results: purposeIdx.map((i) => raw[i]!) });
-      return [...mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS), ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
+      const merged = mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS);
+      const reads = deepReadPlan(merged);
+      if (reads.length) {
+        let answers: { result: Json | WorkIqError; followUp: boolean }[];
+        try {
+          // One retry: a deep read adds depth to sections that already have results, so it never holds the run up long.
+          // A read that finds nothing is asked again, once, in its own conversation (turns of one conversation never overlap).
+          answers = await inPool(reads, WORKIQ_CLI_CONCURRENCY, async (d) => {
+            const first = await this.retrieveInSession(workIqDeepReadQuestion(d.key, question), question.timeZone, question.lang, signal, 1, { files: d.files });
+            const conversationId = retrieveError(first) || deepReadText(first) || signal?.aborted ? null : conversationOf(first);
+            if (!conversationId) return { result: first, followUp: false };
+            const next = await this.retrieveInSession(workIqDeepReadFollowUp(question.lang), question.timeZone, question.lang, signal, 1, { conversationId });
+            return retrieveError(next) ? { result: first, followUp: false } : { result: next, followUp: true };
+          });
+        } finally {
+          this.keepSessionIdle();
+        }
+        if (signal?.aborted) {
+          this.closeSession();
+          throw new WorkIqError('workiqUnavailable');
+        }
+        reads.forEach((d, n) => {
+          const i = merged.findIndex((s) => s.key === d.key);
+          merged[i] = withDeepRead(merged[i]!, d.files, answers[n]!.result, question.lang, WORKIQ_ITEM_MAX_CHARS, answers[n]!.followUp);
+        });
+      }
+      return [...merged, ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
     });
   }
 

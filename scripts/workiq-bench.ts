@@ -661,7 +661,7 @@ async function pipeline(projectId: string, rounds: number) {
         } catch { shapes.push({ stage, unparsed: true }); }
         return { text: String(b.text ?? ''), costJpy: null, inputTokens: Number(b.inputTokens ?? 0), outputTokens: Number(b.outputTokens ?? 0) };
       },
-      fetchSite: (url, signal) => post('/relay/site', { url }, signal) as never,
+      fetchSite: (url, signal, terms) => post('/relay/site', { url, ...(terms?.length ? { terms } : {}) }, signal) as never,
       fetchNews: (company, l, signal) => post('/relay/news', { company, lang: l }, signal) as never,
       fetchWorkIq: async (q, signal) => {
         const t = Date.now();

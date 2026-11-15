@@ -119,15 +119,20 @@ requests (the runtime's reported model cost, else the model multiplier).
 | `DELETE /relay/copilot` | — | `{ copilot: null }` |
 | `GET /relay/status` | — | also returns `copilot: { model } | null` |
 
-**Official-site reader.** `POST /relay/site` with `{ "url": "<official site>" }` returns `{ pages: [{ url, title,
-description, themeColor, text, fetchedAt }], failed: [{ url, error }] }`. Only the URL the user typed and links found on
-that site are requested; nothing from the app is sent. Guards: `https` on port 443 only, no credentials and no IP-literal
+**Official-site reader.** `POST /relay/site` with `{ "url": "<official site>", "terms"?: ["<purpose term>", …] }` returns
+`{ pages: [{ url, title, description, themeColor, text, fetchedAt, purposeTerms? }], failed: [{ url, error }] }`. Only
+the URL the user typed and links found on that site are requested; nothing from the app is sent. `terms` (the project
+name, purpose and focus terms the app extracts on this PC; strings of 2–40 characters, at most 40) never leave the
+relay: they only rank the site's own links. Guards: `https` on port 443 only, no credentials and no IP-literal
 hosts; **every hostname is resolved and refused when any address is loopback, private, link-local, CGNAT, multicast or
 reserved** (`403 privateAddress`); redirects are followed manually (at most 3) and re-checked — the entry page may move
 to another public host (a company that changed domains), every other page must stay on that site
 (`403 redirectNotAllowed`); every request and every link found on a page is checked again (https, port 443, no credentials, no IP literal); `text/html` only, decoded with the declared charset (header or `<meta charset>`, e.g. Shift_JIS), 1.5 MB and 10 s per page, at most 6 pages (PARAM-145) in 10 attempts.
 Pages are chosen best-first: detail pages (outline, sites, figures) before company/profile hubs, then IR, business,
-history and sustainability, spreading the pages over sections; tracking parameters are dropped. When
+history and sustainability, spreading the pages over sections; tracking parameters are dropped. With `terms`, up to 2
+of the 6 pages (`SITE_PURPOSE_PAGES`) go first to links whose anchor text, title, image alt or path names a term,
+weighted by rarity (a term found in many of the site's links, such as "ai" on a technology company's site, counts
+little); those pages carry `purposeTerms`. When
 `BAS_RELAY_OUTBOUND_HOSTS` is set, the site's host must be listed. Errors: `400 invalidUrl`, `403 privateAddress`,
 `403 redirectNotAllowed`, `403 outboundNotAllowed`, `502 siteUnavailable` / `notHtml` / `tooLarge`, `504 siteTimeout`.
 A DNS answer that changes between the check and the connection is not fully excluded; the relay serves this PC only

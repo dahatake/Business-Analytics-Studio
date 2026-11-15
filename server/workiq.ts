@@ -160,7 +160,12 @@ export interface WorkIqQuestion {
   expand: boolean;
 }
 
-export type WorkIqSectionAnswer = (WorkIqAnswer & { key: string; searches?: string[] }) | { key: string; error: string };
+/**
+ * `deepRead`: the top Microsoft 365 files of the section that Work IQ `ask` read in full (server/workiqCli.ts
+ * deepReadPlan), and the error when that read failed (the section keeps its search results either way). `followUp`: the
+ * files did not state it, so the same `ask` conversation was asked again over all of Microsoft 365.
+ */
+export type WorkIqSectionAnswer = (WorkIqAnswer & { key: string; searches?: string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };
 
 /** One search per requested section and topic, in order. Keys: the aspect, or `topic-<n>`. */
 export function workIqSearches(q: WorkIqQuestion): { key: string; query: string }[] {
@@ -183,7 +188,20 @@ export interface PlannedSearch {
   items: readonly ReadinessKey[];
   /** The ladder wording behind a `ladder` search, as packGenerate's follow-up rounds would ask it. */
   wording?: string;
+  /** `retrieve` capabilities this search is limited to (one Microsoft 365 source); absent = every source. */
+  sources?: readonly WorkIqSource[];
 }
+
+/** `retrieve` capability names that select one Microsoft 365 source (People returned nothing for a purpose search, 2026-11-15). */
+export type WorkIqSource = 'Email' | 'Meetings' | 'TeamsMessages' | 'OneDriveAndSharePoint';
+export const WORKIQ_SOURCES: readonly WorkIqSource[] = ['OneDriveAndSharePoint', 'Email', 'Meetings', 'TeamsMessages'];
+/**
+ * Purpose concepts also searched source by source (Agentic Retrieval's knowledge-source selection). Measured 2026-11-15
+ * on a real project: one search over every source returned 5 results; the same search limited to files returned 11 and
+ * to mail 4, 18 distinct sources in all. Each source search ranks within its own source, so a concept that mail
+ * dominates still reaches its files. The first concepts are the named things, the most specific.
+ */
+export const SOURCE_FANOUT_TOPICS = 4;
 
 /** Purpose searches per planned fan-out: the clauses and the names the purpose and focus mention. */
 export const MAX_PURPOSE_SEARCHES = 8;
@@ -224,14 +242,17 @@ export function purposeTopics(q: Pick<WorkIqQuestion, 'company' | 'project' | 'p
 /**
  * workIqSearches plus, with `expand`, every ladder wording of every readiness item (keys `<item>-<n>`) and the purpose
  * concepts (keys `purpose-<n>`). `ladder: false` keeps the purpose searches but drops the wordings, for the slower
- * synthesized `ask` fallback (server/workiqCli.ts).
+ * synthesized `ask` fallback (server/workiqCli.ts). `sources: true` (the `retrieve` route; `ask` cannot select a source)
+ * adds the first SOURCE_FANOUT_TOPICS purpose concepts once per Microsoft 365 source (keys `purpose-<n>-<source>`).
  */
-export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean } = {}): PlannedSearch[] {
+export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?: boolean } = {}): PlannedSearch[] {
   const ladder = q.expand && opts.ladder !== false;
+  const purpose = q.expand ? purposeTopics(q) : [];
   return [
     ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })),
     ...(ladder ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
-    ...(q.expand ? purposeTopics(q).map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })) : []),
+    ...purpose.map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })),
+    ...(opts.sources ? purpose.slice(0, SOURCE_FANOUT_TOPICS).flatMap((t, n) => WORKIQ_SOURCES.map((s): PlannedSearch => ({ key: `purpose-${n + 1}-${s}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [], sources: [s] }))) : []),
     ...q.topics.map((topic, i): PlannedSearch => ({ key: `topic-${i + 1}`, query: workIqTopicQuery(q, topic), kind: 'topic', items: [] })),
   ];
 }

@@ -322,11 +322,16 @@ export interface SitePageInfo {
   themeColor: string | null;
   text: string;
   fetchedAt: string;
+  /** The project-purpose terms the link to this page named. */
+  purposeTerms?: string[];
 }
 
-/** The relay reads the official site (SSRF-guarded, server/site.ts). Throws RelayError with the relay's code. */
-export async function fetchSitePages(url: string, signal?: AbortSignal): Promise<{ pages: SitePageInfo[]; failed: { url: string; error: string }[] }> {
-  const res = await relayFetch('/relay/site', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal });
+/**
+ * The relay reads the official site (SSRF-guarded, server/site.ts). `terms` (the project purpose's terms) only rank the
+ * site's links in the relay; they are not sent to the site. Throws RelayError with the relay's code.
+ */
+export async function fetchSitePages(url: string, signal?: AbortSignal, terms: readonly string[] = []): Promise<{ pages: SitePageInfo[]; failed: { url: string; error: string }[] }> {
+  const res = await relayFetch('/relay/site', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, ...(terms.length ? { terms } : {}) }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as { pages: SitePageInfo[]; failed: { url: string; error: string }[] };
 }
@@ -423,7 +428,7 @@ export interface WorkIqQuestionInput {
 export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
 
-export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[] }) | { key: string; error: string };
+export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };
 
 function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
   if (typeof b.answer !== 'string' || typeof b.question !== 'string' || typeof b.fetchedAt !== 'string' || !Array.isArray(b.citations)) return null;
@@ -451,7 +456,10 @@ export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: rea
     const a = answerInfo(s as Partial<WorkIqAnswerInfo>);
     const searches = (s as { searches?: unknown }).searches;
     const listed = Array.isArray(searches) ? searches.filter((w): w is string => typeof w === 'string') : [];
-    return a ? [{ key, ...a, ...(listed.length ? { searches: listed } : {}) }] : [{ key, error: 'badRelayAnswer' }];
+    const dr = (s as { deepRead?: { files?: unknown; followUp?: unknown; error?: unknown } }).deepRead;
+    const deepRead = dr && typeof dr.files === 'number' && Number.isInteger(dr.files) && dr.files > 0
+      ? { files: dr.files, ...(dr.followUp === true ? { followUp: true } : {}), ...(typeof dr.error === 'string' ? { error: dr.error.slice(0, 60) } : {}) } : null;
+    return a ? [{ key, ...a, ...(listed.length ? { searches: listed } : {}), ...(deepRead ? { deepRead } : {}) }] : [{ key, error: 'badRelayAnswer' }];
   });
 }
 

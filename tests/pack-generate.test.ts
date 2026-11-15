@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { CopilotError, CopilotService, type CopilotSdk, type SdkSession } from '../server/copilot.ts';
-import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, parseSiteUrl, SiteError } from '../server/site.ts';
+import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, parseSiteUrl, purposeLinks, SITE_MAX_PAGES, SITE_PURPOSE_PAGES, SiteError } from '../server/site.ts';
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import {
-  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
+  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
 } from '../src/modules/project/packGenerate.ts';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
@@ -404,7 +404,7 @@ describe('FR-311 pack generation (D-12)', () => {
     const queries: WorkIqQuery[] = [];
     const fetchedAt = '2026-11-10T02:59:45.000Z';
     // The relay's merged sections, one per readiness item, each listing the ladder wordings it searched.
-    const merged = REQUIREMENTS.map((r) => ({ key: r.key, question: `Q-${r.key}`, answer: `${r.key} の事実`, sensitivity: null, fetchedAt, citations: [{ title: r.key, url: `https://t.example/${r.key}` }], searches: r.ladder.ja }));
+    const merged = REQUIREMENTS.map((r) => ({ key: r.key, question: `Q-${r.key}`, answer: `${r.key} の事実`, sensitivity: null, fetchedAt, citations: [{ title: r.key, url: `https://t.example/${r.key}` }], searches: r.ladder.ja, ...(r.key === 'workflow' ? { deepRead: { files: 2 } } : {}) }));
     // Every answer names a new gap, so only the progress rule can end the rounds.
     let n = 0;
     const d = deps([], {
@@ -433,6 +433,9 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.report.stopReasons).toEqual({ a: 'noProgress', b: 'noProgress' });
     expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(expect.arrayContaining(['source-workiq-customers', 'source-workiq-workflow', 'source-workiq-data-catalog']));
     expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-workflow')!.title).toContain('業務の流れ');
+    // Which items Work IQ read in full is in the report.
+    expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-workflow')!.deepRead).toEqual({ files: 2 });
+    expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-data-catalog')!.deepRead).toBeUndefined();
     expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-data-catalog')!.title).toContain('データ資産');
   });
 
@@ -673,6 +676,21 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.report.offPurposeNews?.map((a) => a.title)).toEqual(['Contoso 決算', 'Contoso が新工場']);
   });
 
+  it('the official-site reader gets the purpose terms; pages read for them are labelled for the model and in the report', async () => {
+    const seen: (readonly string[] | undefined)[] = [];
+    const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
+      fetchSite: async (_u, _s, terms) => {
+        seen.push(terms);
+        return { pages: [sitePage, { ...sitePage, url: 'https://www.contoso.example/topics/delivery.html', title: '納期遅延ゼロへの取り組み', purposeTerms: ['納期遅延'] }], failed: [] };
+      },
+    });
+    const r = await generatePack(input(), d, () => {}, new AbortController().signal);
+    expect(seen[0]).toEqual(purposeTerms(input()));
+    expect(r.report.retrieved.find((x) => x.sourceId === 'source-web-2')).toMatchObject({ purposeTerms: ['納期遅延'] });
+    expect(r.report.retrieved.find((x) => x.sourceId === 'source-web-1')?.purposeTerms).toBeUndefined();
+    expect(d.prompts[0]).toContain('Project の目的に関わる公式ページ（リンクの語: 納期遅延）');
+  });
+
   it('fails without saving anything when the model gives no JSON, a call fails, or the user cancels', async () => {
     await expect(generatePack(input(), deps(['すみません、作れません']), () => {}, new AbortController().signal)).rejects.toMatchObject({ code: 'noAnswer' });
     const failing = deps([stageA], { complete: async () => { throw new Error('relay 503 notSignedIn'); } });
@@ -821,6 +839,29 @@ describe('official-site reader guards (server/site.ts)', () => {
     expect(htmlToText('<title>A &amp; B</title><style>x{}</style><p>こんにちは&#x3002;</p>')).toMatchObject({ title: 'A & B', text: 'こんにちは。' });
     expect(factLinks('<a href="/about">a</a><a href="/about/history/">h</a><a href="mailto:x@y">m</a>', new URL('https://contoso.example/'), 4))
       .toEqual(['https://contoso.example/about', 'https://contoso.example/about/history/']);
+  });
+
+  it('finds purpose links by anchor text, title, image alt and path words; Latin terms match whole words only', () => {
+    const links = '<a href="/solutions/viva-engage/">社内SNS</a><a href="/p/1"><img alt="情報共有の事例"></a><a href="/p/2" title="Hub ラジオ">x</a><a href="/mail/">メール</a><a href="/company/">会社</a>';
+    expect(purposeLinks(links, new URL('https://contoso.example/'), ['Viva', 'engage', '情報共有', 'hub', 'ai'], 10))
+      .toEqual(['https://contoso.example/solutions/viva-engage/', 'https://contoso.example/p/1', 'https://contoso.example/p/2']);
+  });
+
+  it('reads up to SITE_PURPOSE_PAGES purpose pages within the same 6-page cap; without terms the reading is unchanged', async () => {
+    const top = '<a href="/company/">c</a><a href="/company/profile/">p</a><a href="/ir/">i</a><a href="/business/">b</a><a href="/sustainability/">s</a><a href="/history/">h</a>'
+      + '<a href="/topics/2026/dx.html">社内情報共有と Viva Engage の活用</a><a href="/topics/2026/hub.html">Hubらじお 配信開始</a><a href="/topics/2026/other.html">情報共有</a>';
+    const doFetch = (async (u: URL | string) => page(html(String(u) === 'https://contoso.example/' ? top : '<p>x</p>'))) as typeof fetch;
+    const plain = await fetchSitePages('https://contoso.example/', { fetch: doFetch, lookup: publicLookup });
+    expect(plain.pages.some((p) => p.url.includes('/topics/'))).toBe(false);
+
+    const r = await fetchSitePages('https://contoso.example/', { fetch: doFetch, lookup: publicLookup }, ['Viva', 'engage', '情報共有', 'Hubらじお']);
+    expect(r.pages).toHaveLength(SITE_MAX_PAGES);
+    const onPurpose = r.pages.filter((p) => p.purposeTerms);
+    expect(onPurpose).toHaveLength(SITE_PURPOSE_PAGES);
+    expect(onPurpose[0]).toMatchObject({ url: 'https://contoso.example/topics/2026/dx.html', purposeTerms: ['viva', 'engage', '情報共有'] });
+    expect(onPurpose[1]!.url).toBe('https://contoso.example/topics/2026/hub.html');
+    expect(r.pages.filter((p) => !p.purposeTerms).length).toBe(SITE_MAX_PAGES - SITE_PURPOSE_PAGES);
+    expect(r.pages.some((p) => p.url.endsWith('/company/profile/'))).toBe(true);
   });
 });
 

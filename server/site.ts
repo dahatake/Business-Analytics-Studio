@@ -19,6 +19,8 @@ export interface SitePage {
   themeColor: string | null;
   text: string;
   fetchedAt: string;
+  /** The project-purpose terms the link to this page named (read for the purpose, not for company facts). */
+  purposeTerms?: string[];
 }
 
 export type SiteErrorCode = 'invalidUrl' | 'privateAddress' | 'siteUnavailable' | 'siteTimeout' | 'notHtml' | 'tooLarge' | 'redirectNotAllowed' | 'outboundNotAllowed';
@@ -34,6 +36,13 @@ export class SiteError extends Error {
 
 /** PARAM-145 (D-12): pages read per run (the entry page + company, IR and detail pages found from it). */
 export const SITE_MAX_PAGES = 6;
+/**
+ * PARAM-145: of those pages, how many may go to links that name a term of the project purpose (business, service or
+ * case pages about the purpose). The page cap approved in D-19 is unchanged; the purpose decides which pages fill it.
+ */
+export const SITE_PURPOSE_PAGES = 2;
+/** Purpose terms accepted per run (the terms only rank links in the relay; they are never sent to the site). */
+export const SITE_MAX_TERMS = 40;
 const MAX_BYTES = 1_500_000;
 const PAGE_TIMEOUT_MS = 10_000;
 const MAX_TEXT_CHARS = 6_000;
@@ -53,7 +62,7 @@ const FACT_TIERS: RegExp[] = [
   /(sustainability|csr|esg)/i,
 ];
 /** Query parameters that only track clicks: dropped so the same page is read once. */
-const TRACKING_PARAM = /^(padid|utm_[a-z]+|gclid|fbclid|ref|from|cid|_ga)$/i;
+const TRACKING_PARAM = /^(padid|utm_[a-z]+|gclid|fbclid|ref|from|cid|icid|ocid|_ga)$/i;
 
 type Lookup = (hostname: string) => Promise<{ address: string; family: number }[]>;
 
@@ -158,7 +167,16 @@ export function htmlToText(html: string): { title: string; description: string; 
 
 /** Same-site links whose path looks like company facts, by fact value then depth, tracking parameters removed. */
 export function factLinks(html: string, base: URL, limit: number): string[] {
-  return rankedLinks(html, base).map(([u]) => u).slice(0, limit);
+  return rankedLinks(html, base).filter((l) => l.fact).map((l) => l.url).slice(0, limit);
+}
+
+/** Same-site links whose anchor text, title or path names a purpose term, rarest terms (fewest links) first. */
+export function purposeLinks(html: string, base: URL, terms: readonly string[], limit: number): string[] {
+  const links = rankedLinks(html, base, normalizeTerms(terms)).filter((l) => l.terms.length);
+  const df = new Map<string, number>();
+  for (const l of links) for (const t of l.terms) df.set(t, (df.get(t) ?? 0) + 1);
+  const weight = (l: RankedLink) => l.terms.reduce((n, t) => n + 1 / df.get(t)!, 0);
+  return links.sort((a, b) => weight(b) - weight(a)).map((l) => l.url).slice(0, limit);
 }
 
 const tierOf = (u: string) => {
@@ -169,10 +187,46 @@ const tierOf = (u: string) => {
 /** The section a page sits in: '/a/b/' and '/a/b.html' are both in '/a/'. */
 const sectionOf = (u: string) => new URL(u).pathname.replace(/\/$/, '').replace(/[^/]*$/, '');
 
-function rankedLinks(html: string, base: URL): [string, number][] {
-  const found = new Map<string, number>();
-  for (const m of html.matchAll(/<a\b[^>]*href\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/gi)) {
-    const href = decode(m[2] ?? m[3] ?? '').trim();
+export function normalizeTerms(terms: readonly unknown[]): string[] {
+  const out = new Set<string>();
+  for (const t of terms) {
+    if (typeof t !== 'string') continue;
+    const s = t.trim().toLowerCase();
+    if (s.length >= 2 && s.length <= 40) out.add(s);
+    if (out.size >= SITE_MAX_TERMS) break;
+  }
+  return [...out];
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Latin terms match whole words (so "ai" is not found in "mail"); Japanese terms match anywhere. */
+function termsIn(text: string, terms: readonly string[]): string[] {
+  if (!terms.length || !text) return [];
+  const lower = text.toLowerCase();
+  return terms.filter((t) => (/^[a-z0-9]/.test(t) ? new RegExp(`(^|[^a-z0-9])${escapeRe(t)}($|[^a-z0-9])`).test(lower) : lower.includes(t)));
+}
+
+function pathWords(u: URL): string {
+  let path = u.pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // a malformed escape: match the raw path
+  }
+  return path.replace(/\.(html?|php|aspx?)$/i, '').replace(/[/_.\-]+/g, ' ');
+}
+
+interface RankedLink { url: string; tier: number; fact: boolean; terms: string[] }
+
+/**
+ * Same-site links worth reading: company-fact paths (tier by FACT_TIERS) and, when purpose terms are given, links whose
+ * anchor text, title, image alt or path names one of them. A link that is only on purpose ranks after every fact tier.
+ */
+function rankedLinks(html: string, base: URL, terms: readonly string[] = []): RankedLink[] {
+  const found = new Map<string, RankedLink>();
+  for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)(?=<\/a\s*>|<a\b|$)/gi)) {
+    const attrs = m[1] ?? '';
+    const href = decode(attr(attrs, 'href') ?? '').trim();
     if (!href || href.startsWith('#') || /^(mailto|tel|javascript):/i.test(href)) continue;
     let u: URL;
     try {
@@ -182,14 +236,22 @@ function rankedLinks(html: string, base: URL): [string, number][] {
     }
     if (u.protocol !== 'https:' || u.username || u.password || (u.port !== '' && u.port !== '443') || !sameSite(u.hostname, base.hostname) || /\.(pdf|zip|jpe?g|png|gif|svg|mp4|xlsx?|docx?|pptx?)$/i.test(u.pathname)) continue;
     const tier = tierOf(u.toString());
-    if (tier < 0) continue;
+    const inner = m[2] ?? '';
+    const label = terms.length
+      ? [decode(inner.replace(/<[^>]+>/g, ' ')), attr(attrs, 'title') ?? '', ...[...inner.matchAll(/<img\b[^>]*>/gi)].map((i) => attr(i[0], 'alt') ?? ''), pathWords(u)].join(' ')
+      : '';
+    const hits = termsIn(label, terms);
+    if (tier < 0 && !hits.length) continue;
     u.hash = '';
     for (const key of [...u.searchParams.keys()]) if (TRACKING_PARAM.test(key)) u.searchParams.delete(key);
     const key = u.toString();
-    if (key !== base.toString() && !found.has(key)) found.set(key, tier);
+    if (key === base.toString()) continue;
+    const prev = found.get(key);
+    if (!prev) found.set(key, { url: key, tier: tier < 0 ? FACT_TIERS.length : tier, fact: tier >= 0, terms: hits });
+    else prev.terms = [...new Set([...prev.terms, ...hits])];
   }
   const depth = (s: string) => new URL(s).pathname.split('/').filter(Boolean).length;
-  return [...found].sort((a, b) => a[1] - b[1] || depth(a[0]) - depth(b[0]));
+  return [...found.values()].sort((a, b) => a.tier - b.tier || depth(a.url) - depth(b.url));
 }
 
 /**
@@ -285,43 +347,70 @@ const MAX_ATTEMPTS = 10;
 /**
  * Best-first reading of the official site: the entry page (must succeed), then the most fact-dense candidate each time
  * (detail pages before hubs, hubs before IR/business/history/sustainability). Links found on every page read join the
- * candidates, so details one level below a hub (e.g. company/profile/facilities/) are reached.
+ * candidates, so details one level below a hub (e.g. company/profile/facilities/) are reached. With purpose terms, up to
+ * SITE_PURPOSE_PAGES of the pages go first to the links naming the most terms (the terms stay in the relay).
  */
-export async function fetchSitePages(rawUrl: string, deps: SiteDeps = {}): Promise<{ pages: SitePage[]; failed: { url: string; error: SiteErrorCode }[] }> {
+export async function fetchSitePages(rawUrl: string, deps: SiteDeps = {}, purposeTerms: readonly string[] = []): Promise<{ pages: SitePage[]; failed: { url: string; error: SiteErrorCode }[] }> {
   const start = parseSiteUrl(rawUrl);
   const outboundHosts = deps.outboundHosts ?? null;
   if (outboundHosts && !outboundHosts.some((h) => sameSite(h, start.hostname.toLowerCase()))) throw new SiteError('outboundNotAllowed');
   const d = { fetch: deps.fetch ?? fetch, lookup: deps.lookup ?? defaultLookup, outboundHosts };
   const now = deps.now ?? Date.now;
+  const terms = normalizeTerms(purposeTerms);
   const first = await fetchPage(start, d, null);
   const site = first.url;
   const pages: SitePage[] = [{ url: site.toString(), ...htmlToText(first.html), fetchedAt: new Date(now()).toISOString() }];
   const failed: { url: string; error: SiteErrorCode }[] = [];
   const seen = new Set<string>([site.toString(), start.toString()]);
-  const queue = new Map<string, number>();
-  const add = (url: string, score: number) => {
-    if (!seen.has(url) && (!queue.has(url) || queue.get(url)! > score)) queue.set(url, score);
+  const queue = new Map<string, { score: number; fact: boolean; terms: string[] }>();
+  const add = (url: string, score: number, fact = true, hits: string[] = []) => {
+    if (seen.has(url)) return;
+    const prev = queue.get(url);
+    queue.set(url, prev
+      ? { score: Math.min(prev.score, score), fact: prev.fact || fact, terms: [...new Set([...prev.terms, ...hits])] }
+      : { score, fact, terms: hits });
   };
-  for (const [u, tier] of rankedLinks(first.html, site)) add(u, tier);
+  // IDF-style weight: a term found in many of the site's links (e.g. "ai" on a technology company's site) says little
+  // about the purpose; a rare one ("innovation hub") says much. Counted over every distinct link found so far.
+  const linksWith = new Map<string, number>();
+  const counted = new Set<string>();
+  const weightOf = (hits: readonly string[]) => hits.reduce((n, t) => n + 1 / Math.max(1, linksWith.get(t) ?? 1), 0);
+  const addLinks = (html: string, base: URL) => {
+    for (const l of rankedLinks(html, base, terms)) {
+      if (!counted.has(l.url)) {
+        counted.add(l.url);
+        for (const t of l.terms) linksWith.set(t, (linksWith.get(t) ?? 0) + 1);
+      }
+      add(l.url, l.tier, l.fact, l.terms);
+    }
+  };
+  addLinks(first.html, site);
   // Guesses run after linked fact pages; a real link to the same page keeps its (better) rank.
   for (const p of GUESSED_PATHS) add(new URL(p, new URL('./', site)).toString(), 3.5);
   const depth = (s: string) => new URL(s).pathname.split('/').filter(Boolean).length;
   // Spread the few pages over different sections: each page already read in the same section costs a tier; news costs two.
   const effective = (u: string, score: number) =>
     score + pages.filter((p) => sectionOf(p.url) === sectionOf(u)).length + (/\/news(room)?\//i.test(new URL(u).pathname) ? 2 : 0);
+  let purposeTried = 0;
   let attempts = 0;
   while (pages.length < SITE_MAX_PAGES && attempts < MAX_ATTEMPTS && queue.size > 0) {
-    const [next] = [...queue].map(([u, s]) => [u, effective(u, s)] as [string, number]).sort((a, b) => a[1] - b[1] || depth(a[0]) - depth(b[0]))[0]!;
+    const onPurpose = purposeTried < SITE_PURPOSE_PAGES ? [...queue].filter(([, c]) => c.terms.length) : [];
+    const pool = onPurpose.length ? onPurpose : [...queue].filter(([, c]) => c.fact);
+    if (!pool.length) break;
+    const [next, cand] = pool
+      .map(([u, c]) => [u, c, effective(u, c.score), onPurpose.length ? weightOf(c.terms) : 0] as const)
+      .sort((a, b) => b[3] - a[3] || a[2] - b[2] || depth(a[0]) - depth(b[0]))[0]!;
     queue.delete(next);
     seen.add(next);
     attempts++;
+    if (onPurpose.length) purposeTried++;
     try {
       const page = await fetchPage(new URL(next), d, site);
       const url = page.url.toString();
       seen.add(url);
       if (pages.some((p) => p.url === url)) continue;
-      pages.push({ url, ...htmlToText(page.html), fetchedAt: new Date(now()).toISOString() });
-      for (const [u, tier] of rankedLinks(page.html, page.url)) add(u, tier);
+      pages.push({ url, ...htmlToText(page.html), fetchedAt: new Date(now()).toISOString(), ...(cand.terms.length ? { purposeTerms: cand.terms } : {}) });
+      addLinks(page.html, page.url);
     } catch (err) {
       failed.push({ url: next, error: err instanceof SiteError ? err.code : 'siteUnavailable' });
     }

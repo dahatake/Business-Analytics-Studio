@@ -320,7 +320,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
           use: 'packBuild', lang: lang as Lang, prompt, userConfirmed: true, personConfirmed: true,
           maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: PACK_BUILD_TIMEOUT_MS, scope: runScope, stage,
         }, signal),
-        fetchSite: (url, signal) => fetchSitePages(url, signal),
+        fetchSite: (url, signal, terms) => fetchSitePages(url, signal, terms),
         fetchNews: (company, l, signal, publicTopic) => fetchNewsHeadlines(company, l, signal, publicTopic),
         ...(settings.provider === 'foundry' && input.useWorkIq ? {
           fetchWorkIq: (q, signal) => askWorkIqSections({ ...q, aspects: (q.aspects ?? []) as WorkIqAspect[], topics: q.topics ?? [], timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }, signal),

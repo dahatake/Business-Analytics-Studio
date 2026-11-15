@@ -10,7 +10,7 @@ import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
 import { COPILOT_MODEL_PATTERN, CopilotError, CopilotService } from './copilot.ts';
 import { FOUNDRY_MEDIA, MAX_ATTACHMENT_BYTES, MAX_REQUEST_MEDIA_BYTES, MAX_REQUEST_MEDIA_FILES, MEDIA_TYPES, validateMediaParts, type MediaPart } from '../src/ai/attachments.ts';
-import { SiteError, fetchSitePages } from './site.ts';
+import { SiteError, fetchSitePages, normalizeTerms } from './site.ts';
 import {
   WORKIQ_OUTBOUND_HOSTS, WORKIQ_SETTINGS_FILE, WorkIqError, WorkIqService, loadWorkIqSettings, parseWorkIqQuestion, removeWorkIqSettings,
   validateWorkIqInput, type StoredWorkIq, type WorkIqErrorCode,
@@ -700,10 +700,13 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
 
   if (path === '/relay/site') {
     if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
-    const url = parseBody(req.body)?.url;
+    const body = parseBody(req.body);
+    const url = body?.url;
     if (typeof url !== 'string') return json(400, { error: 'invalidUrl' });
+    // Purpose terms only rank the site's own links here; they are never sent to the site.
+    const terms = Array.isArray(body?.terms) ? normalizeTerms(body.terms) : [];
     try {
-      return json(200, await (ctx.site ?? fetchSitePages)(url, { fetch: ctx.fetch, now: ctx.now, outboundHosts: config.outboundHosts }));
+      return json(200, await (ctx.site ?? fetchSitePages)(url, { fetch: ctx.fetch, now: ctx.now, outboundHosts: config.outboundHosts }, terms));
     } catch (error) {
       if (!(error instanceof SiteError)) throw error;
       const status = error.code === 'invalidUrl' ? 400 : error.code === 'privateAddress' || error.code === 'outboundNotAllowed' || error.code === 'redirectNotAllowed' ? 403 : error.code === 'siteTimeout' ? 504 : 502;

@@ -16,7 +16,7 @@ import {
 } from '../server/relay.ts';
 import { spawn } from 'node:child_process';
 import { MAX_PURPOSE_SEARCHES, WorkIqError, purposeTopics, type WorkIqQuestion } from '../server/workiq.ts';
-import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, WorkIqCliService, mergeByItem, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
+import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
@@ -845,11 +845,15 @@ describe('D-12 packBuild through the relay', () => {
 
   it('official-site reader: token-protected, URL validated, outbound list honoured, errors mapped', async () => {
     let used = 0;
-    const site = (async () => { used++; return { pages: [], failed: [] }; }) as unknown as RelayContext['site'];
+    const termsSeen: unknown[] = [];
+    const site = (async (_u: string, _d: unknown, terms: unknown) => { used++; termsSeen.push(terms); return { pages: [], failed: [] }; }) as unknown as RelayContext['site'];
     expect((await call(req('POST', '/relay/site', { url: 'https://example.com' }, { headers: { 'x-bas-relay': 'bad' } }), { site })).status).toBe(403);
     expect((await call(req('POST', '/relay/site', { url: 'https://example.com' }), { site })).status).toBe(200);
     expect((await call(req('POST', '/relay/site', { url: 1 }), { site })).status).toBe(400);
     expect(used).toBe(1);
+    // Purpose terms reach the reader cleaned (strings of 2-40 characters, lower case); they only rank the site's links.
+    await call(req('POST', '/relay/site', { url: 'https://example.com', terms: ['Viva', 1, 'x', '情報共有', 'a'.repeat(41)] }), { site });
+    expect(termsSeen).toEqual([[], ['viva', '情報共有']]);
     expect((await call(req('POST', '/relay/site', { url: 'http://127.0.0.1/' }))).body).toEqual({ error: 'invalidUrl' });
     expect((await call(req('POST', '/relay/site', { url: 'https://example.com/' }), { config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['contoso.com'] } })).body).toEqual({ error: 'outboundNotAllowed' });
   });
@@ -1133,6 +1137,17 @@ process.stdin.on('data', (d) => {
       if (mode === 'hang') return;
       if (m.params.name === 'ask' && mode !== 'eula') {
         if (mode === 'askfail') { send({ id: m.id, result: { isError: true, content: [{ type: 'text', text: 'Network error: the request failed.' }] } }); continue; }
+        if (m.params.arguments.conversationId) {
+          // The follow-up turn of a deep read that found nothing in its files (2026-11-13: it then found facts elsewhere).
+          const more = 'FY27 NSAT actual 4.3 per the Oct QBR mail [QBR notes](https://contoso.sharepoint.com/qbr.docx).';
+          send({ id: m.id, result: { content: [{ type: 'text', text: more }], structuredContent: { answer: more, conversationId: m.params.arguments.conversationId } } });
+          continue;
+        }
+        if (m.params.arguments.fileUrls) {
+          const read = mode === 'deepfail' ? null : mode === 'deepnone' ? '「not found」' : 'FY27 NSAT actual 4.2 in Q1 (KPI scorecard.xlsx). Owner: [Plan](https://contoso.sharepoint.com/plan.docx).';
+          send({ id: m.id, result: read ? { content: [{ type: 'text', text: read }], structuredContent: { answer: read, conversationId: 'c2' } } : { isError: true, content: [{ type: 'text', text: 'Network error: the request failed.' }] } });
+          continue;
+        }
         const answer = 'NSAT target 4.5 (FY27) [KPI scorecard](https://contoso.sharepoint.com/kpi.xlsx). See also https://teams.microsoft.com/l/meetup-join/9 .';
         send({ id: m.id, result: { content: [{ type: 'text', text: answer }], structuredContent: { answer, conversationId: 'c1' } } });
         continue;
@@ -1144,7 +1159,13 @@ process.stdin.on('data', (d) => {
         send({ id: m.id, result: { isError: true, content: [{ type: 'text', text: "An error occurred invoking 'retrieve'." }] } });
         continue;
       }
-      if (mode === 'byquery') {
+      if (mode === 'byquery' || mode === 'deepnone') {
+        // Files come only from OneDriveAndSharePoint when the search is limited to sources (as the live service does).
+        const caps = m.params.arguments.capabilities;
+        if (caps && !caps.some((c) => c.name === 'OneDriveAndSharePoint')) {
+          send({ id: m.id, result: { content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': { results: [], resultCount: 0, stoppedReason: 'completed' } } } });
+          continue;
+        }
         const results = [{ markdown: 'Shared overview of the Contoso programme.', webUrl: 'https://contoso.sharepoint.com/common.docx', entityType: 'Files', resourceMetadata: { document: { title: 'Overview' } } }];
         if (/KPI|scorecard/i.test(q)) results.unshift({ markdown: 'NSAT target 4.5 (FY27).', webUrl: 'https://contoso.sharepoint.com/kpi.xlsx', entityType: 'Files', resourceMetadata: { document: { title: 'KPI scorecard' } } });
         send({ id: m.id, result: { content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': { results, resultCount: results.length, stoppedReason: 'completed' } } } });
@@ -1317,13 +1338,23 @@ process.stdin.on('data', (d) => {
     expect(r.status).toBe(200);
     const sections = (r.body as { sections: { key: string; question: string; answer: string; citations: { title: string }[]; searches: string[] }[] }).sections;
     expect(sections.map((s) => s.key)).toEqual(['org', 'locations', 'customers', 'workflow', 'dataCatalog', 'kpi', 'engagements', 'issues', 'purpose']);
-    // 1 section search + 3 wordings × 8 items + 1 search built from the purpose, built by the relay.
-    expect(calls()).toHaveLength(26);
-    expect(calls().some((c) => String(c.arguments.query).includes('Reduce late deliveries'))).toBe(true);
+    // 1 section search + 3 wordings × 8 items + 1 search built from the purpose, then that purpose search once per source.
+    const searches = calls().filter((c) => c.name === 'retrieve');
+    expect(searches).toHaveLength(30);
+    expect(searches.some((c) => String(c.arguments.query).includes('Reduce late deliveries'))).toBe(true);
+    const bySource = searches.filter((c) => c.arguments.capabilities);
+    expect(bySource.map((c) => c.arguments.capabilities)).toEqual([[{ name: 'OneDriveAndSharePoint' }], [{ name: 'Email' }], [{ name: 'Meetings' }], [{ name: 'TeamsMessages' }]]);
+    expect(new Set(bySource.map((c) => c.arguments.query)).size).toBe(1);
+    // Then the top files are read in full, each once (here both are the KPI item's: it found the overview in all four of its searches).
+    const reads = calls().filter((c) => c.name === 'ask');
+    expect(reads.map((c) => c.arguments.fileUrls)).toEqual([['https://contoso.sharepoint.com/common.docx', 'https://contoso.sharepoint.com/kpi.xlsx']]);
+    expect(String(reads[0]!.arguments.question)).toMatch(/Read only the attached files[\s\S]*KPI and OKR definitions[\s\S]*Reduce late deliveries/);
     const kpi = sections.find((s) => s.key === 'kpi')!;
+    expect(kpi.answer).toMatch(/^Deep read \(facts Work IQ ask extracted from the top 2 files\):\n- Overview <https:\/\/contoso\.sharepoint\.com\/common\.docx>\n- KPI scorecard <https:\/\/contoso\.sharepoint\.com\/kpi\.xlsx>\nFY27 NSAT actual 4\.2/);
+    expect((kpi as unknown as { deepRead: unknown }).deepRead).toEqual({ files: 2 });
     expect(kpi.searches).toEqual(['KPI and OKR definitions with targets and actuals', 'metrics and attainment in scorecards, QBRs and business reviews', 'fiscal-year targets, commitments and success measures']);
     expect(kpi.question.split('\n')).toHaveLength(4);
-    expect(kpi.citations.map((c) => c.title).sort()).toEqual(['KPI scorecard', 'Overview']);
+    expect(kpi.citations.map((c) => c.title).sort()).toEqual(['KPI scorecard', 'Overview', 'Plan']);
     // The overview every search returned is sent once, with the item that ranked it highest.
     const all = sections.map((s) => s.answer).join('\n');
     expect(all.split('Shared overview').length - 1).toBe(1);
@@ -1342,13 +1373,113 @@ process.stdin.on('data', (d) => {
     expect(purposeTopics({ ...base, purpose: Array.from({ length: 12 }, (_, i) => `目的の文その${i}について`).join('。') })).toHaveLength(MAX_PURPOSE_SEARCHES);
   });
 
+  it('plans deep reads of files only, purpose first, each file once, and keeps the search text when the read finds nothing or fails', () => {
+    const sp = (n: string) => `https://contoso.sharepoint.com/sites/x/${n}`;
+    expect([sp('a.docx'), sp(':x:/r/b'), sp('_layouts/15/Doc.aspx'), 'https://1drv.ms/w/s!abc'].every(isM365FileUrl)).toBe(true);
+    // Work IQ ask answered "cannot read" for PDF and viewer.aspx files (2026-11-15), so they are left to the search text.
+    expect([sp('SitePages/Home.aspx'), sp('r.pdf'), sp(':b:/r/x'), sp('_layouts/15/viewer.aspx?sourcedoc=1'), 'https://outlook.office.com/mail/id/1', 'https://teams.microsoft.com/l/meetup-join/9', 'http://contoso.sharepoint.com/a.docx', 'https://evil.com/a.docx'].some(isM365FileUrl)).toBe(false);
+
+    const sec = (key: string, urls: string[]) => ({ key, question: 'q', answer: 'search text', citations: urls.map((url) => ({ title: url.split('/').pop()!, url })), sensitivity: null, fetchedAt: 't' });
+    const plan = deepReadPlan([
+      sec('kpi', [sp('k1.xlsx'), sp('shared.docx'), 'https://outlook.office.com/mail/id/1']),
+      sec('purpose', [sp('shared.docx'), sp('p.pptx')]),
+      sec('org', ['https://teams.microsoft.com/l/chat/1']),
+      { key: 'issues', error: 'workiqTimeout' },
+      sec('engagements', [sp('e1.docx')]), sec('workflow', [sp('w.docx')]), sec('customers', [sp('c.docx')]),
+    ] as never);
+    expect(plan).toEqual([
+      { key: 'purpose', files: [sp('shared.docx'), sp('p.pptx')] },
+      { key: 'kpi', files: [sp('k1.xlsx')] },
+      { key: 'engagements', files: [sp('e1.docx')] },
+      { key: 'workflow', files: [sp('w.docx')] },
+    ]);
+
+    const s = sec('kpi', [sp('k1.xlsx')]);
+    const ask = (answer: string) => askAsRetrieval({ content: [{ type: 'text', text: answer }], structuredContent: { answer } }, 'ja');
+    expect(withDeepRead(s, [sp('k1.xlsx')], ask('「見つからない」'), 'ja')).toEqual({ ...s, deepRead: { files: 1 } });
+    expect(withDeepRead(s, [sp('k1.xlsx')], new WorkIqError('workiqTimeout'), 'ja')).toEqual({ ...s, deepRead: { files: 1, error: 'workiqTimeout' } });
+    const read = withDeepRead(s, [sp('k1.xlsx')], ask('NSAT 4.2（k1.xlsx）'), 'ja', 200) as typeof s;
+    expect(read.answer).toMatch(/^重点資料の精読（[^\n]*1 件[^\n]*\n- k1\.xlsx <[^>]+>\nNSAT 4\.2（k1\.xlsx）\n\nsearch text$/);
+    expect(read.answer).not.toContain('Copilot');
+    expect((withDeepRead(s, [sp('k1.xlsx')], ask('x'.repeat(5000)), 'ja', 3_000) as typeof s).answer.length).toBeLessThanOrEqual(3_000);
+    expect([ask('「見つからない」'), ask('Not found.'), new WorkIqError('workiqTimeout')].map(deepReadText)).toEqual(['', '', '']);
+    expect(deepReadText(ask('NSAT 4.2'))).toBe('NSAT 4.2');
+    const more = withDeepRead(s, [sp('k1.xlsx')], ask('NSAT 4.3（QBR メール）'), 'ja', 200, true) as typeof s & { deepRead: unknown };
+    expect(more.answer).toMatch(/^重点資料の精読（上位のファイル 1 件に無かったため、同じ会話で Microsoft 365 全体から探した事実）:\n/);
+    expect(more.deepRead).toEqual({ files: 1, followUp: true });
+  });
+
+  it('reranks the sources of an item by the share of its Work IQ search terms they contain', () => {
+    expect(queryTerms('FY27 の NSAT 目標とアカウントチーム')).toEqual(['fy27', 'nsat', '目標', 'アカウントチーム']);
+    expect(termCoverage('NSAT target', ['nsat', 'fy27'], () => 1)).toBe(0.5);
+    expect(termCoverage('NSAT target', ['nsat', 'fy27'], (t) => (t === 'nsat' ? 3 : 1))).toBe(0.75);
+    const found = (title: string, markdown: string, terms?: string[]) => ({ content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': {
+      results: [{ markdown, webUrl: `https://contoso.sharepoint.com/${title}`, entityType: 'Files', resourceMetadata: { document: { title } } }],
+      ...(terms ? { searchMetadata: { searchTerms: terms } } : {}), stoppedReason: 'completed' } } });
+    // Each source is first in its own search (an RRF tie, as when mail and files are searched apart); the one with the terms wins.
+    const [kpi] = mergeByItem([{ key: 'kpi', queries: ['q1', 'q2'], wordings: [], results: [found('a.docx', 'Team offsite agenda.', ['NSAT']), found('b.docx', 'NSAT 4.2 in Q1.')] }], 't');
+    expect((kpi as { citations: { title: string }[] }).citations.map((c) => c.title)).toEqual(['b.docx', 'a.docx']);
+    // Without searchTerms the item's own query words are used.
+    const [org] = mergeByItem([{ key: 'org', queries: ['org chart'], wordings: [], results: [found('x.docx', 'Lunch menu.'), found('y.docx', 'The org chart of sales.')] }], 't');
+    expect((org as { citations: { title: string }[] }).citations.map((c) => c.title)).toEqual(['y.docx', 'x.docx']);
+  });
+
+  it('adapts the searches in flight: up after fast successes, halved after a failure, within its bounds', async () => {
+    const lim = new AdaptiveLimit(4, 2, 6, 15_000);
+    for (let n = 0; n < 4; n++) lim.record(true, 9_000);
+    expect(lim.limit).toBe(5);
+    lim.record(true, 20_000);
+    for (let n = 0; n < 4; n++) lim.record(true, 9_000);
+    expect(lim.limit).toBe(5);
+    for (let n = 0; n < 5 + 6; n++) lim.record(true, 9_000);
+    expect(lim.limit).toBe(6);
+    for (let n = 0; n < 6; n++) lim.record(true, 9_000);
+    expect(lim.limit).toBe(6);
+    lim.record(false, 30_000);
+    expect(lim.limit).toBe(3);
+    lim.record(false, 30_000);
+    expect(lim.limit).toBe(2);
+
+    const pool = new AdaptiveLimit(3, 1, 6);
+    let running = 0;
+    let peak = 0;
+    const out = await inAdaptivePool([1, 2, 3, 4, 5, 6, 7], pool, async (x, i) => {
+      peak = Math.max(peak, ++running);
+      await new Promise((r) => setTimeout(r, 5));
+      if (i === 0) pool.record(false, 0);
+      running--;
+      return x * 2;
+    });
+    expect(out).toEqual([2, 4, 6, 8, 10, 12, 14]);
+    expect(peak).toBe(3);
+    expect(pool.limit).toBe(1);
+  });
+
+  it('asks again in the same conversation, over all of Microsoft 365, when the top files do not answer', async () => {
+    const q: WorkIqQuestion = { company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-11', lang: 'en', timeZone: 'Asia/Tokyo', aspects: ['kpi'], topics: [], expand: true };
+    const svc = cli('deepnone');
+    try {
+      const sections = await svc.askSections(q);
+      const asks = calls().filter((c) => c.name === 'ask');
+      expect(asks.map((c) => Object.keys(c.arguments).sort())).toEqual([['fileUrls', 'question'], ['conversationId', 'question']]);
+      expect(asks[1]!.arguments.conversationId).toBe('c2');
+      expect(String(asks[1]!.arguments.question)).toMatch(/other Microsoft 365 information/);
+      const kpi = sections.find((s) => s.key === 'kpi') as { answer: string; citations: { url: string }[]; deepRead: unknown };
+      expect(kpi.answer).toMatch(/^Deep read \(not in the top 2 files, so asked again over all of Microsoft 365 in the same conversation\):\n[\s\S]*FY27 NSAT actual 4\.3/);
+      expect(kpi.deepRead).toEqual({ files: 2, followUp: true });
+      expect(kpi.citations.map((c) => c.url)).toContain('https://contoso.sharepoint.com/qbr.docx');
+    } finally {
+      svc.closeSession();
+    }
+  });
+
   it('restarts a CLI process that lacks retrieve, and searches through ask when no process offers it', async () => {
     const q: WorkIqQuestion = { company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-11', lang: 'en', timeZone: 'Asia/Tokyo', aspects: ['kpi'], topics: [], expand: true };
     const restarted = cli('restart');
     try {
       await restarted.askSections(q);
       expect(Number(readFileSync(`${log}.starts`, 'utf8'))).toBe(2);
-      expect(calls().every((c) => c.name === 'retrieve')).toBe(true);
+      expect(calls().filter((c) => !c.arguments.fileUrls).every((c) => c.name === 'retrieve')).toBe(true);
     } finally {
       restarted.closeSession();
     }
@@ -1357,12 +1488,14 @@ process.stdin.on('data', (d) => {
     const askOnly = cli('askonly');
     try {
       const sections = await askOnly.askSections(q);
-      // Without retrieve: no ladder wordings (one ask per section search and purpose concept), each a Copilot summary with its links.
-      expect(calls().map((c) => c.name)).toEqual(['ask', 'ask']);
-      expect(String(calls()[0]!.arguments.question)).toMatch(/Microsoft 365[\s\S]*Subject: /);
+      // Without retrieve: no ladder wordings (one ask per section search and purpose concept), each a Copilot summary with its links,
+      // read with the project purpose and date as background; then the top file is read in full.
+      expect(calls().map((c) => c.name)).toEqual(['ask', 'ask', 'ask']);
+      expect(String(calls()[0]!.arguments.question)).toMatch(/Microsoft 365[\s\S]*Subject: [\s\S]*\nBackground [\s\S]*purpose: Reduce late deliveries\. As of 2026-11-11/);
+      expect(calls()[2]!.arguments.fileUrls).toEqual(['https://contoso.sharepoint.com/kpi.xlsx']);
       const kpi = sections.find((s) => s.key === 'kpi') as { answer: string; citations: { title: string; url: string }[] };
-      expect(kpi.answer).toContain('Microsoft 365 Copilot summary');
-      expect(kpi.citations.map((c) => c.url).sort()).toEqual(['https://contoso.sharepoint.com/kpi.xlsx', 'https://teams.microsoft.com/l/meetup-join/9']);
+      expect(kpi.answer).toMatch(/^Deep read[\s\S]*FY27 NSAT actual 4\.2[\s\S]*Microsoft 365 Copilot summary/);
+      expect(kpi.citations.map((c) => c.url).sort()).toEqual(['https://contoso.sharepoint.com/kpi.xlsx', 'https://contoso.sharepoint.com/plan.docx', 'https://teams.microsoft.com/l/meetup-join/9']);
       expect(kpi.citations.find((c) => c.url.endsWith('kpi.xlsx'))?.title).toBe('KPI scorecard');
       expect(sections.map((s) => s.key)).toContain('purpose');
     } finally {

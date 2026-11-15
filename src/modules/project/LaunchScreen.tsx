@@ -17,7 +17,7 @@ import './project.css';
 
 /**
  * Start-up step 2: choose the company and project to work on. The sample company with its demo project is always
- * offered first; registered companies follow. Choosing opens step 3, the project screen (main screen, /home).
+ * offered first; registered companies follow. Choosing opens step 3, the project overview (/).
  */
 export function LaunchScreen() {
   const { t, tx } = useI18n();
@@ -36,7 +36,7 @@ export function LaunchScreen() {
   const generate = async (projectId: string) => setGen({ target: { kind: 'project', projectId }, prefill: await generatePrefillFor(projectId) });
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
 
-  const open =  (target: WorkTarget, path = '/home') => {
+  const open = (target: WorkTarget, path = '/') => {
     choose();
     // Set the route before the target: a target with another customer pack reloads the page (main.tsx) at this URL.
     navigate(hrefFor(path));
@@ -58,7 +58,7 @@ export function LaunchScreen() {
     if (!r.ok) {
       return setError(t(r.reason === 'limit' ? 'proj.err.limit' : r.reason === 'duplicate' ? 'proj.err.duplicateProject' : 'proj.err.required', { max: MAX_PROJECTS_PER_COMPANY }));
     }
-    open({ kind: 'project', projectId: r.id }, importAfter ? '/data' : '/home');
+    open({ kind: 'project', projectId: r.id }, importAfter ? '/data' : '/');
   };
 
   const sampleCompany = basePack.isSample ? t('proj.launch.sampleCompany') : tx(basePack.company.name);

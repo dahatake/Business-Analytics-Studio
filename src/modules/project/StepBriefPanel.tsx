@@ -1,0 +1,163 @@
+import { useMemo, useState } from 'react';
+import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
+import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
+import { isUseApproved, preflight } from '../../ai/client.ts';
+import { useI18n } from '../../i18n/index.ts';
+import { useActiveProject } from '../../state/projects.ts';
+import type { Audience } from '../../state/settings.ts';
+import { Panel } from '../../ui/Panel.tsx';
+import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
+import type { CheckContext } from './deliverables.ts';
+import type { StepDashboard } from './stepDashboard.ts';
+import { briefEntities, buildStepBrief, factText, requestStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
+
+/** SCQA and the pyramid below the answer; shared by the rule-based and the generated brief. */
+function BriefBody({ content, brief, prefix }: { content: BriefContent; brief?: StepBrief; prefix: string }) {
+  const { t, lang } = useI18n();
+  const byId = new Map((brief?.facts ?? []).map((f) => [f.id, f]));
+  return (
+    <div className="step-brief-body">
+      <p className="step-brief-answer" data-testid={`${prefix}-answer`}>{content.answer}</p>
+      <dl className="step-brief-scq">
+        <div><dt>{t('proj.dash.brief.situation')}</dt><dd>{content.situation}</dd></div>
+        <div><dt>{t('proj.dash.brief.complication')}</dt><dd>{content.complication}</dd></div>
+        <div><dt>{t('proj.dash.brief.question')}</dt><dd>{content.question}</dd></div>
+      </dl>
+      {content.findings.length > 0 && (
+        <section>
+          <h3 className="step-dash-subhead">{t('proj.dash.brief.findings')}</h3>
+          <ol className="step-brief-list" data-testid={`${prefix}-findings`}>
+            {content.findings.map((f, i) => {
+              const facts = (brief?.findingFacts[i] ?? []).map((id) => byId.get(id)).filter((x) => !!x);
+              return (
+                <li key={i}>
+                  <span>{f}</span>
+                  {facts.length > 0 && (
+                    <ul className="step-brief-facts" aria-label={t('proj.dash.brief.evidence')}>
+                      {facts.map((x) => <li key={x.id} data-fact={x.id}>{`${x.label[lang]}: ${factText(x, lang)}`}</li>)}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
+      {content.actions.length > 0 && (
+        <section>
+          <h3 className="step-dash-subhead">{t('proj.dash.brief.actions')}</h3>
+          <ol className="step-brief-list" data-testid={`${prefix}-actions`}>{content.actions.map((a, i) => <li key={i}>{a}</li>)}</ol>
+        </section>
+      )}
+      {content.caveats.length > 0 && (
+        <section>
+          <h3 className="step-dash-subhead">{t('proj.dash.brief.caveats')}</h3>
+          <ul className="step-brief-caveats muted" data-testid={`${prefix}-caveats`}>{content.caveats.map((c, i) => <li key={i}>{c}</li>)}</ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/**
+ * FR-319: the step's executive summary. The rule-based brief (every figure from the fact ledger) is always shown;
+ * "Generate with Copilot" adds a generated version next to it, labelled live or mock, dated, checked figure by
+ * figure against the ledger and marked out of date when the data changes (HAX G1, G2, G9, G11, G15).
+ */
+/** The calendar date (JST, as \mt.date\ expects) of an ISO timestamp. */
+const jstDate = (iso: string) => new Date(Date.parse(iso) + 9 * 3_600_000).toISOString().slice(0, 10);
+
+export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: CheckContext; audience: Audience }) {
+  const { t, lang, fmt } = useI18n();
+  const { project } = useActiveProject();
+  const brief = useMemo(() => buildStepBrief(d, ctx, lang, audience), [d, ctx, lang, audience]);
+  const key = `${project?.id ?? 'demo'}:${audience}:${d.step}`;
+  const generated = useStepBriefs((s) => s.byKey[key]);
+  const setGenerated = useStepBriefs((s) => s.set);
+  const live = useAiSettings((s) => liveReady(s)) && isUseApproved('stepBrief');
+  const { dialog, confirmLive } = useLiveConfirm();
+  const [busy, setBusy] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+
+  const generate = async () => {
+    setBusy(true);
+    setCancelled(false);
+    try {
+      let confirmed: { userConfirmed: boolean; personConfirmed: boolean } | undefined;
+      if (live) {
+        const pf = preflight({ use: 'stepBrief', lang, prompt: '', entities: briefEntities(brief, ctx), userConfirmed: true, personConfirmed: true });
+        // Blocked for a reason a confirmation cannot fix (budget, interval…): answer with the mock, ask nothing.
+        if (pf.allowed) {
+          const decision = await confirmLive({
+            use: 'ai.use.stepBrief', scope: t('proj.dash.brief.scope', { step: t(`proj.step.${d.step}`), n: brief.facts.length }), itemCount: brief.refs.length,
+            internalCount: pf.internalCount, personCount: pf.personCount, estimatedCostJpy: pf.estimatedCostJpy,
+            monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
+          });
+          if (!decision.ok) {
+            setCancelled(true);
+            return;
+          }
+          confirmed = { userConfirmed: true, personConfirmed: decision.personConfirmed };
+        }
+      }
+      setGenerated(key, await requestStepBrief(brief, ctx, lang, confirmed));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stale = !!generated && (generated.hash !== brief.hash || generated.lang !== lang);
+  return (
+    <Panel title={t('proj.dash.brief.title')} testId="step-dash-brief" className="span-full">
+      <div className="step-brief">
+        <div className="step-brief-col" data-testid="step-dash-brief-rule">
+          <div className="step-brief-head">
+            <Badge appearance="tint" color="informative">{t('proj.dash.brief.rule')}</Badge>
+            <span className="muted">{t('proj.dash.brief.ruleHint', { n: brief.facts.length })}</span>
+          </div>
+          <BriefBody content={brief} brief={brief} prefix="step-dash-brief" />
+          <details className="step-chart-data" data-testid="step-dash-brief-ledger">
+            <summary>{t('proj.dash.brief.ledger', { n: brief.facts.length })}</summary>
+            <table className="data-table compact">
+              <thead><tr><th scope="col">{t('proj.dash.brief.fact')}</th><th scope="col" className="num">{t('proj.dash.brief.value')}</th></tr></thead>
+              <tbody>{brief.facts.map((f) => <tr key={f.id} data-fact={f.id}><th scope="row">{f.label[lang]}</th><td className="num">{factText(f, lang)}</td></tr>)}</tbody>
+            </table>
+          </details>
+        </div>
+        <div className="step-brief-col" data-testid="step-dash-brief-ai-col">
+          <div className="step-brief-head">
+            <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate()} data-testid="step-dash-brief-generate">
+              {t(generated ? 'proj.dash.brief.regenerate' : 'proj.dash.brief.generate')}
+            </Button>
+          </div>
+          <p className="muted">{t(live ? 'proj.dash.brief.liveHint' : 'proj.dash.brief.mockHint')}</p>
+          {cancelled && <p className="muted" data-testid="step-dash-brief-cancelled">{t('proj.dash.brief.cancelled')}</p>}
+          {generated && (
+            <div className="step-brief-ai" data-testid="step-dash-brief-ai" data-mode={generated.mode} data-stale={stale}>
+              {generated.mode === 'mock'
+                ? <MockNotice reasons={generated.blockedReasons} />
+                : <LiveNotice costJpy={generated.costJpy ?? null} {...(generated.usage ? { usage: generated.usage } : {})} />}
+              <div className="step-brief-meta">
+                <span className="muted" data-testid="step-dash-brief-at">{t('proj.dash.brief.at', { at: `${fmt.date(jstDate(generated.at))} ${fmt.time(new Date(generated.at))}` })}</span>
+                {stale && <Badge appearance="filled" color="warning" data-testid="step-dash-brief-stale">{t('proj.dash.brief.stale')}</Badge>}
+                <Button appearance="subtle" size="small" icon={<Dismiss20Regular />} onClick={() => setGenerated(key, null)} data-testid="step-dash-brief-dismiss">
+                  {t('proj.dash.brief.dismiss')}
+                </Button>
+              </div>
+              {generated.check.unverified.length > 0 ? (
+                <MessageBar intent="warning" data-testid="step-dash-brief-unverified">
+                  <MessageBarBody>{t('proj.dash.brief.unverified', { list: generated.check.unverified.join(', ') })}</MessageBarBody>
+                </MessageBar>
+              ) : (
+                <p className="step-brief-verified" data-testid="step-dash-brief-verified">{t('proj.dash.brief.verified', { n: generated.check.checked })}</p>
+              )}
+              <BriefBody content={generated.content} prefix="step-dash-brief-ai" />
+            </div>
+          )}
+        </div>
+      </div>
+      {dialog}
+    </Panel>
+  );
+}

@@ -9,7 +9,7 @@ import { MotionBehaviourProvider } from '@fluentui/react-motion';
 import { useI18n } from './i18n/index.ts';
 import { useSettings } from './state/settings.ts';
 import { useEffectiveDark, useReducedMotion } from './state/motion.ts';
-import { hrefFor, useRoute, useRouteTarget } from './state/router.ts';
+import { hrefFor, navigate, useRoute, useRouteTarget } from './state/router.ts';
 import { sound } from './audio/sound.ts';
 import { loaded } from './data/pack.ts';
 import { companyAnchorRequiresInternalView } from './data/companyAnchor.ts';
@@ -35,19 +35,15 @@ function useThemes(): { dark: Theme; light: Theme } {
   }), [brand]);
 }
 
-function TopBar({ restricted }: { restricted: boolean }) {
+function TopBar({ restricted, onHome }: { restricted: boolean; onHome: () => void }) {
   const { t } = useI18n();
   const { muted, setMuted, setMotion, audience, setAudience } = useSettings();
-  const reopenLaunch = useLaunch((s) => s.reopen);
   const reduced = useReducedMotion();
   return (
     <header className="topbar">
       <div className="topbar-row">
-        <Tooltip content={t('proj.target.launch')} relationship="description">
-          <button type="button" className="brand brand-button" onClick={() => {
-            reopenLaunch();
-            requestAnimationFrame(() => document.getElementById('main')?.focus());
-          }}>
+        <Tooltip content={t('proj.nav.home')} relationship="description">
+          <button type="button" className="brand brand-button" onClick={onHome}>
             <span className="brand-mark" aria-hidden />
             <Text weight="semibold" size={400} className="brand-name">{t('app.title')}</Text>
           </button>
@@ -193,8 +189,14 @@ export function App() {
 
   const themes = useThemes();
   const chromeRef = useRef<HTMLDivElement>(null);
+  const focusMainAfterNavigation = useRef(false);
   const stage = useLaunch((s) => s.stage);
   useChromeHeight(chromeRef, stage === 'app');
+  useLayoutEffect(() => {
+    if (!focusMainAfterNavigation.current) return;
+    focusMainAfterNavigation.current = false;
+    document.getElementById('main')?.focus();
+  }, [route]);
   const navItem = useMemo(() => (route.segments[0] === 'entity' ? undefined : screenFor(route.path)), [route.path, route.segments]);
   useEffect(() => {
     document.title = stage !== 'app'
@@ -217,7 +219,14 @@ export function App() {
         <>
           <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>{t('a11y.skip')}</button>
           <div className="chrome" ref={chromeRef}>
-            <TopBar restricted={restricted} />
+            <TopBar restricted={restricted} onHome={() => {
+              const home = hrefFor('/home');
+              if (window.location.hash === home) document.getElementById('main')?.focus();
+              else {
+                focusMainAfterNavigation.current = true;
+                navigate(home);
+              }
+            }} />
             {!restricted && <LiveFeedBar />}
             {!restricted && <StepBandSlot />}
           </div>

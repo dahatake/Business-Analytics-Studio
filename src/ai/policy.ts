@@ -18,11 +18,13 @@
  *   materials before saving; the call is included in the existing approval, cost estimate and per-run limit.
  * - D-20 (user, 2026-11-12): "recommend" (FR-050, "Ask AI for suggestions" on a discussion theme) is approved for the
  *   configured provider, with the theme's related items and attached files, after a per-send confirmation.
+ * - D-22 (user, 2026-11-15): "stepBrief" (FR-318, "Generate with Copilot" on a step dashboard) is approved for the
+ *   configured provider, with the step's fact ledger and the items it names, after a per-send confirmation.
  */
 export type AiUse =
   | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
   | 'explain' | 'presentation' | 'aiUsageAnalysis' | 'review' | 'import' | 'storyVideo' | 'connectionTest'
-  | 'research' | 'brandResearch' | 'packBuild' | 'alignmentProposal' | 'deliverableDraft';
+  | 'research' | 'brandResearch' | 'packBuild' | 'alignmentProposal' | 'deliverableDraft' | 'stepBrief';
 
 export type Provider = 'foundry' | 'copilotSdk';
 
@@ -100,6 +102,14 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
     decidedBy: 'docs/company-project-alignment-study.md §9 (2026-11-12)',
   },
   deliverableDraft: TBD_ROW(['§3.1 has no row for deliverable drafts yet (FR-136)', 'D-9 proposal awaiting user approval (docs/decision-guide.md)']),
+  stepBrief: {
+    provider: ['foundry', 'copilotSdk'],
+    data: 'The step\'s fact ledger (counts, ratios, KPI values, costs computed from the project; labels only), the names of the issues, causes, KPIs and solutions it cites (filtered for the audience; internal allowed, D-2; no person entities) and the rule-based summary built from the same facts. No source excerpts, attached files, discussion text or other app data',
+    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + per-send confirmation of the items and cost (Foundry charges unknown, not capped by the app budget)',
+    costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+    openQuestions: [],
+    decidedBy: 'docs/decision-guide.md D-22 (2026-11-15)',
+  },
 };
 
 export function isApproved(row: UseApproval): boolean {
@@ -164,6 +174,8 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   // Output 4,000: the reported output includes reasoning; 5 short Japanese lines measured 1,494 tokens (claude-haiku-4.5),
   // so 1,500 would cut off a reasoning deployment on Foundry (max_completion_tokens) before any answer.
   recommend: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 48_000, maxOutputTokens: 4000 },
+  // D-22: the ledger and the rule-based brief are a few thousand characters; output 4,000 leaves room for reasoning models.
+  stepBrief: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
 };
 
 /** D-20: characters of one recommend prompt + context (server/relay.ts); attached text is shortened to fit below it. */

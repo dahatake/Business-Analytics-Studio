@@ -5,7 +5,7 @@ import {
   DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Cube24Regular,
   Organization24Regular, Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
   Bot24Regular, PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, KeyMultiple24Regular, TaskListSquareLtr24Regular,
-  DocumentDatabase24Regular,
+  DocumentDatabase24Regular, Gauge24Regular,
 } from '@fluentui/react-icons';
 import type { MessageKey } from '../i18n/index.ts';
 import { Overview } from '../screens/Overview.tsx';
@@ -43,6 +43,7 @@ const lazyNamed = <K extends string>(load: () => Promise<Record<K, ComponentType
 /** Every screen of the app. Feature modules own their screen files under src/modules/<module>/. */
 export const SCREENS: ScreenDef[] = [
   { path: '/home', label: 'proj.nav.home', Icon: Rocket24Regular, group: 'start', component: lazyNamed(() => import('../modules/project/HomeScreen.tsx'), 'HomeScreen') },
+  { path: '/step', label: 'proj.dash.nav', Icon: Gauge24Regular, group: 'start', hiddenFromNav: true, component: lazyNamed(() => import('../modules/project/StepDashboardScreen.tsx'), 'StepDashboardScreen') },
   { path: '/deliverables', label: 'dlv.nav', Icon: TaskListSquareLtr24Regular, group: 'start', component: lazyNamed(() => import('../modules/project/DeliverablesScreen.tsx'), 'DeliverablesScreen') },
   { path: '/', label: 'nav.overview', Icon: Home24Regular, group: 'analyze', component: Overview },
   { path: '/analysis', label: 'proj.nav.analysis', Icon: DataPie24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/project/AnalysisScreen.tsx'), 'AnalysisScreen') },
@@ -86,7 +87,7 @@ export function screenFor(path: string): ScreenDef | undefined {
 }
 
 /** Light screens loaded in idle time after start-up, so their first visit opens without a loading spinner. */
-const IDLE_PRELOAD = ['/relations', '/map', '/flows', '/plan', '/optimize', '/directory', '/settings'];
+const IDLE_PRELOAD = ['/step', '/relations', '/map', '/flows', '/plan', '/optimize', '/directory', '/settings'];
 
 export function preloadScreensWhenIdle() {
   const idle = (run: () => void) =>

@@ -250,12 +250,12 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(17);
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(18);
     await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(12);
-    // D-1 "explain", D-12 "packBuild", D-13 "connectionTest", D-17 "alignmentProposal" and D-20 "recommend" (in table order).
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(5);
+    // D-1 "explain", D-12 "packBuild", D-13 "connectionTest", D-17 "alignmentProposal", D-20 "recommend" and D-22 "stepBrief" (in table order).
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(6);
     await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'recommend');
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'alignmentProposal');
+    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'stepBrief');
 
     await page.goto('/#/assistant');
     await page.getByTestId('ai-chat-input').fill('lead time');
@@ -583,7 +583,12 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
       req.on('end', () => {
         received.push({ url: req.url ?? '', apiKey: req.headers['api-key'] as string | undefined, body: Buffer.concat(chunks).toString('utf8') });
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ choices: [{ message: { content: 'Stub live explanation of the screen.' } }], usage: { prompt_tokens: 2000, completion_tokens: 300 } }));
+        const body = Buffer.concat(chunks).toString('utf8');
+        // D-22: a step brief in the requested sections, with one figure (987,654) that is in no fact ledger.
+        const content = body.includes('[bas-proj:stepBrief:')
+          ? '### answer\nStub brief: fix the definitions first.\n### situation\nStub situation.\n### complication\nStub complication with 987,654 open items.\n### question\nWhat first?\n### findings\n- Stub finding.\n### actions\n- Stub action.\n### caveats\n- Stub caveat.'
+          : 'Stub live explanation of the screen.';
+        res.end(JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 2000, completion_tokens: 300 } }));
       });
     });
     await new Promise<void>((done) => stub.listen(0, '127.0.0.1', done));
@@ -693,6 +698,37 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(received.length).toBe(before);
   });
 
+  test('D-22: [Generate with Copilot] on a step dashboard confirms first, labels the answer live and flags a figure not in the fact ledger', async ({ page }) => {
+    await configure(page, 'en');
+    await page.goto('/#/step?step=kpi');
+    const gen = page.getByTestId('step-dash-brief-generate');
+    await expect(page.getByTestId('step-dash-brief-ai-col')).toContainText('You confirm the items and the cost');
+    received.length = 0;
+    await gen.click();
+    const dialog = page.getByTestId('ai-live-confirm');
+    await expect(dialog).toContainText('Step executive summary');
+    expect(received).toHaveLength(0);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByTestId('step-dash-brief-cancelled')).toBeVisible();
+    expect(received).toHaveLength(0);
+
+    await gen.click();
+    if (await dialog.getByTestId('ai-live-person-check').count()) await dialog.getByTestId('ai-live-person-check').check();
+    await dialog.getByTestId('ai-live-send').click();
+    const ai = page.getByTestId('step-dash-brief-ai');
+    await expect(ai).toHaveAttribute('data-mode', 'live');
+    await expect(ai.getByTestId('ai-live-label')).toContainText('Live');
+    await expect(ai.getByTestId('step-dash-brief-ai-answer')).toHaveText('Stub brief: fix the definitions first.');
+    await expect(ai.getByTestId('step-dash-brief-unverified')).toContainText('987,654');
+    expect(received).toHaveLength(1);
+    const sent = JSON.stringify((JSON.parse(received[0]!.body) as { messages: unknown[] }).messages);
+    expect(sent).toContain('[bas-proj:stepBrief:kpi]');
+    expect(sent).toContain('Fact ledger:');
+    const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { use: string }[];
+    expect(ledger.at(-1)!.use).toBe('stepBrief');
+    expect(JSON.stringify(ledger)).not.toContain('Stub brief');
+    expect(await scan(page)).toEqual([]);
+  });
   test('D-20: "Ask AI for suggestions" confirms items and attached files, then sends the theme with its text attachment', async ({ page }) => {
     await page.addInitScript(() => {
       if (localStorage.getItem('bas.proj.ui')) return;

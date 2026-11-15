@@ -10,37 +10,14 @@ import { AuthorBadge, BackToHome, downloadText, useTargetNames } from './common.
 import {
   evaluateStep, fieldHintKey, fieldKey, hasDate, hasNumber, inputKey, normalizeDeliverables, PAYBACK_LIMIT_RANGE, PAYBACK_MAX_YEARS, progressOf, resultKey,
   setField, setPaybackLimit, STEP_DEFS,
-  type CheckContext,
 } from './deliverables.ts';
 import { deliverableNameKey, StrategySummary, TodoItem, todayIn, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
+import { inputCount } from './stepDashboard.ts';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
 import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
 import './project.css';
 
 const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_STEPS as readonly string[]).includes(s);
-
-/** How much of each existing input the step can use (so the user sees what is already there). */
-function inputCount(id: string, c: CheckContext): number {
-  const n = (kind: string) => c.pack.pack.entities.filter((e) => e.kind === kind).length;
-  switch (id) {
-    case 'issues': return n('issue');
-    case 'causes': return n('cause');
-    case 'sources': return n('source');
-    case 'discussion': return c.discussion.themes.length + c.discussion.records.length;
-    case 'analyses': return c.analysis.analyses.length;
-    case 'kpis': return n('kpi');
-    case 'flows': return n('deal') + n('deliverable') + n('invoice');
-    case 'projectKpis': return c.kpi.kpis.length;
-    case 'okrs': return c.kpi.okrs.length;
-    case 'objectives': return c.objectives?.length ?? 0;
-    case 'useCases': return c.useCases.filter((u) => u.origin === 'registered').length;
-    case 'solutions': return n('solution');
-    case 'personas': return new Set(c.useCases.map((u) => u.persona)).size;
-    case 'initiatives': return n('initiative');
-    case 'people': return n('person');
-    default: return 0;
-  }
-}
 
 /** The project's own payback hurdle (the plan check uses it); who set it and when is kept with the value. */
 function PaybackCriterion() {

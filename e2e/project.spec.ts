@@ -121,14 +121,15 @@ test.describe('project module', () => {
     await page.getByTestId('launch-company-name').fill('Contoso');
     await page.getByTestId('launch-project-name').fill('Alpha');
     await page.getByTestId('launch-create').click();
-    await expect(page).toHaveURL(/#\/home/);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+    await expect(page).toHaveURL(/#\/$/);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('経営サマリー');
+    await expect(page.getByRole('link', { name: '概要' })).toHaveAttribute('aria-current', 'page');
     await expect(page.locator('header.topbar')).not.toContainText(/青空精機|架空/);
     await expect(page.getByTestId('proj-target-menu')).toContainText('Contoso-Alpha');
 
-    // The choice holds for the session: a reload goes straight to the project screen.
+    // The choice holds for the session: a reload goes straight to the project overview.
     await page.reload();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('経営サマリー');
 
     await page.getByTestId('proj-target-menu').click();
     await page.getByTestId('proj-target-launch').click();
@@ -171,7 +172,7 @@ test.describe('project module', () => {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
   });
 
-  test('app title returns to launch by click and keyboard without losing project work', async ({ page }) => {
+  test('app title opens the main screen by click and keyboard without losing project work', async ({ page }) => {
     await go(page, '/home');
     await createCompanyAndProjects(page, 'Contoso', ['Alpha']);
     await chooseTarget(page, 'Alpha');
@@ -181,17 +182,19 @@ test.describe('project module', () => {
     await expect(page.getByTestId('proj-canvas-title')).toHaveText('Keep this project work');
 
     const title = page.getByRole('button', { name: 'Business Analytics Studio', exact: true });
-    const launch = page.getByTestId('launch-screen');
+    const home = page.getByRole('heading', { level: 1, name: 'Contoso-Alpha' });
     const reopenProject = async () => {
       await page.getByRole('button', { name: 'Contoso-Alpha を開く', exact: true }).click();
       await expect(page.getByTestId('proj-target-menu')).toContainText('Contoso-Alpha');
     };
     await title.click();
-    await expect(launch).toBeVisible();
-    await expect(launch).toBeFocused();
+    await expect(page).toHaveURL(/#\/home/);
+    await expect(home).toBeVisible();
+    await expect(page.locator('#main')).toBeFocused();
+    await page.getByTestId('proj-target-menu').click();
+    await page.getByTestId('proj-target-launch').click();
+    await expect(page.getByTestId('launch-screen')).toBeVisible();
     await expect(page.getByTestId('launch-company-Contoso')).toContainText('Alpha');
-    await page.reload();
-    await expect(launch).toBeVisible();
     await reopenProject();
     await nav(page, '/discussion');
     await expect(page.getByTestId('proj-canvas-title')).toHaveText('Keep this project work');
@@ -199,9 +202,10 @@ test.describe('project module', () => {
     for (const key of ['Enter', 'Space']) {
       await title.focus();
       await title.press(key);
-      await expect(launch).toBeVisible();
-      await expect(launch).toBeFocused();
-      await reopenProject();
+      await expect(page).toHaveURL(/#\/home/);
+      await expect(home).toBeVisible();
+      await expect(page.locator('#main')).toBeFocused();
+      await nav(page, '/discussion');
     }
     await nav(page, '/discussion');
     await expect(page.getByTestId('proj-canvas-title')).toHaveText('Keep this project work');
@@ -221,10 +225,13 @@ test.describe('project module', () => {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
     await expect(current).toContainText('KPI/OKR 定義');
-    await expect(page.getByTestId('proj-home-step')).toContainText('KPI/OKR 定義');
+    // Activating a step opens its dashboard (FR-317); focus stays on the stepper for further keyboard use.
+    await expect(page).toHaveURL(/#\/step\?step=kpi/);
+    await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', 'kpi');
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.press('Space');
     await expect(current).toContainText('あるべき姿');
+    await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', 'tobe');
     for (const b of await stepper.getByRole('button').all()) {
       const bb = await b.boundingBox();
       expect(bb!.height).toBeGreaterThanOrEqual(44);

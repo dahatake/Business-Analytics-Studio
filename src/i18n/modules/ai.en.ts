@@ -225,6 +225,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.use.research': 'Research',
   'ai.use.brandResearch': 'Brand research',
   'ai.use.deliverableDraft': 'Deliverable drafts',
+  'ai.use.stepBrief': 'Step executive summary',
   'ai.use.packBuild': 'Customer pack creation',
   'ai.use.alignmentProposal': 'Company-project alignment proposal',
   'ai.usage.title': 'Usage and budget',

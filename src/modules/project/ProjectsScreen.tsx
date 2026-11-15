@@ -123,7 +123,10 @@ export function ProjectsScreen() {
           onDeleteCompany={() => management.deleteCompany(c)}
           onEditProject={setEditProject}
           onDeleteProject={management.deleteProject}
-          onOpen={(p) => setTarget({ kind: 'project', projectId: p.id })}
+          onOpen={(p) => {
+            navigate(hrefFor('/'));
+            setTarget({ kind: 'project', projectId: p.id });
+          }}
           onGenerate={(p) => void onGenerate(p)}
           onExport={onExport}
           date={fmt.date}
@@ -140,7 +143,7 @@ export function ProjectsScreen() {
           prefill={gen.prefill}
           onClose={() => setGen(null)}
           onOpenProject={(projectId) => {
-            navigate(hrefFor('/home'));
+            navigate(hrefFor('/'));
             setTarget({ kind: 'project', projectId });
             // A pack saved for the project that is already active needs an explicit restart to be loaded (main.tsx).
             reloadAfterDeviceSave();

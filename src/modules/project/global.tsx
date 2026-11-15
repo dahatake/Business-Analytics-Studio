@@ -66,7 +66,7 @@ function WorkTargetMenu() {
   );
 }
 
-/** FR-136 / G-006: the five improvement steps (PARAM-030), current step marked, keyboard operable, ≥ 44 px (PARAM-086). */
+/** FR-136 / G-006: the five improvement steps (PARAM-030), current step marked, keyboard operable, ≥ 44 px (PARAM-086). FR-317: a click also opens the step dashboard. */
 function Stepper() {
   const { t } = useI18n();
   const { step } = useActiveProject();
@@ -96,7 +96,7 @@ function Stepper() {
                 data-step={s}
                 data-complete={complete}
                 title={`${i + 1} ${t(`proj.step.${s}`)}${complete ? ` — ${t('dlv.status.done')}` : ''}`}
-                onClick={() => setStep(s)}
+                onClick={() => { setStep(s); navigate(hrefFor('/step', { step: s })); }}
                 onKeyDown={(e) => onKey(e, i)}
               >
                 <span className="proj-step-num">{i + 1}</span>{' '}

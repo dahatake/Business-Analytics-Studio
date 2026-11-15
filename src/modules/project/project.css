@@ -551,3 +551,117 @@
 .sol-range > legend, .sol-okr-link > legend { padding: 0 4px; }
 .sol-contrib-list { padding-left: 20px; }
 .sol-def-propose { margin: 8px 0; }
+/* FR-317: step dashboard */
+.step-dash-summary { display: grid; gap: 8px; }
+.step-dash-summary p { margin: 0; }
+.step-dash-deliverable { font-weight: var(--fontWeightSemibold); }
+.step-dash-progress { display: flex; align-items: center; gap: 12px; max-width: 480px; }
+.step-dash-progress > span { white-space: nowrap; }
+.step-dash-progress .fui-ProgressBar { flex: 1 1 auto; }
+.step-dash-subhead { font-size: var(--fontSizeBase300); margin: 8px 0 4px; }
+.step-dash-signoffs, .step-dash-inputs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.step-dash-tiles { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); }
+.step-dash-tile {
+  display: grid; gap: 6px; align-content: start; height: 100%; box-sizing: border-box; min-height: 44px;
+  padding: 12px 14px; border-radius: var(--borderRadiusLarge); border: 1px solid var(--colorNeutralStroke2);
+  border-left-width: 4px; background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); text-decoration: none;
+}
+.step-dash-tile:hover { background: var(--colorNeutralBackground1Hover); }
+.step-dash-tile:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.step-dash-tile[data-tone='ok'] { border-left-color: var(--colorPaletteGreenBorder2); }
+.step-dash-tile[data-tone='open'] { border-left-color: var(--colorPaletteDarkOrangeBorder2); }
+.step-dash-tile[data-tone='empty'], .step-dash-tile[data-tone='info'] { border-left-color: var(--colorNeutralStroke1); }
+.step-dash-tile-label { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
+.step-dash-tile-value { font-size: var(--fontSizeHero700); line-height: var(--lineHeightHero700); font-weight: var(--fontWeightSemibold); }
+.step-dash-tile[data-tone='empty'] .step-dash-tile-value { font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500); color: var(--colorNeutralForeground2); }
+.step-dash-tile-sub { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
+.step-dash-tile-state { justify-self: start; }
+.step-dash-yes { color: var(--colorPaletteGreenForeground1); }
+.step-dash-no { color: var(--colorPaletteDarkOrangeForeground1); font-weight: var(--fontWeightSemibold); }
+.step-dash-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 8px; margin: 0; }
+.step-dash-stat { display: grid; gap: 2px; }
+.step-dash-stat dt { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
+.step-dash-stat dd { margin: 0; font-size: var(--fontSizeBase500); font-weight: var(--fontWeightSemibold); }
+/* FR-319: step executive summary */
+.step-brief { display: grid; gap: 16px 24px; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); align-items: start; }
+.step-brief-col { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.step-brief-col + .step-brief-col { border-left: 1px solid var(--colorNeutralStroke2); padding-left: 24px; }
+@media (max-width: 800px) { .step-brief-col + .step-brief-col { border-left: 0; padding-left: 0; border-top: 1px solid var(--colorNeutralStroke2); padding-top: 16px; } }
+.step-brief-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.step-brief-body { display: grid; gap: 8px; }
+.step-brief-body section { min-width: 0; }
+.step-brief-answer { margin: 0; font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); font-weight: var(--fontWeightSemibold); max-width: 80ch; }
+.step-brief-scq { display: grid; gap: 4px; margin: 0; }
+.step-brief-scq > div { display: grid; grid-template-columns: minmax(64px, max-content) 1fr; gap: 8px; }
+.step-brief-scq dt { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); font-weight: var(--fontWeightSemibold); }
+.step-brief-scq dd { margin: 0; max-width: 80ch; }
+.step-brief-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 80ch; }
+.step-brief-facts { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.step-brief-facts > li {
+  font-size: var(--fontSizeBase200); padding: 1px 8px; border-radius: var(--borderRadiusCircular);
+  border: 1px solid var(--colorNeutralStroke1); background: var(--colorNeutralBackground2); color: var(--colorNeutralForeground2);
+}
+.step-brief-caveats { margin: 0; padding-left: 20px; }
+.step-brief-ai { display: grid; gap: 8px; padding: 12px; border-radius: var(--borderRadiusLarge); border: 1px solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground2); }
+.step-brief-ai[data-stale='true'] { border-style: dashed; border-color: var(--colorPaletteDarkOrangeBorder2); }
+.step-brief-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.step-brief-verified { margin: 0; color: var(--colorPaletteGreenForeground1); }
+/* FR-318: step charts (bars on a shared track; state is shown by glyph and line style as well as colour) */
+.step-chart { margin: 0 0 12px; display: grid; gap: 6px; min-width: 0; }
+.step-chart-title { font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); font-weight: var(--fontWeightSemibold); }
+.step-chart-read { margin: 0; font-size: var(--fontSizeBase200); max-width: 80ch; }
+.step-chart-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
+.step-chart-key { display: inline-flex; align-items: center; gap: 6px; }
+.step-chart-swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; box-sizing: border-box; }
+.step-chart-swatch.is-target, .step-chart-swatch.is-today, .step-chart-swatch.is-median { width: 0; height: 14px; border-radius: 0; }
+.step-chart-swatch.is-current { width: 10px; height: 10px; border-radius: 50%; }
+.step-chart-rows, .step-chart-bridges { display: grid; gap: 6px; }
+.step-chart-bridges { gap: 16px; }
+.step-chart-bridge { display: grid; gap: 4px; }
+.step-chart-bridge-name { font-weight: var(--fontWeightSemibold); }
+.step-chart-row { display: grid; grid-template-columns: minmax(96px, 28%) minmax(120px, 1fr) minmax(88px, max-content); gap: 12px; align-items: center; }
+.step-chart-row.is-cut { border-top: 2px dashed var(--colorNeutralStroke1); padding-top: 6px; }
+.step-chart-row.is-total { border-top: 1px solid var(--colorNeutralStroke1); padding-top: 4px; font-weight: var(--fontWeightSemibold); }
+.step-chart-label { overflow-wrap: anywhere; font-size: var(--fontSizeBase200); }
+.step-chart-value { font-variant-numeric: tabular-nums; white-space: nowrap; font-size: var(--fontSizeBase200); text-align: right; }
+.step-chart-track { position: relative; height: 18px; border-radius: 2px; background: var(--colorNeutralBackground3); }
+.step-chart-track.is-plain { background: transparent; border-bottom: 1px solid var(--colorNeutralStroke2); }
+.step-chart-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; min-width: 2px; box-sizing: border-box; }
+.step-chart-bar.is-float { top: 3px; bottom: 3px; }
+.step-chart-bar.is-brand, .step-chart-swatch.is-brand, .step-chart-fill { background: var(--colorBrandBackground); }
+.step-chart-bar.is-neutral, .step-chart-swatch.is-neutral { background: var(--colorNeutralForeground3); }
+.step-chart-bar.is-good, .step-chart-swatch.is-good { background: var(--colorPaletteGreenBackground3); }
+.step-chart-bar.is-bad, .step-chart-swatch.is-bad { background: var(--colorPaletteRedBackground3); }
+.step-chart-bar.is-plan, .step-chart-swatch.is-plan { background: var(--colorNeutralBackground5); border: 1px solid var(--colorNeutralStrokeAccessible); overflow: hidden; }
+.step-chart-bar.is-conflict { border: 2px dashed var(--colorPaletteRedBorder2); }
+.step-chart-fill { position: absolute; left: 0; top: 0; bottom: 0; }
+.step-chart-band, .step-chart-swatch.is-band { background: var(--colorBrandBackground2); border: 1px solid var(--colorBrandStroke1); box-sizing: border-box; }
+.step-chart-band { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; }
+.step-chart-mark { position: absolute; top: -3px; bottom: -3px; width: 0; margin-left: -1px; }
+.step-chart-mark.is-target, .step-chart-swatch.is-target { border-left: 2px dashed var(--colorNeutralForeground1); }
+.step-chart-mark.is-today, .step-chart-swatch.is-today { border-left: 2px dotted var(--colorBrandForeground1); }
+.step-chart-mark.is-median, .step-chart-swatch.is-median { border-left: 3px solid var(--colorNeutralForeground1); }
+.step-chart-dot, .step-chart-swatch.is-current { background: var(--colorNeutralBackground1); border: 2px solid var(--colorNeutralForeground1); box-sizing: border-box; }
+.step-chart-dot { position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); }
+.step-chart-dot.is-total { background: var(--colorNeutralForeground1); }
+.step-chart-ok { color: var(--colorPaletteGreenForeground1); font-weight: var(--fontWeightSemibold); }
+.step-chart-ng { color: var(--colorPaletteRedForeground1); font-weight: var(--fontWeightSemibold); }
+.step-chart-heat { display: grid; grid-template-columns: minmax(120px, 1.6fr) repeat(var(--cols), minmax(64px, 1fr)); gap: 2px; align-items: stretch; }
+.step-chart-heat-row { display: contents; }
+.step-chart-heat-head { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); text-align: center; padding: 0 2px 4px; align-self: end; }
+.step-chart-heat .step-chart-label { align-self: center; }
+.step-chart-cell { display: grid; place-items: center; min-height: 28px; border-radius: 2px; font-weight: var(--fontWeightSemibold); }
+.step-chart-cell.is-good { background: var(--colorPaletteGreenBackground1); color: var(--colorPaletteGreenForeground1); border: 1px solid var(--colorPaletteGreenBorder2); }
+.step-chart-cell.is-bad { background: var(--colorPaletteRedBackground1); color: var(--colorPaletteRedForeground1); border: 1px solid var(--colorPaletteRedBorder2); }
+.step-chart-data > summary { cursor: pointer; font-size: var(--fontSizeBase200); color: var(--colorBrandForegroundLink); min-height: 24px; display: list-item; }
+.step-chart-data[open] > summary { margin-bottom: 4px; }
+@media (max-width: 600px) {
+  .step-chart-row { grid-template-columns: 1fr minmax(72px, max-content); }
+  .step-chart-row .step-chart-label { grid-column: 1 / -1; }
+}
+@media (forced-colors: active) {
+  .step-chart-bar, .step-chart-fill, .step-chart-swatch, .step-chart-band, .step-chart-dot.is-total { forced-color-adjust: none; background: CanvasText; border-color: CanvasText; }
+  .step-chart-bar.is-plan, .step-chart-band, .step-chart-swatch.is-band { background: Canvas; }
+  .step-chart-fill { background: Highlight; }
+  .step-chart-mark { border-color: CanvasText; }
+}

@@ -226,7 +226,7 @@ function ReadinessPanel() {
           prefill={prefill}
           onClose={() => setOpen(false)}
           onOpenProject={(projectId) => {
-            navigate(hrefFor('/home'));
+            navigate(hrefFor('/'));
             setTarget({ kind: 'project', projectId });
             reloadAfterDeviceSave();
           }}

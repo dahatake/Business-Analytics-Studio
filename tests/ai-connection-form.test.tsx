@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeLedger } from '../src/ai/client.ts';
-import { ConnectionActions, FoundryFields, PriceFields } from '../src/modules/ai/AiConnectionForm.tsx';
+import { AiReadiness, ConnectionActions, FoundryFields, PriceFields } from '../src/modules/ai/AiConnectionForm.tsx';
+import { LiveNotice, TokenTable } from '../src/modules/ai/AiCommon.tsx';
+import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import type { ConnectionSaveResult } from '../src/modules/ai/relayClient.ts';
 import { useAiSettings, type AiSettingsState } from '../src/modules/ai/settingsStore.ts';
 import { useSettings } from '../src/state/settings.ts';
@@ -36,6 +38,18 @@ afterEach(() => {
 });
 
 describe('connection test action', () => {
+  it('shows Copilot cost limitations without asking for a price, and displays reported or unavailable tokens', () => {
+    useAiSettings.setState({ provider: 'copilotSdk', copilotModel: 'gpt-5', liveEnabled: true });
+    const { rerender } = render(<><PriceFields /><AiReadiness /><LiveNotice costJpy={null} usage={{ inputTokens: 10, outputTokens: 20 }} /></>);
+    expect(screen.queryByTestId('ai-price-request')).toBeNull();
+    expect(screen.getByTestId('ai-provider-cost-note').textContent).toContain('cannot be capped');
+    expect(screen.getByTestId('ai-readiness').textContent).not.toContain('Unit price');
+    expect(screen.getByTestId('ai-live-tokens').textContent).toContain('30');
+    rerender(<><LiveNotice costJpy={null} usage={{ inputTokens: null, outputTokens: null }} />
+      <TokenTable summary={summarizeTokens([{ at: new Date().toISOString(), use: 'packBuild', inputTokens: null, outputTokens: null, costJpy: null }])} /></>);
+    expect(screen.getByTestId('ai-live-tokens').textContent).toContain('Unavailable');
+    expect(screen.getByTestId('ai-tokens-total-value').textContent).toBe('Unavailable');
+  });
   it.each<{ patch: Partial<AiSettingsState>; reason: string }>([
     { patch: { endpoint: 'https://other.example/api/projects/project' }, reason: 'project URL' },
     { patch: { endpoint: '' }, reason: 'HTTPS resource URL' },

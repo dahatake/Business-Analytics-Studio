@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { samplePack } from '../src/data/sample.ts';
 import { loadPack } from '../src/data/pack.ts';
 import { translate, type MessageKey } from '../src/i18n/core.ts';
@@ -13,14 +13,13 @@ import {
   type CheckContext, type DeliverableData,
 } from '../src/modules/project/deliverables.ts';
 import type { EntityOf } from '../src/data/schema.ts';
-import { isUseApproved } from '../src/ai/client.ts';
-import { C03_TABLE, isApproved } from '../src/ai/policy.ts';
+import { setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
 import { BAND_LIST_HEIGHT_GUESS, shouldAutoExpand, todoHref } from '../src/modules/project/deliverablesUi.tsx';
 import { parseHash } from '../src/state/router.ts';
-import { buildDraft, draftPrompt, draftToText, parseDraftText, requestDeliverableDraft } from '../src/modules/project/deliverableDraft.ts';
-import { requestAnalysisDraft } from '../src/modules/project/mocks.ts';
+import { buildDraft, buildTaskDrafts, draftEntities, draftPrompt, draftRequest, draftToText, parseDraftText, parseTaskDrafts, requestDeliverableDraft } from '../src/modules/project/deliverableDraft.ts';
 import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContribution, type StrategyData } from '../src/modules/project/strategy.ts';
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
+import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -59,6 +58,20 @@ function drafted(c: CheckContext, lang: 'ja' | 'en' = 'ja', audience: 'internal'
 }
 
 const OBJECTIVE = { id: 'obj-mtp-1', text: '中期経営計画: 2027 年度までに納期遵守率 98 %' };
+
+describe('task business impact scenarios', () => {
+  const input = { baselineBenefit: '1000', baselineCost: '200', benefit: '1800', cost: '300', investment: '1400', years: '3' };
+  it('compares annual and cumulative net benefit against the current baseline', () => {
+    expect(simulateTaskImpact(input)).toEqual({ ok: true, baselineAnnual: 800, scenarioAnnual: 1500, annualChange: 700, totalChange: 700, paybackYears: 2 });
+    expect(simulateTaskImpact({ ...input, benefit: '900' })).toEqual({ ok: true, baselineAnnual: 800, scenarioAnnual: 600, annualChange: -200, totalChange: -2000, paybackYears: null });
+  });
+  it('does not silently turn absent, invalid or excessive assumptions into zero', () => {
+    for (const patch of [{ benefit: '' }, { cost: '-1' }, { investment: '1.5' }, { years: '0' }, { years: '51' }, { benefit: '10000000000001' }]) {
+      expect(simulateTaskImpact({ ...input, ...patch })).toEqual({ ok: false });
+    }
+    expect(simulateTaskImpact({ ...input, investment: '0' })).toMatchObject({ ok: true, paybackYears: 0 });
+  });
+});
 
 /**
  * What a person does on the strategy panels: confirm each solution's type (digital only where a use case exists),
@@ -134,6 +147,7 @@ describe('step deliverables: definitions', () => {
     expect(target('solution', 'sol-target')).toBe('sol-sim');
     expect(target('deliverable', 'dlv-trace')).toBe('sol-thread');
     expect(target('deliverable', 'dlv-docs')).toBe('sol-docs');
+    expect(target('deliverable', 'plan-payback')).toBe('dlv-criteria');
   });
 
   it('defines a deliverable for each of the five steps with fields, exit criteria and at least one human sign-off', () => {
@@ -413,20 +427,76 @@ describe('Draft with Copilot', () => {
     expect(data.docs.asis?.problem).toEqual({ text: 'ai problem', author: 'ai', updatedAt: 't3' });
   });
 
-  it('goes through the C-03 gate; without approval the mock answers and says why', async () => {
+  afterEach(() => {
+    setLiveTransport(null);
+    setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
+    writeLedger([]);
+  });
+
+  it('requires confirmation and never substitutes a mock on failure', async () => {
     const c = demoCtx();
-    const { response, fields } = await requestDeliverableDraft({ step: 'asis', ctx: c, lang: 'ja', audience: 'internal' });
-    expect(response.mode).toBe('mock');
-    expect(response.blockedReasons).toContain('c03NotApproved');
-    expect(Object.keys(fields).sort()).toEqual(STEP_DEFS.asis.fields.map((f) => f.id).sort());
-    expect(draftPrompt({ step: 'asis', ctx: c, lang: 'en', audience: 'internal' })).toContain('### <fieldId>');
-    // Mocks are picked by use, so the full field set above came from the 'deliverableDraft' mock. Drafts have their own
-    // C-03 row (D-9), still blocked, so approving another use cannot turn them live.
-    expect(isApproved(C03_TABLE.deliverableDraft)).toBe(false);
-    expect(isUseApproved('deliverableDraft')).toBe(false);
-    expect(C03_TABLE.deliverableDraft.openQuestions.join(' ')).toContain('D-9');
-    // The analysis draft keeps its own 'structure' mock.
-    const analysis = await requestAnalysisDraft('swot', 'ja', []);
-    expect(analysis.items.length).toBeGreaterThan(0);
+    const input = { step: 'asis', ctx: c, lang: 'ja', audience: 'internal' } as const;
+    const send = vi.fn().mockRejectedValue(new Error('offline'));
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true }));
+    setLiveTransport(send);
+    await expect(requestDeliverableDraft(input, draftRequest(input))).rejects.toThrow('notConfirmed');
+    expect(send).not.toHaveBeenCalled();
+    await expect(requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true })).rejects.toThrow('offline');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts complete live sections for every step and rejects incomplete responses', async () => {
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true }));
+    for (const step of IMPROVEMENT_STEPS) {
+      writeLedger([]);
+      const input = { step, ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
+      const sections = [
+        ...STEP_DEFS[step].fields.map((f) => `### ${f.id}\nfield`),
+        ...STEP_DEFS[step].todos.map((todo) => `### task-${todo.id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n検証: 記録を照合\n影響: 要試算`),
+      ].join('\n');
+      setLiveTransport(async () => ({ text: sections, inputTokens: 10, outputTokens: 10 }));
+      const result = await requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true });
+      expect(result.response.mode).toBe('live');
+      expect(Object.keys(result.tasks)).toHaveLength(STEP_DEFS[step].todos.length);
+      expect(Object.keys(result.fields)).toHaveLength(STEP_DEFS[step].fields.length);
+    }
+    writeLedger([]);
+    const input = { step: 'asis', ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
+    setLiveTransport(async () => ({ text: '### problem\nincomplete', inputTokens: 10, outputTokens: 10 }));
+    await expect(requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true })).rejects.toThrow('必要な項目がありません');
+    writeLedger([]);
+    const incompleteTasks = [
+      ...STEP_DEFS.asis.fields.map((f) => `### ${f.id}\nfield`),
+      ...STEP_DEFS.asis.todos.map((todo) => `### task-${todo.id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n影響: 要試算`),
+    ].join('\n');
+    setLiveTransport(async () => ({ text: incompleteTasks, inputTokens: 10, outputTokens: 10 }));
+    await expect(requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true })).rejects.toThrow('task-define-causes');
+  });
+
+  it('keeps task sections separate and links missing causes to the issue', () => {
+    const raw = clone();
+    const issue = raw.entities.find((e) => e.kind === 'issue')!;
+    if (issue.kind !== 'issue') throw new Error('Expected issue');
+    issue.causeIds = [];
+    const ctx = demoCtx({ pack: loadPack(raw) });
+    expect(buildTaskDrafts({ step: 'asis', ctx, lang: 'en', audience: 'internal' })['define-causes']).toContain('not enough evidence');
+    expect(parseTaskDrafts('asis', '### task-define-causes\ncheck\n### task-bogus\nignore\n### problem\nfield')).toEqual({ 'define-causes': 'check' });
+    expect(parseDraftText('asis', '### problem\nfield\n### task-define-causes\ncheck')).toEqual({ problem: 'field' });
+    const cause = byId('asis', ctx)['define-causes']!;
+    const route = parseHash(todoHref(cause));
+    expect(route.query.get('edit')).toBe(issue.id);
+    expect(route.query.get('field')).toBe('causeIds');
+  });
+
+  it('excludes internal entities and project free text for external audiences', () => {
+    const c = demoCtx();
+    const input = { step: 'asis', ctx: c, lang: 'en', audience: 'external' } as const;
+    const request = draftRequest(input);
+    expect(request.entities).toEqual(draftEntities(c, 'external'));
+    expect(request.entities?.every((e) => e.classification === 'shareable' && e.sourceIds.every((id) => c.pack.byId.get(id)?.classification === 'shareable'))).toBe(true);
+    expect(draftPrompt(input)).toContain('Project data: null');
+    for (const entity of c.pack.pack.entities.filter((e) => e.classification === 'internal')) {
+      expect(request.prompt).not.toContain(entity.id);
+    }
   });
 });

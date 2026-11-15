@@ -30,8 +30,8 @@ export interface CopilotStatus {
 
 export interface CopilotCompletion {
   text: string;
-  inputTokens: number;
-  outputTokens: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
   /** Premium requests consumed (sum of the reported model-multiplier cost, else the model multiplier). */
   premiumRequests: number;
 }
@@ -163,11 +163,17 @@ export class CopilotService {
     let outputTokens = 0;
     let reportedCost = 0;
     let usageEvents = 0;
+    let tokensAvailable = true;
     const off = session.on('assistant.usage', (event) => {
       const d = event.data ?? {};
       usageEvents++;
-      if (typeof d.inputTokens === 'number') inputTokens += d.inputTokens;
-      if (typeof d.outputTokens === 'number') outputTokens += d.outputTokens;
+      if (typeof d.inputTokens === 'number' && Number.isFinite(d.inputTokens) && d.inputTokens >= 0 &&
+          typeof d.outputTokens === 'number' && Number.isFinite(d.outputTokens) && d.outputTokens >= 0) {
+        inputTokens += d.inputTokens;
+        outputTokens += d.outputTokens;
+      } else {
+        tokensAvailable = false;
+      }
       if (typeof d.cost === 'number') reportedCost += d.cost;
     });
     const onAbort = () => void session.abort().catch(() => undefined);
@@ -185,7 +191,7 @@ export class CopilotService {
       const text = answer?.data?.content;
       if (typeof text !== 'string' || text.trim() === '') throw new CopilotError('emptyAnswer');
       const multiplier = typeof model?.billing?.multiplier === 'number' ? model.billing.multiplier : 1;
-      return { text, inputTokens, outputTokens, premiumRequests: reportedCost > 0 ? reportedCost : Math.max(1, usageEvents) * multiplier };
+      return { text, inputTokens: usageEvents && tokensAvailable ? inputTokens : null, outputTokens: usageEvents && tokensAvailable ? outputTokens : null, premiumRequests: reportedCost > 0 ? reportedCost : Math.max(1, usageEvents) * multiplier };
     } catch (err) {
       if (err instanceof CopilotError) {
         if (err.code === 'timeout') await session.abort().catch(() => undefined);

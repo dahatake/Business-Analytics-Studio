@@ -57,7 +57,7 @@ Connection tests, explanations and pack generation do not require a price. Confi
 reports distinguish unknown costs from free mock answers; usage summaries show the known-cost subtotal and the count
 of unpriced calls separately. The app cannot enforce a Foundry monetary billing cap without pricing; check Azure billing
 and configure Azure budget alerts. Token caps, per-use daily quotas, intervals, timeouts and consent still apply.
-A zero app budget blocks sends. Copilot premium-request pricing and known-cost budget enforcement are unchanged.
+A zero app budget blocks sends. Copilot also requires no unit price; its charges are unknown and cannot be capped by the app budget. Check GitHub billing and spending limits. Old Copilot price settings are removed on migration; historical ledger records remain.
 Story video remains mock-only and needs no Foundry price.
 
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
@@ -110,7 +110,7 @@ material only.
 (`copilot` → `/login`). The relay never sees or stores a GitHub token. Each call creates a session with **no tools**
 (`availableTools: []`, every permission request rejected), the system prompt **replaced** by the pack builder's, the
 session store off and an empty working directory, and deletes the session afterwards. A cancel that arrives while the session is being created sends nothing. With `BAS_RELAY_OUTBOUND_HOSTS` set, both Copilot routes answer `403 outboundNotAllowed` unless the Copilot hosts are listed. Cost is reported as premium
-requests (the runtime's reported model cost, else the model multiplier).
+requests (the runtime's reported model cost, else the model multiplier), not a currency charge. Per-call `assistant.usage` input and output tokens are summed; if any usage event lacks valid counts, or no event arrives, both counts are `null` rather than a fabricated zero. See the [SDK usage documentation](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md).
 
 | Route | Body | Answer |
 |---|---|---|

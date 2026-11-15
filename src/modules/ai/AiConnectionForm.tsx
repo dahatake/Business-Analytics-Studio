@@ -7,7 +7,7 @@ import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, 
 import { useI18n } from '../../i18n/index.ts';
 import { D4Warning } from './AiCommon.tsx';
 import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode } from './relayClient.ts';
-import { connectionTestPreflight, isConfigured, liveReady, parseBudget, providerPrices, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { connectionTestPreflight, isConfigured, liveReady, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
 
@@ -511,19 +511,13 @@ function copilotErrorKey(code: string | null): (typeof COPILOT_ERRORS)[number] {
   return (COPILOT_ERRORS as readonly string[]).includes(code ?? '') ? (code as (typeof COPILOT_ERRORS)[number]) : code === null ? 'notSignedIn' : 'providerError';
 }
 
-/** Foundry cost notice or Copilot premium-request pricing (D-12). */
+/** Cost notice for the selected provider. */
 export function PriceFields() {
   const { t } = useI18n();
   const s = useAiSettings();
-  const ok = providerPrices(s) !== null;
   return (
     <div className="ai-stack">
-      {s.provider === 'copilotSdk' ? (
-        <Field label={t('ai.price.perRequest')} hint={t('ai.price.perRequestHint')}>
-          <Input inputMode="decimal" value={s.copilotPricePerRequest} onChange={(_, d) => s.update({ copilotPricePerRequest: d.value })} data-testid="ai-price-request" />
-        </Field>
-      ) : <p className="muted" data-testid="ai-foundry-cost-note">{t('ai.cost.unknown')}</p>}
-      {s.provider === 'copilotSdk' && !ok && <p className="muted" data-testid="ai-price-missing">{t('ai.price.missing')}</p>}
+      <p className="muted" data-testid="ai-provider-cost-note">{t(s.provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown')}</p>
     </div>
   );
 }
@@ -532,13 +526,12 @@ export function PriceFields() {
 export function AiReadiness() {
   const { t } = useI18n();
   const s = useAiSettings();
-  const items: ['relay' | 'configured' | 'prices' | 'live' | 'workiq', boolean][] = [
+  const items: ['relay' | 'configured' | 'live' | 'workiq', boolean][] = [
     ['relay', s.relayReachable],
     ['configured', isConfigured(s)],
     ['live', s.liveEnabled],
   ];
-  if (s.provider === 'copilotSdk') items.splice(2, 0, ['prices', providerPrices(s) !== null]);
-  else items.splice(2, 0, ['workiq', workIqReady(s)]);
+  if (s.provider === 'foundry') items.splice(2, 0, ['workiq', workIqReady(s)]);
   return (
     <ul className="ai-readiness" data-testid="ai-readiness">
       {items.map(([key, ok]) => (
@@ -567,7 +560,7 @@ export function AiQuickSettings() {
       )}
       <ProviderChoice />
       {s.provider === 'copilotSdk' ? <CopilotSettings /> : <FoundryFields />}
-      {s.provider === 'copilotSdk' && <><h3 className="ai-h3">{t('ai.price.titleCopilot')}</h3><PriceFields /></>}
+      <PriceFields />
       <BudgetInput />
       <Switch checked={s.liveEnabled} onChange={(_, d) => s.update({ liveEnabled: d.checked })} label={t('ai.settings.liveSwitch')} data-testid="ai-live-switch" />
       <p className="muted">{t('ai.settings.liveNote')}</p>

@@ -915,6 +915,17 @@ describe('GitHub Copilot adapter (server/copilot.ts)', () => {
     expect(f.deleted).toEqual(['s1']);
   });
 
+  it('sums SDK usage events and distinguishes absent or incomplete usage from zero', async () => {
+    const complete = async (usage: Record<string, unknown>[]) => new CopilotService(async () => fakeSdk({ usage }).sdk)
+      .complete({ model: 'gpt-5', system: 'S', prompt: 'P', timeoutMs: 1000 });
+    expect(await complete([{ inputTokens: 100, outputTokens: 50 }, { inputTokens: 20, outputTokens: 0 }]))
+      .toMatchObject({ inputTokens: 120, outputTokens: 50 });
+    expect(await complete([])).toMatchObject({ inputTokens: null, outputTokens: null });
+    expect(await complete([{ inputTokens: 10, outputTokens: 5 }, { inputTokens: 3 }]))
+      .toMatchObject({ inputTokens: null, outputTokens: null });
+    expect(await complete([{ inputTokens: 0, outputTokens: 0 }])).toMatchObject({ inputTokens: 0, outputTokens: 0 });
+  });
+
   it('falls back to the model multiplier when no cost is reported, and maps failures', async () => {
     const f = fakeSdk({ usage: [{ inputTokens: 1, outputTokens: 1 }] });
     expect((await new CopilotService(async () => f.sdk).complete({ model: 'claude-opus', system: 'S', prompt: 'P', timeoutMs: 1000 })).premiumRequests).toBe(10);

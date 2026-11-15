@@ -7,8 +7,7 @@
  * - D-2: internal information MAY be sent externally (this amends Q-055). Person data still needs FR-219 confirmation.
  * - D-3: one monthly budget of 100,000 JPY for the whole app (user-changeable in settings).
  * - D-4: contracts/rights are settled before the app is started; the UI shows that assumption as a warning.
- * - D-9 (proposal, not approved): deliverable drafts get their own row instead of borrowing "structure"; it stays
- *   blocked until "explain" is measured (D-8), §3.1 has the row and the user approves it.
+ * - D-23 (user, 2026-11-15): deliverable and task drafts have their own approved row and require per-send confirmation.
  * - D-12 (user, 2026-11-10): "packBuild" (FR-311, customer pack generated in the app) is approved for the configured
  *   provider, Microsoft Foundry or GitHub Copilot SDK, within the single monthly budget of 100,000 JPY.
  * - D-13 (2026-11-11): fixed synthetic Foundry connection tests are approved through the settings route only.
@@ -55,7 +54,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   recommend: {
     provider: ['foundry', 'copilotSdk'],
     data: 'The discussion theme title, the theme\'s related items (internal allowed, D-2; person items only after FR-219 confirmation) and its attached files: text files as text in the prompt (shortened to fit), images and PDF as files only when the selected model reads that type. No other themes, records or app data',
-    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + per-send confirmation of the items, attached files, person data and cost (Foundry charges unknown, not capped by the app budget)',
+    enableCondition: 'Live switch on (FR-132) + provider configured + per-send confirmation of items, attachments, person data and unknown charges (not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-20 (2026-11-12)',
@@ -88,7 +87,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   packBuild: {
     provider: ['foundry', 'copilotSdk'],
     data: 'Company and project names, purpose, as-of date, official site URL, fetched pages and news headlines, attached work material and research note, optional company anchor scope, stated objectives, KPIs, segments, issues, source metadata and supplied excerpts (internal allowed, D-2), the verified customer pack and its retrieved materials for all five analysis methods (D-18), and with Microsoft Foundry only the Work IQ answers and citation titles (D-14); no analyst hypotheses or unrelated app data',
-    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + confirmation of content, data-owner approval and cost information (Foundry charges unknown, not capped by the app budget)',
+    enableCondition: 'Live switch on (FR-132) + provider configured + confirmation of content, data-owner approval and unknown charges (not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-12 and D-18 (2026-11-12)',
@@ -96,16 +95,23 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   alignmentProposal: {
     provider: ['foundry', 'copilotSdk'],
     data: 'Project purpose and user-entered project KPI, company-stated objectives and KPIs, company source metadata, and selected project source metadata and up to eight source-linked issue, cause, solution, initiative, KPI or OKR summaries per source; summaries can be AI-generated, not original evidence. No source excerpts, person entities, analyst hypotheses, full pack or other app data; free text can still contain personal information',
-    enableCondition: 'Live switch on + configured provider + Copilot premium-request price when applicable + separate per-send confirmation of the displayed content, data-owner and personal-data approval, and cost information (Foundry charges unknown and not capped by the app budget)',
+    enableCondition: 'Live switch on + configured provider + separate confirmation of content, data-owner and personal-data approval, and unknown charges (not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/company-project-alignment-study.md §9 (2026-11-12)',
   },
-  deliverableDraft: TBD_ROW(['§3.1 has no row for deliverable drafts yet (FR-136)', 'D-9 proposal awaiting user approval (docs/decision-guide.md)']),
+  deliverableDraft: {
+    provider: ['foundry', 'copilotSdk'],
+    data: 'Visible issue, cause, KPI, solution, initiative and source names and descriptions and their relationships; project decisions, KPI values and registered use-case summaries only for internal audiences. Free text may contain personal information. No attachment contents or person entities.',
+    enableCondition: 'Live switch on + configured provider + per-send confirmation of request, data ownership, possible personal information and unknown charges (not capped by the app budget)',
+    costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
+    openQuestions: [],
+    decidedBy: 'docs/decision-guide.md D-23 (2026-11-15)',
+  },
   stepBrief: {
     provider: ['foundry', 'copilotSdk'],
     data: 'The step\'s fact ledger (counts, ratios, KPI values, costs computed from the project; labels only), the names of the issues, causes, KPIs and solutions it cites (filtered for the audience; internal allowed, D-2; no person entities) and the rule-based summary built from the same facts. No source excerpts, attached files, discussion text or other app data',
-    enableCondition: 'Live switch on (FR-132) + the chosen provider configured in the relay + Copilot premium-request price when using Copilot + per-send confirmation of the items and cost (Foundry charges unknown, not capped by the app budget)',
+    enableCondition: 'Live switch on (FR-132) + provider configured + per-send confirmation of items and unknown charges (not capped by the app budget)',
     costCapJpy: DEFAULT_MONTHLY_BUDGET_JPY,
     openQuestions: [],
     decidedBy: 'docs/decision-guide.md D-22 (2026-11-15)',
@@ -170,6 +176,7 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   // JSON and stops the run). The Foundry deployment accepted max_completion_tokens up to 128,000.
   packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
+  deliverableDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
   // D-20: a prompt of RECOMMEND_MAX_PROMPT_CHARS (at most that many tokens) plus up to 10 files at MEDIA_TOKEN_ESTIMATE each.
   // Output 4,000: the reported output includes reasoning; 5 short Japanese lines measured 1,494 tokens (claude-haiku-4.5),
   // so 1,500 would cut off a reasoning deployment on Foundry (max_completion_tokens) before any answer.

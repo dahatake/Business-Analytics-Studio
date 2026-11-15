@@ -162,7 +162,7 @@ export const MAX_GAP_TOPICS = 8;
 export const FOLLOWUP_ANSWER_MAX_CHARS = 3_000;
 export const MAX_FOLLOWUP_CHARS = 48_000;
 
-export interface CallResult { text: string; costJpy: number | null; inputTokens: number; outputTokens: number }
+export interface CallResult { text: string; costJpy: number | null; inputTokens: number | null; outputTokens: number | null }
 
 export interface GenDeps {
   /** `stage` lets the caller attribute the call's tokens to the generation step in the usage ledger. */
@@ -199,7 +199,7 @@ export interface ProgressEvent {
   errors?: number;
   costJpy: number | null;
   /** Input + output tokens the provider reported for the calls finished so far. */
-  tokens: number;
+  tokens: number | null;
 }
 
 const STEP_SPAN: Record<StepId, [number, number]> = {
@@ -233,7 +233,7 @@ export interface GenerationReport {
   inputs: Omit<PackGenInput, 'materials'> & { materials: { name: string; chars: number; text: string }[] };
   retrieved: RetrievedItem[];
   retrievalErrors: { what: 'site' | 'news' | 'workiq'; url?: string; error: string }[];
-  calls: { stage: GenStage; costJpy: number | null; inputTokens: number; outputTokens: number; ms: number; trimmedChars?: number; retried?: boolean }[];
+  calls: { stage: GenStage; costJpy: number | null; inputTokens: number | null; outputTokens: number | null; ms: number; trimmedChars?: number; retried?: boolean }[];
   costJpy: number | null;
   fixRounds: number;
   /** Items removed because they still failed verification after the fix rounds (with what depended on them). */
@@ -1170,7 +1170,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const calls: GenerationReport['calls'] = [];
   const emit = (step: StepId, status: StepStatus, within = status === 'done' ? 1 : 0, extra: Partial<ProgressEvent> = {}) => {
     const [a, b] = STEP_SPAN[step];
-    onProgress({ step, status, ratio: a + (b - a) * within, costJpy, tokens: calls.reduce((n, c) => n + c.inputTokens + c.outputTokens, 0), ...extra });
+    onProgress({ step, status, ratio: a + (b - a) * within, costJpy, tokens: calls.reduce<number | null>((n, c) => n === null || c.inputTokens === null || c.outputTokens === null ? null : n + c.inputTokens + c.outputTokens, 0), ...extra });
   };
   const cancelled = () => new PackGenError('cancelled', 'cancelled', costJpy);
   /*

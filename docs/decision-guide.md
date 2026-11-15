@@ -17,7 +17,7 @@
 | D-7 | P-03（削除と保持）を承認。推奨の保持期間（利用量の記録 13 か月、削除は明示操作だけ） | 利用者 | — | 設定画面の「データの保持と削除」、AI の接続設定の画面の記録の削除 |
 | D-8 | P-04 と追加 2 点（操作ごとの判定の基準、測定中は他の負荷を流さない） | 利用者 | — | `src/config/measurement.ts`、`npm run measure`、`npm run kpi1`、[measurement-plan.md](measurement-plan.md)、性能試験の直列実行 |
 | I-1〜I-6 | 推奨の選択肢 | 利用者が AI に一任 | — | 下の §4 の各行 |
-| D-9 | **提案（未承認）。** 「Copilotでドラフト作成」は `structure` を借りず、専用の用途 `deliverableDraft` を C-03 の表に持つ。行は未承認のままにし、実接続はしない | 利用者が AI に一任（選択肢の比較は §0.1） | なし（許可行は増えない）。§3.1 への行は未追加 | `src/ai/policy.ts` の `C03_TABLE.deliverableDraft`、`src/modules/project/deliverableDraft.ts` |
+| D-9 | 当初は `deliverableDraft` を独立した未承認用途とした。後の D-23 がこの用途に限って実接続を許可 | 利用者が AI に一任（選択肢の比較は §0.1）、後に明示許可 | 現在の条件は D-23 と §3.1 | `src/ai/policy.ts` の `C03_TABLE.deliverableDraft`、`src/modules/project/deliverableDraft.ts` |
 | D-10 | サンプルの数値の食い違いは、KPI（担当者・出典・期間がある値）を正として文章の側を直す。再発を防ぐため、現状分析の自動判定に「数値の照合」を加える | 利用者が AI に一任（§0.1） | なし | `src/data/sample.ts`（issue-cash）、`src/modules/project/discussion.ts`（rec-demo-1）、`deliverables.ts` の `asis-reconcile` |
 | D-11 | 投資回収の判定は構築期間を含め、上限は Project ごとに設定できる（既定 3 年はアプリの仮定と表示し、設定した人と日付を残す）。ToDo 帯を自動で開く条件は、画面の高さ 900px ではなく、固定の領域（開いた一覧を含む）が画面の高さの 35% 以内のとき | 利用者が AI に一任（§0.1） | なし | `deliverables.ts` の `paybackYears`・`paybackLimit`、`DeliverablesScreen.tsx` の「判定の基準」、`deliverablesUi.tsx` の `shouldAutoExpand` |
 | D-12 | **利用者の決定（2026-11-10）。** 顧客パックをアプリ内で生成AIに作らせる用途 `packBuild` を、設定済みの接続先（Azure の Microsoft Foundry、または GitHub Copilot）で許可する。費用は月 100,000 円まで（D-3 の 1 つの枠） | 利用者（依頼「設定済みのLLM(AzureもしくはGitHub Copilot)を使ってください」「予算は100,000円/月まで許可します」） | C-03 の許可行が 2 行になる（`explain`・`packBuild`）。`explain` は Foundry だけのまま。§3.1 への行・FR-311・PARAM-145〜149 の正式な反映は未完了（下の §0.2） | `src/ai/policy.ts` の `C03_TABLE.packBuild`、`src/modules/project/packGenerate.ts`、`PackGenerateDialog.tsx`、中継（`server/relay.ts`・`copilot.ts`・`site.ts`） |
@@ -31,6 +31,7 @@
 | D-20 | **利用者の決定（2026-11-12）。** 議論画面の「AI に提案を依頼」（FR-050・`recommend`）を、設定済みの接続先（Microsoft Foundry、または GitHub Copilot SDK）で許可する。送るのはテーマ名、テーマに関係する項目（internal を含む、D-2。人物は FR-219 の確認後）、テーマの添付ファイル（テキストは依頼の文に入れ、32,000 文字に収まるよう短くする。画像・PDF は選んだモデルが読める形式だけをファイルとして送る）。他のテーマ・記録・アプリ内のデータは送らない。送信ごとに、項目数・社外秘と人物の件数・送る添付と送らない添付・概算費用を確認してから送る。上限は 1 日 30 回、5 秒間隔、入力 48,000 トークン（推定）、出力 4,000 トークン（出力には推論分が含まれ、短い 5 行の提案で 1,494 トークンを実測したため）、90 秒、D-3 の共通予算。応答は「AI 提案」として記録し、決定にするのは利用者の操作だけ（FR-050） | 利用者（明示回答「`**要判断**`: 承認します。」） | C-03 の許可行が 5 行になる（`recommend`・`explain`・`connectionTest`・`packBuild`・`alignmentProposal`）。Foundry の実請求は不明で予算で制限されない | `src/ai/policy.ts` の `C03_TABLE.recommend`・`PER_USE_LIMITS.recommend`、`src/modules/project/mocks.ts`（`suggestionRequest`・`parseSuggestions`）、`DiscussionScreen.tsx`、`src/modules/ai/AiCommon.tsx`（添付の確認）、`server/relay.ts`（専用の指示文・文字数） |
 | D-21 | **本会話の依頼に基づく実装判断（2026-11-13）。** 経営・KPI/OKR・Project の結び付け、貢献のシミュレーション、解決策の種類ごとの成果物（FR-312〜FR-316）は、端末内の決定的な計算（種付きの乱数のモンテカルロ・鎖のデータからの文書の組み立て）だけで実装する。Azure の資源と GitHub Copilot SDK は利用が許可されたが、数値と結び付けを生成 AI に作らせると「値を作らない・数値に出典」の規則と C-03 の用途別の承認に反し、再現性も失うため使わない。新しい C-03 用途・外部送信・費用は発生しない（Azure の予算 10,000 円/月は未使用）。KPI/OKR の定義の取得は既存の顧客パック作成（`packBuild`・Work IQ）の指示に加えるだけで、送信先・回数は変えない | 本会話の利用者（依頼「Microsoft Azureのリソースを使用してよいです。GitHub Copilot SDKも使用してよいです」） | 定義案・成果物の文は人が仕上げる（【要記入】）。生成 AI による下書きは、別途 C-03 の用途の承認を得てから追加できる | `src/modules/project/strategy.ts`・`simulate.ts`・`solutionDocs.ts`・`StrategyPanels.tsx`、`src/data/kpiDefinition.ts`、[strategy-linkage-study.md](strategy-linkage-study.md) |
 | D-22 | **本会話の依頼に基づく判断（2026-11-15）。** 段のダッシュボードのエグゼクティブサマリー（FR-319・`stepBrief`）を、設定済みの接続先（Microsoft Foundry、または GitHub Copilot SDK）で許可する。送るのは段の名前、その段のファクト台帳、ファクトが参照する項目（社外向けの表示では非表示の項目を除く。人物は送らない）、ルールベースのサマリーの文だけ。送信ごとに項目数・社外秘の件数・概算費用を確認してから送る。上限は 1 日 30 回、5 秒間隔、入力 16,000・出力 4,000 トークン、D-3 の共通予算。数値とグラフは決定的な計算のまま（D-21）で、AI は文だけを書き、その数値をファクト台帳と照合して台帳にない数値を「未確認」と示す | 本会話の利用者（依頼「［Copilotで生成］ボタンをつけていいです」） | C-03 の許可行が 6 行になる。取り消すときは `C03_TABLE.stepBrief` を未確定に戻せば、ボタンはルールベースの文を「モック」と表示するだけになる | `src/ai/policy.ts` の `C03_TABLE.stepBrief`・`PER_USE_LIMITS.stepBrief`、`src/modules/project/stepBrief.ts`・`StepBriefPanel.tsx`、`server/relay.ts`（専用の指示文） |
+| D-23 | **本会話の依頼に基づく判断（2026-11-15）。** 成果物とタスクの提案 `deliverableDraft` に限り、設定済みの Foundry または GitHub Copilot SDK を使用する。送信内容・接続先・費用・自由文中の人物情報とデータ所有者の許可を毎回確認する。社外向けでは非公開項目とプロジェクト自由文を除く。出力はドラフトとして保存し、個別の承認まで確定しない。送信拒否・接続失敗・不完全応答をモックで代用しない。上限は 1 日 30 回、5 秒間隔、入力 16,000・出力 8,000 トークン、D-3 の共通予算 | 利用者（「モックではなく、実装をしてください。AzureやGitHub Copilotの予算を使うことを許可します。」） | 他用途は承認しない。Foundry の実請求は不明でアプリ予算により制限されない | `src/ai/policy.ts`、`src/modules/project/deliverableDraft.ts`、`src/modules/project/deliverablesUi.tsx` |
 | I-4 | 被写界深度は「見送り」を推奨していたが、既定で無効・High 品質と演出が有効なときだけ使え、FPS が下がると最初に切る形なら KPI-5 を損なわないため実装に変更 | 利用者が AI に一任 | — | 3D ビュー |
 
 ### 0.1 D-9〜D-11 の選択肢と選んだ理由（2026-11-09）
@@ -44,7 +45,7 @@
 | **C（採用）** | 専用の用途 `deliverableDraft` を作り、未承認の行として表に載せる。承認の条件と行の案をここに残す | 承認の判断が用途ごとに独立し、AI の接続設定の画面にも未承認の行として見える |
 
 行の案（承認時に §3.1 に記載する下書き。**未承認**）: 接続先は Microsoft Foundry。送る情報は `explain` と同じ範囲（D-2 により internal を含む。人物は FR-219 の確認の後だけ。社外向けの表示では internal を除く）。有効の条件は `explain` と同じ（実接続の切替・中継の設定・単価・送信ごとの確認）。1 回の上限は、出力が 1 成果物で 5〜6 項目になるため出力 3,000 トークン程度を候補とする（PARAM は未決）。月の予算は D-3 の 1 つの枠。
-**昇格の条件:** (1) `explain` の実測（D-8）が済み、見直しが終わる (2) §3.1 に行を追加する (3) 利用者が承認する。3 つがそろうまで、ドラフトは端末内のモックで作り「モック」と表示する。
+**当初の昇格条件:** `explain` の実測と見直し、§3.1 への追加、利用者の承認。後の明示依頼により D-23 がこの用途の実接続を許可した。
 
 **D-10 サンプルの数値の食い違い**
 
@@ -69,6 +70,8 @@
 ### 0.2 D-12 顧客パックの生成（2026-11-10）
 
 **要求定義書への反映の下書き（実装済み。FR・PARAM の番号は正本では未採番）**
+
+**2026-11-15 の変更:** Foundry と GitHub Copilot の単価入力を不要とし、どちらの料金も不明として扱う。月予算は料金不明分の請求上限を保証しない。以下は当時の判断の記録。
 
 - **C-03 §3.1 の行** 用途「顧客パックの作成（`packBuild`）」: 接続先 = Microsoft Foundry または GitHub Copilot SDK（利用者が設定で選ぶ）。送る情報 = 企業名・Project 名・目的・基準日・公式サイトの URL、中継が公式サイトから取得したページ本文、ニュースの見出し、利用者が添付した資料と調査メモ（D-2 により internal を含む）。アプリ内のほかのデータは送らない。有効の条件 = 実接続の切替（FR-132）＋選んだ接続先が中継に保存済み（Foundry はエンドポイント・デプロイ・キー、Copilot は CLI のサインインとモデル）＋単価の入力＋開始前に送信内容・データの所有者の承認・概算費用を利用者が確認。費用の上限 = 月 100,000 円（D-3 の枠）。
 - **FR-311** 企業と Project の画面（起動時の選択画面・Project の管理）に「顧客パックを Copilot で作成」を置く。押すと必須（企業名・Project 名・目的・基準日）と任意（公式サイト・業種・重点・ニュースの利用・社内資料・調査メモ）の入力を出し、未入力の必須項目を最初から示す。開始すると、公開情報の取得 → 基盤 → 業務 → 検査と修正 → 検査済みパックの全 5 手法の分析 → 取得報告と保存を進捗バーと経過時間・費用とともに示し、中止できる。検査に通った顧客パックだけを、入力・取得した出典・生成記録・費用（`extensions.generation`）と取得報告（`extensions.collection`）とともに Project に保存する（取り込みと同じ全か無か）。5 手法の分析結果は Project 別の分析データとして保存する。分析画面を開いたときは、保存済みの結果を表示し、分析を再実行しない。同じ画面から AI の設定（接続先・キー・Copilot のモデル・単価・予算・実接続）を開ける。

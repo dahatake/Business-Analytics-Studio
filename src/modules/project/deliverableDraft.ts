@@ -1,4 +1,4 @@
-import { aiComplete, registerMock, type AiResponse } from '../../ai/client.ts';
+import { aiLive, type AiRequest, type AiResponse } from '../../ai/client.ts';
 import type { Entity, EntityOf } from '../../data/schema.ts';
 import { makeFormatters, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { personaLabel } from '../../state/personas.ts';
@@ -6,13 +6,11 @@ import type { ImprovementStep } from '../../state/projects.ts';
 import { loc, type Localizable } from '../../state/text.ts';
 import { computeAnalysis } from './analysis.ts';
 import { describeInsight } from './analysisText.ts';
-import { fieldHintKey, fieldKey, paybackLimit, paybackYears, rankedIssues, SCHEDULE_LAG_MAX, STEP_DEFS, type CheckContext } from './deliverables.ts';
+import { evaluateStep, fieldHintKey, fieldKey, paybackLimit, paybackYears, rankedIssues, resultKey, SCHEDULE_LAG_MAX, STEP_DEFS, todoKey, todoWhyKey, type CheckContext } from './deliverables.ts';
 
 /**
  * "Draft with Copilot": a draft of each step's deliverable, grounded only in the customer pack and the project data.
- * The request goes through aiComplete (C-03 gate) under its own use `deliverableDraft`, so approving another use never
- * turns drafts live by accident (docs/decision-guide.md D-9). While the use is not approved for live sending, the
- * registered deterministic mock below answers and the UI labels the result as mock (FR-011).
+ * The live-only request uses its own C-03 row and never substitutes a mock on failure.
  */
 
 const MARK = '[bas-proj:deliverable:';
@@ -32,7 +30,7 @@ export interface DraftInput {
 }
 
 function visibleOf(ctx: CheckContext, audience: Audience) {
-  const show = (e: Entity) => audience === 'internal' || e.classification === 'shareable';
+  const show = (e: Entity) => audience === 'internal' || (e.classification === 'shareable' && e.sourceIds.every((id) => ctx.pack.byId.get(id)?.classification === 'shareable'));
   const of = <K extends Entity['kind']>(kind: K) => ctx.pack.pack.entities.filter((e): e is EntityOf<K> => e.kind === kind && show(e));
   const get = (id: string) => {
     const e = ctx.pack.byId.get(id);
@@ -304,7 +302,7 @@ export function parseDraftText(step: ImprovementStep, text: string): Record<stri
     }
   };
   for (const line of text.split(/\r?\n/)) {
-    const m = /^#{2,3}\s*([A-Za-z]+)\s*$/.exec(line.trim());
+    const m = /^#{2,3}\s*([A-Za-z0-9-]+)\s*$/.exec(line.trim());
     if (m) {
       flush();
       current = m[1]!;
@@ -315,42 +313,109 @@ export function parseDraftText(step: ImprovementStep, text: string): Record<stri
   return out;
 }
 
+/** A mock is deliberately cautious: it cannot infer a customer's actual cause. */
+export function buildTaskDrafts({ step, ctx, lang }: DraftInput): Record<string, string> {
+  const tr = (k: MessageKey, vars?: Record<string, string | number>) => translate(lang, k, vars);
+  return Object.fromEntries(evaluateStep(step, ctx).map((r) => {
+    const status = r.outcome ? tr(resultKey(r.outcome.code), r.outcome.vars) : tr(r.done ? 'dlv.status.done' : 'dlv.waiting');
+    const cause = r.todo.id === 'define-causes' && !r.done;
+    const guidance = cause
+      ? L(lang, {
+        ja: '選択肢: 業務手順、担当・体制、システム・データのいずれかに原因がある可能性、または複数の要因。推奨: まず担当者への聞き取りと記録の照合で候補を絞る。理由: 現時点では原因を裏付ける情報が不足し、特定の原因を最良とは判断できない。仮説を登録する際は出典と検証方法を記録する。',
+        en: 'Options: process, people or organization, systems or data, or a combination. Recommendation: interview the people involved and check records first. Reason: there is not enough evidence to identify a best cause. Record the source and how each hypothesis will be tested.',
+      })
+      : L(lang, {
+        ja: '選択肢: 既存データを確認・修正する、または不足情報を収集してから判断する。推奨: 根拠を確認し、不足があれば収集する。理由: 根拠のない確定や完了判定を避けるため。',
+        en: 'Options: check and correct existing data, or collect missing information before deciding. Recommendation: check the evidence and collect what is missing. Reason: avoid an unsupported decision or completion.',
+      });
+    return [r.todo.id, `${status}\n${tr(todoWhyKey(r.todo.id))}\n${guidance}`];
+  }));
+}
+
+export function parseTaskDrafts(step: ImprovementStep, text: string): Record<string, string> {
+  const known = new Set(STEP_DEFS[step].todos.map((todo) => todo.id));
+  const result: Record<string, string> = {};
+  let id: string | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    const heading = /^#{2,3}\s*([A-Za-z0-9-]+)\s*$/.exec(line.trim());
+    if (heading) {
+      const key = heading[1]!.startsWith('task-') ? heading[1]!.slice(5) : '';
+      id = known.has(key) ? key : null;
+    } else if (id) result[id] = `${result[id] ?? ''}${line}\n`;
+  }
+  return Object.fromEntries(Object.entries(result).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value));
+}
+
+const TASK_SECTIONS = {
+  ja: ['事実・根拠', '不足情報', '仮説', '選択肢', '推奨', '理由', '検証', '影響'],
+  en: ['Facts and evidence', 'Missing information', 'Hypotheses', 'Options', 'Recommendation', 'Reasoning', 'Verification', 'Impact'],
+} as const;
+
+function completeTaskDraft(text: string, lang: Lang): boolean {
+  const lines = text.split(/\r?\n/).map((line) => line.replace(/\*\*/g, '').trim().replace(/^[-*]\s*/, ''));
+  return TASK_SECTIONS[lang].every((label) => lines.some((line) => {
+    const rest = line.slice(label.length);
+    return line.startsWith(label) && /^[:：]\s*\S/.test(rest);
+  }));
+}
+
 /** The live prompt: what to write, the fields and the project data that is not in the entity context. */
 export function draftPrompt(input: DraftInput): string {
-  const { step, ctx, lang } = input;
+  const { step, ctx, lang, audience } = input;
   const tr = (k: MessageKey) => translate(lang, k);
   const fields = STEP_DEFS[step].fields.map((f) => `- ${f.id}: ${tr(fieldKey(step, f.id))} — ${tr(fieldHintKey(step, f.id))}`).join('\n');
-  const project = {
+  const tasks = evaluateStep(step, ctx).map((r) => `- task-${r.todo.id}: ${tr(todoKey(r.todo.id))}; ${audience === 'external' ? '' : (r.outcome ? translate(lang, resultKey(r.outcome.code), r.outcome.vars) : tr(r.done ? 'dlv.status.done' : 'dlv.waiting'))}`).join('\n');
+  const project = audience === 'internal' ? {
     decisions: ctx.discussion.records.filter((r) => r.kind === 'decision').map((r) => loc(r.text, lang)),
     kpis: ctx.kpi.kpis.map((k) => ({ name: loc(k.name, lang), baseline: k.baseline, current: k.current, target: k.target, deadline: k.deadline })),
     useCases: ctx.useCases.filter((u) => u.origin === 'registered').map((u) => ({ name: loc(u.name, lang), effect: u.effect ? loc(u.effect, lang) : '', steps: u.steps.length })),
-  };
+  } : null;
+  const entities = draftEntities(ctx, audience);
+  const visibleIds = new Set(entities.map((e) => e.id));
+  const facts = entities.map((e) => ({
+    id: e.id, kind: e.kind, sourceIds: e.sourceIds.filter((id) => visibleIds.has(id)),
+    ...(e.kind === 'issue' ? { causeIds: e.causeIds.filter((id) => visibleIds.has(id)), kpiIds: e.kpiIds.filter((id) => visibleIds.has(id)) } : {}),
+    ...(e.kind === 'kpi' ? { baseline: e.baseline, current: e.current, target: e.target, unit: loc(e.unit, lang), period: loc(e.period, lang), direction: e.direction, scale: e.scale } : {}),
+    ...(e.kind === 'solution' ? { issueIds: e.issueIds.filter((id) => visibleIds.has(id)), kpiIds: e.kpiIds.filter((id) => visibleIds.has(id)), costJpy: e.costJpy, annualBenefitJpy: e.annualBenefitJpy } : {}),
+    ...(e.kind === 'initiative' ? { solutionId: visibleIds.has(e.solutionId) ? e.solutionId : null, start: e.start, end: e.end, progress: e.progress } : {}),
+  }));
   return [
     `${MARK}${step}]`,
     `Write a draft of "${tr(`dlv.${step}.name` as MessageKey)}" in ${lang === 'ja' ? 'Japanese' : 'English'}.`,
     'Use only the context entities and the project data below. Mark hypotheses as such and include numbers, units and dates where the data has them.',
     'Answer with one section per field, each starting with a line "### <fieldId>". Fields:',
     fields,
+    'Also write one section per task using "### task-<id>". Each task MUST contain exactly these labelled lines with nonempty content:',
+    TASK_SECTIONS[lang].map((label) => `- ${label}: ...`).join('\n'),
+    'List at least two practical options, recommend one and explain why it is preferable, identify evidence and missing information, label inferred causes and consequences as hypotheses, state assumptions and how to verify them. For impact, state what could change and which inputs are needed to calculate it; do not invent numerical forecasts, causes or sources. If no evidence exists, say so and recommend how to obtain it.',
+    tasks,
+    `Entity facts and relationships: ${JSON.stringify(facts)}`,
     `Project data: ${JSON.stringify(project)}`,
   ].join('\n');
 }
 
-let pending: DraftInput | null = null;
-
 /** Entities the draft is grounded in (what a live model would receive, after redaction by the gate). */
-export function draftEntities(ctx: CheckContext): Entity[] {
+export function draftEntities(ctx: CheckContext, audience: Audience = 'internal'): Entity[] {
   const kinds = new Set(['issue', 'cause', 'kpi', 'solution', 'initiative', 'source']);
-  return ctx.pack.pack.entities.filter((e) => kinds.has(e.kind));
+  const { show } = visibleOf(ctx, audience);
+  return ctx.pack.pack.entities.filter((e) => kinds.has(e.kind) && show(e));
 }
 
-export async function requestDeliverableDraft(input: DraftInput): Promise<{ response: AiResponse; fields: Record<string, string> }> {
-  pending = input;
-  // The use's only mock; registering again replaces it.
-  registerMock('deliverableDraft', () => (pending ? draftToText(buildDraft(pending)) : ''));
-  try {
-    const response = await aiComplete({ use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input), entities: draftEntities(input.ctx) });
-    return { response, fields: parseDraftText(input.step, response.text) };
-  } finally {
-    pending = null;
-  }
+export function draftRequest(input: DraftInput): AiRequest {
+  return { use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input), entities: draftEntities(input.ctx, input.audience) };
+}
+
+export async function requestDeliverableDraft(input: DraftInput, request: AiRequest): Promise<{ response: AiResponse; fields: Record<string, string>; tasks: Record<string, string> }> {
+  const live = await aiLive(request);
+  const fields = parseDraftText(input.step, live.text);
+  const tasks = parseTaskDrafts(input.step, live.text);
+  const missing = [
+    ...STEP_DEFS[input.step].fields.filter((f) => !fields[f.id]).map((f) => f.id),
+    ...STEP_DEFS[input.step].todos.filter((todo) => !tasks[todo.id] || !completeTaskDraft(tasks[todo.id]!, input.lang)).map((todo) => `task-${todo.id}`),
+  ];
+  if (missing.length) throw new Error(input.lang === 'ja'
+    ? `AI の応答に必要な項目がありません: ${missing.join(', ')}`
+    : `Incomplete AI response: ${missing.join(', ')}`);
+  const response: AiResponse = { mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: '', costJpy: live.costJpy, usage: { inputTokens: live.inputTokens, outputTokens: live.outputTokens } };
+  return { response, fields, tasks };
 }

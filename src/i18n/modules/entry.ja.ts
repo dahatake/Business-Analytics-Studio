@@ -12,6 +12,7 @@ export const entryJa = {
   'entry.descriptionHint': '空欄のときは名前を説明として使います。',
   'entry.field.shareable': '社外にも共有できる（オフのときは社内限定）',
   'entry.field.unit': '単位',
+  'entry.field.progressRatio': '進捗（0〜1、1 は 100%）',
   'entry.field.scale': '尺度',
   'entry.field.kpis': '関係する KPI',
   'entry.field.products': '製品',

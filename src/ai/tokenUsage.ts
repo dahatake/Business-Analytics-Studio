@@ -3,9 +3,9 @@ import type { UsageRecord } from './budget.ts';
 /** Token totals of a group of ledger records. Tokens are what the provider reported (or the app's estimate, counted apart). */
 export interface TokenTotals {
   calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
   /** null when any call in the group has an unknown price (Foundry): unknown is never treated as free. */
   costJpy: number | null;
   /** Calls whose tokens are the app's estimate because the provider reported no usage. */
@@ -34,12 +34,12 @@ export function stepOfStage(stage: string | undefined): string | undefined {
 const empty = (): TokenTotals => ({ calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costJpy: 0, estimatedCalls: 0 });
 
 function add(t: TokenTotals, r: Pick<UsageRecord, 'inputTokens' | 'outputTokens' | 'costJpy' | 'estimated'>) {
-  const input = Number.isFinite(r.inputTokens) && r.inputTokens > 0 ? r.inputTokens : 0;
-  const output = Number.isFinite(r.outputTokens) && r.outputTokens > 0 ? r.outputTokens : 0;
+  const input = r.inputTokens !== null && Number.isFinite(r.inputTokens) && r.inputTokens >= 0 ? r.inputTokens : null;
+  const output = r.outputTokens !== null && Number.isFinite(r.outputTokens) && r.outputTokens >= 0 ? r.outputTokens : null;
   t.calls++;
-  t.inputTokens += input;
-  t.outputTokens += output;
-  t.totalTokens += input + output;
+  t.inputTokens = t.inputTokens === null || input === null ? null : t.inputTokens + input;
+  t.outputTokens = t.outputTokens === null || output === null ? null : t.outputTokens + output;
+  t.totalTokens = t.totalTokens === null || input === null || output === null ? null : t.totalTokens + input + output;
   t.costJpy = t.costJpy === null || r.costJpy === null ? null : t.costJpy + r.costJpy;
   if (r.estimated) t.estimatedCalls++;
 }

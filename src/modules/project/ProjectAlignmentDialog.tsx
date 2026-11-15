@@ -220,7 +220,7 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
               {version && (
                 <details>
                   <summary>{t('proj.align.aiTitle')}</summary>
-                  <p>{t('proj.align.aiNotice', { provider: t(`ai.provider.${ai.provider}`), cost: estimate?.estimatedCostJpy == null ? t('ai.cost.unknown') : yenFine(fmt.locale, estimate.estimatedCostJpy) })}</p>
+                  <p>{t('proj.align.aiNotice', { provider: t(`ai.provider.${ai.provider}`), cost: estimate?.estimatedCostJpy == null ? t(ai.provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown') : yenFine(fmt.locale, estimate.estimatedCostJpy) })}</p>
                   <p className="muted">{t('proj.align.aiContents')}</p>
                   <pre className="proj-prewrap" data-testid="alignment-ai-preview">{proposal}</pre>
                   <D4Warning />

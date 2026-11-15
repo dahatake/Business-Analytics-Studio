@@ -4,7 +4,7 @@ import {
 } from '@fluentui/react-components';
 import { Add16Regular, Delete20Regular } from '@fluentui/react-icons';
 import { entitiesOf, getEntity, loaded, packOrigin } from '../../data/pack.ts';
-import type { Region } from '../../data/schema.ts';
+import type { EntityKind, Region } from '../../data/schema.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
 import { commitPackChange, newEntityId, referencesTo, usePackVersion } from '../../state/packEdits.ts';
@@ -12,7 +12,7 @@ import { isHidden } from '../cardSpecs.ts';
 import { ensureSource, hashOfSource, itemOfSource, type AttachmentItem } from '../../state/attachments.ts';
 import { AttachmentField } from './AttachmentField.tsx';
 import {
-  blankEntity, FIELDS, fromForm, setLText, toForm, type EditableKind, type FieldErrors, type FieldSpec, type FormState,
+  blankEntity, FIELDS, fromForm, isEditableKind, setLText, toForm, type EditableKind, type FieldErrors, type FieldSpec, type FormState,
 } from './entitySpecs.ts';
 import './entry.css';
 
@@ -27,13 +27,14 @@ export interface EntityEditorProps {
   onSaved?: (id: string) => void;
   /** Nested editors (creating a referenced item) get distinct test ids. */
   depth?: number;
+  focusField?: string | null;
 }
 
 /**
  * Data entry for customer-pack entities (issues, KPIs, the business chain, people, …).
  * Saved where the project's data lives: its own imported pack, or the per-target overlay on the base pack.
  */
-export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 0 }: EntityEditorProps) {
+export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 0, focusField = null }: EntityEditorProps) {
   const { t, tx, lang } = useI18n();
   const audience = useSettings((s) => s.audience);
   usePackVersion((s) => s.version);
@@ -58,6 +59,19 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
     setConfirmDelete(false);
     // Reset only when another entity is opened, not on every pack change.
   }, [kind, id]);
+
+  useEffect(() => {
+    if (!kind || !focusField) return;
+    const timer = window.setTimeout(() => {
+      const field = document.querySelector(`[data-testid="entry-field-${CSS.escape(focusField)}"]`);
+      const control = field instanceof HTMLElement && (field.matches('input, select, textarea, button') ? field : field.querySelector<HTMLElement>('input, select, textarea, button'));
+      if (control instanceof HTMLElement) {
+        control.focus();
+        control.scrollIntoView({ block: 'center' });
+      }
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [kind, id, focusField]);
 
   const set = (key: string, value: FormState[string]) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -116,8 +130,8 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
     }
   };
 
-  const options = (k: EditableKind, current: string[]) => entitiesOf(k)
-    .filter((e) => e.id !== id && (!isHidden(e, audience) || current.includes(e.id)))
+  const options = (k: EntityKind, current: string[]) => entitiesOf(k)
+    .filter((e) => e.id !== id && (k !== 'source' || hashOfSource(e) === null) && (!isHidden(e, audience) || current.includes(e.id)))
     .map((e) => ({ id: e.id, label: isHidden(e, audience) ? t('entry.restricted') : tx(e.name) }));
 
   const renderField = (f: FieldSpec) => {
@@ -183,7 +197,7 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
               ))}
             </div>
             {errors[f.key] && <p className="entry-error" role="alert">{errMsg(f.key)}</p>}
-            {createButton(f.kind)}
+            {isEditableKind(f.kind) && createButton(f.kind)}
           </fieldset>
         );
       }

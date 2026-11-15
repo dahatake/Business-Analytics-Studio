@@ -1,22 +1,25 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Badge, Button, Caption1, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner,
 } from '@fluentui/react-components';
 import {
   CheckmarkCircle20Filled, ChevronDown20Regular, ChevronUp20Regular, DocumentText20Regular, ErrorCircle20Regular, Sparkle20Regular,
 } from '@fluentui/react-icons';
-import type { AiResponse } from '../../ai/client.ts';
+import { AiLiveError, preflight, type AiResponse } from '../../ai/client.ts';
 import { PARAMS } from '../../config/params.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
+import { usePackVersion } from '../../state/packEdits.ts';
 import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
+import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { useAiSettings } from '../ai/settingsStore.ts';
 import { MockBadge } from './common.tsx';
-import { draftEntities, requestDeliverableDraft } from './deliverableDraft.ts';
+import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
 import {
   applyDraft, evaluateStep, threadOf, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
   type AppCheckContext, type CheckContext, type CheckRef, type TodoResult,
@@ -32,6 +35,7 @@ export function todayIn(timeZone: string = PARAMS.timeZone, now = new Date()): s
 }
 
 export function useCheckContext(): AppCheckContext {
+  const packVersion = usePackVersion((s) => s.version);
   const discussion = useDiscussion((s) => s.value);
   const kpi = useScopeKpis();
   const analysis = useAnalyses((s) => s.value);
@@ -47,7 +51,7 @@ export function useCheckContext(): AppCheckContext {
     pack: loaded, discussion, kpi, analysis, useCases, deliverables: normalizeDeliverables(raw), today: isDemo ? PARAMS.asOfDate : todayIn(),
     strategy: normalizeStrategy(rawStrategy), objectives,
     projectObjectiveIds: [...new Set((alignments ?? []).filter((a) => a.kind !== 'unaligned').flatMap((a) => a.objectiveIds))],
-  }), [discussion, kpi, analysis, useCases, raw, isDemo, rawStrategy, objectives, alignments]);
+  }), [discussion, kpi, analysis, useCases, raw, isDemo, rawStrategy, objectives, alignments, packVersion]);
 }
 
 /** The company's stated objectives (company anchor), the top of the company → OKR → KPI → solution chain. */
@@ -117,6 +121,27 @@ export function todoHref(r: TodoResult): string {
   if (field?.type === 'field') {
     return hrefFor('/deliverables', { step: field.step, target: `dlv-field-${field.id}` });
   }
+  if (r.todo.id === 'plan-payback') {
+    return hrefFor('/deliverables', { step: 'deliverable', target: 'dlv-criteria' });
+  }
+  const entity = r.outcome?.refs?.find((ref) => ref.type === 'entity');
+  if (['plan-coverage', 'plan-schedule', 'plan-owner'].includes(r.todo.id)) {
+    const query: Record<string, string> = { view: 'table', target: 'relation-table' };
+    if (r.todo.id === 'plan-coverage' && r.outcome?.code === 'noSolutions') {
+      query.create = 'solution';
+      query.field = 'name';
+    } else if (r.todo.id !== 'plan-coverage' && entity?.type === 'entity' && loaded.byId.get(entity.id)?.kind === 'initiative') {
+      query.edit = entity.id;
+      query.field = r.todo.id === 'plan-owner' ? 'ownerId' : 'start';
+    } else {
+      query.create = 'initiative';
+      query.field = 'solutionId';
+    }
+    return hrefFor('/relations', query);
+  }
+  if ((r.todo.id === 'asis-baseline' || r.todo.id === 'kpi-direction') && entity?.type === 'entity') {
+    return hrefFor('/relations', { view: 'table', target: 'relation-table', edit: entity.id, field: r.todo.id === 'asis-baseline' ? 'baseline' : 'target' });
+  }
   if (r.todo.kind === 'manual') {
     q.set('target', `dlv-sign-${r.todo.id}`);
   } else if (path === '/deliverables') {
@@ -129,6 +154,16 @@ export function todoHref(r: TodoResult): string {
   } else if (path === '/relations') {
     q.set('view', 'table');
     q.set('target', 'relation-table');
+    const fields: Record<string, string> = {
+      'define-sources': 'sourceIds', 'define-causes': 'causeIds', 'define-kpi-link': 'kpiIds',
+      'asis-cause-evidence': r.outcome?.code === 'noCauses' ? 'causeIds' : 'sourceIds',
+    };
+    if (fields[r.todo.id] && entity?.type === 'entity') {
+      q.set('edit', entity.id);
+      q.set('field', fields[r.todo.id]!);
+    } else if (fields[r.todo.id] && r.outcome?.code === 'noIssues') {
+      q.set('create', 'issue');
+    }
   } else if (path === '/discussion') {
     q.set('target', r.outcome?.code === 'noThemes' ? 'proj-tree' : 'proj-canvas');
   } else if (path === '/usecases') {
@@ -139,10 +174,10 @@ export function todoHref(r: TodoResult): string {
   return hrefFor(path, q);
 }
 
-function Refs({ refs }: { refs: CheckRef[] }) {
+export function Refs({ refs, limit = MAX_REFS }: { refs: CheckRef[]; limit?: number }) {
   const { t, lang } = useI18n();
   if (refs.length === 0) return null;
-  const shown = refs.slice(0, MAX_REFS);
+  const shown = refs.slice(0, limit);
   return (
     <ul className="dlv-refs">
       {shown.map((r, i) => (
@@ -156,15 +191,33 @@ function Refs({ refs }: { refs: CheckRef[] }) {
           )}
         </li>
       ))}
-      {refs.length > MAX_REFS && <li className="muted">{t('dlv.more', { n: refs.length - MAX_REFS })}</li>}
+      {refs.length > limit && <li className="muted">{t('dlv.more', { n: refs.length - limit })}</li>}
     </ul>
   );
+}
+
+function approveTask(id: string) {
+  const audience = useSettings.getState().audience;
+  const key = `${audience}:${id}`;
+  useDeliverables.getState().set((value) => {
+    const data = normalizeDeliverables(value);
+    const item = data.recommendations?.[key] ?? (audience === 'internal' ? data.recommendations?.[id] : undefined);
+    if (!item?.draft) return data;
+    return {
+      ...data,
+      recommendations: { ...data.recommendations, [key]: {
+        approved: { ...item.draft, at: new Date().toISOString(), by: useProjUi.getState().editor.trim() },
+      } },
+    };
+  });
 }
 
 /** One exit criterion: auto-checked (verdict + evidence + where to fix it) or a person's sign-off (checkbox). */
 export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: boolean }) {
   const { t, fmt } = useI18n();
   const checkboxId = useId();
+  const audience = useSettings((s) => s.audience);
+  const recommendation = useDeliverables((s) => s.value.recommendations?.[`${audience}:${r.todo.id}`] ?? (audience === 'internal' ? s.value.recommendations?.[r.todo.id] : undefined));
   const label = todoLabel(t, r.todo.id, usePaybackLimit());
   const status = <span className="visually-hidden">{t(r.done ? 'dlv.status.done' : 'dlv.status.todo')}</span>;
   const kind = <Badge size="small" appearance="outline" color={r.todo.kind === 'auto' ? 'informative' : 'brand'} className="dlv-kind">{t(r.todo.kind === 'auto' ? 'dlv.kind.auto' : 'dlv.kind.manual')}</Badge>;
@@ -191,10 +244,33 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
         <Caption1 className="dlv-todo-caption" data-testid={`dlv-result-${r.todo.id}`}>{caption}</Caption1>
       </div>
       {detailed && <p className="dlv-todo-why">{t(todoWhyKey(r.todo.id))}</p>}
-      {detailed && r.outcome && !r.outcome.ok && <Refs refs={r.outcome.refs ?? []} />}
+      {detailed && r.outcome && !r.outcome.ok && <Refs refs={r.outcome.refs ?? []} limit={Infinity} />}
+      {detailed && recommendation?.approved && (
+        <div data-testid={`dlv-task-approved-${r.todo.id}`}>
+          <strong>{t('dlv.task.approved')}</strong>{' '}{recommendation.approved.mock && <MockBadge />}
+          <p className="muted">{t('dlv.task.historical')}</p>
+          <p className="proj-prewrap">{recommendation.approved.text}</p>
+        </div>
+      )}
+      {detailed && recommendation?.draft && (
+        <div data-testid={`dlv-task-draft-${r.todo.id}`}>
+          <strong>{t('dlv.task.draft')}</strong>{' '}{recommendation.draft.mock && <MockBadge />}
+          <p className="proj-prewrap">{recommendation.draft.text}</p>
+          <Button size="small" onClick={() => approveTask(r.todo.id)}>{t('dlv.task.approve')}</Button>
+        </div>
+      )}
       {!r.done && r.todo.kind === 'auto' && (
         <a className="dlv-fix" href={todoHref(r)} onClick={revisitRouteTarget} aria-label={t('dlv.fixLabel', { todo: label })}>
           {t('dlv.fix')}
+        </a>
+      )}
+      {!detailed && (
+        <a
+          href={hrefFor('/deliverables', { step: Object.values(STEP_DEFS).find((def) => def.todos.some((todo) => todo.id === r.todo.id))?.step, task: r.todo.id, target: 'dlv-task-workbench' })}
+          onClick={revisitRouteTarget}
+          aria-label={t('dlv.task.simLabel', { todo: label })}
+        >
+          {t('dlv.task.simulate')}
         </a>
       )}
     </li>
@@ -303,10 +379,12 @@ export function StepTodoBand() {
   );
 }
 
+type DraftTextMap = Record<string, string>;
 type DraftState =
+  | { status: 'idle' }
   | { status: 'working' }
-  | { status: 'ready'; response: AiResponse; fields: Record<string, string> }
-  | { status: 'error' };
+  | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap }
+  | { status: 'error'; message: string };
 
 /** "Draft with Copilot": preview the draft, then fill the deliverable (empty fields only unless the user says so). */
 export function DraftDialog() {
@@ -315,26 +393,85 @@ export function DraftDialog() {
   const closeDraft = useProjTransient((s) => s.closeDraft);
   const audience = useSettings((s) => s.audience);
   const ctx = useCheckContext();
-  const [state, setState] = useState<DraftState>({ status: 'working' });
+  const scope = useDeliverables((s) => s.scope);
+  const [state, setState] = useState<DraftState>({ status: 'idle' });
   const [overwrite, setOverwrite] = useState(false);
+  const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!step) return;
-    let alive = true;
-    setState({ status: 'working' });
+    setState({ status: 'idle' });
     setOverwrite(false);
-    requestDeliverableDraft({ step, ctx, lang, audience })
-      .then((r) => { if (alive) setState({ status: 'ready', ...r }); })
-      .catch(() => { if (alive) setState({ status: 'error' }); });
-    return () => { alive = false; };
-    // The draft is made once per opening, from the data at that moment.
-  }, [step]);
+  }, [step, scope]);
+
+  const generate = async () => {
+    if (!step || state.status === 'working') return;
+    const input = { step, ctx, lang, audience };
+    const request = draftRequest(input);
+    const pf = preflight({ ...request, userConfirmed: true, personConfirmed: true });
+    if (!pf.allowed) {
+      setState({ status: 'error', message: pf.reasons.map((r) => t(reasonKey(r))).join(' ') });
+      return;
+    }
+    if (request.prompt.length + pf.context.length > 32_000) {
+      setState({ status: 'error', message: t('dlv.draft.tooLarge') });
+      return;
+    }
+    setState({ status: 'working' });
+    try {
+      const settings = useAiSettings.getState();
+      const decision = await confirmLive({
+        use: 'ai.use.deliverableDraft', scope: t(deliverableNameKey(step)), itemCount: request.entities?.length ?? 0,
+        internalCount: pf.internalCount, personCount: pf.personCount, estimatedCostJpy: pf.estimatedCostJpy,
+        monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: settings.monthlyBudgetJpy,
+        destination: settings.provider === 'foundry'
+          ? `${settings.relayConnection?.endpoint ?? ''} / ${settings.relayConnection?.deployment ?? ''}`
+          : `GitHub Copilot / ${settings.copilotModel ?? ''}`,
+        contentPreview: `${request.prompt}\n\n${pf.context}`, freeTextMayContainPersons: true, storesResponse: true,
+      });
+      requestAnimationFrame(() => bodyRef.current?.focus());
+      if (!decision.ok || useDeliverables.getState().scope !== scope || useProjTransient.getState().draftStep !== step || useSettings.getState().audience !== audience) {
+        setState({ status: 'idle' });
+        return;
+      }
+      const current = useAiSettings.getState();
+      if (current.provider !== settings.provider || current.copilotModel !== settings.copilotModel || JSON.stringify(current.relayConnection) !== JSON.stringify(settings.relayConnection)) {
+        setState({ status: 'error', message: t('dlv.draft.destinationChanged') });
+        return;
+      }
+      const r = await requestDeliverableDraft(input, { ...request, userConfirmed: true, personConfirmed: decision.personConfirmed });
+      if (useDeliverables.getState().scope === scope && useProjTransient.getState().draftStep === step && useSettings.getState().audience === audience) {
+        const at = new Date().toISOString();
+        useDeliverables.getState().set((value) => {
+          const data = normalizeDeliverables(value);
+          const recommendations = { ...data.recommendations };
+          for (const [id, text] of Object.entries(r.tasks)) {
+            const key = `${audience}:${id}`;
+            recommendations[key] = { ...recommendations[key], draft: { text, mock: r.response.mode === 'mock', at } };
+          }
+          return { ...data, recommendations };
+        });
+        setState({ status: 'ready', ...r });
+      }
+    } catch (error) {
+      if (useDeliverables.getState().scope === scope && useProjTransient.getState().draftStep === step) {
+        const message = error instanceof AiLiveError ? error.reasons.map((r) => t(reasonKey(r))).join(' ') : error instanceof Error ? error.message : String(error);
+        setState({ status: 'error', message });
+      }
+    }
+  };
 
   if (!step) return null;
   const doc = ctx.deliverables.docs[step] ?? {};
   const fields = STEP_DEFS[step].fields;
   const ready = state.status === 'ready' ? state : null;
   const willApply = ready ? fields.filter((f) => ready.fields[f.id] && (overwrite || !doc[f.id]?.text.trim())).length : 0;
+  const simulation = ready ? evaluateStep(step, {
+    ...ctx,
+    deliverables: applyDraft(ctx.deliverables, step, ready.fields, { overwrite, mock: ready.response.mode === 'mock', at: new Date().toISOString() }).data,
+  }) : [];
+  const before = evaluateStep(step, ctx);
+  const changes = simulation.filter((after, i) => after.todo.kind === 'auto' && after.done !== before[i]?.done);
 
   const apply = () => {
     if (!ready) return;
@@ -348,19 +485,53 @@ export function DraftDialog() {
   };
 
   return (
+    <>
+    {confirmDialog}
     <Dialog open onOpenChange={(_, d) => { if (!d.open) closeDraft(); }}>
       <DialogSurface className="dlv-draft-surface" data-testid="dlv-draft-dialog">
-        <DialogBody>
+        <DialogBody ref={bodyRef} tabIndex={-1}>
           <DialogTitle>{t('dlv.draft.title', { name: t(deliverableNameKey(step)) })}</DialogTitle>
           <DialogContent>
             {state.status === 'working' && <Spinner label={t('dlv.draft.working')} />}
-            {state.status === 'error' && <p role="alert">{t('dlv.draft.failed')}</p>}
+            {state.status === 'error' && <p role="alert">{t('dlv.draft.failed')} {state.message}</p>}
+            {(state.status === 'idle' || state.status === 'error') && <Button appearance="primary" onClick={() => void generate()} data-testid="dlv-draft-generate">{t('dlv.draft.generate')}</Button>}
             {ready && (
               <>
                 <p className="dlv-draft-note" data-testid="dlv-draft-mode" data-mode={ready.response.mode}>
                   {ready.response.mode === 'mock' && <MockBadge />} {t(ready.response.mode === 'mock' ? 'dlv.draft.mockNote' : 'dlv.draft.liveNote')}
                 </p>
-                <Caption1>{t('dlv.draft.grounding', { entities: draftEntities(ctx).length })}</Caption1>
+                <Caption1>{t('dlv.draft.grounding', { entities: draftEntities(ctx, audience).length })}</Caption1>
+                <h3>{t('dlv.task.title')}</h3>
+                <p>{t('dlv.task.note')}</p>
+                <ul className="dlv-todo-list">
+                  {before.map((r) => {
+                    const item = ctx.deliverables.recommendations?.[`${audience}:${r.todo.id}`] ?? (audience === 'internal' ? ctx.deliverables.recommendations?.[r.todo.id] : undefined);
+                    return (
+                      <li key={r.todo.id} data-testid={`dlv-task-preview-${r.todo.id}`}>
+                        <strong>{todoLabel(t, r.todo.id)}</strong>{' '}
+                        {item?.draft && (
+                          <>
+                            <Badge appearance="outline">{t('dlv.task.draft')}</Badge>
+                            <p className="proj-prewrap">{item.draft.text}</p>
+                            <Refs refs={r.outcome?.refs ?? []} limit={Infinity} />
+                            <Button size="small" onClick={() => approveTask(r.todo.id)} data-testid={`dlv-task-approve-${r.todo.id}`}>{t('dlv.task.approve')}</Button>
+                          </>
+                        )}
+                        {!item?.draft && item?.approved && <Badge appearance="tint">{t('dlv.task.approved')}</Badge>}
+                        {!item?.draft && !item?.approved && <p role="status">{t('dlv.task.missing')}</p>}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <h3>{t('dlv.task.simTitle')}</h3>
+                <p>{t('dlv.task.simNote')}</p>
+                {changes.length === 0 && <p>{t('dlv.task.simUnchanged')}</p>}
+                <ul data-testid="dlv-task-simulation">
+                  {changes.map((after) => (
+                    <li key={after.todo.id}>{todoLabel(t, after.todo.id)}: {t(before.find((r) => r.todo.id === after.todo.id)?.done ? 'dlv.status.done' : 'dlv.status.todo')} → {t(after.done ? 'dlv.status.done' : 'dlv.status.todo')}</li>
+                  ))}
+                </ul>
+                <a href={hrefFor('/deliverables', { step: 'solution', target: 'sol-sim' })} onClick={() => closeDraft()}>{t('dlv.task.simLink')}</a>
                 <dl className="dlv-draft-fields">
                   {fields.map((f) => {
                     const text = ready.fields[f.id];
@@ -388,5 +559,6 @@ export function DraftDialog() {
         </DialogBody>
       </DialogSurface>
     </Dialog>
+    </>
   );
 }

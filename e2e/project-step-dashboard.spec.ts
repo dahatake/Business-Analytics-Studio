@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { JAPANESE, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { STEP_DEFS } from '../src/modules/project/deliverables.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const STEPS = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
@@ -60,8 +61,9 @@ test.describe('step dashboard', () => {
     await expect(doc).toHaveAttribute('data-tone', 'open');
     await page.getByTestId('step-dash-open').click();
     await expect(page).toHaveURL(/#\/deliverables\?step=asis/);
-    await page.getByTestId('dlv-draft').click();
-    await page.getByTestId('dlv-draft-apply').click();
+    for (const field of STEP_DEFS.asis.fields) {
+      await page.getByTestId(`dlv-field-${field.id}`).fill('2026-11-09 16');
+    }
     await page.goto('/#/step?step=asis');
     await expect(doc).toHaveAttribute('data-tone', 'ok');
     await expect(page.getByTestId('step-dash-sign-asis-field')).toHaveAttribute('data-done', 'false');

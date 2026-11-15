@@ -1,6 +1,15 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, open, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { samplePack } from '../src/data/sample.ts';
+import { loadPack } from '../src/data/pack.ts';
+import { demoAnalyses } from '../src/modules/project/analysis.ts';
+import { demoDiscussion } from '../src/modules/project/discussion.ts';
+import { demoKpis } from '../src/modules/project/kpiOkr.ts';
+import { demoUseCases } from '../src/modules/usecases/seed.ts';
+import { buildDraft, buildTaskDrafts, draftToText } from '../src/modules/project/deliverableDraft.ts';
+import { emptyDeliverables, STEP_DEFS } from '../src/modules/project/deliverables.ts';
+import type { ImprovementStep } from '../src/state/projects.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
@@ -20,15 +29,49 @@ async function go(page: Page, route: string, lang: Lang = 'ja') {
   await open(page, route, { lang });
 }
 
+async function fakeAi(page: Page) {
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z',
+  } }));
+  await page.route('**/relay/ai', async (route) => {
+    const request = route.request().postDataJSON() as { prompt: string; lang: Lang };
+    const step = /\[bas-proj:deliverable:([a-z]+)\]/.exec(request.prompt)?.[1] as ImprovementStep;
+    const pack = loadPack(samplePack);
+    const ctx = { pack, discussion: demoDiscussion(), kpi: demoKpis(pack.pack), analysis: demoAnalyses(pack.pack), useCases: demoUseCases(), deliverables: emptyDeliverables(), today: '2026-11-09' };
+    const input = { step, ctx, lang: request.lang, audience: 'internal' } as const;
+    const labels = request.lang === 'ja'
+      ? ['事実・根拠', '不足情報', '仮説', '選択肢', '推奨', '理由', '検証', '影響']
+      : ['Facts and evidence', 'Missing information', 'Hypotheses', 'Options', 'Recommendation', 'Reasoning', 'Verification', 'Impact'];
+    const tasks = Object.fromEntries(Object.entries(buildTaskDrafts(input)).map(([id, text]) => [`task-${id}`, labels.map((label) => `${label}: ${text.replace(/\n/g, ' ')}`).join('\n')]));
+    await route.fulfill({ json: { text: `${draftToText(buildDraft(input))}\n\n${draftToText(tasks)}`, inputTokens: 100, outputTokens: 100 } });
+  });
+  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+  await page.reload();
+  await expect(page.locator('main#main')).toBeVisible();
+}
+
+async function generateDraft(page: Page) {
+  await page.getByTestId('dlv-draft-generate').click();
+  const confirm = page.getByTestId('ai-live-confirm');
+  await expect(confirm).toBeVisible();
+  await confirm.getByTestId('ai-live-person-check').check();
+  await confirm.getByTestId('ai-live-send').click();
+  await expect(page.getByTestId('dlv-draft-mode')).toHaveAttribute('data-mode', 'live');
+}
+
 test.describe('step deliverables and to-do band', () => {
   test('the step signal follows task completion, survives reload, and clears when work is undone', async ({ page }) => {
     await go(page, '/home');
+    await fakeAi(page);
+    await fakeAi(page);
     const steps = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
     const stepper = page.getByTestId('proj-stepper');
     for (const step of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
     const button = stepper.locator('[data-step="asis"]');
     await button.click();
     await page.getByTestId('dlv-draft').click();
+    await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await expect(button).toHaveAttribute('data-complete', 'false'); // Draft alone is not sign-off.
     await page.getByTestId('dlv-sign-asis-field').check();
@@ -45,7 +88,9 @@ test.describe('step deliverables and to-do band', () => {
     await page.getByTestId('dlv-sign-define-agree').check();
     // Drafting and signing the to-be step is not enough: the project is not yet tied to a company objective.
     await stepper.locator('[data-step="tobe"]').click();
+    await page.waitForTimeout(5100);
     await page.getByTestId('dlv-draft').click();
+    await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await page.getByTestId('dlv-sign-tobe-agree').check();
     await expect(stepper.locator('[data-step="tobe"]')).toHaveAttribute('data-complete', 'false');
@@ -72,6 +117,7 @@ test.describe('step deliverables and to-do band', () => {
   test('the fix link in every step opens and focuses the first incomplete deliverable field', async ({ page }) => {
     await page.setViewportSize({ width: 1240, height: 750 });
     await go(page, '/home');
+    await fakeAi(page);
     const steps = [
       ['asis', 'asis-doc', 'problem'],
       ['tobe', 'tobe-doc', 'vision'],
@@ -99,6 +145,7 @@ test.describe('step deliverables and to-do band', () => {
     // A warning in a previously drafted document targets the specific invalid field, not the first field.
     await page.locator('.proj-step[data-step="asis"]').click();
     await page.getByTestId('dlv-draft').click();
+    await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await page.getByTestId('dlv-next').click();
     await expect(page.locator('#dlv-sign-asis-field')).toBeFocused();
@@ -159,11 +206,11 @@ test.describe('step deliverables and to-do band', () => {
 
   test('Draft with Copilot fills the deliverable, the sign-off completes the step', async ({ page }) => {
     await go(page, '/home');
+    await fakeAi(page);
     await page.getByTestId('dlv-draft').click();
     const dialog = page.getByTestId('dlv-draft-dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByTestId('dlv-draft-mode')).toHaveAttribute('data-mode', 'mock');
-    await expect(dialog.getByTestId('dlv-draft-mode')).toContainText('モック');
+    await generateDraft(page);
     await expect(dialog.getByTestId('dlv-draft-field-problem')).toContainText('受注から出荷までが長い');
     expect(await scan(page)).toEqual([]);
     await dialog.getByTestId('dlv-draft-apply').click();
@@ -176,13 +223,13 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-band')).toHaveAttribute('data-complete', 'true');
     await expect(page.getByTestId('dlv-next')).toHaveCount(0);
 
-    // The deliverable screen shows the drafted fields as AI (mock) and re-judges edits immediately.
+    // The deliverable screen shows the drafted fields and re-judges edits immediately.
     await page.getByTestId('dlv-open').click();
     await expect(page).toHaveURL(/#\/deliverables\?step=asis/);
     await expect(page.getByTestId('dlv-name')).toHaveText('現状分析レポート（優先順位つき課題一覧と KPI/OKR ギャップ）');
     const problem = page.getByTestId('dlv-field-problem');
     await expect(problem).toHaveValue(/16 日/);
-    await expect(page.getByTestId('dlv-fields').getByText('モック').first()).toBeVisible();
+    await expect(page.getByTestId('dlv-fields').getByText('モック')).toHaveCount(0);
     await problem.fill('リードタイムを短くする');
     await expect(page.getByText('数値を入れてください')).toBeVisible();
     await expect(page.getByTestId('dlv-screen-progress')).toHaveText('10/11 完了');
@@ -193,14 +240,203 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-field-problem')).toHaveValue('リードタイムを短くする');
   });
 
+  test('task recommendations remain drafts until approved and survive reload without signing off', async ({ page }) => {
+    await go(page, '/home');
+    await fakeAi(page);
+    await page.getByTestId('dlv-draft').click();
+    const dialog = page.getByTestId('dlv-draft-dialog');
+    await generateDraft(page);
+    await expect(dialog.getByTestId('dlv-task-preview-asis-field')).toContainText('ドラフト');
+    await expect(dialog.getByTestId('dlv-task-simulation')).toContainText('未完了');
+    await dialog.getByTestId('dlv-task-approve-asis-field').click();
+    await expect(dialog.getByTestId('dlv-task-preview-asis-field')).toContainText('承認済み');
+    await expect(page.getByTestId('dlv-sign-asis-field')).not.toBeChecked();
+    await dialog.getByRole('button', { name: '閉じる' }).click();
+    await page.goto('/#/deliverables?step=asis');
+    await expect(page.getByTestId('dlv-task-approved-asis-field')).toContainText('承認済み');
+    await expect(page.getByTestId('dlv-task-draft-define-agree')).toContainText('ドラフト');
+    await page.reload();
+    await expect(page.getByTestId('dlv-task-approved-asis-field')).toContainText('承認済み');
+    await expect(page.getByTestId('dlv-todo-asis-field').first()).toHaveAttribute('data-done', 'false');
+    await page.getByRole('button', { name: '社内向け表示' }).click();
+    await expect(page.getByTestId('dlv-task-approved-asis-field')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-task-draft-define-agree')).toHaveCount(0);
+    await page.getByRole('button', { name: '社外向け表示' }).click();
+    await expect(page.getByTestId('dlv-task-approved-asis-field')).toBeVisible();
+  });
+
+  test('confirmation gates sending and a relay failure does not create a mock draft', async ({ page }) => {
+    await go(page, '/home');
+    await fakeAi(page);
+    let calls = 0;
+    await page.route('**/relay/ai', async (route) => {
+      calls += 1;
+      await route.fulfill({ status: 502, json: { error: 'testFailure' } });
+    });
+    await page.getByTestId('dlv-draft').click();
+    await page.getByTestId('dlv-draft-generate').click();
+    const confirm = page.getByTestId('ai-live-confirm');
+    await expect(confirm.getByTestId('ai-live-send')).toBeDisabled();
+    await expect(confirm.getByTestId('ai-live-preview')).toContainText('送信する内容');
+    await expect(confirm).toContainText('https://test.invalid');
+    expect(calls).toBe(0);
+    await confirm.getByRole('button', { name: 'キャンセル' }).click();
+    expect(calls).toBe(0);
+    await page.getByTestId('dlv-draft-generate').click();
+    await confirm.getByTestId('ai-live-person-check').check();
+    await confirm.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('dlv-draft-dialog').getByRole('alert')).toBeVisible();
+    expect(calls).toBe(1);
+    await expect(page.getByTestId('dlv-draft-mode')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-draft-apply')).toBeDisabled();
+  });
+
+  test('task workbench previews a field without saving it', async ({ page }) => {
+    await go(page, '/home');
+    await page.getByTestId('dlv-band').getByTestId('dlv-todo-asis-doc').getByRole('link', { name: /判断・シミュレーション/ }).click();
+    const panel = page.getByTestId('dlv-task-workbench');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId('dlv-task-what-if-result')).toContainText('未記入 10 項目');
+    await panel.getByTestId('dlv-task-what-if').fill('仮入力 16 日');
+    await expect(panel.getByTestId('dlv-task-what-if-result')).toContainText('未記入 9 項目');
+    await expect(page.getByTestId('dlv-field-problem')).toHaveValue('');
+    await page.reload();
+    await expect(page.getByTestId('dlv-field-problem')).toHaveValue('');
+  });
+
+  test('every task offers a transparent, unsaved comparison of business-impact assumptions', async ({ page }) => {
+    test.setTimeout(120_000);
+    await go(page, '/home');
+    for (const [step, definition] of Object.entries(STEP_DEFS)) {
+      for (const todo of definition.todos) {
+        await page.evaluate(({ step, id }) => { location.hash = `/deliverables?step=${step}&task=${id}&target=dlv-task-workbench`; }, { step, id: todo.id });
+        const panel = page.getByTestId('dlv-task-workbench');
+        await expect(panel.getByTestId(`dlv-todo-${todo.id}`)).toBeVisible();
+        await expect(panel.getByTestId('dlv-impact-simulation')).toBeVisible();
+      }
+    }
+    await page.evaluate(() => { location.hash = '/deliverables?step=asis&task=asis-doc&target=dlv-task-workbench'; });
+    const sim = page.getByTestId('dlv-impact-simulation');
+    for (const [key, value] of Object.entries({ baselineBenefit: '1000', baselineCost: '200', benefit: '1800', cost: '300', investment: '1400', years: '3' })) {
+      await sim.getByTestId(`dlv-impact-${key}`).fill(value);
+    }
+    await expect(sim.getByTestId('dlv-impact-result')).toContainText('700');
+    await expect(sim.getByTestId('dlv-impact-result')).toContainText('2 年');
+    await sim.getByTestId('dlv-impact-compare').check();
+    for (const [key, value] of Object.entries({ benefit: '2000', cost: '500', investment: '700' })) {
+      await sim.getByTestId(`dlv-impact-alt-${key}`).fill(value);
+    }
+    await expect(sim.getByTestId('dlv-impact-alt-result')).toContainText('1,400');
+    await expect(sim.getByTestId('dlv-impact-result')).toContainText('B − A');
+    await page.reload();
+    await expect(page.getByTestId('dlv-impact-benefit')).toHaveValue('');
+    await expect(page.getByTestId('dlv-impact-result')).toHaveCount(0);
+  });
+
+  test('missing causes link directly to the issue and can be registered there', async ({ page }) => {
+    await go(page, '/relations?view=table&edit=issue-lead-time&field=causeIds&target=relation-table');
+    const editor = page.getByTestId('entry-dialog');
+    await editor.getByTestId('entry-field-causeIds-cause-manual-scheduling').uncheck();
+    await editor.getByTestId('entry-field-causeIds-cause-siloed-inventory').uncheck();
+    await editor.getByTestId('entry-save').click();
+    const todo = page.getByTestId('dlv-band').getByTestId('dlv-todo-define-causes');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await todo.getByRole('link', { name: /判断・シミュレーション/ }).click();
+    const workbench = page.getByTestId('dlv-task-workbench');
+    await workbench.getByTestId('dlv-task-what-if-cause-manual-scheduling').check();
+    await expect(workbench.getByTestId('dlv-task-what-if-result')).toContainText('すべて');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await todo.getByRole('link', { name: /対応する/ }).click();
+    await expect(editor).toBeVisible();
+    await expect(editor.getByTestId('entry-field-causeIds-cause-manual-scheduling')).toBeFocused();
+    await editor.getByTestId('entry-new-causeIds').click();
+    const nested = page.getByTestId('entry-dialog-1');
+    await nested.getByTestId('entry-field-name').fill('検証する原因仮説');
+    await nested.getByTestId('entry-save').click();
+    await expect(nested).toBeHidden();
+    await expect(editor.getByTestId('entry-field-causeIds').getByLabel('検証する原因仮説')).toBeChecked();
+    await editor.getByTestId('entry-save').click();
+    await expect(todo).toHaveAttribute('data-done', 'true');
+    const evidence = page.getByTestId('dlv-band').getByTestId('dlv-todo-asis-cause-evidence');
+    await expect(evidence).toHaveAttribute('data-done', 'false');
+    await evidence.getByRole('link', { name: /対応する/ }).click();
+    await expect(editor.getByTestId('entry-field-sourceIds-src-interview')).toBeVisible();
+    await editor.getByTestId('entry-field-sourceIds-src-interview').check();
+    await editor.getByTestId('entry-save').click();
+    await expect(evidence).toHaveAttribute('data-done', 'true');
+    await page.reload();
+    await expect(page.getByTestId('dlv-band').getByTestId('dlv-todo-define-causes')).toHaveAttribute('data-done', 'true');
+    await expect(page.getByTestId('dlv-band').getByTestId('dlv-todo-asis-cause-evidence')).toHaveAttribute('data-done', 'true');
+  });
+
+  test('a missing KPI link opens the affected issue and updates the check when saved', async ({ page }) => {
+    await go(page, '/relations?view=table&edit=issue-lead-time&field=kpiIds&target=relation-table');
+    const editor = page.getByTestId('entry-dialog');
+    await editor.getByTestId('entry-field-kpiIds-kpi-lead-time').uncheck();
+    await editor.getByTestId('entry-field-kpiIds-kpi-otd').uncheck();
+    await editor.getByTestId('entry-save').click();
+    const todo = page.getByTestId('dlv-band').getByTestId('dlv-todo-define-kpi-link');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await todo.getByRole('link', { name: /対応する/ }).click();
+    await expect(editor.getByTestId('entry-field-kpiIds-kpi-lead-time')).toBeFocused();
+    await editor.getByTestId('entry-field-kpiIds-kpi-lead-time').check();
+    await editor.getByTestId('entry-save').click();
+    await expect(todo).toHaveAttribute('data-done', 'true');
+  });
+
+  test('schedule task opens an editable initiative and rechecks the corrected dates', async ({ page }) => {
+    await go(page, '/relations?view=table&edit=init-dp-rollout&field=start&target=relation-table');
+    const editor = page.getByTestId('entry-dialog');
+    await editor.getByTestId('entry-field-start').fill('2026-06-01');
+    await editor.getByTestId('entry-save').click();
+    await page.locator('.proj-step[data-step="deliverable"]').click();
+    const todo = page.getByTestId('dlv-band').getByTestId('dlv-todo-plan-schedule');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await todo.getByRole('link', { name: /対応する/ }).click();
+    await expect(editor.getByTestId('entry-field-start')).toBeFocused();
+    await editor.getByTestId('entry-field-start').fill('2026-10-01');
+    await editor.getByTestId('entry-save').click();
+    await expect(todo).toHaveAttribute('data-done', 'true');
+    await page.reload();
+    await expect(page.getByTestId('dlv-band').getByTestId('dlv-todo-plan-schedule')).toHaveAttribute('data-done', 'true');
+  });
+
+  test('coverage task creates a plan for the missing solution and persists it', async ({ page }) => {
+    await go(page, '/relations?view=table&edit=init-et-model&target=relation-table');
+    const editor = page.getByTestId('entry-dialog');
+    await editor.getByTestId('entry-delete').click();
+    await editor.getByTestId('entry-delete').click();
+    await expect(editor).toBeHidden();
+    await page.locator('.proj-step[data-step="deliverable"]').click();
+    const todo = page.getByTestId('dlv-band').getByTestId('dlv-todo-plan-coverage');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await todo.getByRole('link', { name: /対応する/ }).click();
+    await expect(editor.getByTestId('entry-field-solutionId')).toBeFocused();
+    await editor.getByTestId('entry-field-name').fill('エネルギーツインの計画');
+    await editor.getByTestId('entry-field-solutionId').selectOption('sol-energy-twin');
+    await editor.getByTestId('entry-field-start').fill('2026-10-15');
+    await editor.getByTestId('entry-field-end').fill('2027-02-26');
+    await editor.getByTestId('entry-field-progress').fill('0.15');
+    await editor.getByTestId('entry-field-ownerId').selectOption('person-yamamoto-hiroshi');
+    await editor.getByTestId('entry-save').click();
+    await expect(editor).toBeHidden();
+    await expect(todo).toHaveAttribute('data-done', 'true');
+    await page.reload();
+    await expect(page.getByTestId('dlv-band').getByTestId('dlv-todo-plan-coverage')).toHaveAttribute('data-done', 'true');
+    await go(page, '/plan');
+    await expect(page.locator('#plan-table')).toContainText('エネルギーツインの計画');
+  });
+
   test('the band follows the stepper; each step has its own deliverable', async ({ page }) => {
     await go(page, '/home');
+    await fakeAi(page);
     await page.locator('.proj-step[data-step="deliverable"]').click();
     const band = page.getByTestId('dlv-band');
     await expect(band).toContainText('ステップ 5/5: 要求定義・計画');
     await expect(band).toContainText('成果物: 要求定義書・プロジェクト計画書');
     await expect(page.getByTestId('dlv-todo-plan-schedule')).toHaveAttribute('data-done', 'true');
     await page.getByTestId('dlv-draft').click();
+    await generateDraft(page);
     await expect(page.getByTestId('dlv-draft-field-businessCase')).toContainText('回収');
     await page.getByTestId('dlv-draft-apply').click();
     await expect(page.getByTestId('dlv-todo-plan-doc')).toHaveAttribute('data-done', 'true');
@@ -304,9 +540,11 @@ test.describe('step deliverables and to-do band', () => {
 
   test('English: the band, the draft and the deliverable screen have no Japanese', async ({ page }) => {
     await go(page, '/deliverables?step=kpi', 'en');
+    await fakeAi(page);
     await expect(page.getByTestId('dlv-name')).toHaveText('KPI/OKR definition (measurement plan)');
     await page.getByTestId('dlv-screen-draft').click();
     await expect(page.getByTestId('dlv-draft-dialog')).toContainText('Draft: KPI/OKR definition');
+    await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await expect(page.getByTestId('dlv-field-formula')).toHaveValue(/lower is better/);
     expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);

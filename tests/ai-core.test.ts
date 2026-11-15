@@ -10,12 +10,12 @@ import { aiComplete, preflight, readLedger, registerMock, setLiveTransport, setR
 import { loaded } from '../src/data/pack.ts';
 
 const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'explain', estimatedInputTokens: 10, maxOutputTokens: 100, estimatedCostJpy: 1 });
-const allTrue = { liveEnabled: true, userConfirmed: true, configured: true, hasUnitPrices: true, budget: okBudget, personCount: 0, personConfirmed: true };
+const allTrue = { liveEnabled: true, userConfirmed: true, configured: true, budget: okBudget, personCount: 0, personConfirmed: true };
 
 describe('C-03 table (D-1: staged approval)', () => {
   it('approves the specified uses and providers; every other use stays blocked even with every switch on', () => {
     const approved = (Object.keys(C03_TABLE) as AiUse[]).filter((u) => isApproved(C03_TABLE[u]));
-    expect(approved).toEqual(['recommend', 'explain', 'connectionTest', 'packBuild', 'alignmentProposal', 'stepBrief']);
+    expect(approved).toEqual(['recommend', 'explain', 'connectionTest', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief']);
     expect(C03_TABLE.explain.provider).toBe('foundry');
     expect(C03_TABLE.recommend.provider).toEqual(['foundry', 'copilotSdk']);
     expect(C03_TABLE.packBuild.provider).toEqual(['foundry', 'copilotSdk']);
@@ -39,9 +39,8 @@ describe('C-03 table (D-1: staged approval)', () => {
     expect(evaluateGate({ use: 'explain', ...allTrue, liveEnabled: false }).reasons).toEqual(['liveDisabled']);
     expect(evaluateGate({ use: 'explain', ...allTrue, userConfirmed: false }).reasons).toEqual(['notConfirmed']);
     expect(evaluateGate({ use: 'explain', ...allTrue, configured: false }).reasons).toEqual(['notConfigured']);
-    expect(evaluateGate({ use: 'explain', ...allTrue, hasUnitPrices: false }).reasons).toEqual(['noUnitPrice']);
-    expect(evaluateGate({ use: 'explain', ...allTrue, provider: 'foundry', hasUnitPrices: false }).allowed).toBe(true);
-    expect(evaluateGate({ use: 'packBuild', ...allTrue, provider: 'copilotSdk', hasUnitPrices: false }).reasons).toEqual(['noUnitPrice']);
+    expect(evaluateGate({ use: 'explain', ...allTrue, provider: 'foundry' }).allowed).toBe(true);
+    expect(evaluateGate({ use: 'packBuild', ...allTrue, provider: 'copilotSdk' }).allowed).toBe(true);
     expect(evaluateGate({ use: 'explain', ...allTrue, personCount: 2, personConfirmed: false }).reasons).toEqual(['personNotConfirmed']);
   });
 

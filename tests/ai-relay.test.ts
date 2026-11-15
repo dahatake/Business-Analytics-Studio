@@ -760,6 +760,25 @@ describe('D-12 packBuild through the relay', () => {
     await call(req('DELETE', '/relay/copilot'));
   });
 
+  it('D-23 deliverable drafts use hypothesis-safe instructions for both providers', async () => {
+    const body = { use: 'deliverableDraft', provider: 'foundry', lang: 'ja', prompt: 'synthetic', context: '', maxOutputTokens: 8000, timeoutMs: 60_000 };
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig });
+    seen = [];
+    expect((await call(req('POST', '/relay/ai', body), { config: testConfig })).status).toBe(200);
+    const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[] };
+    expect(sent.messages[0]!.content).toContain('仮説');
+    expect(sent.messages[0]!.content).toContain('検証方法');
+    expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 8001 }), { config: testConfig })).status).toBe(400);
+
+    const { calls, service } = fakeCopilot('synthetic');
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    expect((await call(req('POST', '/relay/ai', { ...body, provider: 'copilotSdk', lang: 'en' }), { copilot: service })).status).toBe(200);
+    expect(calls[0]!.system).toContain('hypotheses');
+    expect(calls[0]!.system).toContain('Never invent');
+    await call(req('DELETE', '/relay/copilot'));
+  });
+
   it('Foundry: JSON mode with max_completion_tokens and the pack system prompt; a deployment rejecting it is retried once classically', async () => {
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig })).status).toBe(200);

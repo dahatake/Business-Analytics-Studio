@@ -33,8 +33,8 @@ export interface AiRequest {
 }
 
 export interface TokenCount {
-  inputTokens: number;
-  outputTokens: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
 }
 
 export interface AiResponse {
@@ -58,7 +58,7 @@ export interface AiRuntimeSettings {
   configured: boolean;
   /** D-3: the user's monthly budget (default 100,000 JPY). */
   monthlyBudgetJpy?: number;
-  /** Copilot premium-request pricing; null for Foundry (cost unavailable). */
+  /** Optional pricing for integrations that can calculate costs. */
   prices?: UnitPrices | null;
 }
 
@@ -77,8 +77,8 @@ export interface LiveCall {
 
 export interface LiveResult {
   text: string;
-  inputTokens: number;
-  outputTokens: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
   /** GitHub Copilot: premium requests the call consumed (model multiplier included). */
   premiumRequests?: number;
 }
@@ -171,7 +171,6 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
     liveEnabled: settings.liveEnabled,
     userConfirmed: req.userConfirmed ?? false,
     configured: settings.configured,
-    hasUnitPrices: prices !== null,
     budget,
     personCount: selection.personCount,
     personConfirmed: req.personConfirmed ?? false,
@@ -192,7 +191,7 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
 /** Whether a use can ever go live in this build (its C-03 row is approved). UIs use it to offer the live path. */
 export function isUseApproved(use: AiUse): boolean {
   return evaluateGate({
-    use, liveEnabled: true, userConfirmed: true, configured: true, hasUnitPrices: true,
+    use, liveEnabled: true, userConfirmed: true, configured: true,
     budget: { allowed: true, level: 'ok', reasons: [], monthSpentJpy: 0, todayCalls: 0 }, personCount: 0, personConfirmed: true,
   }, C03_TABLE).allowed;
 }
@@ -247,7 +246,7 @@ async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Pr
     }
     throw err;
   }
-  const costJpy = settings.prices ? actualCostJpy(result.inputTokens, result.outputTokens, settings.prices, result.premiumRequests) : null;
+  const costJpy = settings.prices && result.inputTokens !== null && result.outputTokens !== null ? actualCostJpy(result.inputTokens, result.outputTokens, settings.prices) : null;
   appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costJpy, ...attribution });
   return { ...result, costJpy };
 }
@@ -278,7 +277,7 @@ export class AiLiveError extends Error {
  * Live only, never a mock: for features whose result is stored as real data (FR-311 customer pack generation), a mock
  * answer would be wrong data. Same gate, budget and ledger as aiComplete; a refusal or failure throws AiLiveError.
  */
-export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ text: string; costJpy: number | null; inputTokens: number; outputTokens: number }> {
+export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ text: string; costJpy: number | null; inputTokens: number | null; outputTokens: number | null }> {
   const pf = preflight(req);
   if (!pf.allowed) throw new AiLiveError(pf.reasons, `blocked: ${pf.reasons.join(', ')}`, pf.budget);
   if (!transport) throw new AiLiveError(['liveFailed'], 'no transport');

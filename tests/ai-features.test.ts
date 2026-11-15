@@ -285,7 +285,6 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: 'x' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed']));
-    expect(r.blockedReasons).not.toContain('noUnitPrice');
     expect(r.blockedReasons).not.toContain('c03NotApproved'); // D-1: "explain" is approved
     expect(calls).toHaveLength(0);
   });
@@ -297,48 +296,45 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(liveReady(useAiSettings.getState())).toBe(true);
   });
 
-  it('D-12: Copilot is priced per premium request × the model multiplier; token prices do not count for it', () => {
+  it('Copilot is ready without a unit price and reports cost as unknown', () => {
     useAiSettings.setState({
-      ...READY, provider: 'copilotSdk', copilotModel: 'claude-opus', copilotPricePerRequest: '',
+      ...READY, provider: 'copilotSdk', copilotModel: 'claude-opus',
       copilotStatus: { reachable: true, available: true, authenticated: true, login: 'u', error: null, model: 'claude-opus', models: [{ id: 'claude-opus', name: 'Opus', multiplier: 10 }] },
     });
     expect(runtimeSettings()).toMatchObject({ provider: 'copilotSdk', configured: true, prices: null });
-    expect(liveReady(useAiSettings.getState())).toBe(false);
-    useAiSettings.setState({ copilotPricePerRequest: '6' });
-    expect(runtimeSettings().prices).toEqual({ inputPerM: 0, outputPerM: 0, perRequestJpy: 6, requestMultiplier: 10 });
     expect(liveReady(useAiSettings.getState())).toBe(true);
-    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotPricePerRequest: '', copilotStatus: null });
+    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotStatus: null });
   });
 
-  it('FR-311 aiLive never answers with a mock: refusals throw, a Copilot answer records premium requests × price', async () => {
+  it('FR-311 aiLive never answers with a mock: a Copilot answer records reported tokens and unknown cost', async () => {
     writeLedger([]);
     await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true })).rejects.toBeInstanceOf(AiLiveError);
-    useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotPricePerRequest: '6', copilotStatus: null });
+    useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotStatus: null });
     const seenCalls: LiveCall[] = [];
     setLiveTransport(async (c) => { seenCalls.push(c); return { text: '{}', inputTokens: 10, outputTokens: 20, premiumRequests: 2 }; });
     const r = await aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true, maxOutputTokens: 16000 });
-    expect(r.costJpy).toBe(12);
+    expect(r).toMatchObject({ costJpy: null, inputTokens: 10, outputTokens: 20 });
     expect(seenCalls[0]).toMatchObject({ use: 'packBuild', provider: 'copilotSdk', maxOutputTokens: 16000 });
-    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', costJpy: 12 })]);
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', costJpy: null, inputTokens: 10, outputTokens: 20 })]);
     await expect(aiLive({ use: 'explain', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true })).rejects.toMatchObject({ reasons: ['c03NotApproved'] });
     setLiveTransport(async () => { throw new Error('relay 503 notSignedIn'); });
     await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true })).rejects.toMatchObject({ reasons: ['liveFailed'], message: 'relay 503 notSignedIn' });
-    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotPricePerRequest: '' });
+    useAiSettings.setState({ provider: 'foundry', copilotModel: null });
     writeLedger([]);
   });
 
-  it('a cancelled live call that may already be billed is recorded at the worst-case estimate, never as free', async () => {
+  it('a cancelled Copilot call that may already be billed is recorded with unknown cost', async () => {
     writeLedger([]);
-    useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotPricePerRequest: '6', copilotStatus: null });
+    useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotStatus: null });
     const ac = new AbortController();
     setLiveTransport(async (_c, signal) => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))));
     const pending = aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true }, ac.signal);
     ac.abort();
     const err = await pending.catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AiLiveError);
-    expect((err as AiLiveError).recordedCostJpy).toBeCloseTo(6 * 1.2);
-    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', outputTokens: 0, costJpy: expect.closeTo(7.2, 5) })]);
-    useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotPricePerRequest: '' });
+    expect((err as AiLiveError).recordedCostJpy).toBeNull();
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', outputTokens: 0, costJpy: null, estimated: true })]);
+    useAiSettings.setState({ provider: 'foundry', copilotModel: null });
     writeLedger([]);
   });
 
@@ -423,17 +419,19 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect('reviewBudgetJpy' in useAiSettings.getState()).toBe(false);
   });
 
-  it('migrates away previously entered Foundry prices without losing the connection or Copilot price', async () => {
+  it.each([2, 3])('migrates away old prices from version %i without losing the connection', async (version) => {
     localStorage.setItem('bas.ai.settings', JSON.stringify({
-      version: 2,
+      version,
       state: { ...CONNECTION, priceInputPerM: '1000', priceOutputPerM: '4000', copilotPricePerRequest: '6' },
     }));
     await useAiSettings.persist.rehydrate();
-    expect(useAiSettings.getState()).toMatchObject({ ...CONNECTION, copilotPricePerRequest: '6' });
+    expect(useAiSettings.getState()).toMatchObject(CONNECTION);
+    expect(useAiSettings.getState()).not.toHaveProperty('copilotPricePerRequest');
     expect(useAiSettings.getState()).not.toHaveProperty('priceInputPerM');
     expect(useAiSettings.getState()).not.toHaveProperty('priceOutputPerM');
     const saved = JSON.parse(localStorage.getItem('bas.ai.settings')!);
-    expect(saved.version).toBe(3);
+    expect(saved.version).toBe(4);
+    expect(saved.state).not.toHaveProperty('copilotPricePerRequest');
     expect(saved.state).not.toHaveProperty('priceInputPerM');
     expect(saved.state).not.toHaveProperty('priceOutputPerM');
   });

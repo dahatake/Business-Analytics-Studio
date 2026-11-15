@@ -14,7 +14,7 @@ import './ai.css';
 
 /** Reasons the UI can explain: the client gate's reasons plus the relay's own refusals. */
 export const KNOWN_REASONS = [
-  'c03NotApproved', 'liveDisabled', 'notConfirmed', 'notConfigured', 'noUnitPrice', 'budget', 'personNotConfirmed', 'liveFailed',
+  'c03NotApproved', 'liveDisabled', 'notConfirmed', 'notConfigured', 'budget', 'personNotConfirmed', 'liveFailed',
   'relayUnreachable',
 ] as const;
 export type KnownReason = (typeof KNOWN_REASONS)[number];
@@ -72,7 +72,7 @@ export function LiveNotice({ costJpy, usage, children }: { costJpy: number | nul
       </div>
       {usage && (
         <p className="muted" data-testid="ai-live-tokens">
-          {t('ai.tokens.call', {
+          {usage.inputTokens === null || usage.outputTokens === null ? t('ai.tokens.unavailable') : t('ai.tokens.call', {
             total: fmt.integer(usage.inputTokens + usage.outputTokens), input: fmt.integer(usage.inputTokens), output: fmt.integer(usage.outputTokens),
           })}
         </p>
@@ -99,6 +99,7 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
 }) {
   const { t, fmt } = useI18n();
   const yen = (v: number | null) => (v === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, v));
+  const tokens = (v: number | null) => v === null ? t('ai.tokens.unavailable') : fmt.integer(v);
   return (
     <table className="ai-token-table" data-testid={testId}>
       {caption && <caption>{caption}</caption>}
@@ -117,9 +118,9 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
           <tr key={`${l.use}.${l.step ?? ''}`} data-testid={`${testId}-row`} data-use={l.use} data-step={l.step ?? ''}>
             <th scope="row">{tokenLineLabel(t, l)}{l.estimatedCalls > 0 ? ` ${t('ai.tokens.estimatedMark')}` : ''}</th>
             <td>{fmt.integer(l.calls)}</td>
-            <td>{fmt.integer(l.inputTokens)}</td>
-            <td>{fmt.integer(l.outputTokens)}</td>
-            <td data-testid={`${testId}-row-total`}>{fmt.integer(l.totalTokens)}</td>
+            <td>{tokens(l.inputTokens)}</td>
+            <td>{tokens(l.outputTokens)}</td>
+            <td data-testid={`${testId}-row-total`}>{tokens(l.totalTokens)}</td>
             <td>{yen(l.costJpy)}</td>
           </tr>
         ))}
@@ -136,9 +137,9 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
         <tr data-testid={`${testId}-total`}>
           <th scope="row">{t('ai.tokens.sum')}</th>
           <td>{fmt.integer(summary.total.calls)}</td>
-          <td>{fmt.integer(summary.total.inputTokens)}</td>
-          <td>{fmt.integer(summary.total.outputTokens)}</td>
-          <td data-testid={`${testId}-total-value`}>{fmt.integer(summary.total.totalTokens)}</td>
+          <td>{tokens(summary.total.inputTokens)}</td>
+          <td>{tokens(summary.total.outputTokens)}</td>
+          <td data-testid={`${testId}-total-value`}>{tokens(summary.total.totalTokens)}</td>
           <td>{yen(summary.total.costJpy)}</td>
         </tr>
       </tfoot>
@@ -203,6 +204,10 @@ export interface LiveConfirmInfo {
   monthBudgetJpy: number;
   /** Attached files by name: sent to the model, or withheld (unreadable by the selected model, too large, missing). */
   attachments?: { sent: string[]; skipped: string[] };
+  contentPreview?: string;
+  freeTextMayContainPersons?: boolean;
+  storesResponse?: boolean;
+  destination?: string;
 }
 
 export interface LiveDecision {
@@ -226,13 +231,13 @@ export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmF
     setPending(info);
   }), []);
   const close = (ok: boolean) => {
-    const needsPerson = (pending?.personCount ?? 0) > 0;
+    const needsPerson = (pending?.personCount ?? 0) > 0 || !!pending?.freeTextMayContainPersons;
     resolver.current?.({ ok, personConfirmed: ok && (!needsPerson || personChecked) });
     resolver.current = null;
     setPending(null);
   };
   const p = pending;
-  const blocked = p !== null && p.personCount > 0 && !personChecked;
+  const blocked = p !== null && (p.personCount > 0 || !!p.freeTextMayContainPersons) && !personChecked;
   const dialog = (
     <Dialog open={p !== null} modalType="alert" onOpenChange={(_, d) => { if (!d.open) close(false); }}>
       <DialogSurface data-testid="ai-live-confirm">
@@ -242,6 +247,7 @@ export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmF
             {p && (
               <>
                 <p>{t('ai.live.lead', { use: t(p.use), provider: t(`ai.provider.${provider}`) })}</p>
+                {p.destination && <p>{t('ai.live.destination', { destination: p.destination })}</p>}
                 <ul className="ai-reasons" data-testid="ai-live-content">
                   <li>{t('ai.live.items', { count: p.itemCount, scope: p.scope })}</li>
                   <li data-testid="ai-live-internal">{t('ai.live.internal', { count: p.internalCount })}</li>
@@ -253,17 +259,23 @@ export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmF
                     <li data-testid="ai-live-attachments-skipped">{t('ai.live.attachmentsSkipped', { count: p.attachments.skipped.length, names: p.attachments.skipped.join(', ') })}</li>
                   )}
                 </ul>
-                <p data-testid="ai-live-cost">{p.estimatedCostJpy === null ? t('ai.cost.unknown') : t('ai.live.cost', { cost: yenFine(fmt.locale, p.estimatedCostJpy), factor: AI_LIMITS.estimateSafetyFactor })}</p>
+                {p.contentPreview && (
+                  <details data-testid="ai-live-preview">
+                    <summary>{t('ai.live.preview')}</summary>
+                    <pre className="proj-prewrap">{p.contentPreview}</pre>
+                  </details>
+                )}
+                <p data-testid="ai-live-cost">{p.estimatedCostJpy === null ? t(provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown') : t('ai.live.cost', { cost: yenFine(fmt.locale, p.estimatedCostJpy), factor: AI_LIMITS.estimateSafetyFactor })}</p>
                 <p data-testid="ai-live-month">{t('ai.live.month', { spent: yenFine(fmt.locale, p.monthSpentJpy), budget: fmt.yen(p.monthBudgetJpy) })}</p>
-                {p.personCount > 0 && (
+                {(p.personCount > 0 || p.freeTextMayContainPersons) && (
                   <Checkbox
                     checked={personChecked}
                     onChange={(_, d) => setPersonChecked(d.checked === true)}
-                    label={t('ai.live.personCheck', { count: p.personCount })}
+                    label={p.freeTextMayContainPersons ? t('ai.live.freeTextPersonCheck') : t('ai.live.personCheck', { count: p.personCount })}
                     data-testid="ai-live-person-check"
                   />
                 )}
-                <p className="muted">{t('ai.live.noRecord')}</p>
+                <p className="muted">{t(p.storesResponse ? 'ai.live.responseStored' : 'ai.live.noRecord')}</p>
                 <D4Warning />
               </>
             )}

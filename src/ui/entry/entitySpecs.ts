@@ -1,8 +1,8 @@
 import type { Lang, MessageKey } from '../../i18n/core.ts';
 import { Entity, type EntityKind, type LText } from '../../data/schema.ts';
 
-/** Kinds that can be entered in the app. Causes, initiatives, suppliers and sources come from pack generation only. */
-export const EDITABLE_KINDS = ['issue', 'kpi', 'solution', 'customer', 'deal', 'deliverable', 'invoice', 'person', 'product', 'site'] as const satisfies readonly EntityKind[];
+/** Kinds that can be entered in the app. Suppliers and sources come from pack generation or attachments. */
+export const EDITABLE_KINDS = ['issue', 'cause', 'kpi', 'solution', 'initiative', 'customer', 'deal', 'deliverable', 'invoice', 'person', 'product', 'site'] as const satisfies readonly EntityKind[];
 export type EditableKind = (typeof EDITABLE_KINDS)[number];
 export const isEditableKind = (k: string): k is EditableKind => (EDITABLE_KINDS as readonly string[]).includes(k);
 
@@ -14,7 +14,7 @@ export type FieldSpec =
   | { key: string; type: 'date'; label: MessageKey }
   | { key: string; type: 'enum'; label: MessageKey; options: Option[]; numeric?: boolean }
   | { key: string; type: 'ref'; label: MessageKey; kind: EditableKind }
-  | { key: string; type: 'refs'; label: MessageKey; kind: EditableKind; min?: number }
+  | { key: string; type: 'refs'; label: MessageKey; kind: EditableKind | 'source'; min?: number }
   | { key: string; type: 'region'; label: MessageKey }
   | { key: string; type: 'list'; label: MessageKey };
 
@@ -30,8 +30,11 @@ export const FIELDS: Record<EditableKind, FieldSpec[]> = {
   issue: [
     { key: 'impact', type: 'enum', label: 'field.impact', options: SCORE, numeric: true },
     { key: 'feasibility', type: 'enum', label: 'field.feasibility', options: SCORE, numeric: true },
+    { key: 'causeIds', type: 'refs', label: 'field.causes', kind: 'cause' },
     { key: 'kpiIds', type: 'refs', label: 'entry.field.kpis', kind: 'kpi' },
+    { key: 'sourceIds', type: 'refs', label: 'entity.sources', kind: 'source' },
   ],
+  cause: [{ key: 'sourceIds', type: 'refs', label: 'entity.sources', kind: 'source' }],
   kpi: [
     { key: 'unit', type: 'ltext', label: 'entry.field.unit', required: true },
     { key: 'baseline', type: 'number', label: 'field.baseline' },
@@ -48,6 +51,14 @@ export const FIELDS: Record<EditableKind, FieldSpec[]> = {
     { key: 'msProducts', type: 'list', label: 'field.msProducts' },
     { key: 'costJpy', type: 'number', label: 'field.cost', min: 1 },
     { key: 'annualBenefitJpy', type: 'number', label: 'field.annualBenefit', min: 1 },
+  ],
+  initiative: [
+    { key: 'solutionId', type: 'ref', label: 'kind.solution', kind: 'solution' },
+    { key: 'start', type: 'date', label: 'field.start' },
+    { key: 'end', type: 'date', label: 'field.end' },
+    { key: 'progress', type: 'number', label: 'entry.field.progressRatio', min: 0, max: 1, step: 0.01 },
+    { key: 'dependsOn', type: 'refs', label: 'field.dependsOn', kind: 'initiative' },
+    { key: 'ownerId', type: 'ref', label: 'field.owner', kind: 'person' },
   ],
   customer: [
     { key: 'industry', type: 'ltext', label: 'field.industry', required: true },
@@ -95,8 +106,10 @@ const hueOf = (id: string) => [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)
 /** §3.7 world/type of entries made in the app, matching the sample pack. */
 const META: Record<EditableKind, { world: 'real' | 'digital'; type: string }> = {
   issue: { world: 'real', type: 'event' },
+  cause: { world: 'real', type: 'event' },
   kpi: { world: 'digital', type: 'metric' },
   solution: { world: 'digital', type: 'system' },
+  initiative: { world: 'real', type: 'operation' },
   customer: { world: 'real', type: 'organization' },
   deal: { world: 'real', type: 'event' },
   deliverable: { world: 'real', type: 'thing' },
@@ -109,8 +122,10 @@ const META: Record<EditableKind, { world: 'real' | 'digital'; type: string }> = 
 const defaults = (kind: EditableKind): Record<string, unknown> => {
   switch (kind) {
     case 'issue': return { impact: 3, feasibility: 3, causeIds: [], kpiIds: [] };
+    case 'cause': return {};
     case 'kpi': return { baseline: 0, current: 0, target: 100, direction: 'increase', scale: 'ratio', ownerId: '' };
     case 'solution': return { issueIds: [], kpiIds: [], msProducts: [] };
+    case 'initiative': return { solutionId: '', start: today(), end: today(), progress: 0, dependsOn: [], ownerId: '' };
     case 'customer': return { regionId: '' };
     case 'deal': return { customerId: '', productIds: [], ownerId: '', stage: 'lead', closeDate: today() };
     case 'deliverable': return { dealId: '', dueDate: today(), status: 'planned' };

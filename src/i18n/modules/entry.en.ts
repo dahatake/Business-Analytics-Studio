@@ -13,6 +13,7 @@ export const entryEn: Record<keyof typeof entryJa, string> = {
   'entry.descriptionHint': 'When empty, the name is used as the description.',
   'entry.field.shareable': 'Shareable outside the company (off = internal only)',
   'entry.field.unit': 'Unit',
+  'entry.field.progressRatio': 'Progress (0–1, where 1 is 100%)',
   'entry.field.scale': 'Scale',
   'entry.field.kpis': 'Related KPIs',
   'entry.field.products': 'Products',

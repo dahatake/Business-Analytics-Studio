@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { FOUNDRY_MEDIA, type MediaCapability } from '../../ai/attachments.ts';
 import { appStorage as localStorage, syncDeviceStore } from '../../data/deviceStorage.ts';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { checkBudget, parseRequestPrice, type UnitPrices } from '../../ai/budget.ts';
+import { checkBudget } from '../../ai/budget.ts';
 import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
@@ -25,7 +25,7 @@ export function parseBudget(raw: string): number | null {
 }
 
 type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'liveEnabled' | 'speechEndpoint' | 'speechRegion'
-  | 'monthlyBudgetJpy' | 'copilotPricePerRequest';
+  | 'monthlyBudgetJpy';
 
 /**
  * Non-secret AI settings (FR-275/FR-282/FR-167). App-wide, not per project: the connection belongs to the PC.
@@ -44,8 +44,6 @@ export interface AiSettingsState {
   speechRegion: string;
   /** D-3: one monthly budget for the whole app (PARAM-117), default 100,000 JPY. */
   monthlyBudgetJpy: number;
-  /** D-12: JPY per GitHub Copilot premium request (user-entered; invalid blocks every Copilot send). */
-  copilotPricePerRequest: string;
   relayReachable: boolean;
   foundryKeySaved: boolean;
   speechKeySaved: boolean;
@@ -88,7 +86,6 @@ export const useAiSettings = create<AiSettingsState>()(
       speechEndpoint: '',
       speechRegion: '',
       monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
-      copilotPricePerRequest: '',
       relayReachable: false,
       foundryKeySaved: false,
       speechKeySaved: false,
@@ -172,12 +169,12 @@ export const useAiSettings = create<AiSettingsState>()(
     }),
     {
       name: AI_SETTINGS_KEY,
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, liveEnabled: s.liveEnabled,
         speechEndpoint: s.speechEndpoint, speechRegion: s.speechRegion,
-        monthlyBudgetJpy: s.monthlyBudgetJpy, copilotPricePerRequest: s.copilotPricePerRequest,
+        monthlyBudgetJpy: s.monthlyBudgetJpy,
       }),
       // v1 had a separate review budget (PARAM-120); D-3 merged it into the single monthly budget.
       migrate: (persisted, version) => {
@@ -185,6 +182,7 @@ export const useAiSettings = create<AiSettingsState>()(
         if (version < 2) delete p.reviewBudgetJpy;
         delete p.priceInputPerM;
         delete p.priceOutputPerM;
+        delete p.copilotPricePerRequest;
         return p as unknown as AiSettingsState;
       },
     },
@@ -215,15 +213,6 @@ export function connectionTestPreflight(s: Pick<AiSettingsState, 'monthlyBudgetJ
   return { budget };
 }
 
-/** Copilot premium-request price and multiplier; Foundry monetary pricing is unavailable. */
-export function providerPrices(s: Pick<AiSettingsState, 'provider' | 'copilotPricePerRequest' | 'copilotModel' | 'copilotStatus'>): UnitPrices | null {
-  if (s.provider === 'copilotSdk') {
-    const multiplier = s.copilotStatus?.models.find((m) => m.id === s.copilotModel)?.multiplier ?? 1;
-    return parseRequestPrice(s.copilotPricePerRequest, multiplier);
-  }
-  return null;
-}
-
 export function runtimeSettings(): AiRuntimeSettings {
   const s = useAiSettings.getState();
   return {
@@ -231,11 +220,10 @@ export function runtimeSettings(): AiRuntimeSettings {
     liveEnabled: s.liveEnabled,
     configured: isConfigured(s),
     monthlyBudgetJpy: s.monthlyBudgetJpy,
-    prices: providerPrices(s),
+    prices: null,
   };
 }
 
-/** Whether an approved use is ready; only Copilot requires a manual price. */
 /** Files the selected provider and model read natively: Foundry chat completions document JPEG/PNG/GIF/WEBP for vision
 deployments; a Copilot model reports its own list (none until checked, and none for `auto`). */
 export function mediaCapability(s: Pick<AiSettingsState, 'provider' | 'copilotModel' | 'copilotStatus'>): MediaCapability | null {
@@ -244,7 +232,7 @@ export function mediaCapability(s: Pick<AiSettingsState, 'provider' | 'copilotMo
 }
 
 export function liveReady(s: AiSettingsState): boolean {
-  return s.liveEnabled && isConfigured(s) && (s.provider === 'foundry' || providerPrices(s) !== null);
+  return s.liveEnabled && isConfigured(s);
 }
 
 /** Work IQ requires a successful retrieval diagnostic, not just a saved refresh token. */

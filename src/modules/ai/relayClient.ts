@@ -235,7 +235,8 @@ export const relayTransport: LiveTransport = async (call: LiveCall, signal?: Abo
     });
     if (!res.ok) throw new RelayError(res.status, await errorCode(res));
     const body = (await res.json()) as Partial<LiveResult>;
-    if (typeof body.text !== 'string' || typeof body.inputTokens !== 'number' || typeof body.outputTokens !== 'number') throw new RelayError(502, 'badRelayAnswer');
+    const validTokens = (v: unknown): v is number | null => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+    if (typeof body.text !== 'string' || !validTokens(body.inputTokens) || !validTokens(body.outputTokens)) throw new RelayError(502, 'badRelayAnswer');
     return {
       text: body.text, inputTokens: body.inputTokens, outputTokens: body.outputTokens,
       ...(typeof body.premiumRequests === 'number' && body.premiumRequests >= 0 ? { premiumRequests: body.premiumRequests } : {}),

@@ -50,6 +50,23 @@ function recordResponses(page: Page): string[] {
 test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/012)', () => {
   test.describe.configure({ mode: 'serial' });
 
+  test('Copilot is ready without a unit price and explains unknown charges', async ({ page }) => {
+    await page.route('**/relay/status', async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ json: { ...await response.json(), copilot: { model: 'gpt-5' } } });
+    });
+    await open(page, '/ai-settings', { lang: 'ja' });
+    await page.getByTestId('ai-provider-copilot').check();
+    await page.getByTestId('ai-live-switch').check();
+    await expect(page.getByTestId('ai-price-request')).toHaveCount(0);
+    await expect(page.getByTestId('ai-provider-cost-note')).toContainText('請求額を制限できません');
+    await expect(page.getByTestId('ai-state')).not.toContainText('モック');
+    await page.reload();
+    await expect(page.getByTestId('ai-provider-copilot')).toBeChecked();
+    await expect(page.getByTestId('ai-price-request')).toHaveCount(0);
+    await expect(page.getByTestId('ai-state')).not.toContainText('モック');
+  });
+
   for (const lang of ['ja', 'en'] as const) {
     test(`${lang}: AI sending rules explain approved and undecided uses`, async ({ page }) => {
       await open(page, '/assistant', { lang });

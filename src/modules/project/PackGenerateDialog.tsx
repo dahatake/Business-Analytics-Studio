@@ -230,7 +230,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     };
     // Recomputed when what is sent or the price settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotPricePerRequest, ai.copilotModel, ai.copilotStatus, open]);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotModel, ai.copilotStatus, open]);
   const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
   const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget
@@ -567,7 +567,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                     <dl className="gen-estimate" data-testid="gen-estimate">
                       <dt>{t('proj.gen.calls')}</dt><dd>{t('proj.gen.callsValue', { min: 2, max: estimate.calls })}</dd>
                       <dt>{t('proj.gen.cost')}</dt>
-                      <dd>{estimate.max === null ? t(ai.provider === 'foundry' ? 'ai.cost.unknown' : 'proj.gen.noPrice') : t('proj.gen.costValue', { min: yen(estimate.min!), max: yen(estimate.max) })}</dd>
+                      <dd>{estimate.max === null ? t(ai.provider === 'foundry' ? 'ai.cost.unknown' : 'ai.cost.unknownCopilot') : t('proj.gen.costValue', { min: yen(estimate.min!), max: yen(estimate.max) })}</dd>
                       <dt>{t('proj.gen.month')}</dt><dd>{t('proj.gen.monthValue', { spent: yen(estimate.spent), budget: fmt.yen(ai.monthlyBudgetJpy) })}</dd>
                     </dl>
                     {overBudget && <MessageBar intent="error" data-testid="gen-over-budget"><MessageBarBody>{t('proj.gen.overBudget')}</MessageBarBody></MessageBar>}
@@ -585,7 +585,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                 <div className="gen-progress" data-testid="gen-progress" aria-live="polite">
                   <ProgressBar value={progress?.ratio ?? 0} thickness="large" aria-label={t('proj.gen.progressLabel')} data-testid="gen-progress-bar" />
                   <p className="muted">
-                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, cost: yen(progress ? progress.costJpy : 0), tokens: fmt.integer(progress?.tokens ?? 0) })}
+                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, cost: yen(progress ? progress.costJpy : 0), tokens: progress?.tokens === null ? t('ai.tokens.unavailable') : fmt.integer(progress?.tokens ?? 0) })}
                   </p>
                   <ol className="gen-steps">
                     {STEPS.map((s) => (
@@ -602,7 +602,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                       <MessageBarBody>
                         {t(`proj.gen.error.${phase.code}`)}
                         <span className="gen-detail" lang="en">{phase.detail}</span>
-                        {t('proj.gen.errorCost', { cost: yen(phase.costJpy), tokens: fmt.integer(phase.tokens.totalTokens) })}
+                        {t('proj.gen.errorCost', { cost: yen(phase.costJpy), tokens: phase.tokens.totalTokens === null ? t('ai.tokens.unavailable') : fmt.integer(phase.tokens.totalTokens) })}
                       </MessageBarBody>
                     </MessageBar>
                   )}

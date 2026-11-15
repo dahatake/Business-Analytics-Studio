@@ -263,7 +263,7 @@ export function toMarkdown(b: ExportBundle, aiUsage?: TokenSummary): string {
 export function tokenSection(s: TokenSummary, lang: Lang): string[] {
   const tr = (key: MessageKey, vars?: Vars) => translate(lang, key, vars);
   const locale = lang === 'ja' ? 'ja-JP' : 'en-US';
-  const n = (v: number) => new Intl.NumberFormat(locale).format(v);
+  const n = (v: number | null) => v === null ? tr('ai.tokens.unavailable') : new Intl.NumberFormat(locale).format(v);
   const yen = (v: number | null) => (v === null ? tr('ai.cost.unavailable') : new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 2 }).format(v));
   const row = (label: string, x: TokenTotals) => `| ${cell(label)} | ${n(x.calls)} | ${n(x.inputTokens)} | ${n(x.outputTokens)} | ${n(x.totalTokens)} | ${cell(yen(x.costJpy))} |`;
   const out = [`## ${tr('proj.md.tokens')}`, '', tr('proj.md.tokensNote'), ''];

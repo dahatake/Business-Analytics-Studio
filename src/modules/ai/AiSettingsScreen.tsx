@@ -5,7 +5,7 @@ import {
 } from '@fluentui/react-components';
 import { Delete20Regular } from '@fluentui/react-icons';
 import { isUseApproved, readLedger } from '../../ai/client.ts';
-import { AI_LIMITS, C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
+import { C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { hrefFor } from '../../state/router.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
@@ -209,9 +209,8 @@ export function AiSettingsScreen() {
           </div>
         </Panel>
 
-        <Panel title={s.provider === 'copilotSdk' ? t('ai.price.titleCopilot') : t('ai.cost.title')} testId="ai-prices">
+        <Panel title={t('ai.cost.title')} testId="ai-prices">
           <div className="ai-stack">
-            {s.provider === 'copilotSdk' && <p className="muted">{t('ai.price.leadCopilot', { factor: AI_LIMITS.estimateSafetyFactor })}</p>}
             <PriceFields />
           </div>
         </Panel>

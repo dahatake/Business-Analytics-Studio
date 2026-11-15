@@ -14,6 +14,9 @@ import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { isHidden, routeFor } from '../ui/cardSpecs.ts';
 import { kindColor, kindIcon } from '../ui/icons.ts';
+import { EntityEditorDialog } from '../ui/entry/EntityEditorDialog.tsx';
+import { isEditableKind } from '../ui/entry/entitySpecs.ts';
+import { usePackVersion } from '../state/packEdits.ts';
 
 type View = 'chain' | 'graph' | 'table';
 type Allow = (e: Entity) => boolean;
@@ -112,6 +115,12 @@ export function Relations() {
   const { t, tx } = useI18n();
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
+  const packVersion = usePackVersion((s) => s.version);
+  const edit = getEntity(route.query.get('edit') ?? '');
+  const editingEntity = edit && isEditableKind(edit.kind) && !isHidden(edit, audience) ? edit : null;
+  const editingKind = editingEntity && isEditableKind(editingEntity.kind) ? editingEntity.kind : null;
+  const create = route.query.get('create');
+  const creatingKind = create && isEditableKind(create) ? create : null;
   const view = (VIEWS as string[]).includes(route.query.get('view') ?? '') ? (route.query.get('view') as View) : 'chain';
   const sel = route.query.get('sel');
   const focusParam = route.query.get('focus') ?? '';
@@ -123,14 +132,15 @@ export function Relations() {
   const focus = focusEntity && allow(focusEntity) ? focusParam : fallback;
   const hops = Math.min(PARAMS.graphHopsMax, Math.max(PARAMS.graphHopsMin, Number(route.query.get('hops') ?? 2) || 2));
 
-  const visibleEntities = useMemo(() => loaded.pack.entities.filter(allow), [allow]);
-  const depthOf = useMemo(() => neighborhoodDepths(focus, hops, allow), [focus, hops, allow]);
+  const visibleEntities = useMemo(() => loaded.pack.entities.filter(allow), [allow, packVersion]);
+  const depthOf = useMemo(() => neighborhoodDepths(focus, hops, allow), [focus, hops, allow, packVersion]);
   const egoEntities = useMemo(() => visibleEntities.filter((e) => depthOf.has(e.id)), [visibleEntities, depthOf]);
   const egoEdges = useMemo(() => loaded.edges.filter((e) => depthOf.has(e.source) && depthOf.has(e.target)), [depthOf]);
-  const tableEdges = useMemo(() => allowedEdges(allow), [allow]);
+  const tableEdges = useMemo(() => allowedEdges(allow), [allow, packVersion]);
 
   return (
     <div className="screen screen-relations">
+      {(editingKind || creatingKind) && <EntityEditorDialog kind={editingKind ?? creatingKind} id={editingEntity?.id} focusField={route.query.get('field')} onClose={() => replaceQuery({ edit: undefined, field: undefined, create: undefined })} />}
       <PageHeader title={t('relations.title')} subtitle={t('relations.subtitle')} />
       {excluded.headlines + excluded.derived > 0 && (
         <MessageBar intent="info" data-testid="news-excluded">

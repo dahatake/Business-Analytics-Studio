@@ -54,6 +54,10 @@ export const DeliverableDataSchema = z.object({
   docs: z.record(z.string(), z.record(z.string(), FieldValueSchema)),
   /** manual todo id → sign-off. Absent = not signed off. */
   signOffs: z.record(z.string(), SignOffSchema),
+  recommendations: z.record(z.string(), z.object({
+    draft: z.object({ text: z.string(), mock: z.boolean(), at: z.string() }).optional(),
+    approved: z.object({ text: z.string(), mock: z.boolean(), at: z.string(), by: z.string() }).optional(),
+  })).optional(),
   /** Project-specific judging criteria. Absent = the app's defaults. A broken value falls back to the default. */
   criteria: z.object({ paybackMaxYears: CriterionSchema.optional().catch(undefined) }).optional().catch(undefined),
 });
@@ -461,7 +465,7 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
         check: (c) => {
           const ids = new Set(kindOf(c.pack, 'issue').flatMap((i) => i.causeIds));
           const causes = kindOf(c.pack, 'cause').filter((x) => ids.has(x.id));
-          if (causes.length === 0) return fail('noCauses');
+          if (causes.length === 0) return fail('noCauses', entityRefs(kindOf(c.pack, 'issue')));
           const bad = causes.filter((x) => !x.sourceIds.some((s) => c.pack.byId.get(s)?.kind === 'source'));
           return bad.length ? fail('causesWithoutSource', entityRefs(bad), { n: bad.length }) : pass('allCausesSourced', { n: causes.length });
         },

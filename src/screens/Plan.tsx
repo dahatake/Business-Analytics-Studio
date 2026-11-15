@@ -11,6 +11,7 @@ import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { SvgEntityNode } from '../ui/SvgEntityNode.tsx';
 import { isHidden } from '../ui/cardSpecs.ts';
+import { usePackVersion } from '../state/packEdits.ts';
 
 type Init = EntityOf<'initiative'>;
 const LABEL_W = 0, ROW_H = 40, GROUP_H = 30, TOP = 34;
@@ -19,6 +20,7 @@ const day = (iso: string) => new Date(`${iso}T00:00:00+09:00`);
 export function Plan() {
   const { t, tx, fmt, lang } = useI18n();
   const audience = useSettings((s) => s.audience);
+  const packVersion = usePackVersion((s) => s.version);
   const route = useRoute();
   const zoom = route.query.get('zoom') === '2' ? 2 : 1;
   const axisRef = useRef<SVGGElement>(null);
@@ -37,7 +39,7 @@ export function Plan() {
       }
     }
     return { out, height: y + 10, inits: visible };
-  }, [audience]);
+  }, [audience, packVersion]);
 
   const width = 900 * zoom;
   const x = useMemo(() => {

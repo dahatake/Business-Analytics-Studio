@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UsageRecord } from '../src/ai/budget.ts';
 import { aiComplete, readLedger, rebindLedgerScope, setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
 import { recordsOfScope, summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { tokenSection } from '../src/modules/project/exportFormat.ts';
+import { relayTransport } from '../src/modules/ai/relayClient.ts';
 
 const rec = (o: Partial<UsageRecord>): UsageRecord => ({ at: '2026-05-01T00:00:00.000Z', use: 'packBuild', inputTokens: 0, outputTokens: 0, costJpy: null, ...o });
 
@@ -22,18 +23,24 @@ describe('token summary per step', () => {
       ['explain', undefined, 1, 2300],
     ]);
     expect(s.total).toMatchObject({ calls: 5, inputTokens: 20100, outputTokens: 7850, totalTokens: 27950 });
-    expect(s.total.totalTokens).toBe(s.lines.reduce((n, l) => n + l.totalTokens, 0));
+    expect(s.total.totalTokens).toBe(s.lines.reduce((n, l) => n + (l.totalTokens ?? 0), 0));
   });
 
-  it('an unknown price makes the group cost unknown (never free); estimates are counted; bad numbers are ignored', () => {
+  it('unknown or invalid usage makes the group total unknown, not zero; estimates are counted', () => {
     const s = summarizeTokens([
       rec({ use: 'explain', costJpy: 1, inputTokens: 10, outputTokens: 5 }),
       rec({ use: 'explain', costJpy: 2, inputTokens: Number.NaN, outputTokens: -3, estimated: true }),
       rec({ use: 'connectionTest', costJpy: null, inputTokens: 1, outputTokens: 1 }),
     ]);
-    expect(s.lines[0]).toMatchObject({ costJpy: 3, totalTokens: 15, estimatedCalls: 1 });
-    expect(s.total).toMatchObject({ costJpy: null, totalTokens: 17, estimatedCalls: 1 });
+    expect(s.lines[0]).toMatchObject({ costJpy: 3, totalTokens: null, estimatedCalls: 1 });
+    expect(s.total).toMatchObject({ costJpy: null, totalTokens: null, estimatedCalls: 1 });
     expect(summarizeTokens([]).total).toMatchObject({ calls: 0, totalTokens: 0, costJpy: 0 });
+  });
+
+  it('marks a partial group and its exported total unavailable rather than displaying a partial sum', () => {
+    const s = summarizeTokens([rec({ inputTokens: 10, outputTokens: 5 }), rec({ inputTokens: null, outputTokens: null })]);
+    expect(s.total).toMatchObject({ calls: 2, inputTokens: null, outputTokens: null, totalTokens: null });
+    expect(tokenSection(s, 'en').join('\n')).toContain('| **Total** | 2 | Unavailable | Unavailable | Unavailable |');
   });
 
   it('only the records of the asked scope count; unscoped (older) records are excluded', () => {
@@ -68,6 +75,20 @@ describe('ledger attribution', () => {
     writeLedger([rec({ scope: 'gen-run-1', inputTokens: 1 }), rec({ scope: 'pj-a', inputTokens: 2 }), rec({ inputTokens: 3 })]);
     rebindLedgerScope('gen-run-1', 'pj-b');
     expect(readLedger().map((r) => r.scope)).toEqual(['pj-b', 'pj-a', undefined]);
+  });
+
+  it('passes unavailable Copilot usage through the relay into the ledger without treating it as zero', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      new Response(JSON.stringify(url === '/relay/session' ? { token: 'test' } : { text: 'ok', inputTokens: null, outputTokens: null }), { status: 200 }));
+    try {
+      setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true, prices: null }));
+      setLiveTransport(relayTransport);
+      const r = await aiComplete({ use: 'packBuild', lang: 'en', prompt: 'x', userConfirmed: true, scope: 'pj-x' });
+      expect(r).toMatchObject({ mode: 'live', usage: { inputTokens: null, outputTokens: null }, costJpy: null });
+      expect(readLedger()).toEqual([expect.objectContaining({ scope: 'pj-x', inputTokens: null, outputTokens: null, costJpy: null })]);
+    } finally {
+      fetch.mockRestore();
+    }
   });
 });
 

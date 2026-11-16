@@ -54,5 +54,5 @@ $env:BAS_PORT=<port>; $env:BAS_OUT='dist-<module>'; npx playwright test e2e/<mod
 
 - Live AI tests against a local stub provider run only with `$env:BAS_RELAY_TEST_OUTBOUND='1'` (relay settings: [relay-config.md](relay-config.md)).
 - Timing-sensitive tests are tagged `@perf` and run alone, serially (`playwright test --project=perf --workers=1`). Measurement tools are tagged `@measure` and are not part of `verify`.
-- Generative AI: only C-03 rows marked approved in `src/ai/policy.ts` can go live (currently `explain`). Features call `preflight()` to build their confirmation dialog and `aiComplete()` to send; `registerMock(use, fn, when?)` takes an optional matcher so modules can share a use.
+- Generative AI: only C-03 rows marked approved in `src/ai/policy.ts` can go live (currently `explain`). One-time send consent is captured in AI settings; `preflight()` checks send gates and `aiComplete()` sends; `registerMock(use, fn, when?)` takes an optional matcher so modules can share a use.
 - Fluent UI motion follows the app's reduced-motion setting through `MotionBehaviourProvider` in `App.tsx`; do not start your own JS animations without checking `useReducedMotion()`.

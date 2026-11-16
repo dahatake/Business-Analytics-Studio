@@ -1,4 +1,5 @@
 .ai-stack { display: flex; flex-direction: column; gap: 12px; }
+.ai-d4-warning { flex: none; }
 .ai-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .ai-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
 .ai-label { font-weight: 600; color: var(--colorNeutralForeground2); margin-right: 4px; }

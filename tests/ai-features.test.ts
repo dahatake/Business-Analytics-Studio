@@ -198,9 +198,9 @@ describe('explain fallback (FR-274/277)', () => {
 
 
 const CONNECTION = { endpoint: 'https://res.openai.azure.com', deployment: 'gpt', apiVersion: '2024-10-21' };
-const READY = { liveEnabled: true, relayConnection: CONNECTION, connectionVerifiedAt: '2026-11-10T00:00:00Z', foundryKeySaved: true };
+const READY = { liveEnabled: true, sendConsent: true, relayConnection: CONNECTION, connectionVerifiedAt: '2026-11-10T00:00:00Z', foundryKeySaved: true };
 const OFF = {
-  liveEnabled: false, endpoint: '', deployment: '', foundryKeySaved: false, relayConnection: null, connectionVerifiedAt: null, provider: 'foundry' as const, authMethod: 'apiKey' as const,
+  liveEnabled: false, sendConsent: false, endpoint: '', deployment: '', foundryKeySaved: false, relayConnection: null, connectionVerifiedAt: null, provider: 'foundry' as const, authMethod: 'apiKey' as const,
   monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
 };
 
@@ -281,7 +281,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
   });
 
   it('is off and unconfigured by default, with the 100,000 JPY budget and no prices, so nothing is sent', async () => {
-    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, sendConsent: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: 'x' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed']));
@@ -291,7 +291,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
 
   it('keeps Foundry ready without manual pricing and reports unavailable prices to the core', () => {
     useAiSettings.setState({ ...READY, monthlyBudgetJpy: 5000 });
-    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, configured: true, monthlyBudgetJpy: 5000, prices: null });
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 5000, prices: null });
     expect(runtimeSettings().prices).toBeNull();
     expect(liveReady(useAiSettings.getState())).toBe(true);
   });
@@ -304,6 +304,17 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(runtimeSettings()).toMatchObject({ provider: 'copilotSdk', configured: true, prices: null });
     expect(liveReady(useAiSettings.getState())).toBe(true);
     useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotStatus: null });
+  });
+
+  it('revoking consent disables live mode, and changing provider requires new consent', () => {
+    useAiSettings.setState({ ...READY, provider: 'foundry' });
+    useAiSettings.getState().update({ sendConsent: false });
+    expect(useAiSettings.getState()).toMatchObject({ sendConsent: false, liveEnabled: false });
+
+    useAiSettings.setState({ ...READY, liveEnabled: true });
+    useAiSettings.getState().update({ provider: 'copilotSdk' });
+    expect(useAiSettings.getState()).toMatchObject({ provider: 'copilotSdk', sendConsent: false, liveEnabled: false });
+    expect(liveReady(useAiSettings.getState())).toBe(false);
   });
 
   it('FR-311 aiLive never answers with a mock: a Copilot answer records reported tokens and unknown cost', async () => {
@@ -346,18 +357,21 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('"explain" goes live without manual pricing, confirms content and records tokens with unknown cost', async () => {
+  it('"explain" uses saved settings consent and records tokens with unknown cost', async () => {
     useAiSettings.setState(READY);
     const entities = entitiesOfComponents(componentsForRoute('/'));
     const req = { use: 'explain' as const, lang: 'en' as const, prompt: 'Explain', entities };
-    const pf = preflight({ ...req, userConfirmed: true, personConfirmed: true });
-    expect(pf.allowed).toBe(true);
+    useAiSettings.setState({ sendConsent: false });
+    const pf = preflight(req);
+    expect(pf.allowed).toBe(false);
+    expect(pf.reasons).toContain('notConfirmed');
     expect(pf.internalCount).toBeGreaterThan(0);
     expect(pf.estimatedCostJpy).toBeNull();
-    expect((await aiComplete(req)).blockedReasons).toEqual(['notConfirmed']);
+    expect((await aiComplete(req)).blockedReasons).toContain('notConfirmed');
     expect(calls).toHaveLength(0);
 
-    const r = await aiComplete({ ...req, userConfirmed: true, personConfirmed: true });
+    useAiSettings.setState({ sendConsent: true });
+    const r = await aiComplete(req);
     expect(r).toMatchObject({ mode: 'live', text: 'live answer', blockedReasons: [] });
     expect(r.costJpy).toBeNull();
     expect(calls).toHaveLength(1);

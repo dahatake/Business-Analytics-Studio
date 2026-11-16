@@ -200,6 +200,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     });
     await open(page, '/ai-settings', { lang: 'ja' });
     await page.getByTestId('ai-provider-copilot').check();
+    await page.getByTestId('ai-send-consent').check();
     await page.getByTestId('ai-live-switch').check();
     await expect(page.getByTestId('ai-price-request')).toHaveCount(0);
     await expect(page.getByTestId('ai-provider-cost-note')).toContainText('請求額を制限できません');
@@ -378,6 +379,13 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       await seedLaunch(page, lang);
       await page.getByTestId('launch-ai-settings').click();
       const settings = page.getByTestId('ai-settings-dialog');
+      const d4Warning = settings.getByTestId('ai-d4-warning');
+      await expect(d4Warning).toBeVisible();
+      const warningBox = await d4Warning.boundingBox();
+      const warningBodyBox = await d4Warning.locator('.fui-MessageBarBody').boundingBox();
+      expect(warningBox).not.toBeNull();
+      expect(warningBodyBox).not.toBeNull();
+      expect(warningBodyBox!.y + warningBodyBox!.height).toBeLessThanOrEqual(warningBox!.y + warningBox!.height + 1);
       let sends = 0;
       page.on('request', (req) => {
         if (req.url().endsWith('/relay/connection') && req.method() === 'PUT') sends++;

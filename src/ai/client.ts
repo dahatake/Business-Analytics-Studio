@@ -156,7 +156,7 @@ export interface Preflight {
   context: string;
 }
 
-/** Everything a confirmation dialog must show before sending (C-03: content and cost confirmed by the user). */
+/** Send context prepared by callers; one-time permission is captured in AI settings. */
 export function preflight(req: AiRequest, now = new Date()): Preflight {
   const selection = selectOutbound(req.entities ?? [], loaded.byId);
   const context = toPromptContext(selection, req.lang);

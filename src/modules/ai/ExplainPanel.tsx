@@ -4,7 +4,6 @@ import {
 } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
 import { aiComplete, isUseApproved, preflight, readLedger, type AiRequest, type AiResponse } from '../../ai/client.ts';
-import type { GateReason } from '../../ai/gate.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
@@ -18,16 +17,9 @@ import { useAiPanels } from './uiStore.ts';
 
 type RunState = { status: 'idle' | 'loading' | 'cancelled' } | { status: 'done'; res: AiResponse };
 
-/** Confirmation reasons are noise when something else (budget, interval, prices…) already blocks the send. */
-const CONFIRM_REASONS = new Set<GateReason>(['notConfirmed', 'personNotConfirmed']);
-function shownReasons(reasons: GateReason[]): GateReason[] {
-  const other = reasons.filter((r) => !CONFIRM_REASONS.has(r));
-  return other.length > 0 ? other : reasons;
-}
-
 /**
- * FR-274 / FR-277: "現状の説明" side panel. D-1 approved this use for Microsoft Foundry: when live is ready, a confirmation
- * built from preflight() comes first and only a confirmed send goes out. Otherwise a labelled mock answers.
+ * FR-274 / FR-277: "現状の説明" side panel. D-1 approved this use for Microsoft Foundry: when live is ready,
+ * the saved AI-settings consent and send gates allow a live answer; otherwise a labelled mock answers.
  */
 export function ExplainPanel() {
   const { t, lang } = useI18n();
@@ -63,7 +55,7 @@ export function ExplainPanel() {
       const scope = t('ai.scope.screen', { path: route.path });
       const req: AiRequest = { use: 'explain', lang, prompt: t('ai.explain.prompt'), entities: ents };
       const finish = (res: AiResponse) => {
-        if (id === runId.current) setState({ status: 'done', res: { ...res, blockedReasons: shownReasons(res.blockedReasons) } });
+        if (id === runId.current) setState({ status: 'done', res });
       };
       if (live) {
         const pf = preflight({ ...req, userConfirmed: true, personConfirmed: true });

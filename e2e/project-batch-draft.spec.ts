@@ -81,13 +81,13 @@ test.describe('all-step live drafts', () => {
     test(`${provider}: saved settings consent sends drafts without per-send prompts and protects existing work`, async ({ page }) => {
       const requests = await setupBatch(page, provider);
       await openBatch(page);
-      await confirmBatch(page);
       if (provider === 'foundry') {
         const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
           .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
           .exclude('[data-tabster-dummy]').analyze();
         expect(scan.violations.map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target) }))).toEqual([]);
       }
+      await confirmBatch(page);
       await expect(page.getByRole('dialog', { name: '全ステップのドラフトを一括作成' })).toBeVisible();
       await expect(page.getByTestId('dlv-batch-progress')).toContainText('11/11', { timeout: 90_000 });
       expect(requests).toHaveLength(11);

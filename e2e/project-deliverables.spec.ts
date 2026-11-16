@@ -195,7 +195,7 @@ test.describe('Copilot task resolution', () => {
     await todo.getByTestId('dlv-resolve-define-kpi-link').click();
     await page.getByTestId('dlv-resolve-generate').click();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
-    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeEnabled();
     await expect(todo).toHaveAttribute('data-done', 'false');
     await expect.poll(() => requests.length).toBe(1);
   });

@@ -31,7 +31,7 @@ export function yenFine(locale: string, v: number): string {
 export function D4Warning({ testId = 'ai-d4-warning' }: { testId?: string }) {
   const { t } = useI18n();
   return (
-    <MessageBar intent="warning" layout="multiline" data-testid={testId}>
+    <MessageBar intent="warning" layout="multiline" className="ai-d4-warning" data-testid={testId}>
       <MessageBarBody>
         <MessageBarTitle>{t('ai.d4.title')}</MessageBarTitle>
         {t('ai.d4.body')}

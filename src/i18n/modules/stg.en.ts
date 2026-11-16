@@ -1,6 +1,5 @@
 import type { stgJa } from './stg.ja.ts';
 export const stgEn: Record<keyof typeof stgJa, string> = {
-  'stg.title': 'Strategic overview',
   'stg.map': 'Strategy map: objectives to solutions',
   'stg.mapWhy': 'Equal-width curves show registered relationships, not money, benefit volume or causal strength. Dashed curves skip intermediate stages. Disconnected items remain visible.',
   'stg.lane.objective': 'Business objectives',

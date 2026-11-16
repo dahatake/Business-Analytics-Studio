@@ -136,7 +136,7 @@ interface ProjectsState {
   relations: ProjectRelation[];
   mergeDismissals: MergeDismissal[];
   target: WorkTarget;
-  /** The last project opened, used by the main screen title (FR-186). */
+  /** The last project opened, offered first on the launch screen. */
   lastProjectId: string | null;
   demoStep: ImprovementStep;
   addCompany: (name: string, profile?: CompanyProfile) => { ok: true; id: string } | { ok: false; reason: 'emptyName' | 'duplicate' };

@@ -105,6 +105,7 @@ function useChromeHeight(ref: React.RefObject<HTMLDivElement | null>, mounted: b
 }
 
 function isActive(path: string, current: string) {
+  if (path === '/home' && current === '/') return true;
   if (path === '/') return current === '/';
   return current === path || current.startsWith(`${path}/`) || (path === '/directory' && current.startsWith('/entity'));
 }

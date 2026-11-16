@@ -64,7 +64,6 @@ export const coreJa = {
   'nav.group.present': '発表',
   'nav.group.manage': '管理',
   'app.loading': '読み込み中…',
-  'nav.overview': '概要',
   'nav.relations': '関係',
   'nav.map': '地図',
   'nav.flows': '業務と物の流れ',
@@ -507,7 +506,7 @@ export const coreJa = {
 
   'notFound.title': 'ページが見つかりません',
   'notFound.body': 'アドレスを確認してください。',
-  'notFound.home': '概要に戻る',
+  'notFound.home': 'メイン画面に戻る',
 } as const;
 
 

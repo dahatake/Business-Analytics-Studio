@@ -1,14 +1,14 @@
 import { createElement, lazy, useState, type ComponentType, type LazyExoticComponent } from 'react';
 import type { FluentIcon } from '@fluentui/react-icons';
 import {
-  Home24Regular, Diagram24Regular, Map24Regular, ArrowFlowDiagonalUpRight24Regular, GanttChart24Regular,
+  Diagram24Regular, Map24Regular, ArrowFlowDiagonalUpRight24Regular, GanttChart24Regular,
   DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Cube24Regular,
   Organization24Regular, Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
   Bot24Regular, PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, KeyMultiple24Regular, TaskListSquareLtr24Regular,
   DocumentDatabase24Regular, Gauge24Regular,
 } from '@fluentui/react-icons';
 import type { MessageKey } from '../i18n/index.ts';
-import { Overview } from '../screens/Overview.tsx';
+import { HomeScreen } from '../modules/project/HomeScreen.tsx';
 
 export type NavGroup = 'start' | 'analyze' | 'collaborate' | 'present' | 'manage';
 
@@ -42,10 +42,11 @@ const lazyNamed = <K extends string>(load: () => Promise<Record<K, ComponentType
 
 /** Every screen of the app. Feature modules own their screen files under src/modules/<module>/. */
 export const SCREENS: ScreenDef[] = [
-  { path: '/home', label: 'proj.nav.home', Icon: Rocket24Regular, group: 'start', component: lazyNamed(() => import('../modules/project/HomeScreen.tsx'), 'HomeScreen') },
+  { path: '/home', label: 'proj.nav.home', Icon: Rocket24Regular, group: 'start', component: HomeScreen },
   { path: '/step', label: 'proj.dash.nav', Icon: Gauge24Regular, group: 'start', hiddenFromNav: true, component: lazyNamed(() => import('../modules/project/StepDashboardScreen.tsx'), 'StepDashboardScreen') },
   { path: '/deliverables', label: 'dlv.nav', Icon: TaskListSquareLtr24Regular, group: 'start', component: lazyNamed(() => import('../modules/project/DeliverablesScreen.tsx'), 'DeliverablesScreen') },
-  { path: '/', label: 'nav.overview', Icon: Home24Regular, group: 'analyze', component: Overview },
+  // The former analysis overview is now the project's main screen; '/' stays as an alias so existing links keep working.
+  { path: '/', label: 'proj.nav.home', Icon: Rocket24Regular, group: 'start', hiddenFromNav: true, component: HomeScreen },
   { path: '/analysis', label: 'proj.nav.analysis', Icon: DataPie24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/project/AnalysisScreen.tsx'), 'AnalysisScreen') },
   { path: '/relations', label: 'nav.relations', Icon: Diagram24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Relations.tsx'), 'Relations') },
   { path: '/graph', label: 'graph.title', Icon: Organization24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/graph/GraphScreen.tsx'), 'GraphScreen') },

@@ -45,26 +45,11 @@
 .proj-badges { display: inline-flex; gap: 4px; align-items: center; }
 .proj-screen .page-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-/* Main screen (FR-186, FR-266) */
+/* Main screen: the project workflow overview (FR-186) and its help panel (FR-266) */
 .proj-home { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 .proj-home.help-open { grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); }
-.proj-home-main { display: grid; gap: 16px; min-width: 0; }
+.proj-home-main { min-width: 0; }
 .proj-current-step { margin: 0; font-size: var(--fontSizeBase400); display: flex; align-items: center; flex-wrap: wrap; }
-.proj-quick { list-style: none; counter-reset: quick; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-.proj-quick-step {
-  counter-increment: quick; position: relative; padding: 18px 18px 18px 56px; border-radius: var(--borderRadiusXLarge);
-  background: var(--colorNeutralBackground2); border: 1px solid var(--colorNeutralStroke2); display: grid; gap: 8px; align-content: start;
-}
-.proj-quick-step::before {
-  content: counter(quick); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; border-radius: 50%;
-  display: grid; place-items: center; background: var(--colorBrandBackground); color: var(--colorNeutralForegroundOnBrand); font-weight: var(--fontWeightBold);
-}
-.proj-quick-step p { margin: 0; color: var(--colorNeutralForeground2); }
-.proj-status { display: inline-flex; align-items: center; gap: 4px; color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
-.proj-status.ok { color: var(--colorPaletteGreenForeground1); }
-.proj-recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.proj-demo-line { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; color: var(--colorNeutralForeground2); }
-.proj-demo-line p { margin: 0; }
 .proj-help {
   padding: 16px 18px; border-radius: var(--borderRadiusXLarge); background: var(--colorNeutralBackground2); border: 1px solid var(--colorNeutralStroke2);
   display: grid; gap: 14px; animation: proj-slide-in var(--durationNormal) var(--curveDecelerateMid);

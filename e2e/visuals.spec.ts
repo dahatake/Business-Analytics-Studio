@@ -4,7 +4,7 @@ import { open } from './helpers.ts';
 test.describe('F-3.3 visuals', () => {
   test('strategy overview replaces KPI cards with a consistent objective-to-solution map', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Strategic overview');
+    await expect(page.getByRole('heading', { level: 1 })).    toHaveText('Sample company-Demo');
     await expect(page.locator('.kpi-card')).toHaveCount(0);
     await expect(page.getByTestId('strategy-map')).toBeVisible();
     await expect(page.getByTestId('strategy-map').locator('[data-lane="issue"]')).toHaveCount(5);

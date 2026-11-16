@@ -122,14 +122,17 @@ test.describe('project module', () => {
     await page.getByTestId('launch-project-name').fill('Alpha');
     await page.getByTestId('launch-create').click();
     await expect(page).toHaveURL(/#\/$/);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('経営サマリー');
-    await expect(page.getByRole('link', { name: '概要' })).toHaveAttribute('aria-current', 'page');
+    // FR-186: '/' is the project's main screen, which shows the project workflow (the former analysis overview).
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+    await expect(page.getByTestId('strategy-panel')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'メイン画面' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('navigation').getByRole('link', { name: '概要', exact: true })).toHaveCount(0);
     await expect(page.locator('header.topbar')).not.toContainText(/青空精機|架空/);
     await expect(page.getByTestId('proj-target-menu')).toContainText('Contoso-Alpha');
 
     // The choice holds for the session: a reload goes straight to the project overview.
     await page.reload();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('経営サマリー');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
 
     await page.getByTestId('proj-target-menu').click();
     await page.getByTestId('proj-target-launch').click();
@@ -165,11 +168,16 @@ test.describe('project module', () => {
     await chooseTarget(page, 'Alpha');
     await expect(page.getByTestId('proj-canvas-title')).toHaveText('Alpha only theme');
 
-    // FR-186: the main screen's h1 is "company-project" of the open project (or the last one opened).
+    // FR-186: the main screen's h1 is "company-project" of the open target, and the screen is the project workflow,
+    // not the company/project quick start.
     await nav(page, '/home');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+    await expect(page.getByTestId('strategy-panel')).toBeVisible();
+    await expect(page.getByTestId('strategy-next')).toBeVisible();
+    await expect(page.getByTestId('executive-summary')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '企業を登録する' })).toHaveCount(0);
     await chooseTarget(page, /^デモ/);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Contoso-Alpha');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('サンプル企業-デモ');
   });
 
   test('app title opens the main screen by click and keyboard without losing project work', async ({ page }) => {

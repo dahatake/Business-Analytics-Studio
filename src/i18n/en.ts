@@ -65,7 +65,6 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'nav.group.present': 'Present',
   'nav.group.manage': 'Manage',
   'app.loading': 'Loading…',
-  'nav.overview': 'Overview',
   'nav.relations': 'Relations',
   'nav.map': 'Map',
   'nav.flows': 'Flows',
@@ -508,7 +507,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
 
   'notFound.title': 'Page not found',
   'notFound.body': 'Please check the address.',
-  'notFound.home': 'Back to overview',
+  'notFound.home': 'Back to home',
 };
 
 export const en: Record<MessageKey, string> = { ...coreEn, ...modulesEn };

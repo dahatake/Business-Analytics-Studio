@@ -5,7 +5,7 @@ test.describe('F-3.5.2 language toggle', () => {
   test('switches instantly without reloading and keeps the choice', async ({ page }) => {
     await open(page, '/', { lang: 'ja' });
     await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
-    await expect(page.getByRole('link', { name: '概要' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'メイン画面' })).toBeVisible();
     await page.evaluate(() => { (window as unknown as { __noReload: number }).__noReload = 1; });
     const navigations: string[] = [];
     page.on('framenavigated', (f) => navigations.push(f.url()));
@@ -13,15 +13,15 @@ test.describe('F-3.5.2 language toggle', () => {
     await page.getByTestId('lang-toggle').getByRole('button', { name: 'English' }).click();
 
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('link', { name: 'Overview' })).toBeVisible();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Strategic overview');
+    await expect(page.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sample company-Demo');
     expect(await page.evaluate(() => (window as unknown as { __noReload?: number }).__noReload)).toBe(1);
     expect(navigations).toEqual([]);
     await expect(page.getByTestId('lang-toggle').getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true');
 
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('link', { name: 'Overview' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
   });
 
   test('the toggle sits in the top bar on every screen', async ({ page }) => {

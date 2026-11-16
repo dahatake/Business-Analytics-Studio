@@ -592,17 +592,80 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
     await expect(page.getByTestId('ai-import-reasons')).toContainText('Connection settings are incomplete');
   });
 
-  test('story video creates a free mock without Foundry price input', async ({ page }) => {
-    await open(page, '/assistant', { lang: 'en' });
+  test('story video exports standalone HTML with playback and safe model text', async ({ page }) => {
+    await open(page, '/assistant', { lang: 'en', motion: 'full' });
     const story = page.getByTestId('ai-story');
-    await expect(story.getByTestId('ai-story-estimate')).toContainText('Mock answers cost nothing');
+    await expect(story.getByTestId('ai-story-estimate')).toContainText('server-side model pricing');
+    await expect(story.getByTestId('ai-story-generate-live')).toBeDisabled();
     await expect(story.getByTestId('ai-story-generate')).toBeEnabled();
     await expect(story.getByTestId('ai-story-overcap')).toHaveCount(0);
     await story.getByTestId('ai-story-generate').click();
     await expect(story.getByTestId('ai-story-state')).toHaveText('Latest');
     await expect(story.getByTestId('ai-mock-label')).toContainText('Mock');
-    await expect(story.getByTestId('ai-story-player').locator('li').first()).toBeVisible();
+    const player = page.frameLocator('[data-testid="ai-story-player"]');
+    await expect(player.locator('li').first()).toBeVisible();
+    const first = await player.locator('h1').textContent();
+    await expect(player.locator('li')).toHaveCount(1);
+    await story.getByRole('button', { name: 'Play', exact: true }).click();
+    await expect(story.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await expect(player.locator('h1')).not.toHaveText(first!, { timeout: 5000 });
+    await story.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(story.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+    const download = page.waitForEvent('download');
+    await story.getByTestId('ai-story-download').click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/\.html$/);
+    const stream = await file.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    const html = Buffer.concat(chunks).toString('utf8');
+    const savedUrl = new URL('/saved-story.html', page.url()).href;
+    await page.route(savedUrl, (route) => route.fulfill({ contentType: 'text/html', body: html }));
+    await page.goto(savedUrl);
+    await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Restart', exact: true }).click();
+    await expect(page.locator('#position')).toContainText('1 /');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeHidden();
+    await expect(page.locator('li').nth(1)).toBeVisible();
     await noJapanese(page);
+  });
+
+  test('live HTML story uses one gated request, renders text safely, and survives reload', async ({ page }) => {
+    let calls = 0;
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: true, speechKey: false },
+      connection: { endpoint: 'https://example.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' },
+      connectionVerifiedAt: '2026-11-17T00:00:00Z', keyProtection: null, copilot: null, workiq: null,
+    } }));
+    await page.route('**/relay/story/estimate', (route) => route.fulfill({ json: {
+      maximumJpy: 10, remainingJpy: 9990, source: 'https://azure.microsoft.com/pricing/', expiresAt: '2026-12-01T00:00:00Z',
+    } }));
+    await page.route('**/relay/ai', async (route) => {
+      expect(route.request().postDataJSON().use).toBe('storyVideo');
+      calls++;
+      await route.fulfill({ json: {
+        text: JSON.stringify({ scenes: [{ title: 'Source evidence', narration: '<img src=x onerror=alert(1)>', role: 'opening', durationMs: 3000 }] }),
+        inputTokens: 100, outputTokens: 80, costJpy: 1.25,
+      } });
+    });
+    const settings = await openAiSettings(page, { lang: 'en' });
+    await settings.getByTestId('ai-send-consent').check();
+    await settings.getByTestId('ai-live-switch').check();
+    await settings.getByTestId('ai-settings-dialog-close').click();
+    await page.goto('/#/assistant');
+    await page.getByTestId('ai-story-generate-live').click();
+    await expect(page.getByTestId('ai-story').getByTestId('ai-live-label')).toBeVisible();
+    await expect(page.getByTestId('ai-story').getByTestId('ai-live-label')).toContainText('1.25');
+    expect(calls).toBe(1);
+    const frame = page.frameLocator('[data-testid="ai-story-player"]');
+    await expect(frame.locator('li')).toContainText('<img src=x onerror=alert(1)>');
+    await expect(frame.locator('img')).toHaveCount(0);
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
+    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await page.reload();
+    await expect(page.frameLocator('[data-testid="ai-story-player"]').locator('li')).toContainText('onerror');
+    expect(calls).toBe(1);
   });
 });
 

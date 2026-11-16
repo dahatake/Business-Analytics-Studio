@@ -1,69 +1,63 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Field, Select, Spinner } from '@fluentui/react-components';
-import { Pause20Regular, Play20Regular, Video20Regular } from '@fluentui/react-icons';
+import { ArrowDownload20Regular, Video20Regular } from '@fluentui/react-icons';
+import { aiLive, preflight, type AiRequest, type LiveCall } from '../../ai/client.ts';
+import { StoryOutput, StoryScenes } from '../../ai/storyOutput.ts';
 import { getEntity } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
-import { useReducedMotion } from '../../state/motion.ts';
 import { useSettings } from '../../state/settings.ts';
+import { useReducedMotion } from '../../state/motion.ts';
 import { loc } from '../../state/text.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import { useUseCases } from '../usecases/store.ts';
-import { MockNotice } from './AiCommon.tsx';
-import {
-  runStoryGeneration, sourceFromUseCase, sourcesFromSolutions,
-  storyInputTokens, storyMock, storyPrompt, storyState, useStories, type StoryEstimate, type StoryScene, type StoryVideo,
-} from './story.ts';
+import { downloadText } from '../project/common.tsx';
+import { LiveNotice, MockNotice, reasonKey } from './AiCommon.tsx';
+import { fetchStoryQuote, RelayError, type StoryQuote } from './relayClient.ts';
+import { useAiSettings } from './settingsStore.ts';
+import { liveStoryPrompt, sourceFromUseCase, sourcesFromSolutions, STORY_OUTPUT_TOKENS, storyMock, storyPrompt, storyState, useStories, type StoryVideo } from './story.ts';
+import { storyHtml } from './storyHtml.ts';
 
-/** HTML/CSS/SVG playback of a storyboard (no video file). Never autoplays; reduced motion shows all scenes statically. */
 function StoryPlayer({ video }: { video: StoryVideo }) {
   const { t } = useI18n();
   const reduced = useReducedMotion();
-  const [playing, setPlaying] = useState(false);
   const [index, setIndex] = useState(0);
-  const timer = useRef<number | undefined>(undefined);
-
+  const [playing, setPlaying] = useState(false);
+  const remaining = useRef(video.scenes[0]?.durationMs ?? 0);
+  const deadline = useRef(0);
   useEffect(() => {
-    if (!playing || reduced) return;
-    const scene = video.scenes[index];
-    if (!scene) {
-      setPlaying(false);
-      setIndex(0);
-      return;
-    }
-    timer.current = window.setTimeout(() => setIndex((i) => i + 1), scene.durationMs);
-    return () => window.clearTimeout(timer.current);
-  }, [playing, index, reduced, video.scenes]);
-
-  const scenes: StoryScene[] = reduced || !playing ? video.scenes : video.scenes.slice(index, index + 1);
+    if (reduced) { setPlaying(false); return; }
+    if (!playing) return;
+    deadline.current = performance.now() + remaining.current;
+    const timer = window.setTimeout(() => {
+      if (index + 1 >= video.scenes.length) {
+        remaining.current = video.scenes[index]!.durationMs;
+        setPlaying(false);
+      } else {
+        remaining.current = video.scenes[index + 1]!.durationMs;
+        setIndex(index + 1);
+      }
+    }, remaining.current);
+    return () => window.clearTimeout(timer);
+  }, [playing, reduced, index, video.scenes]);
   return (
-    <div className="ai-story" data-testid="ai-story-player">
-      {!reduced && (
-        <Button icon={playing ? <Pause20Regular /> : <Play20Regular />} onClick={() => setPlaying((p) => !p)}>
-          {playing ? t('ai.story.pause') : t('ai.story.play')}
-        </Button>
-      )}
-      <ol className={`ai-story-scenes ${playing && !reduced ? 'is-playing' : ''}`} aria-live={playing ? 'polite' : 'off'}>
-        {scenes.map((s, i) => (
-          <li key={`${s.title}-${i}`} className={`ai-scene ai-scene-${s.role}`}>
-            <svg className="ai-scene-art" viewBox="0 0 64 64" aria-hidden="true">
-              <circle cx="32" cy="32" r="26" className="ai-scene-ring" />
-              <circle cx="32" cy="32" r={s.role === 'opening' ? 10 : s.role === 'closing' ? 18 : 14} className="ai-scene-dot" />
-            </svg>
-            <div>
-              <p className="ai-scene-title">{s.title}</p>
-              <p className="ai-scene-text">{s.narration}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
+    <div className="ai-stack">
+      <div className="ai-row">
+        {!reduced && <Button onClick={() => {
+          if (playing) remaining.current = Math.max(0, deadline.current - performance.now());
+          setPlaying((value) => !value);
+        }}>{t(playing ? 'ai.story.pause' : 'ai.story.play')}</Button>}
+        <Button onClick={() => { setPlaying(false); setIndex(0); remaining.current = video.scenes[0]!.durationMs; }}>{t('ai.story.restart')}</Button>
+      </div>
+      <iframe title={t('ai.story.title')} srcDoc={storyHtml(video, { embedded: true, ...(reduced ? {} : { sceneIndex: index }) })}
+        sandbox="" referrerPolicy="no-referrer" style={{ width: '100%', height: 560, border: 0 }} data-testid="ai-story-player" />
     </div>
   );
 }
 
-/** FR-291 / FR-292: story video from a use case, with an estimate before generating and the PARAM-128 cap. */
 export function StoryVideoSection() {
   const { t, lang, fmt } = useI18n();
   const audience = useSettings((s) => s.audience);
+  const settings = useAiSettings();
   const useCases = useUseCases((s) => s.value);
   const stories = useStories((s) => s.value);
   const setStories = useStories((s) => s.set);
@@ -77,69 +71,110 @@ export function StoryVideoSection() {
   const [selected, setSelected] = useState('');
   const source = sources.find((s) => s.id === selected) ?? sources[0];
   const [busy, setBusy] = useState(false);
-  const cancelled = useRef(false);
+  const [quote, setQuote] = useState<StoryQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const abort = useRef<AbortController | null>(null);
+  const request = useMemo<AiRequest | null>(() => source ? ({
+    use: 'storyVideo', lang, prompt: liveStoryPrompt(source, lang), maxOutputTokens: STORY_OUTPUT_TOKENS, timeoutMs: 90_000,
+  }) : null, [source, lang]);
+  const call = useMemo<LiveCall | null>(() => request ? ({
+    ...request, provider: 'foundry', context: '', maxOutputTokens: STORY_OUTPUT_TOKENS, timeoutMs: 90_000,
+  }) : null, [request]);
+  const pf = request ? preflight(request) : null;
+  const liveAllowed = settings.provider === 'foundry' && !!pf?.allowed;
+  useEffect(() => {
+    setQuote(null);
+    setQuoteError(null);
+    if (!call || !liveAllowed) return;
+    const controller = new AbortController();
+    void fetchStoryQuote(call, controller.signal).then(setQuote).catch((err: unknown) => {
+      if (!controller.signal.aborted) setQuoteError(err instanceof RelayError ? err.code : 'relayUnreachable');
+    });
+    return () => controller.abort();
+  }, [call, liveAllowed, settings.relayConnection, revision]);
+  useEffect(() => () => abort.current?.abort(), [request]);
 
-  if (!source) return <p>{t('ai.story.noSource')}</p>;
-  // Keep this deterministic until the story-specific cost cap can be estimated before sending.
-  const estimate: StoryEstimate = { ok: true, inputTokens: storyInputTokens(source, lang), perCallJpy: 0, totalJpy: 0 };
+  if (!source || !request) return <p>{t('ai.story.noSource')}</p>;
   const video = stories[source.id];
-  const state = busy ? 'generating' : storyState(video, source);
-
-  const generate = async () => {
-    if (!estimate.ok) return;
-    cancelled.current = false;
-    setBusy(true);
-    const result = await runStoryGeneration(estimate, async (step) => {
-      return { text: storyMock(storyPrompt(source, lang, step)), costJpy: estimate.perCallJpy };
-    }, () => cancelled.current);
-    let scenes: StoryScene[] = [];
-    try {
-      scenes = JSON.parse(result.outputs.storyboard ?? '[]') as StoryScene[];
-      const timings = JSON.parse(result.outputs.animation ?? '[]') as number[];
-      scenes = scenes.map((s, i) => ({ ...s, durationMs: timings[i] ?? s.durationMs }));
-    } catch {
-      scenes = [];
-    }
+  const state = busy ? 'generating' : video?.lang !== lang && video ? 'stale' : storyState(video, source);
+  const html = video?.scenes.length ? storyHtml(video) : null;
+  const pricingError = (code: string) => {
+    if (code === 'storyMonthlyCap') return t('ai.story.monthlyCap');
+    if (code === 'storyCap') return t('ai.story.overCap');
+    if (code === 'storyPricing') return t('ai.story.noPrice');
+    return t('ai.story.failed', { code });
+  };
+  const save = (scenes: StoryVideo['scenes'], mode: 'mock' | 'live', spentJpy: number, estimateJpy: number) => {
     setStories((prev) => ({
-      ...prev,
-      [source.id]: {
+      ...prev, [source.id]: {
         sourceId: source.id, sourceUpdatedAt: source.updatedAt, lang, scenes, createdAt: new Date().toISOString(),
-        calls: result.calls, spentJpy: result.spentJpy, estimateJpy: estimate.totalJpy,
-        status: result.status === 'done' ? 'latest' : 'aborted', ...(result.reason ? { abortReason: result.reason } : {}),
+        calls: mode === 'live' ? 1 : 0, spentJpy, estimateJpy, mode, status: 'latest',
       },
     }));
-    setBusy(false);
+  };
+  const generate = async () => {
+    if (!quote || !liveAllowed || busy) return;
+    const controller = new AbortController();
+    abort.current = controller;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await aiLive(request, controller.signal);
+      const output = StoryOutput.parse(JSON.parse(result.text));
+      if (!controller.signal.aborted) save(output.scenes, 'live', result.costJpy ?? quote.maximumJpy, quote.maximumJpy);
+    } catch (err) {
+      setError(controller.signal.aborted ? t('ai.story.abort.cancelled') : t('ai.story.failed', { code: err instanceof Error ? err.message : 'unknown' }));
+    } finally {
+      setBusy(false);
+      abort.current = null;
+      setRevision((value) => value + 1);
+    }
   };
 
   return (
     <div className="ai-stack" data-testid="ai-story">
-      <p className="muted">{t('ai.story.mockLead')}</p>
+      <p className="muted">{t('ai.story.htmlLead')}</p>
       {useCases.length === 0 && <p className="muted">{t('ai.story.fromSolutions')}</p>}
       <Field label={t('ai.story.source')}>
-        <Select value={source.id} onChange={(_, d) => setSelected(d.value)} data-testid="ai-story-source">
+        <Select disabled={busy} value={source.id} onChange={(_, d) => { setSelected(d.value); setError(null); }} data-testid="ai-story-source">
           {sources.map((s) => <option key={s.id} value={s.id}>{loc(s.title, lang)}</option>)}
         </Select>
       </Field>
       <div className="ai-status" data-testid="ai-story-estimate">
-        <span>{t('ai.usage.mockFree')}</span>
+        {quote ? <span>{t('ai.story.estimate', { maximum: fmt.yen(Math.ceil(quote.maximumJpy)), remaining: fmt.yen(Math.floor(quote.remainingJpy)) })}</span>
+          : <span>{quoteError ? pricingError(quoteError) : liveAllowed ? t('ai.loading') : t('ai.story.noPrice')}</span>}
       </div>
+      {!liveAllowed && <ul>{pf?.reasons.map((reason) => <li key={reason}>{t(reasonKey(reason))}</li>)}</ul>}
       <div className="ai-row">
-        <Button appearance="primary" icon={<Video20Regular />} disabled={!estimate.ok || busy} onClick={() => void generate()} data-testid="ai-story-generate">
-          {t('ai.story.generateMock')}
+        <Button appearance="primary" icon={<Video20Regular />} disabled={!quote || !liveAllowed || busy} onClick={() => void generate()} data-testid="ai-story-generate-live">
+          {t('ai.story.generateLive')}
         </Button>
-        {busy && <Button onClick={() => { cancelled.current = true; }}>{t('ai.story.cancel')}</Button>}
+        <Button disabled={busy} onClick={() => {
+          setError(null);
+          try {
+            save(StoryScenes.parse(JSON.parse(storyMock(storyPrompt(source, lang, 'storyboard')))), 'mock', 0, 0);
+          } catch (err) {
+            setError(t('ai.story.failed', { code: err instanceof Error ? err.message : 'unknown' }));
+          }
+        }} data-testid="ai-story-generate">{t('ai.story.generateMock')}</Button>
+        {busy && <Button onClick={() => abort.current?.abort()}>{t('ai.story.cancel')}</Button>}
         <Badge appearance="outline" data-testid="ai-story-state">{t(`ai.story.state.${state}`)}</Badge>
       </div>
+      {error && <p role="alert">{error}</p>}
       {busy && <Spinner size="tiny" label={t('ai.loading')} />}
-      {video && !busy && (
-        <>
-          <MockNotice reasons={[]}>
-            <p className="muted">{t('ai.story.spent', { calls: video.calls, spent: fmt.yen(Math.ceil(video.spentJpy)) })}</p>
-            {video.status === 'aborted' && <p role="status">{t(`ai.story.abort.${video.abortReason ?? 'budget'}`)}</p>}
-          </MockNotice>
-          {video.scenes.length > 0 && <StoryPlayer video={video} />}
-        </>
-      )}
+      {video && !busy && <>
+        {video.mode === 'live'
+          ? <LiveNotice costJpy={video.spentJpy} />
+          : <MockNotice reasons={[]}><p>{t('ai.usage.mockFree')}</p></MockNotice>}
+        {html && <>
+          <Button icon={<ArrowDownload20Regular />} onClick={() => downloadText(`story-${source.id.replace(/[^\w-]/g, '_')}.html`, html, 'text/html')} data-testid="ai-story-download">
+            {t('ai.story.download')}
+          </Button>
+          <StoryPlayer key={`${video.sourceId}-${video.createdAt}`} video={video} />
+        </>}
+      </>}
     </div>
   );
 }

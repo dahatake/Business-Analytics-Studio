@@ -6,9 +6,10 @@ import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfi
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
 import {
-  STORY_CAP_JPY, STORY_MAX_CALLS, STORY_OUTPUT_TOKENS, STORY_PLANNED_CALLS, STORY_SAFETY_FACTOR, estimateStory, parsePrice, runStoryGeneration,
   sourcesFromSolutions, storyMock, storyPrompt, storyState, type StoryVideo,
 } from '../src/modules/ai/story.ts';
+import { StoryOutput } from '../src/ai/storyOutput.ts';
+import { storyHtml } from '../src/modules/ai/storyHtml.ts';
 import { buildIndex, chatPrompt, contextWindow, pairsInPrompt, search, tokenize, type ChatTurn } from '../src/modules/ai/search.ts';
 import {
   appliedForRoute, applyProposals, commitApply, parseProposals, reviewPrompt, undoLastApply, useAiOverrides, overrideKey, type Proposal,
@@ -19,44 +20,27 @@ import { USAGE_MAX_CHARS, USAGE_TIMEOUT_MS, TimeoutError, withTimeout } from '..
 
 const JAPANESE = /[\u3040-\u30ff\u3400-\u9fff\uff01-\uff60]/;
 
-describe('story video budget (FR-292, PARAM-128〜131)', () => {
-  it('estimates planned calls × unit prices × 1.2', () => {
-    const e = estimateStory(10_000, { input: '300', output: '1200' });
-    const perCall = (10_000 * 300 + STORY_OUTPUT_TOKENS * 1200) / 1_000_000;
-    expect(e.perCallJpy).toBeCloseTo(perCall);
-    expect(e.totalJpy).toBeCloseTo(perCall * STORY_PLANNED_CALLS * STORY_SAFETY_FACTOR);
-    expect(STORY_SAFETY_FACTOR).toBe(1.2);
-    expect(e.ok).toBe(true);
+describe('HTML stories (FR-291/292)', () => {
+  it('rejects malformed or unbounded model scenes', () => {
+    const scene = { title: 'Source', narration: 'Evidence', role: 'opening', durationMs: 3000 };
+    expect(StoryOutput.safeParse({ scenes: [scene] }).success).toBe(true);
+    for (const scenes of [[], [null], [{ ...scene, durationMs: -1 }], [{ ...scene, role: 'script' }], Array(11).fill(scene)]) {
+      expect(StoryOutput.safeParse({ scenes }).success).toBe(false);
+    }
   });
 
-  it('refuses to start above 1000 JPY and without valid prices (no defaults)', () => {
-    const over = estimateStory(10_000, { input: '40000', output: '40000' });
-    expect(over.totalJpy).toBeGreaterThan(STORY_CAP_JPY);
-    expect(over).toMatchObject({ ok: false, reason: 'overCap' });
-    for (const bad of ['', '0', '-1', 'abc']) expect(estimateStory(100, { input: bad, output: '1' }).reason).toBe('noPrice');
-    expect(parsePrice('2.5')).toBe(2.5);
-  });
-
-  it('a just-under-cap estimate is allowed; the boundary uses the safety factor', () => {
-    const perCallAtCap = STORY_CAP_JPY / (STORY_PLANNED_CALLS * STORY_SAFETY_FACTOR);
-    const price = String((perCallAtCap * 1_000_000) / STORY_OUTPUT_TOKENS);
-    expect(estimateStory(0, { input: '1', output: price }).ok).toBe(true);
-    expect(estimateStory(0, { input: '1', output: String(Number(price) * 1.01) }).ok).toBe(false);
-  });
-
-  it('stops before a call that would exceed the cap, and after the maximum number of calls', async () => {
-    const est = estimateStory(0, { input: '1', output: String((300 * 1_000_000) / STORY_OUTPUT_TOKENS) }); // 300 JPY per call
-    expect(est.ok).toBe(true); // 300 × 2 × 1.2 = 720
-    let calls = 0;
-    const costly = await runStoryGeneration(est, async () => { calls++; return { text: 'x', costJpy: 700 }; });
-    expect(costly).toMatchObject({ status: 'aborted', reason: 'budget', calls: 1 });
-    expect(calls).toBe(1);
-    const failing = await runStoryGeneration(estimateStory(0, { input: '1', output: '1' }), async () => null);
-    expect(failing).toMatchObject({ status: 'aborted', reason: 'maxCalls', calls: STORY_MAX_CALLS });
-    const ok = await runStoryGeneration(estimateStory(0, { input: '1', output: '1' }), async (step) => ({ text: step, costJpy: 0.01 }));
-    expect(ok).toMatchObject({ status: 'done', calls: 2, outputs: { storyboard: 'storyboard', animation: 'animation' } });
-    const cancelled = await runStoryGeneration(estimateStory(0, { input: '1', output: '1' }), async () => ({ text: 'x', costJpy: 0 }), () => true);
-    expect(cancelled.reason).toBe('cancelled');
+  it('escapes source/model content in standalone HTML and keeps playback code fixed', () => {
+    const video: StoryVideo = {
+      sourceId: '</small><img src=x onerror=alert(1)>', sourceUpdatedAt: 'pack', createdAt: '2026-11-17',
+      lang: 'en', mode: 'live', status: 'latest', calls: 1, spentJpy: 1, estimateJpy: 2,
+      scenes: [{ title: '</title><script>alert(1)</script>', narration: '<img src=x onerror=alert(1)> & "data"', role: 'opening', durationMs: 3000 }],
+    };
+    const html = storyHtml(video);
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('<img');
+    expect(html.match(/<script>/g)).toHaveLength(1);
+    expect(html).toContain("connect-src 'none'");
+    expect(html).toContain('AI-generated; review required');
   });
 
   it('mock storyboard follows the source and goes stale when the source changes', () => {

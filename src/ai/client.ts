@@ -80,6 +80,8 @@ export interface LiveResult {
   outputTokens: number | null;
   /** GitHub Copilot: premium requests the call consumed (model multiplier included). */
   premiumRequests?: number;
+  /** Server-calculated cost using the story deployment's verified rate ceilings. */
+  costJpy?: number | null;
 }
 
 export type LiveTransport = (call: LiveCall, signal?: AbortSignal) => Promise<LiveResult>;
@@ -243,7 +245,7 @@ async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Pr
     }
     throw err;
   }
-  const costJpy = settings.prices && result.inputTokens !== null && result.outputTokens !== null ? actualCostJpy(result.inputTokens, result.outputTokens, settings.prices) : null;
+  const costJpy = result.costJpy ?? (settings.prices && result.inputTokens !== null && result.outputTokens !== null ? actualCostJpy(result.inputTokens, result.outputTokens, settings.prices) : null);
   appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costJpy, ...attribution });
   return { ...result, costJpy };
 }

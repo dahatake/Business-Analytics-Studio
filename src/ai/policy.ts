@@ -44,6 +44,7 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   },
   chat: { dailyCalls: AI_LIMITS.dailyCalls },
   presentation: { maxOutputTokens: 4000 },
+  storyVideo: { maxOutputTokens: 2000 },
   packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
   deliverableDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },

@@ -58,7 +58,62 @@ reports distinguish unknown costs from free mock answers; usage summaries show t
 of unpriced calls separately. The app cannot enforce a Foundry monetary billing cap without pricing; check Azure billing
 and configure Azure budget alerts. Token caps, per-use daily quotas, intervals, timeouts and consent still apply.
 A zero app budget blocks sends. Copilot also requires no unit price; its charges are unknown and cannot be capped by the app budget. Check GitHub billing and spending limits. Old Copilot price settings are removed on migration; historical ledger records remain.
-Story video remains mock-only and needs no Foundry price.
+HTML stories are the exception: live generation requires deployment-bound server pricing and a durable reservation
+before sending (see below). The explicit local preview remains free and sends nothing.
+
+### HTML story pricing and monthly allocation
+
+The assistant's story section generates **one** JSON storyboard, including durations, through the common Foundry
+relay and one-time consent gate. There is no separate AI timing call or automatic generation retry. HTML playback,
+pause/resume, restart, reduced-motion rendering, and standalone HTML downloads need no Azure video, storage or hosting
+service. Model text is validated and escaped into a fixed player, embedded in a sandboxed iframe with no network access.
+Live failures are shown explicitly and do not silently substitute a mock.
+
+Before enabling live stories, an operator must verify the model behind the deployment (a deployment name alone does
+not identify its model) and place `story-pricing.json` in `BAS_RELAY_DIR`, next to the verified common connection:
+
+```json
+{
+  "endpoint": "https://YOUR-RESOURCE.openai.azure.com",
+  "deployment": "model-router",
+  "model": "model-router",
+  "inputPerM": 0,
+  "outputPerM": 0,
+  "source": "https://azure.microsoft.com/pricing/details/ai-foundry-models/model-router/",
+  "expiresAt": "2026-12-01T00:00:00Z"
+}
+```
+
+**The zero prices above are deliberately invalid placeholders, not usable rates.** Set positive finite JPY ceilings per
+million tokens from current official pricing for the actual deployment, including tax/exchange-rate allowance and,
+for model router, the routing input fee and the most expensive eligible underlying model. Use the resource endpoint
+saved by AI Settings (matched by HTTPS host, so `/openai/v1` may be included or omitted), the exact deployment name,
+and a future UTC expiry. `gpt-chat-latest`, numbered GPT chat-latest
+models, and `model-router` are accepted. Missing, invalid, expired or destination-mismatched rates prevent sending.
+This is operator configuration, not a restored manual token-price form in AI Settings.
+
+`POST /relay/story/estimate` takes the same validated story request as `/relay/ai` and returns the maximum reservation,
+remaining monthly allocation, official source and expiry, without contacting Foundry. The send path rechecks everything;
+the browser's quote is never trusted for authorization. Input reservation uses UTF-8 bytes plus 1,024 chat-envelope
+tokens, the complete 2,000-token output limit, and the 1.2 safety factor, rounded up to 0.01 JPY.
+
+The relay refuses a reservation over **1,000 JPY per story** or cumulative reservations over **10,000 JPY per JST calendar
+month**. Before sending, it atomically saves the full reservation to `story-budget.json`, under an exclusive directory
+lock. Separate browser tabs and relay processes sharing this directory cannot spend the same remaining allocation.
+Failures, cancellation, invalid output and timeouts retain the full reservation. The browser usage ledger records
+successful calls using token usage and the configured rate ceilings; this is an estimate, not the Azure invoice.
+Do not delete/reset the server allocation file to restore available budget. Corrupt accounting or an existing lock
+fails closed. After a process crash, inspect that no relay is writing before manually removing a stale
+`story-budget.lock` directory; never remove the accounting file.
+
+The allocation protects this story route in this relay directory, **not other applications, other machines or direct
+Azure calls**. It assumes the verified rate ceilings remain sufficient; model-router's routing pool can change even
+without a version-number change. Refresh prices/subsets before their assumptions change. Azure Cost Management budgets
+are alerts, not hard spending stops. No subscription-wide billing cap is promised.
+
+The requested subscription was confirmed through its explicit tenant and its existing `model-router` deployment was
+found in `eastus2`. Reuse is preferable to provisioning another resource. Do not silently replace an existing common
+connection that points to a different resource; configure and verify the intended destination through AI Settings.
 
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
 when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown in the AI settings dialog.

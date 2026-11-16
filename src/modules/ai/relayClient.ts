@@ -239,13 +239,35 @@ export const relayTransport: LiveTransport = async (call: LiveCall, signal?: Abo
     if (typeof body.text !== 'string' || !validTokens(body.inputTokens) || !validTokens(body.outputTokens)) throw new RelayError(502, 'badRelayAnswer');
     return {
       text: body.text, inputTokens: body.inputTokens, outputTokens: body.outputTokens,
+      ...(typeof body.costJpy === 'number' && Number.isFinite(body.costJpy) && body.costJpy >= 0 ? { costJpy: body.costJpy } : {}),
       ...(typeof body.premiumRequests === 'number' && body.premiumRequests >= 0 ? { premiumRequests: body.premiumRequests } : {}),
     };
+
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
   }
 };
+
+export interface StoryQuote {
+  maximumJpy: number;
+  remainingJpy: number;
+  source: string;
+  expiresAt: string;
+}
+
+export async function fetchStoryQuote(call: LiveCall, signal?: AbortSignal): Promise<StoryQuote> {
+  const res = await relayFetch('/relay/story/estimate', {
+    method: 'POST', extraHeaders: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(call), signal,
+  });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const body = await res.json() as Partial<StoryQuote>;
+  if (typeof body.maximumJpy !== 'number' || !Number.isFinite(body.maximumJpy) || body.maximumJpy <= 0 ||
+      typeof body.remainingJpy !== 'number' || !Number.isFinite(body.remainingJpy) ||
+      typeof body.source !== 'string' || typeof body.expiresAt !== 'string') throw new RelayError(502, 'badRelayAnswer');
+  return { maximumJpy: body.maximumJpy, remainingJpy: body.remainingJpy, source: body.source, expiresAt: body.expiresAt };
+}
 
 /* ---------- GitHub Copilot (D-12) ---------- */
 

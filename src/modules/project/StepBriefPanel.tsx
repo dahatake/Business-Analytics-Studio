@@ -3,15 +3,16 @@ import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/re
 import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { isUseApproved, preflight } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
-import { useActiveProject } from '../../state/projects.ts';
+import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
-import type { Audience } from '../../state/settings.ts';
+import { useSettings, type Audience } from '../../state/settings.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
-import type { CheckContext } from './deliverables.ts';
-import type { StepDashboard } from './stepDashboard.ts';
-import { briefEntities, buildStepBrief, factText, requestStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
+import type { AppCheckContext } from './deliverables.ts';
+import { stepBriefContext } from './overviewModel.ts';
+import { stepDashboard, type StepDashboard } from './stepDashboard.ts';
+import { briefEntities, buildStepBrief, factText, requestStepBrief, setStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
 
 /** SCQA and the pyramid below the answer; shared by the rule-based and the generated brief. */
 export function BriefBody({ content, brief, prefix }: { content: BriefContent; brief?: StepBrief; prefix: string }) {
@@ -69,13 +70,13 @@ export function BriefBody({ content, brief, prefix }: { content: BriefContent; b
 /** The calendar date (JST, as \mt.date\ expects) of an ISO timestamp. */
 const jstDate = (iso: string) => new Date(Date.parse(iso) + 9 * 3_600_000).toISOString().slice(0, 10);
 
-export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: CheckContext; audience: Audience }) {
+export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: AppCheckContext; audience: Audience }) {
   const { t, lang, fmt } = useI18n();
-  const { project } = useActiveProject();
-  const brief = useMemo(() => buildStepBrief(d, ctx, lang, audience), [d, ctx, lang, audience]);
-  const key = `${project?.id ?? 'demo'}:${audience}:${d.step}`;
-  const generated = useStepBriefs((s) => s.byKey[key]);
-  const setGenerated = useStepBriefs((s) => s.set);
+  const scope = useCurrentScope();
+  const briefCtx = useMemo(() => stepBriefContext(ctx, audience), [ctx, audience]);
+  const brief = useMemo(() => buildStepBrief(audience === 'external' ? stepDashboard(d.step, briefCtx) : d, briefCtx, lang, audience), [d, briefCtx, lang, audience]);
+  const key = `${audience}:${d.step}`;
+  const generated = useStepBriefs((s) => s.value[key]);
   const live = useAiSettings((s) => liveReady(s)) && isUseApproved('stepBrief');
   const { dialog, confirmLive } = useLiveConfirm();
   const [busy, setBusy] = useState(false);
@@ -87,7 +88,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ch
     try {
       let confirmed: { userConfirmed: boolean; personConfirmed: boolean } | undefined;
       if (live) {
-        const pf = preflight({ use: 'stepBrief', lang, prompt: '', entities: briefEntities(brief, ctx), userConfirmed: true, personConfirmed: true });
+        const pf = preflight({ use: 'stepBrief', lang, prompt: '', entities: briefEntities(brief, briefCtx), userConfirmed: true, personConfirmed: true });
         // Blocked for a reason a confirmation cannot fix (budget, interval…): answer with the mock, ask nothing.
         if (pf.allowed) {
           const decision = await confirmLive({
@@ -102,7 +103,16 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ch
           confirmed = { userConfirmed: true, personConfirmed: decision.personConfirmed };
         }
       }
-      setGenerated(key, await requestStepBrief(brief, ctx, lang, confirmed));
+      if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
+        setCancelled(true);
+        return;
+      }
+      const result = await requestStepBrief(brief, briefCtx, lang, confirmed);
+      if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
+        setCancelled(true);
+        return;
+      }
+      setStepBrief(key, result);
     } finally {
       setBusy(false);
     }
@@ -157,7 +167,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ch
               <div className="step-brief-meta">
                 <span className="muted" data-testid="step-dash-brief-at">{t('proj.dash.brief.at', { at: `${fmt.date(jstDate(generated.at))} ${fmt.time(new Date(generated.at))}` })}</span>
                 {stale && <Badge appearance="filled" color="warning" data-testid="step-dash-brief-stale">{t('proj.dash.brief.stale')}</Badge>}
-                <Button appearance="subtle" size="small" icon={<Dismiss20Regular />} onClick={() => setGenerated(key, null)} data-testid="step-dash-brief-dismiss">
+                <Button appearance="subtle" size="small" icon={<Dismiss20Regular />} onClick={() => setStepBrief(key, null)} data-testid="step-dash-brief-dismiss">
                   {t('proj.dash.brief.dismiss')}
                 </Button>
               </div>

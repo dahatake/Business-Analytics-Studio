@@ -236,6 +236,19 @@ describe('step executive summary (FR-319)', () => {
     expect(after.answer).not.toBe(before.answer);
   });
 
+  it('marks a saved brief stale when a referenced description changes without numeric changes', () => {
+    const c = demoCtx();
+    const before = buildStepBrief(stepDashboard('asis', c), c, 'en', 'internal');
+    const raw = clone();
+    const referenced = raw.entities.find((entity) => entity.id === before.refs[0]);
+    if (!referenced) throw new Error('Missing referenced fixture');
+    referenced.description.en += ' Updated evidence.';
+    const changed = demoCtx(loadPack(raw));
+    const after = buildStepBrief(stepDashboard('asis', changed), changed, 'en', 'internal');
+    expect(after.facts).toEqual(before.facts);
+    expect(after.hash).not.toBe(before.hash);
+  });
+
   it('round-trips through the section format the model is asked for', () => {
     const c = draftedCtx();
     for (const step of IMPROVEMENT_STEPS) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useEffect, useRef, type KeyboardEvent } from 'react';
 import {
   Button, Menu, MenuButton, MenuDivider, MenuGroup, MenuGroupHeader, MenuItem, MenuItemRadio, MenuList, MenuPopover, MenuTrigger,
 } from '@fluentui/react-components';
@@ -14,6 +14,8 @@ import { useProjTransient } from './stores.ts';
 import './project.css';
 
 export { StepTodoBand as StepBand };
+
+const BatchDraftDialog = lazy(() => import('./BatchDraftDialog.tsx').then((m) => ({ default: m.BatchDraftDialog })));
 
 /** FR-148 / FR-176: the work-target menu (demo or company → project) at the top of every screen. */
 function WorkTargetMenu() {
@@ -133,6 +135,7 @@ export function TopBarSlot({ restricted = false }: { restricted?: boolean }) {
 
 export function Overlay() {
   const openExport = useProjTransient((s) => s.openExport);
+  const batchOpen = useProjTransient((s) => s.batchDraftOpen);
   useEffect(() => {
     // FR-052: Ctrl+Shift+E opens the full export from anywhere.
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -148,6 +151,7 @@ export function Overlay() {
     <>
       <ExportDialog />
       <DraftDialog />
+      {batchOpen && <Suspense fallback={null}><BatchDraftDialog /></Suspense>}
     </>
   );
 }

@@ -60,6 +60,14 @@ async function generateDraft(page: Page) {
   await expect(page.getByTestId('dlv-draft-mode')).toHaveAttribute('data-mode', 'live');
 }
 
+async function openStepDraft(page: Page) {
+  const previous = await page.evaluate(() => window.location.hash);
+  await page.getByTestId('dlv-open').click();
+  await page.getByTestId('dlv-screen-draft').click();
+  await page.evaluate((hash) => { window.location.hash = hash; }, previous);
+  await expect(page.getByTestId('dlv-draft-dialog')).toBeVisible();
+}
+
 test.describe('step deliverables and to-do band', () => {
   test('the step signal follows task completion, survives reload, and clears when work is undone', async ({ page }) => {
     await go(page, '/home');
@@ -70,7 +78,7 @@ test.describe('step deliverables and to-do band', () => {
     for (const step of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
     const button = stepper.locator('[data-step="asis"]');
     await button.click();
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await expect(button).toHaveAttribute('data-complete', 'false'); // Draft alone is not sign-off.
@@ -89,7 +97,7 @@ test.describe('step deliverables and to-do band', () => {
     // Drafting and signing the to-be step is not enough: the project is not yet tied to a company objective.
     await stepper.locator('[data-step="tobe"]').click();
     await page.waitForTimeout(5100);
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await page.getByTestId('dlv-sign-tobe-agree').check();
@@ -144,7 +152,7 @@ test.describe('step deliverables and to-do band', () => {
     }
     // A warning in a previously drafted document targets the specific invalid field, not the first field.
     await page.locator('.proj-step[data-step="asis"]').click();
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     await generateDraft(page);
     await page.getByTestId('dlv-draft-apply').click();
     await page.getByTestId('dlv-next').click();
@@ -207,7 +215,7 @@ test.describe('step deliverables and to-do band', () => {
   test('Draft with Copilot fills the deliverable, the sign-off completes the step', async ({ page }) => {
     await go(page, '/home');
     await fakeAi(page);
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     const dialog = page.getByTestId('dlv-draft-dialog');
     await expect(dialog).toBeVisible();
     await generateDraft(page);
@@ -243,7 +251,7 @@ test.describe('step deliverables and to-do band', () => {
   test('task recommendations remain drafts until approved and survive reload without signing off', async ({ page }) => {
     await go(page, '/home');
     await fakeAi(page);
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     const dialog = page.getByTestId('dlv-draft-dialog');
     await generateDraft(page);
     await expect(dialog.getByTestId('dlv-task-preview-asis-field')).toContainText('ドラフト');
@@ -273,7 +281,7 @@ test.describe('step deliverables and to-do band', () => {
       calls += 1;
       await route.fulfill({ status: 504, json: { error: 'timeout' } });
     });
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     await page.getByTestId('dlv-draft-generate').click();
     const confirm = page.getByTestId('ai-live-confirm');
     await expect(confirm.getByTestId('ai-live-send')).toBeDisabled();
@@ -438,7 +446,7 @@ test.describe('step deliverables and to-do band', () => {
     await expect(band).toContainText('ステップ 5/5: 要求定義・計画');
     await expect(band).toContainText('成果物: 要求定義書・プロジェクト計画書');
     await expect(page.getByTestId('dlv-todo-plan-schedule')).toHaveAttribute('data-done', 'true');
-    await page.getByTestId('dlv-draft').click();
+    await openStepDraft(page);
     await generateDraft(page);
     await expect(page.getByTestId('dlv-draft-field-businessCase')).toContainText('回収');
     await page.getByTestId('dlv-draft-apply').click();

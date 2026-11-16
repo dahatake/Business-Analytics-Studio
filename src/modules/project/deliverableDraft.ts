@@ -406,8 +406,8 @@ export function draftRequest(input: DraftInput): AiRequest {
   return { use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input), entities: draftEntities(input.ctx, input.audience), timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS };
 }
 
-export async function requestDeliverableDraft(input: DraftInput, request: AiRequest): Promise<{ response: AiResponse; fields: Record<string, string>; tasks: Record<string, string> }> {
-  const live = await aiLive(request);
+export async function requestDeliverableDraft(input: DraftInput, request: AiRequest, signal?: AbortSignal): Promise<{ response: AiResponse; fields: Record<string, string>; tasks: Record<string, string> }> {
+  const live = await aiLive(request, signal);
   const fields = parseDraftText(input.step, live.text);
   const tasks = parseTaskDrafts(input.step, live.text);
   const missing = [

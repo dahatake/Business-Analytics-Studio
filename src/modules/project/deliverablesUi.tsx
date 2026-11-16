@@ -8,7 +8,7 @@ import {
 import { AiLiveError, preflight, type AiResponse } from '../../ai/client.ts';
 import { PARAMS } from '../../config/params.ts';
 import { loaded } from '../../data/pack.ts';
-import { useI18n, type MessageKey } from '../../i18n/index.ts';
+import { useI18n, type Lang, type MessageKey } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
@@ -24,7 +24,7 @@ import {
   applyDraft, evaluateStep, threadOf, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
   type AppCheckContext, type CheckContext, type CheckRef, type TodoResult,
 } from './deliverables.ts';
-import { useAnalyses, useDeliverables, useDiscussion, useProjTransient, useProjUi, useScopeKpis, useStrategy } from './stores.ts';
+import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useProjTransient, useProjUi, useScopeKpis, useStrategy, type SavedFieldDraft } from './stores.ts';
 import { gapCount, normalizeStrategy } from './strategy.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import './project.css';
@@ -326,7 +326,7 @@ export function StepTodoBand() {
   const room = useRoomForList(head, list);
   const collapsed = preference ?? !room;
   const setCollapsed = useProjUi((s) => s.setTodoCollapsed);
-  const openDraft = useProjTransient((s) => s.openDraft);
+  const openBatchDraft = useProjTransient((s) => s.openBatchDraft);
   const applied = useProjTransient((s) => s.draftApplied);
   const listId = useId();
   const n = IMPROVEMENT_STEPS.indexOf(step) + 1;
@@ -356,7 +356,7 @@ export function StepTodoBand() {
         )}
         <span className="visually-hidden" role="status">{applied ? t('dlv.draft.applied', { n: applied.count }) : ''}</span>
         <div className="dlv-band-actions">
-          <Button appearance="primary" icon={<Sparkle20Regular />} onClick={() => openDraft(step)} data-testid="dlv-draft">{t('dlv.draft.button')}</Button>
+          <Button appearance="primary" className="dlv-batch-button" icon={<Sparkle20Regular />} onClick={openBatchDraft} data-testid="dlv-draft">{t('dlv.batch.button')}</Button>
           <Button as="a" appearance="secondary" icon={<DocumentText20Regular />} href={hrefFor('/deliverables', { step })} data-testid="dlv-open">{t('dlv.band.open')}</Button>
           <Button
             appearance="subtle"
@@ -384,8 +384,12 @@ type DraftTextMap = Record<string, string>;
 type DraftState =
   | { status: 'idle' }
   | { status: 'working' }
-  | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap }
+  | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap; at: string }
   | { status: 'error'; message: string };
+
+function sameFieldDraft(saved: SavedFieldDraft | undefined, ready: { fields: DraftTextMap; at: string }, lang: Lang): boolean {
+  return !!saved && saved.lang === lang && saved.at === ready.at && JSON.stringify(saved.fields) === JSON.stringify(ready.fields);
+}
 
 /** "Draft with Copilot": preview the draft, then fill the deliverable (empty fields only unless the user says so). */
 export function DraftDialog() {
@@ -395,18 +399,41 @@ export function DraftDialog() {
   const audience = useSettings((s) => s.audience);
   const ctx = useCheckContext();
   const scope = useDeliverables((s) => s.scope);
+  const savedDraft = useFieldDrafts((s) => step ? s.value[`${audience}:${step}`] : undefined);
   const [state, setState] = useState<DraftState>({ status: 'idle' });
   const [overwrite, setOverwrite] = useState(false);
   const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setState({ status: 'idle' });
+    const saved = step ? useFieldDrafts.getState().value[`${audience}:${step}`] : undefined;
+    setState(saved && saved.lang === lang ? {
+      status: 'ready',
+      response: { mode: 'live', text: '', blockedReasons: [], withheldIds: [], context: '' },
+      fields: saved.fields,
+      tasks: {},
+      at: saved.at,
+    } : { status: 'idle' });
     setOverwrite(false);
-  }, [step, scope]);
+  }, [step, scope, audience, lang]);
 
   const generate = async () => {
     if (!step || state.status === 'working') return;
+    const saved = useFieldDrafts.getState().value[`${audience}:${step}`];
+    const originalDraft = saved ? { ...saved, fields: { ...saved.fields } } : undefined;
+    const taskDrafts = () => {
+      const recommendations = normalizeDeliverables(useDeliverables.getState().value).recommendations;
+      return JSON.stringify(STEP_DEFS[step].todos.map((todo) => recommendations?.[`${audience}:${todo.id}`]?.draft ?? null));
+    };
+    const originalTasks = taskDrafts();
+    const draftsUnchanged = () => {
+      const current = useFieldDrafts.getState().value[`${audience}:${step}`];
+      return (originalDraft ? sameFieldDraft(current, originalDraft, originalDraft.lang) : !current) && taskDrafts() === originalTasks;
+    };
+    const targetCurrent = () => useDeliverables.getState().scope === scope
+      && useProjTransient.getState().draftStep === step
+      && useSettings.getState().audience === audience
+      && useSettings.getState().lang === lang;
     const input = { step, ctx, lang, audience };
     const request = draftRequest(input);
     const pf = preflight({ ...request, userConfirmed: true, personConfirmed: true });
@@ -431,8 +458,13 @@ export function DraftDialog() {
         contentPreview: `${request.prompt}\n\n${pf.context}`, freeTextMayContainPersons: true, storesResponse: true,
       });
       requestAnimationFrame(() => bodyRef.current?.focus());
-      if (!decision.ok || useDeliverables.getState().scope !== scope || useProjTransient.getState().draftStep !== step || useSettings.getState().audience !== audience) {
+      if (!targetCurrent()) return;
+      if (!decision.ok) {
         setState({ status: 'idle' });
+        return;
+      }
+      if (!draftsUnchanged()) {
+        setState({ status: 'error', message: t('dlv.draft.changed') });
         return;
       }
       const current = useAiSettings.getState();
@@ -441,7 +473,11 @@ export function DraftDialog() {
         return;
       }
       const r = await requestDeliverableDraft(input, { ...request, userConfirmed: true, personConfirmed: decision.personConfirmed });
-      if (useDeliverables.getState().scope === scope && useProjTransient.getState().draftStep === step && useSettings.getState().audience === audience) {
+      if (targetCurrent()) {
+        if (!draftsUnchanged()) {
+          setState({ status: 'error', message: t('dlv.draft.changed') });
+          return;
+        }
         const at = new Date().toISOString();
         useDeliverables.getState().set((value) => {
           const data = normalizeDeliverables(value);
@@ -452,10 +488,11 @@ export function DraftDialog() {
           }
           return { ...data, recommendations };
         });
-        setState({ status: 'ready', ...r });
+        useFieldDrafts.getState().set((value) => ({ ...value, [`${audience}:${step}`]: { fields: r.fields, lang, at } }));
+        setState({ status: 'ready', ...r, at });
       }
     } catch (error) {
-      if (useDeliverables.getState().scope === scope && useProjTransient.getState().draftStep === step) {
+      if (targetCurrent()) {
         const message = error instanceof AiLiveError
           ? error.reasons.includes('liveFailed')
             ? t('dlv.draft.liveFailed', { detail: error.message })
@@ -470,6 +507,7 @@ export function DraftDialog() {
   const doc = ctx.deliverables.docs[step] ?? {};
   const fields = STEP_DEFS[step].fields;
   const ready = state.status === 'ready' ? state : null;
+  const draftChanged = !!ready && !sameFieldDraft(savedDraft, ready, lang);
   const willApply = ready ? fields.filter((f) => ready.fields[f.id] && (overwrite || !doc[f.id]?.text.trim())).length : 0;
   const simulation = ready ? evaluateStep(step, {
     ...ctx,
@@ -480,13 +518,38 @@ export function DraftDialog() {
 
   const apply = () => {
     if (!ready) return;
+    if (!sameFieldDraft(useFieldDrafts.getState().value[`${audience}:${step}`], ready, lang)) {
+      setState({ status: 'error', message: t('dlv.draft.changed') });
+      return;
+    }
     let count = 0;
     useDeliverables.getState().set((v) => {
       const r = applyDraft(normalizeDeliverables(v), step, ready.fields, { overwrite, mock: ready.response.mode === 'mock', at: new Date().toISOString() });
       count = r.applied.length;
       return r.data;
     });
+    useFieldDrafts.getState().set((value) => {
+      const key = `${audience}:${step}`;
+      const saved = value[key];
+      if (!sameFieldDraft(saved, ready, lang)) return value;
+      const next = { ...value };
+      delete next[key];
+      return next;
+    });
     closeDraft({ step, count });
+  };
+
+  const discard = () => {
+    if (!ready || !sameFieldDraft(useFieldDrafts.getState().value[`${audience}:${step}`], ready, lang)) {
+      setState({ status: 'error', message: t('dlv.draft.changed') });
+      return;
+    }
+    useFieldDrafts.getState().set((value) => {
+      const next = { ...value };
+      delete next[`${audience}:${step}`];
+      return next;
+    });
+    setState({ status: 'idle' });
   };
 
   return (
@@ -505,6 +568,10 @@ export function DraftDialog() {
                 <p className="dlv-draft-note" data-testid="dlv-draft-mode" data-mode={ready.response.mode}>
                   {ready.response.mode === 'mock' && <MockBadge />} {t(ready.response.mode === 'mock' ? 'dlv.draft.mockNote' : 'dlv.draft.liveNote')}
                 </p>
+                <p className="muted">{t('dlv.draft.savedNote')}</p>
+                <p className="muted">{t('dlv.draft.savedAt', { at: ready.at })}</p>
+                {draftChanged && <p role="alert" data-testid="dlv-draft-changed">{t('dlv.draft.changed')}</p>}
+                <Button onClick={() => void generate()} data-testid="dlv-draft-regenerate">{t('dlv.draft.regenerate')}</Button>
                 <Caption1>{t('dlv.draft.grounding', { entities: draftEntities(ctx, audience).length })}</Caption1>
                 <h3>{t('dlv.task.title')}</h3>
                 <p>{t('dlv.task.note')}</p>
@@ -558,7 +625,8 @@ export function DraftDialog() {
             )}
           </DialogContent>
           <DialogActions>
-            <Button appearance="primary" disabled={!ready || willApply === 0} onClick={apply} data-testid="dlv-draft-apply">{t('dlv.draft.apply')}</Button>
+            <Button appearance="primary" disabled={!ready || draftChanged || willApply === 0} onClick={apply} data-testid="dlv-draft-apply">{t('dlv.draft.apply')}</Button>
+            {ready && <Button disabled={draftChanged} onClick={discard} data-testid="dlv-draft-discard">{t('dlv.draft.discard')}</Button>}
             <Button appearance="secondary" onClick={() => closeDraft()}>{t('dlv.draft.close')}</Button>
           </DialogActions>
         </DialogBody>

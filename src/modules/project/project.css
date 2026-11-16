@@ -343,7 +343,7 @@
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--colorNeutralStroke2);
 }
-.dlv-band-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.dlv-band-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; min-width: 0; }
 .dlv-band-title { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
 .dlv-band-deliverable { color: var(--colorNeutralForeground2); }
 .dlv-band-progress { display: flex; align-items: center; gap: 8px; flex: 0 1 200px; min-width: 150px; font-size: var(--fontSizeBase200); }
@@ -356,7 +356,8 @@
 }
 .dlv-band-next-lead { flex: none; font-weight: var(--fontWeightSemibold); }
 .dlv-band-next-text { overflow: hidden; text-overflow: ellipsis; text-decoration: underline; }
-.dlv-band-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.dlv-band-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; min-width: 0; max-width: 100%; }
+.dlv-band-actions > .dlv-batch-button { max-width: 100%; white-space: normal; text-align: start; }
 .dlv-band-scroll { overflow-x: auto; padding-bottom: 2px; }
 .dlv-band-scroll:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 .dlv-band-list { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; }
@@ -391,6 +392,8 @@
 .dlv-field-label { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .dlv-draft-surface { max-width: min(960px, 96vw); }
+.dlv-batch-list { display: grid; gap: 8px; padding-inline-start: 1.5em; }
+.dlv-batch-list li > .fui-Button, .dlv-batch-list li > a, .dlv-batch-list li > .fui-Spinner { margin-inline-start: 8px; }
 .dlv-draft-note { display: flex; gap: 8px; align-items: flex-start; }
 .dlv-draft-note > .fui-Badge { flex: none; }
 .dlv-draft-fields { display: grid; gap: 10px; margin: 12px 0; }

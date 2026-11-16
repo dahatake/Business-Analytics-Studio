@@ -20,7 +20,7 @@ import { ScrollRegion } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
 import {
-  availableAxes, humanizeProposal, itemNames, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
+  availableAxes, itemNames, overviewBaseline, overviewContext, overviewPrompt, parseOverviewResponse, proposalEntities, recommendedAxis, strategyMap,
   useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyMap,
 } from './overviewModel.ts';
 import { BriefBody } from './StepBriefPanel.tsx';
@@ -208,7 +208,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   const generate = async () => {
     setBusy(true); setError(null); setSaved(false);
     const provider = useAiSettings.getState().provider;
-    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang), scope, userConfirmed: true };
+    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience), scope, userConfirmed: true };
     try {
       const pf = preflight(request);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
@@ -225,7 +225,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       const result = await aiLive({ ...request, personConfirmed: decision.personConfirmed }, abort.current.signal);
       current();
       if (!alive.current) return;
-      const proposal = humanizeProposal(validateOverviewProposal(JSON.parse(result.text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')), ctx), ctx, lang);
+      const proposal = parseOverviewResponse(result.text, ctx, lang);
       set((v) => ({ ...v, draft: { proposal, baseline, lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy } }));
       await flushDeviceStorage();
     } catch (e) { fail(e); }

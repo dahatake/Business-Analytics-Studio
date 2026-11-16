@@ -17,7 +17,7 @@ import {
 } from './deliverables.ts';
 import { deliverableNameKey, Refs, StrategySummary, TodoItem, todayIn, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { inputCount } from './stepDashboard.ts';
-import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
+import { useDeliverables, useFieldDrafts, useProjTransient, useProjUi } from './stores.ts';
 import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
 import { simulateTaskImpact, type ImpactInputs } from './taskImpact.ts';
 import './project.css';
@@ -197,7 +197,7 @@ function PaybackCriterion() {
 
 /** The step deliverables: definition, exit criteria with live verdicts, existing inputs and the fields to add. */
 export function DeliverablesScreen() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const route = useRoute();
   const { step: activeStep } = useActiveProject();
   const q = route.query.get('step');
@@ -205,6 +205,8 @@ export function DeliverablesScreen() {
   const ctx = useCheckContext();
   const set = useDeliverables((s) => s.set);
   const openDraft = useProjTransient((s) => s.openDraft);
+  const audience = useSettings((s) => s.audience);
+  const savedDraft = useFieldDrafts((s) => s.value[`${audience}:${step}`]);
   const names = useTargetNames();
   const all = useMemo(() => Object.fromEntries(IMPROVEMENT_STEPS.map((s) => [s, evaluateStep(s, ctx)])) as Record<ImprovementStep, ReturnType<typeof evaluateStep>>, [ctx]);
   const results = all[step];
@@ -239,7 +241,7 @@ export function DeliverablesScreen() {
         actions={(
           <>
             <BackToHome />
-            <Button appearance="primary" icon={<Sparkle20Regular />} onClick={() => openDraft(step)} data-testid="dlv-screen-draft">{t('dlv.draft.button')}</Button>
+            <Button appearance="primary" icon={<Sparkle20Regular />} onClick={() => openDraft(step)} data-testid="dlv-screen-draft">{t(savedDraft?.lang === lang ? 'dlv.draft.review' : 'dlv.draft.button')}</Button>
             <Button appearance="secondary" icon={<ArrowDownload20Regular />} onClick={exportMd} data-testid="dlv-export">{t('dlv.screen.export')}</Button>
           </>
         )}

@@ -11,6 +11,7 @@ import type { AnalysisData, DiscussionData, KpiData } from './model.ts';
 import { emptyDeliverables, type DeliverableData } from './deliverables.ts';
 import { emptyStrategy, type StrategyData } from './strategy.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
+import type { Lang } from '../../i18n/core.ts';
 import { useUseCases, type UseCase } from '../usecases/store.ts';
 import { UseCaseImportUndo } from './useCaseImport.ts';
 
@@ -40,6 +41,12 @@ export function saveAnalysisForProject(projectId: string, value: AnalysisData) {
 }
 /** Step deliverables (fields added on top of the pack and project data) and sign-offs. Every scope starts empty. */
 export const useDeliverables = createScopedStore<DeliverableData>('proj.deliverables', () => emptyDeliverables());
+export interface SavedFieldDraft {
+  fields: Record<string, string>;
+  lang: Lang;
+  at: string;
+}
+export const useFieldDrafts = createScopedStore<Record<string, SavedFieldDraft>>('proj.fieldDrafts', () => ({}));
 /** Solution types, KPI contribution estimates, deliverable section edits and the KPI/OKR definition status. */
 export const useStrategy = createScopedStore<StrategyData>('proj.strategy', () => emptyStrategy());
 
@@ -90,6 +97,7 @@ interface ProjTransient {
   undoVersion: number;
   /** The step whose deliverable draft dialog is open. */
   draftStep: ImprovementStep | null;
+  batchDraftOpen: boolean;
   /** Last applied draft, announced by the to-do band. */
   draftApplied: { step: ImprovementStep; count: number } | null;
   openExport: (themeId?: string | null) => void;
@@ -97,6 +105,8 @@ interface ProjTransient {
   selectTheme: (id: string | null) => void;
   openDraft: (step: ImprovementStep) => void;
   closeDraft: (applied?: { step: ImprovementStep; count: number }) => void;
+  openBatchDraft: () => void;
+  closeBatchDraft: () => void;
 }
 
 export const useProjTransient = create<ProjTransient>()((set) => ({
@@ -105,12 +115,15 @@ export const useProjTransient = create<ProjTransient>()((set) => ({
   selectedThemeId: null,
   undoVersion: 0,
   draftStep: null,
+  batchDraftOpen: false,
   draftApplied: null,
   openExport: (themeId = null) => set({ exportOpen: true, exportThemeId: themeId }),
   closeExport: () => set({ exportOpen: false }),
   selectTheme: (selectedThemeId) => set({ selectedThemeId }),
   openDraft: (draftStep) => set({ draftStep, draftApplied: null }),
   closeDraft: (applied) => set({ draftStep: null, draftApplied: applied ?? null }),
+  openBatchDraft: () => set({ batchDraftOpen: true }),
+  closeBatchDraft: () => set({ batchDraftOpen: false }),
 }));
 
 /** One editor (undo stack + history) per scope; rebuilt when the work target changes so projects never share undo. */

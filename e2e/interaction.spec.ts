@@ -70,8 +70,8 @@ test.describe('F-3.2.1 detail cards', () => {
     await expect(card(page)).toContainText('¥186M');
   });
 
-  test('graph nodes, chart points and Gantt bars use the same card', async ({ page }) => {
-    await open(page, '/', { lang: 'en' });
+  test('matrix points and Gantt bars use the same card', async ({ page }) => {
+    await open(page, '/workspace', { lang: 'en' });
     await page.locator('.priority-matrix [data-entity-ref="issue-lead-time"]').hover();
     await expect(card(page)).toHaveAttribute('data-entity-id', 'issue-lead-time');
     await open(page, '/plan', { lang: 'en' });

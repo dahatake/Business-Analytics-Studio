@@ -2,7 +2,7 @@ import type { Entity } from '../data/schema.ts';
 import { appStorage as localStorage } from '../data/deviceStorage.ts';
 import { loaded } from '../data/pack.ts';
 import { currentScope } from '../state/projects.ts';
-import { AI_LIMITS, C03_TABLE, PER_USE_LIMITS, type AiUse, type Limits, type Provider } from './policy.ts';
+import { AI_LIMITS, PER_USE_LIMITS, type AiUse, type Limits, type Provider } from './policy.ts';
 import { actualCostJpy, checkBudget, estimateCostJpy, estimateTokens, type BudgetDecision, type UnitPrices, type UsageRecord } from './budget.ts';
 import { evaluateGate, type GateReason } from './gate.ts';
 import { selectOutbound, toPromptContext } from './redact.ts';
@@ -17,9 +17,6 @@ export interface AiRequest {
   prompt: string;
   /** Data the feature wants to ground the answer in (D-2: internal items may be included). */
   entities?: Entity[];
-  /** User consent captured by the feature's confirmation UI (content and estimated cost). */
-  userConfirmed?: boolean;
-  personConfirmed?: boolean;
   /** Per-use output cap (e.g. PARAM-132: 4000 for presentations). */
   maxOutputTokens?: number;
   /** Per-use timeout in ms (e.g. PARAM-121: 60 s, PARAM-127: 90 s). */
@@ -56,7 +53,7 @@ export interface AiRuntimeSettings {
   provider?: Provider;
   liveEnabled: boolean;
   configured: boolean;
-  /** One-time approval saved in AI settings for the approved uses and their outbound data. */
+  /** One-time consent saved in AI settings for data included in AI requests. */
   sendConsent?: boolean;
   /** D-3: the user's monthly budget (default 100,000 JPY). */
   monthlyBudgetJpy?: number;
@@ -156,7 +153,7 @@ export interface Preflight {
   context: string;
 }
 
-/** Send context prepared by callers; one-time permission is captured in AI settings. */
+/** Send context prepared by callers; broad one-time permission is captured in AI settings. */
 export function preflight(req: AiRequest, now = new Date()): Preflight {
   const selection = selectOutbound(req.entities ?? [], loaded.byId);
   const context = toPromptContext(selection, req.lang);
@@ -175,14 +172,10 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
     if (!providerBudget.allowed) budget = { ...budget, allowed: false, level: 'stop', reasons: [...new Set([...budget.reasons, ...providerBudget.reasons])] };
   }
   const gate = evaluateGate({
-    use: req.use,
-    provider: settings.provider ?? 'foundry',
     liveEnabled: settings.liveEnabled,
-    userConfirmed: settings.sendConsent ?? req.userConfirmed ?? false,
+    sendConsent: settings.sendConsent ?? false,
     configured: settings.configured,
     budget,
-    personCount: selection.personCount,
-    personConfirmed: settings.sendConsent ?? req.personConfirmed ?? false,
   });
   return {
     allowed: gate.allowed,
@@ -195,14 +188,6 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
     personCount: selection.personCount,
     context,
   };
-}
-
-/** Whether a use can ever go live in this build (its C-03 row is approved). UIs use it to offer the live path. */
-export function isUseApproved(use: AiUse): boolean {
-  return evaluateGate({
-    use, liveEnabled: true, userConfirmed: true, configured: true,
-    budget: { allowed: true, level: 'ok', reasons: [], monthSpentJpy: 0, todayCalls: 0 }, personCount: 0, personConfirmed: true,
-  }, C03_TABLE).allowed;
 }
 
 /**

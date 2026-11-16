@@ -140,9 +140,14 @@ test('FR-101: a pack built by the CLI is shown without rebuilding the app', asyn
   const served = await startServer(app, 0, '127.0.0.1', join(base, 'device'));
   try {
     await setup(page, { lang: 'en', deviceId: null });
-    await page.goto(`${served.url}#/`);
-    await expect(page.locator('main#main')).toBeVisible();
-    await expect(page.getByText('Contoso Robotics E2E').first()).toBeVisible();
+    await page.goto(`${served.url}#/data`);
+    const currentPack = page.getByTestId('pack-current');
+    await expect(currentPack).toBeVisible();
+    await expect(currentPack).toContainText('Contoso Robotics E2E');
+    await expect(page.getByTestId('pack-origin')).toHaveText('The customer pack placed with the app (data/pack.json)');
+    await page.reload();
+    await expect(currentPack).toContainText('Contoso Robotics E2E');
+    await expect(page.getByTestId('pack-origin')).toHaveText('The customer pack placed with the app (data/pack.json)');
     await page.goto(`${served.url}#/brand`);
     await expect(page.getByTestId('brand-origin')).toHaveText('Default theme');
     await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { replaceFileSync } from './files.ts';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
-import { AI_LIMITS, C03_TABLE, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, isApprovedFor, workIqAllowedFor, type AiUse, type Provider, type UseApproval } from '../src/ai/policy.ts';
+import { AI_LIMITS, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, isAiUse, type AiUse, type Provider } from '../src/ai/policy.ts';
 import { MAX_SECRET_LENGTH, SecretVault, isSecretName } from './vault.ts';
 import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
@@ -278,7 +278,7 @@ export function outboundAllowed(url: string, savedEndpoint: string, config: Rela
 /* Handler                                                                                                            */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-export type RelayRefusal = 'c03NotApproved' | 'notConfigured';
+export type RelayRefusal = 'notConfigured';
 
 /**
  * Hosts the GitHub Copilot runtime sends prompts to and signs in with. With BAS_RELAY_OUTBOUND_HOSTS set, Copilot is
@@ -303,19 +303,15 @@ const WORKIQ_STATUS: Record<WorkIqErrorCode, number> = {
 
 const WORKIQ_ASK_FIELDS = new Set(['provider', 'company', 'project', 'purpose', 'focus', 'asOf', 'lang', 'timeZone', 'aspects', 'topics', 'expand']);
 
-/** Server-side C-03 re-check (defence in depth behind src/ai/gate.ts): approved rows and providers only, and a complete connection. */
-export function relayAiDecision(use: AiUse, configured: boolean, table: Record<AiUse, UseApproval> = C03_TABLE, provider: Provider = 'foundry'): RelayRefusal[] {
-  const reasons: RelayRefusal[] = [];
-  if (!isApprovedFor(table[use], provider)) reasons.push('c03NotApproved');
-  if (!configured) reasons.push('notConfigured');
-  return reasons;
+/** Server-side check that the selected provider has a complete connection. */
+export function relayAiDecision(configured: boolean): RelayRefusal[] {
+  return configured ? [] : ['notConfigured'];
 }
 
 export interface RelayContext {
   vault: SecretVault;
   token: string;
   config?: RelayConfig;
-  table?: Record<AiUse, UseApproval>;
   /** Last forwarded call per use (PARAM-116 minimum interval, enforced server-side too). */
   lastCall?: Map<string, number>;
   now?: () => number;
@@ -508,7 +504,6 @@ async function forwardCopilot(call: AiCall, model: string, copilot: CopilotServi
  */
 export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise<RelayResponse> {
   const config = ctx.config ?? STRICT_RELAY_CONFIG;
-  const table = ctx.table ?? C03_TABLE;
   const { vault, token } = ctx;
   if (config.requireLoopback && !isLoopback(req.remoteAddress, config)) return json(403, { error: 'notLoopback' });
   if (!hostAllowed(header(req.headers, 'host'), req.localPort, config)) return json(403, { error: 'badHost' });
@@ -604,7 +599,6 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const body = parseBody(req.body);
     if (!body || Object.keys(body).some((k) => k !== 'provider')) return json(400, { error: 'invalidQuestion' });
     if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
-    if (!workIqAllowedFor('foundry')) return json(403, { error: 'c03NotApproved' });
     const s = workiqSettings();
     if (!s) return json(409, { error: 'notConfigured' });
     if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
@@ -634,7 +628,6 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     // The user's explicit acceptance, made on the screen that links the EULA; never sent by anything else.
     if (!body || Object.keys(body).some((k) => k !== 'provider' && k !== 'accept') || body.accept !== true) return json(400, { error: 'invalidSettings' });
     if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
-    if (!workIqAllowedFor('foundry')) return json(403, { error: 'c03NotApproved' });
     if (workiqSettings()?.method !== 'cli') return json(409, { error: 'notConfigured' });
     if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
     try {
@@ -665,7 +658,6 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (!body || Object.keys(body).some((k) => !WORKIQ_ASK_FIELDS.has(k))) return json(400, { error: 'invalidQuestion' });
     // D-14: Work IQ belongs to the Microsoft Foundry path only; GitHub Copilot SDK runs never reach it.
     if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
-    if (!workIqAllowedFor('foundry') || !isApprovedFor(table.packBuild, 'foundry')) return json(403, { error: 'c03NotApproved' });
     if (!configured()) return json(403, { error: 'foundryNotConfigured' });
     const s = workiqSettings();
     if (!s) return json(409, { error: 'notConfigured' });
@@ -764,7 +756,6 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (method === 'PUT') {
       const r = validateConnection(parseBody(req.body), config);
       if (!r.ok) return json(400, { error: r.error });
-      if (!isApprovedFor(table.connectionTest, 'foundry')) return json(403, { error: 'c03NotApproved' });
       const key = vault.get('foundryKey');
       if (!key) return json(400, { error: 'keyMissing' });
       const now = (ctx.now ?? Date.now)();
@@ -801,13 +792,13 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (!body) return json(400, { error: 'invalidBody' });
     if (Object.keys(body).some((k) => !AI_FIELDS.has(k))) return json(400, { error: 'unknownField' });
     const use = body.use;
-    if (typeof use !== 'string' || !Object.hasOwn(table, use)) return json(400, { error: 'unknownUse' });
+    if (!isAiUse(use)) return json(400, { error: 'unknownUse' });
     if (use === 'connectionTest') return json(400, { error: 'useConnectionSettings' });
     const provider = body.provider ?? 'foundry';
     if (provider !== 'foundry' && provider !== 'copilotSdk') return json(400, { error: 'unknownProvider' });
-    const reasons = relayAiDecision(use as AiUse, configuredFor(provider), table, provider);
+    const reasons = relayAiDecision(configuredFor(provider));
     if (reasons.length > 0) return json(403, { allowed: false, reasons });
-    const call = validateAiCall(body, use as AiUse, provider);
+    const call = validateAiCall(body, use, provider);
     if (!call) return json(400, { error: 'invalidRequest' });
     const now = (ctx.now ?? Date.now)();
     const minInterval = PER_USE_LIMITS[call.use]?.minIntervalMs;

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { Badge, Button, Field, Input, MessageBar, MessageBarBody, Radio, RadioGroup, Spinner, Textarea } from '@fluentui/react-components';
 import { Search20Regular, Send20Regular } from '@fluentui/react-icons';
 import { aiComplete, type AiResponse } from '../../ai/client.ts';
-import { C03_TABLE, isApproved } from '../../ai/policy.ts';
 import { selectOutbound } from '../../ai/redact.ts';
 import { getEntity, loaded } from '../../data/pack.ts';
 import type { Entity } from '../../data/schema.ts';
@@ -15,7 +14,7 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { useUseCases } from '../usecases/store.ts';
-import { MockNotice, usePersonConfirm } from './AiCommon.tsx';
+import { MockNotice } from './AiCommon.tsx';
 import { CHAT_CONTEXT_PAIRS, buildIndex, chatPrompt, search, type ChatTurn } from './search.ts';
 import { isConfigured, useAiSettings } from './settingsStore.ts';
 import { StoryVideoSection } from './StoryVideo.tsx';
@@ -35,12 +34,10 @@ function SearchAndChat() {
   const useCases = useUseCases((s) => s.value);
   const history = useChat((s) => s.value);
   const setHistory = useChat((s) => s.set);
-  const { dialog, confirm } = usePersonConfirm();
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
-  const [cancelled, setCancelled] = useState(false);
 
   const index = useMemo(
     () => buildIndex(loaded.pack.entities.filter((e) => !isHidden(e, audience)), useCases),
@@ -51,17 +48,12 @@ function SearchAndChat() {
   const ask = async () => {
     const q = question.trim();
     if (!q) return;
-    setCancelled(false);
     const grounding = search(index, q, 5)
       .filter((h) => h.type === 'entity')
       .map((h) => getEntity(h.id))
       .filter((e): e is Entity => Boolean(e));
-    if (!(await confirm(grounding, t('ai.scope.chat')))) {
-      setCancelled(true);
-      return;
-    }
     setBusy(true);
-    const res: AiResponse = await aiComplete({ use: 'chat', lang, prompt: chatPrompt(q, history), entities: grounding, personConfirmed: true });
+    const res: AiResponse = await aiComplete({ use: 'chat', lang, prompt: chatPrompt(q, history), entities: grounding });
     const citations = selectOutbound(grounding, loaded.byId).included.map((e) => e.id);
     setHistory((h) => [...h, { q, a: res.text, citations, reasons: res.blockedReasons }]);
     setQuestion('');
@@ -102,10 +94,10 @@ function SearchAndChat() {
 
       <Panel title={t('ai.chat.title')} testId="ai-chat">
         <div className="ai-stack">
-          <p className="ai-status">
-            <Badge appearance="tint" color="danger" data-testid="ai-chat-foundry">{t('ai.chat.foundryBlocked')}</Badge>
+          <div className="ai-status">
+            <span className="muted">{t('ai.chat.liveNote')}</span>
             <span className="muted">{t('ai.chat.contextNote', { pairs: CHAT_CONTEXT_PAIRS })}</span>
-          </p>
+          </div>
           <ol className="ai-chat-log" data-testid="ai-chat-log">
             {history.map((turn, i) => (
               <li key={i} className="ai-turn">
@@ -122,7 +114,6 @@ function SearchAndChat() {
               </li>
             ))}
           </ol>
-          {cancelled && <p role="status">{t('ai.person.cancelled')}</p>}
           <form
             className="ai-row"
             onSubmit={(e) => {
@@ -139,7 +130,6 @@ function SearchAndChat() {
           {busy && <Spinner size="tiny" label={t('ai.loading')} />}
         </div>
       </Panel>
-      {dialog}
     </div>
   );
 }
@@ -189,8 +179,7 @@ function AiImport() {
   const { t } = useI18n();
   const settings = useAiSettings();
   const configured = isConfigured(settings);
-  const approved = isApproved(C03_TABLE.import);
-  const ready = configured && approved;
+  const ready = configured;
   return (
     <Panel title={t('ai.import.title')} testId="ai-import">
       <div className="ai-stack">
@@ -202,7 +191,6 @@ function AiImport() {
         {!ready && (
           <ul className="ai-reasons" data-testid="ai-import-reasons" aria-label={t('ai.import.why')}>
             {!configured && <li>{t('ai.reason.notConfigured')}</li>}
-            {!approved && <li>{t('ai.reason.c03NotApproved')}</li>}
           </ul>
         )}
         <p className="muted">{t('ai.import.note', { mb: IMPORT_MAX_MB })}</p>
@@ -217,7 +205,6 @@ export function AssistantScreen() {
   return (
     <div className="screen ai-screen">
       <PageHeader title={t('ai.title')} subtitle={t('ai.subtitle')} />
-      <p><a href={hrefFor('/ai-policy')}>{t('ai.policy.open')}</a></p>
       <SearchAndChat />
       <div className="grid-2">
         <UsageAnalysis />

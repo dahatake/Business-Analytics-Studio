@@ -135,7 +135,7 @@ export async function deleteSecret(name: SecretName): Promise<boolean> {
   }
 }
 
-export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'c03NotApproved' | 'budget' | 'failed';
+export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'budget' | 'failed';
 export interface ConnectionUsage { inputTokens: number; outputTokens: number }
 export type ConnectionSaveResult =
   | { ok: true; connection: RelayConnectionInfo; connectionVerifiedAt: string; usage: ConnectionUsage }
@@ -157,7 +157,7 @@ export async function saveRelayConnection(c: RelayConnectionInfo): Promise<Conne
     if (res.ok && saved && usage && typeof body.connectionVerifiedAt === 'string') {
       return { ok: true, connection: saved, connectionVerifiedAt: body.connectionVerifiedAt, usage };
     }
-    const known: ConnectionSaveError[] = [...CONNECTION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon', 'c03NotApproved'];
+    const known: ConnectionSaveError[] = [...CONNECTION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon'];
     return { ok: false, error: known.find((k) => k === body.error) ?? 'failed', providerStatus: body.providerStatus, usage };
   } catch (error) {
     return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };

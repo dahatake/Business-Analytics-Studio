@@ -21,12 +21,19 @@
  * - D-22 (user, 2026-11-15): "stepBrief" (FR-318, "Generate with Copilot" on a step dashboard) is approved for the
  *   configured provider, with the step's fact ledger and the items it names, after settings consent.
  */
-export type AiUse =
-  | 'structure' | 'summarize' | 'recommend' | 'chat' | 'executiveSummary'
-  | 'explain' | 'presentation' | 'aiUsageAnalysis' | 'review' | 'import' | 'storyVideo' | 'connectionTest'
-  | 'research' | 'brandResearch' | 'packBuild' | 'alignmentProposal' | 'deliverableDraft' | 'stepBrief' | 'strategyOverview';
+export const AI_USES = [
+  'structure', 'summarize', 'recommend', 'chat', 'executiveSummary',
+  'explain', 'presentation', 'aiUsageAnalysis', 'review', 'import', 'storyVideo', 'connectionTest',
+  'research', 'brandResearch', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief', 'strategyOverview',
+] as const;
+
+export type AiUse = (typeof AI_USES)[number];
 
 export type Provider = 'foundry' | 'copilotSdk';
+
+export function isAiUse(value: unknown): value is AiUse {
+  return typeof value === 'string' && AI_USES.some((use) => use === value);
+}
 
 export interface UseApproval {
   /** The approved provider; a list when the user may choose any of them (D-10). */
@@ -229,7 +236,7 @@ export const WORKIQ_SOURCE = {
 };
 
 export function workIqAllowedFor(provider: Provider): boolean {
-  return WORKIQ_SOURCE.providers.includes(provider) && isApprovedFor(C03_TABLE[WORKIQ_SOURCE.use], provider);
+  return WORKIQ_SOURCE.providers.includes(provider);
 }
 
 /** D-14: characters of one Work IQ answer handed to the pack generator (the relay truncates longer answers). */

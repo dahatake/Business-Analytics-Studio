@@ -733,12 +733,12 @@ export async function requestLiveStepBrief(brief: StepBrief, request: AiRequest,
   return result;
 }
 
-export async function requestStepBrief(brief: StepBrief, ctx: CheckContext, lang: Lang, confirmed?: { userConfirmed: boolean; personConfirmed: boolean }): Promise<GeneratedBrief> {
+export async function requestStepBrief(brief: StepBrief, ctx: CheckContext, lang: Lang): Promise<GeneratedBrief> {
   pending = brief;
   // The use's only mock (FR-011): the deterministic brief, labelled mock by the screen.
   registerMock('stepBrief', () => (pending ? briefText(pending) : ''));
   try {
-    const response = await aiComplete({ ...stepBriefRequest(brief, ctx, lang), ...(confirmed ?? {}) });
+    const response = await aiComplete(stepBriefRequest(brief, ctx, lang));
     return generatedBrief(brief, lang, response);
   } finally {
     pending = null;

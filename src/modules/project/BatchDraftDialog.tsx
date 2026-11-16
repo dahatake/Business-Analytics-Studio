@@ -2,24 +2,23 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner } from '@fluentui/react-components';
 import { AiLiveError, preflight, type Preflight } from '../../ai/client.ts';
 import { PER_USE_LIMITS, type AiUse } from '../../ai/policy.ts';
-import { selectOutbound } from '../../ai/redact.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { currentScope } from '../../state/projects.ts';
 import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
-import { reasonKey, useLiveConfirm, yenFine } from '../ai/AiCommon.tsx';
+import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob } from './batchDraft.ts';
 import { useCheckContext } from './deliverablesUi.tsx';
-import { overviewEntities, useOverview } from './overviewModel.ts';
+import { useOverview } from './overviewModel.ts';
 import { useProjTransient } from './stores.ts';
 
 type JobStatus = 'pending' | 'working' | 'waiting' | 'done' | 'failed';
 type JobStatuses = Record<string, JobStatus>;
 
 export function BatchDraftDialog() {
-  const { t, lang, fmt } = useI18n();
+  const { t, lang } = useI18n();
   const ctx = useCheckContext();
   const audience = useSettings((s) => s.audience);
   const close = useProjTransient((s) => s.closeBatchDraft);
@@ -47,15 +46,6 @@ export function BatchDraftDialog() {
     return t(job.kind === 'fields' ? 'dlv.batch.fields' : 'dlv.batch.brief', { step: t(`proj.step.${job.step}`) });
   };
   const setStatus = (job: BatchJob, status: JobStatus) => setStatuses((current) => ({ ...current, [batchJobId(job)]: status }));
-  const counts = (job: BatchJob, check: Preflight) => {
-    if (job.kind !== 'strategy') return { items: job.request.entities?.length ?? 0, internal: check.internalCount, persons: check.personCount };
-    const entities = overviewEntities(job.context);
-    return {
-      items: entities.length + job.context.objectives.length + job.context.kpi.kpis.length + job.context.kpi.okrs.length,
-      internal: selectOutbound(entities, job.context.pack.byId).internalCount,
-      persons: 0,
-    };
-  };
   const assertCurrent = () => {
     if (batchSourceStamp() !== source.current) {
       setInvalid(true);
@@ -72,7 +62,7 @@ export function BatchDraftDialog() {
   };
 
   const prepare = (pending: BatchJob[]): Preflight[] => {
-    const checks = pending.map((job) => preflight({ ...job.request, userConfirmed: true, personConfirmed: true }));
+    const checks = pending.map((job) => preflight(job.request));
     for (let i = 0; i < pending.length; i += 1) {
       const job = pending[i]!;
       const check = checks[i]!;
@@ -101,30 +91,7 @@ export function BatchDraftDialog() {
       assertCurrent();
       const pending = jobs.filter((job) => !completed.current.has(batchJobId(job)));
       const checks = prepare(pending);
-      const settings = useAiSettings.getState();
-      const preview = pending.map((job, i) => {
-        const check = checks[i]!;
-        const cost = check.estimatedCostJpy === null ? t('dlv.batch.unknownCost') : yenFine(fmt.locale, check.estimatedCostJpy);
-        const count = counts(job, check);
-        const header = t('dlv.batch.previewHeader', {
-          name: nameOf(job), ...count, cost,
-        });
-        return `${i + 1}. ${header}\n${job.request.prompt}\n\n${check.context}`;
-      }).join('\n\n--------------------\n\n');
-      const costs = checks.map((check) => check.estimatedCostJpy);
-      const estimatedCostJpy = costs.every((cost) => cost !== null) ? costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0) : null;
-      const decision = await confirmLive({
-        use: 'dlv.batch.confirmUse',
-        scope: t('dlv.batch.confirmScope', { n: pending.length }),
-        itemCount: pending.reduce((sum, job, i) => sum + counts(job, checks[i]!).items, 0),
-        internalCount: pending.reduce((sum, job, i) => sum + counts(job, checks[i]!).internal, 0),
-        personCount: pending.reduce((sum, job, i) => sum + counts(job, checks[i]!).persons, 0),
-        estimatedCostJpy, monthSpentJpy: checks[0]?.budget.monthSpentJpy ?? 0, monthBudgetJpy: settings.monthlyBudgetJpy,
-        destination: settings.provider === 'foundry'
-          ? `${settings.relayConnection?.endpoint ?? ''} / ${settings.relayConnection?.deployment ?? ''}`
-          : `GitHub Copilot / ${settings.copilotModel ?? ''}`,
-        contentPreview: preview, freeTextMayContainPersons: true, storesResponse: true,
-      });
+      const decision = await confirmLive();
       if (!decision.ok || abort.signal.aborted) {
         setInterrupted(true);
         return;
@@ -139,7 +106,7 @@ export function BatchDraftDialog() {
         assertCurrent();
         setStatus(job, 'working');
         attempts.current.set(job.request.use, Date.now());
-        const result = await runBatchJob(job, decision.personConfirmed, abort.signal);
+        const result = await runBatchJob(job, abort.signal);
         if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         assertCurrent();
         saveBatchResult(job, result, ctx, audience, provider);

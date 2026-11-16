@@ -138,7 +138,7 @@ export function StoryVideoSection() {
       {busy && <Spinner size="tiny" label={t('ai.loading')} />}
       {video && !busy && (
         <>
-          <MockNotice reasons={reasons.length ? reasons : ['c03NotApproved']}>
+          <MockNotice reasons={reasons}>
             <p className="muted">{t('ai.story.spent', { calls: video.calls, spent: fmt.yen(Math.ceil(video.spentJpy)) })}</p>
             {video.status === 'aborted' && <p role="status">{t(`ai.story.abort.${video.abortReason ?? 'budget'}`)}</p>}
           </MockNotice>

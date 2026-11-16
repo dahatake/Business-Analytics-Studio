@@ -4,7 +4,7 @@ import {
   Diagram24Regular, Map24Regular, ArrowFlowDiagonalUpRight24Regular, GanttChart24Regular,
   DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Cube24Regular,
   Organization24Regular, Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
-  Bot24Regular, PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, KeyMultiple24Regular, TaskListSquareLtr24Regular,
+  Bot24Regular, PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, TaskListSquareLtr24Regular,
   DocumentDatabase24Regular, Gauge24Regular,
 } from '@fluentui/react-icons';
 import type { MessageKey } from '../i18n/index.ts';
@@ -62,7 +62,6 @@ export const SCREENS: ScreenDef[] = [
   { path: '/board', label: 'ink.title', Icon: Board24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ink/BoardScreen.tsx'), 'BoardScreen') },
   { path: '/usecases', label: 'uc.title', Icon: BookOpen24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/usecases/UseCasesScreen.tsx'), 'UseCasesScreen') },
   { path: '/assistant', label: 'ai.title', Icon: Bot24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ai/AssistantScreen.tsx'), 'AssistantScreen') },
-  { path: '/ai-policy', label: 'ai.policy.nav', Icon: KeyMultiple24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ai/AiPolicyScreen.tsx'), 'AiPolicyScreen') },
   { path: '/show', label: 'show.title', Icon: SlideText24Regular, group: 'present', component: lazyNamed(() => import('../modules/show/ShowScreen.tsx'), 'ShowScreen') },
   { path: '/projects', label: 'proj.title', Icon: Briefcase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/ProjectsScreen.tsx'), 'ProjectsScreen') },
   { path: '/data', label: 'proj.nav.data', Icon: DocumentDatabase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/PackDataScreen.tsx'), 'PackDataScreen') },

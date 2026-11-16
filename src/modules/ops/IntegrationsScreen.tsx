@@ -1,7 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import { Badge, Button, Checkbox, Input, Label, MessageBar, MessageBarBody, Select, Switch } from '@fluentui/react-components';
 import catalogMarkdown from '../../../docs/integration-catalog.md?raw';
-import { C03_TABLE, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useActiveProject } from '../../state/projects.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
@@ -11,18 +10,15 @@ import './ops.css';
 
 type T = ReturnType<typeof useI18n>['t'];
 
-/** FR-203: selecting an integration never allows a send; the gate column and the C-03 table decide. */
+/** FR-203: selecting an integration never enables a send; AI requests still require settings consent. */
 function sendCondition(t: T, gate: string | null): { text: string; allowed: boolean } {
   if (gate === null) return { text: t('ops.gate.candidate'), allowed: false };
   if (gate === 'dev-only') return { text: t('ops.gate.devOnly'), allowed: false };
   if (gate === 'public-company-news') return { text: t('ops.gate.companyNews'), allowed: false };
+  if (gate === 'ai-consent') return { text: t('ops.gate.aiConsent'), allowed: false };
   const blocked = /^blocked:(Q-\d+)$/.exec(gate);
   if (blocked) return { text: t('ops.gate.blocked', { question: blocked[1]! }), allowed: false };
-  const use = /^c03:(\w+)$/.exec(gate)?.[1] as AiUse | undefined;
-  const row = use ? C03_TABLE[use] : undefined;
-  if (!row) return { text: t('ops.gate.unknown'), allowed: false };
-  if (!isApproved(row)) return { text: t('ops.gate.c03NotApproved', { use: use!, questions: row.openQuestions.join(', ') }), allowed: false };
-  return { text: t('ops.gate.c03Approved'), allowed: false };
+  return { text: t('ops.gate.unknown'), allowed: false };
 }
 
 function useCatalog() {

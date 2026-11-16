@@ -6,7 +6,7 @@ import { ArrowUndo20Regular, Delete20Regular, Dismiss24Regular, Sparkle20Regular
 import { aiComplete, readLedger } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
-import { MockNotice, usePersonConfirm } from './AiCommon.tsx';
+import { MockNotice } from './AiCommon.tsx';
 import { componentsForRoute, entitiesOfComponents } from './explain.ts';
 import { usageSummary } from './ledger.ts';
 import { commitApply, overrideKey, parseProposals, reviewPrompt, undoLastApply, useAiOverrides, type Proposal } from './review.ts';
@@ -17,8 +17,7 @@ type Notice =
   | { kind: 'applied'; count: number }
   | { kind: 'undone' }
   | { kind: 'applyFailed'; reason: 'nothing' | 'empty' }
-  | { kind: 'runFailed' }
-  | { kind: 'cancelled' };
+  | { kind: 'runFailed' };
 
 /** FR-278〜FR-281, FR-283, NFR-COST-001: "Copilot で分析実行" panel. */
 export function ReviewPanel() {
@@ -29,7 +28,6 @@ export function ReviewPanel() {
   const settings = useAiSettings();
   const configured = isConfigured(settings);
   const overrides = useAiOverrides((s) => s.value);
-  const { dialog, confirm } = usePersonConfirm();
   const [running, setRunning] = useState(false);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
@@ -41,13 +39,9 @@ export function ReviewPanel() {
   const run = async () => {
     setNotice(null);
     const entities = entitiesOfComponents(components);
-    if (!(await confirm(entities, t('ai.scope.screen', { path: route.path })))) {
-      setNotice({ kind: 'cancelled' });
-      return;
-    }
     setRunning(true);
     try {
-      const res = await aiComplete({ use: 'review', lang, prompt: reviewPrompt(lang, route.path, components), entities, personConfirmed: true });
+      const res = await aiComplete({ use: 'review', lang, prompt: reviewPrompt(lang, route.path, components), entities });
       const parsed = parseProposals(res.text, components);
       setReasons(res.blockedReasons);
       if (!parsed) setNotice({ kind: 'runFailed' });
@@ -110,13 +104,12 @@ export function ReviewPanel() {
             </div>
             {running && <Spinner size="tiny" label={t('ai.loading')} />}
             {notice && (
-              <MessageBar intent={notice.kind === 'applied' || notice.kind === 'undone' ? 'success' : notice.kind === 'cancelled' ? 'info' : 'error'} role="status" data-testid="ai-review-notice">
+              <MessageBar intent={notice.kind === 'applied' || notice.kind === 'undone' ? 'success' : 'error'} role="status" data-testid="ai-review-notice">
                 <MessageBarBody>
                   {notice.kind === 'applied' && t('ai.review.applied', { count: notice.count })}
                   {notice.kind === 'undone' && t('ai.review.undone')}
                   {notice.kind === 'applyFailed' && t(notice.reason === 'empty' ? 'ai.review.applyEmpty' : 'ai.review.applyNothing')}
                   {notice.kind === 'runFailed' && t('ai.review.runFailed')}
-                  {notice.kind === 'cancelled' && t('ai.person.cancelled')}
                 </MessageBarBody>
               </MessageBar>
             )}
@@ -171,7 +164,6 @@ export function ReviewPanel() {
           </Button>
         </DrawerFooter>
       </OverlayDrawer>
-      {dialog}
     </>
   );
 }

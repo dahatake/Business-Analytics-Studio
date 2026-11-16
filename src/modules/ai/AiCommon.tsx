@@ -1,19 +1,14 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
-import {
-  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, MessageBarTitle,
-} from '@fluentui/react-components';
-import { selectOutbound } from '../../ai/redact.ts';
+import { useCallback, type ReactNode } from 'react';
+import { Badge, MessageBar, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
 import type { TokenCount } from '../../ai/client.ts';
 import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
-import type { Entity } from '../../data/schema.ts';
-import { loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useAiSettings } from './settingsStore.ts';
 import './ai.css';
 
 /** Reasons the UI can explain: the client gate's reasons plus the relay's own refusals. */
 export const KNOWN_REASONS = [
-  'c03NotApproved', 'liveDisabled', 'notConfirmed', 'notConfigured', 'budget', 'personNotConfirmed', 'liveFailed',
+  'liveDisabled', 'notConfirmed', 'notConfigured', 'budget', 'liveFailed',
   'relayUnreachable',
 ] as const;
 export type KnownReason = (typeof KNOWN_REASONS)[number];
@@ -146,79 +141,14 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
   );
 }
 
-type ConfirmResult = Promise<boolean>;
-type ConfirmFn = (entities: Entity[], scope: string) => ConfirmResult;
-
-/**
- * FR-219: before anything that would send "person" entities, ask with the count and the scope.
- * Resolves true when the user continues (or when there is no person), false on cancel.
- */
-export function usePersonConfirm(): { dialog: ReactNode; confirm: ConfirmFn } {
-  const { t } = useI18n();
-  const [pending, setPending] = useState<{ count: number; scope: string } | null>(null);
-  const resolver = useRef<((ok: boolean) => void) | null>(null);
-  const confirm = useCallback<ConfirmFn>((entities, scope) => {
-    const count = selectOutbound(entities, loaded.byId).personCount;
-    if (count === 0) return Promise.resolve(true);
-    return new Promise((resolve: (ok: boolean) => void) => {
-      resolver.current = resolve;
-      setPending({ count, scope });
-    });
-  }, []);
-  const close = (ok: boolean) => {
-    resolver.current?.(ok);
-    resolver.current = null;
-    setPending(null);
-  };
-  const dialog = (
-    <Dialog open={pending !== null} modalType="alert" onOpenChange={(_, d) => { if (!d.open) close(false); }}>
-      <DialogSurface data-testid="ai-person-confirm">
-        <DialogBody>
-          <DialogTitle>{t('ai.person.title')}</DialogTitle>
-          <DialogContent className="ai-stack">
-            <p>{t('ai.person.body', { count: pending?.count ?? 0, scope: pending?.scope ?? '' })}</p>
-            <p className="muted">{t('ai.person.note')}</p>
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="primary" onClick={() => close(true)}>{t('ai.person.continue')}</Button>
-            <Button onClick={() => close(false)}>{t('ai.person.cancel')}</Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-  return { dialog, confirm };
-}
-
-/** What the live send confirmation shows, built from preflight() (C-03: content and cost confirmed by the user). */
-export interface LiveConfirmInfo {
-  use: MessageKey;
-  scope: string;
-  itemCount: number;
-  internalCount: number;
-  personCount: number;
-  estimatedCostJpy: number | null;
-  monthSpentJpy: number;
-  monthBudgetJpy: number;
-  /** Attached files by name: sent to the model, or withheld (unreadable by the selected model, too large, missing). */
-  attachments?: { sent: string[]; skipped: string[] };
-  contentPreview?: string;
-  freeTextMayContainPersons?: boolean;
-  storesResponse?: boolean;
-  destination?: string;
-}
-
 export interface LiveDecision {
   ok: boolean;
-  personConfirmed: boolean;
 }
 
-/** Send confirmation for a real call: content, internal/person counts (D-2, FR-219), estimated cost, budget and D-4. */
-type LiveConfirmResult = Promise<LiveDecision>;
-type LiveConfirmFn = (info: LiveConfirmInfo) => LiveConfirmResult;
+type LiveConfirmFn = () => Promise<LiveDecision>;
 
 export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmFn } {
   const consent = useAiSettings((s) => s.sendConsent);
-  const confirmLive = useCallback<LiveConfirmFn>(async () => ({ ok: consent, personConfirmed: consent }), [consent]);
+  const confirmLive = useCallback<LiveConfirmFn>(async () => ({ ok: consent }), [consent]);
   return { dialog: null, confirmLive };
 }

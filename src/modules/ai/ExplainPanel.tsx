@@ -3,13 +3,13 @@ import {
   Badge, Button, DrawerBody, DrawerHeader, DrawerHeaderTitle, OverlayDrawer, Spinner,
 } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
-import { aiComplete, isUseApproved, preflight, readLedger, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { aiComplete, preflight, readLedger, type AiRequest, type AiResponse } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
-import { LiveNotice, MockNotice, usePersonConfirm, useLiveConfirm } from './AiCommon.tsx';
+import { LiveNotice, MockNotice, useLiveConfirm } from './AiCommon.tsx';
 import { buildExplanation, componentsForRoute, entitiesOfComponents } from './explain.ts';
 import { usageSummary } from './ledger.ts';
 import { liveReady, useAiSettings } from './settingsStore.ts';
@@ -18,8 +18,8 @@ import { useAiPanels } from './uiStore.ts';
 type RunState = { status: 'idle' | 'loading' | 'cancelled' } | { status: 'done'; res: AiResponse };
 
 /**
- * FR-274 / FR-277: "現状の説明" side panel. D-1 approved this use for Microsoft Foundry: when live is ready,
- * the saved AI-settings consent and send gates allow a live answer; otherwise a labelled mock answers.
+ * FR-274 / FR-277: "現状の説明" side panel. A saved AI-settings consent and enabled live connection allow
+ * a live answer; otherwise a labelled mock answers.
  */
 export function ExplainPanel() {
   const { t, lang } = useI18n();
@@ -28,12 +28,10 @@ export function ExplainPanel() {
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
   const budget = useAiSettings((s) => s.monthlyBudgetJpy);
-  const live = useAiSettings((s) => liveReady(s)) && isUseApproved('explain');
-  const { dialog, confirm } = usePersonConfirm();
+  const live = useAiSettings((s) => liveReady(s));
   const { dialog: liveDialog, confirmLive } = useLiveConfirm();
   const [state, setState] = useState<RunState>({ status: 'idle' });
   const runId = useRef(0);
-  const bodyRef = useRef<HTMLDivElement>(null);
 
   const components = componentsForRoute(route.path);
   const entities = entitiesOfComponents(components);
@@ -43,13 +41,6 @@ export function ExplainPanel() {
     if (!open) return;
     const id = ++runId.current;
     setState({ status: 'loading' });
-    // A confirmation opened before the drawer took focus returns focus to the top bar, which leaves the drawer hidden from
-    // assistive technology (Tabster modalizer). Moving focus back into the drawer re-activates it.
-    const refocus = () => requestAnimationFrame(() => {
-      const body = bodyRef.current;
-      const drawer = body?.closest('[role="dialog"]');
-      if (body && !drawer?.contains(document.activeElement)) body.focus();
-    });
     void (async () => {
       const ents = entitiesOfComponents(componentsForRoute(route.path));
       const scope = t('ai.scope.screen', { path: route.path });
@@ -58,25 +49,17 @@ export function ExplainPanel() {
         if (id === runId.current) setState({ status: 'done', res });
       };
       if (live) {
-        const pf = preflight({ ...req, userConfirmed: true, personConfirmed: true });
-        // Blocked for a reason a confirmation cannot fix (budget, interval…): answer with the mock, ask nothing.
+        const pf = preflight(req);
+        // Blocked for a reason the saved consent cannot fix (budget, interval…): answer with the mock.
         if (!pf.allowed) return finish(await aiComplete(req));
-        const decision = await confirmLive({
-          use: 'ai.use.explain', scope, itemCount: ents.length, internalCount: pf.internalCount, personCount: pf.personCount,
-          estimatedCostJpy: pf.estimatedCostJpy, monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
-        });
+        const decision = await confirmLive();
         if (id !== runId.current) return;
-        refocus();
         if (!decision.ok) return setState({ status: 'cancelled' });
-        return finish(await aiComplete({ ...req, userConfirmed: true, personConfirmed: decision.personConfirmed }));
+        return finish(await aiComplete(req));
       }
-      const ok = await confirm(ents, scope);
-      if (id !== runId.current) return;
-      refocus();
-      if (!ok) return setState({ status: 'cancelled' });
-      finish(await aiComplete({ ...req, personConfirmed: true }));
+      finish(await aiComplete(req));
     })();
-  }, [open, route.path, lang, confirm, confirmLive, live, t]);
+  }, [open, route.path, lang, confirmLive, live, t]);
 
   const usage = usageSummary(readLedger(), new Date(), budget);
   const answeredLive = state.status === 'done' && state.res.mode === 'live';
@@ -97,7 +80,7 @@ export function ExplainPanel() {
           </DrawerHeaderTitle>
         </DrawerHeader>
         <DrawerBody>
-          <div className="ai-stack" ref={bodyRef} tabIndex={-1} data-testid="ai-explain-body">
+          <div className="ai-stack" data-testid="ai-explain-body">
             <p className="muted">{t('ai.explain.lead')}</p>
             <p className="ai-status" data-testid="ai-explain-status">
               <Badge appearance="tint" color={answeredLive ? 'success' : 'danger'}>{answeredLive ? t('ai.status.available') : t('ai.status.unavailable')}</Badge>
@@ -105,7 +88,7 @@ export function ExplainPanel() {
               <span>{t('ai.explain.quota', { used: usage.todayCalls, limit: usage.dailyLimit })}</span>
             </p>
             {state.status === 'loading' && <Spinner size="tiny" label={t('ai.loading')} />}
-            {state.status === 'cancelled' && <p role="status">{t('ai.person.cancelled')}</p>}
+            {state.status === 'cancelled' && <p role="status">{t('ai.send.cancelled')}</p>}
             {state.status === 'done' && state.res.mode === 'live' && (
               <LiveNotice costJpy={state.res.costJpy ?? null} usage={state.res.usage}>
                 <p className="ai-answer" data-testid="ai-explain-answer">{state.res.text}</p>
@@ -136,7 +119,6 @@ export function ExplainPanel() {
               </ul>
             </section>
           </div>
-          {dialog}
           {liveDialog}
         </DrawerBody>
       </OverlayDrawer>

@@ -156,8 +156,7 @@ export const opsJa = {
   'ops.gate.companyNews': 'ニュース検索のため公開企業名と言語のみ自動送信。ライブの一時停止で停止します。この画面の選択は取得の有効・無効を切り替えません。',
   'ops.gate.blocked': '送信しない（{question} が未決）',
   'ops.gate.unknown': '送信しない（条件が不明）',
-  'ops.gate.c03NotApproved': '送信しない（C-03 の基準表の「{use}」が未承認: {questions}）',
-  'ops.gate.c03Approved': 'C-03 の表は承認済み。送るたびに利用者の確認が必要です',
+  'ops.gate.aiConsent': 'AI 設定での包括同意が必要です。このカタログから送信は行いません',
 
   'ops.int.settings': '選択した連携の設定',
   'ops.int.settingsWhy': '認証の方式・資格情報の保管場所・規約や費用や SLA の確認状況を Project ごとに残すため。',

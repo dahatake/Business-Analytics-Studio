@@ -412,7 +412,6 @@ export function DraftDialog() {
   const [state, setState] = useState<DraftState>({ status: 'idle' });
   const [overwrite, setOverwrite] = useState(false);
   const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
-  const bodyRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cancel = () => abortRef.current?.abort();
   // Closing the dialog or switching the target stops the request instead of leaving it running unseen.
@@ -454,7 +453,7 @@ export function DraftDialog() {
       && useSettings.getState().lang === lang;
     const input = { step, ctx, lang, audience };
     const request = draftRequest(input);
-    const pf = preflight({ ...request, userConfirmed: true, personConfirmed: true });
+    const pf = preflight(request);
     if (!pf.allowed) {
       setState({ status: 'error', message: pf.reasons.map((r) => t(reasonKey(r))).join(' ') });
       return;
@@ -467,16 +466,7 @@ export function DraftDialog() {
     const controller = new AbortController();
     try {
       const settings = useAiSettings.getState();
-      const decision = await confirmLive({
-        use: 'ai.use.deliverableDraft', scope: t(deliverableNameKey(step)), itemCount: request.entities?.length ?? 0,
-        internalCount: pf.internalCount, personCount: pf.personCount, estimatedCostJpy: pf.estimatedCostJpy,
-        monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: settings.monthlyBudgetJpy,
-        destination: settings.provider === 'foundry'
-          ? `${settings.relayConnection?.endpoint ?? ''} / ${settings.relayConnection?.deployment ?? ''}`
-          : `GitHub Copilot / ${settings.copilotModel ?? ''}`,
-        contentPreview: `${request.prompt}\n\n${pf.context}`, freeTextMayContainPersons: true, storesResponse: true,
-      });
-      requestAnimationFrame(() => bodyRef.current?.focus());
+      const decision = await confirmLive();
       if (!targetCurrent()) return;
       if (!decision.ok) {
         setState({ status: 'idle' });
@@ -493,7 +483,7 @@ export function DraftDialog() {
       }
       abortRef.current = controller;
       setState({ status: 'working', stage: 'generate', startedAt: Date.now() });
-      const r = await requestDeliverableDraft(input, { ...request, userConfirmed: true, personConfirmed: decision.personConfirmed }, controller.signal);
+      const r = await requestDeliverableDraft(input, request, controller.signal);
       if (targetCurrent()) {
         if (!draftsUnchanged()) {
           setState({ status: 'error', message: t('dlv.draft.changed') });
@@ -582,7 +572,7 @@ export function DraftDialog() {
     {confirmDialog}
     <Dialog open onOpenChange={(_, d) => { if (!d.open) close(); }}>
       <DialogSurface className="dlv-draft-surface" data-testid="dlv-draft-dialog">
-        <DialogBody ref={bodyRef} tabIndex={-1}>
+        <DialogBody>
           <DialogTitle>{t('dlv.draft.title', { name: t(deliverableNameKey(step)) })}</DialogTitle>
           <DialogContent>
             {state.status === 'working' && <AiProgress stage={state.stage} startedAt={state.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS} testId="dlv-draft-progress" />}

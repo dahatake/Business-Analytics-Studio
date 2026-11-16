@@ -91,25 +91,17 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       const stamp = batchSourceStamp();
       const options = repairOptions(input);
       const request = { ...resolutionRequest(input, options, guidance), scope };
-      const check = preflight({ ...request, userConfirmed: true, personConfirmed: true });
+      const check = preflight(request);
       if (!check.allowed) throw new AiLiveError(check.reasons, check.reasons.map((reason) => t(reasonKey(reason))).join(' '), check.budget);
       if (request.prompt.length + check.context.length > 32_000) throw new Error(t('dlv.draft.tooLarge'));
-      const decision = await confirmLive({
-        use: 'ai.use.deliverableDraft', scope: t(todoKey(todoId)), itemCount: request.entities?.length ?? 0,
-        internalCount: check.internalCount, personCount: check.personCount, estimatedCostJpy: check.estimatedCostJpy,
-        monthSpentJpy: check.budget.monthSpentJpy, monthBudgetJpy: settings.monthlyBudgetJpy,
-        destination: settings.provider === 'foundry'
-          ? `${settings.relayConnection?.endpoint ?? ''} / ${settings.relayConnection?.deployment ?? ''}`
-          : `GitHub Copilot / ${settings.copilotModel ?? ''}`,
-        contentPreview: `${request.prompt}\n\n${check.context}`, freeTextMayContainPersons: true, storesResponse: true,
-      });
+      const decision = await confirmLive();
       if (!decision.ok || abort.signal.aborted) {
         setCancelled(true);
         return;
       }
       assertStamp(stamp);
       setProgress({ stage: 'generate', startedAt: Date.now() });
-      const proposal = await requestResolution({ ...request, userConfirmed: true, personConfirmed: decision.personConfirmed }, options, abort.signal);
+      const proposal = await requestResolution(request, options, abort.signal);
       if (abort.signal.aborted) {
         setCancelled(true);
         return;

@@ -4,8 +4,7 @@ import {
   ProgressBar, Switch,
 } from '@fluentui/react-components';
 import { Delete20Regular } from '@fluentui/react-icons';
-import { isUseApproved, readLedger } from '../../ai/client.ts';
-import { C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
+import { readLedger } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
@@ -98,7 +97,7 @@ function LedgerPrune({ onChange }: { onChange: () => void }) {
             </DialogContent>
             <DialogActions>
               <Button appearance="primary" onClick={run} data-testid="ai-ledger-prune-ok">{t('ai.ledger.delete')}</Button>
-              <Button onClick={() => setConfirming(false)}>{t('ai.person.cancel')}</Button>
+              <Button onClick={() => setConfirming(false)}>{t('ai.dialog.cancel')}</Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>
@@ -108,7 +107,7 @@ function LedgerPrune({ onChange }: { onChange: () => void }) {
 }
 
 /**
- * The one AI settings view: connection, send consent and live switch, C-03 table, usage, prices, speech and media.
+ * The one AI settings view: connection, broad send consent, live switch, usage, prices, speech and media.
  * It is shown only inside AiSettingsDialog, so every condition of liveReady() is visible wherever settings are opened.
  */
 export function AiSettingsContent() {
@@ -116,20 +115,16 @@ export function AiSettingsContent() {
   const s = useAiSettings();
   const refreshRelay = useAiSettings((x) => x.refreshRelay);
   const configured = isConfigured(s);
-  const [ledgerVersion, setLedgerVersion] = useState(0);
+  const [, setLedgerVersion] = useState(0);
   const usage = usageSummary(readLedger(), new Date(), s.monthlyBudgetJpy);
-  const uses = Object.keys(C03_TABLE) as AiUse[];
-  const live = liveReady(s) && uses.some((u) => isUseApproved(u));
+  const live = liveReady(s);
 
   useEffect(() => {
     void refreshRelay();
   }, [refreshRelay]);
 
-  const tbd = (v: string) => (v === 'TBD' ? t('ai.c03.tbd') : v);
-
   return (
     <>
-      <p data-ledger={ledgerVersion}><a href={hrefFor('/ai-policy')}>{t('ai.policy.open')}</a></p>
       <D4Warning />
       {!s.relayReachable && (
         <MessageBar intent="warning" data-testid="ai-relay-unreachable"><MessageBarBody>{t('ai.relay.unreachable')}</MessageBarBody></MessageBar>
@@ -167,43 +162,6 @@ export function AiSettingsContent() {
       </div>
 
       <LegacyPanel />
-
-      <Panel title={t('ai.c03.title')} testId="ai-c03">
-        <p className="muted">{t('ai.c03.lead')}</p>
-        <div className="ai-table-wrap" tabIndex={0} role="region" aria-label={t('ai.c03.title')}>
-          <table className="data-table">
-            <caption className="visually-hidden">{t('ai.c03.title')}</caption>
-            <thead>
-              <tr>
-                <th scope="col">{t('ai.c03.use')}</th>
-                <th scope="col">{t('ai.c03.provider')}</th>
-                <th scope="col">{t('ai.c03.data')}</th>
-                <th scope="col">{t('ai.c03.condition')}</th>
-                <th scope="col">{t('ai.c03.cost')}</th>
-                <th scope="col">{t('ai.c03.questions')}</th>
-                <th scope="col">{t('ai.c03.status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {uses.map((u) => {
-                const row = C03_TABLE[u];
-                const ok = isApproved(row);
-                return (
-                  <tr key={u} data-use={u} data-approved={ok}>
-                    <th scope="row">{t(`ai.use.${u}`)}</th>
-                    <td>{row.provider === 'TBD' ? t('ai.c03.tbd') : approvedProviders(row).map((p) => t(`ai.provider.${p}`)).join(t('ai.listSep'))}</td>
-                    <td lang={row.data === 'TBD' ? undefined : 'en'}>{tbd(row.data)}</td>
-                    <td lang={row.enableCondition === 'TBD' ? undefined : 'en'}>{tbd(row.enableCondition)}</td>
-                    <td>{row.costCapJpy === 'TBD' ? t('ai.c03.tbd') : approvedProviders(row).includes('foundry') ? t('ai.cost.capNote', { budget: fmt.yen(row.costCapJpy) }) : fmt.yen(row.costCapJpy)}</td>
-                    <td lang="en">{row.openQuestions.join(', ')}</td>
-                    <td><Badge appearance="tint" color={ok ? 'success' : 'danger'}>{ok ? t('ai.c03.approved') : t('ai.c03.blocked')}</Badge></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
 
       <div className="grid-2">
         <Panel title={t('ai.usage.title')} testId="ai-usage">
@@ -260,7 +218,11 @@ export function AiSettingsDialog({ open, onClose }: { open: boolean; onClose: ()
   const { t } = useI18n();
   return (
     <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface className="ai-settings-dialog" data-testid="ai-settings-dialog">
+      <DialogSurface
+        className="ai-settings-dialog"
+        style={{ width: 'min(960px, calc(100vw - 32px))', maxWidth: 'min(960px, calc(100vw - 32px))' }}
+        data-testid="ai-settings-dialog"
+      >
         <DialogBody>
           <DialogTitle>{t('ai.nav.settings')}</DialogTitle>
           <DialogContent>

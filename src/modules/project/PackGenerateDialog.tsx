@@ -214,7 +214,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const estimate = useMemo(() => {
     const plan = runPlan(input);
     const prompt = stageAPrompt(input, []) + materials.map((m) => m.text).join('\n') + researchNote + ' '.repeat(Math.max(0, plan.promptChars - chars));
-    const pf = preflight({ use: 'packBuild', lang, prompt, maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, userConfirmed: true, personConfirmed: true });
+    const pf = preflight({ use: 'packBuild', lang, prompt, maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens });
     const ledger = readLedger();
     const month = jstMonth(new Date());
     const spent = ledger.filter((r) => jstMonth(new Date(r.at)) === month).reduce((a, r) => a + (r.costJpy ?? 0), 0);
@@ -318,7 +318,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
         provider: settings.provider,
         ...(settings.provider === 'copilotSdk' ? (settings.copilotModel ? { model: settings.copilotModel } : {}) : { model: settings.relayConnection?.deployment ?? settings.deployment }),
         complete: (prompt, signal, stage) => aiLive({
-          use: 'packBuild', lang: lang as Lang, prompt, userConfirmed: true, personConfirmed: true,
+          use: 'packBuild', lang: lang as Lang, prompt,
           maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: PACK_BUILD_TIMEOUT_MS, scope: runScope, stage,
         }, signal),
         fetchSite: (url, signal, terms) => fetchSitePages(url, signal, terms),
@@ -615,7 +615,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
               {phase.kind === 'form' && (
                 <>
                   <Button appearance="primary" icon={<BotSparkle20Regular />} disabled={!canStart} onClick={() => void start()} data-testid="gen-start">{t('proj.gen.start')}</Button>
-                  <Button onClick={close}>{t('ai.person.cancel')}</Button>
+                  <Button onClick={close}>{t('ai.dialog.cancel')}</Button>
                 </>
               )}
               {phase.kind === 'running' && <Button onClick={() => abortRef.current?.abort()} data-testid="gen-cancel">{t('proj.gen.cancel')}</Button>}

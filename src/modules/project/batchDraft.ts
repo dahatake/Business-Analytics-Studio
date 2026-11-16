@@ -49,8 +49,8 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
   return jobs;
 }
 
-export async function runBatchJob(job: BatchJob, personConfirmed: boolean, signal: AbortSignal): Promise<BatchResult> {
-  const request = { ...job.request, userConfirmed: true, personConfirmed };
+export async function runBatchJob(job: BatchJob, signal: AbortSignal): Promise<BatchResult> {
+  const request = job.request;
   if (job.kind === 'fields') {
     const result = await requestDeliverableDraft(job.input, request, signal);
     return { kind: 'fields', fields: result.fields, tasks: result.tasks };

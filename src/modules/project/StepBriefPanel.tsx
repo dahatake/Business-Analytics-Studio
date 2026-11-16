@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
 import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { DEFAULT_LIVE_TIMEOUT_MS, isUseApproved, preflight } from '../../ai/client.ts';
+import { DEFAULT_LIVE_TIMEOUT_MS, preflight } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
@@ -78,7 +78,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
   const brief = useMemo(() => buildStepBrief(audience === 'external' ? stepDashboard(d.step, briefCtx) : d, briefCtx, lang, audience), [d, briefCtx, lang, audience]);
   const key = `${audience}:${d.step}`;
   const generated = useStepBriefs((s) => s.value[key]);
-  const live = useAiSettings((s) => liveReady(s)) && isUseApproved('stepBrief');
+  const live = useAiSettings((s) => liveReady(s));
   const { dialog, confirmLive } = useLiveConfirm();
   const [progress, setProgress] = useState<{ stage: AiStage; startedAt?: number } | null>(null);
   const busy = progress !== null;
@@ -88,21 +88,15 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
     setProgress({ stage: live ? 'confirm' : 'generate', startedAt: live ? undefined : Date.now() });
     setCancelled(false);
     try {
-      let confirmed: { userConfirmed: boolean; personConfirmed: boolean } | undefined;
       if (live) {
-        const pf = preflight({ use: 'stepBrief', lang, prompt: '', entities: briefEntities(brief, briefCtx), userConfirmed: true, personConfirmed: true });
-        // Blocked for a reason a confirmation cannot fix (budget, interval…): answer with the mock, ask nothing.
+        const pf = preflight({ use: 'stepBrief', lang, prompt: '', entities: briefEntities(brief, briefCtx) });
+        // Blocked for a reason the saved consent cannot fix (budget, interval…): keep the deterministic brief.
         if (pf.allowed) {
-          const decision = await confirmLive({
-            use: 'ai.use.stepBrief', scope: t('proj.dash.brief.scope', { step: t(`proj.step.${d.step}`), n: brief.facts.length }), itemCount: brief.refs.length,
-            internalCount: pf.internalCount, personCount: pf.personCount, estimatedCostJpy: pf.estimatedCostJpy,
-            monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
-          });
+          const decision = await confirmLive();
           if (!decision.ok) {
             setCancelled(true);
             return;
           }
-          confirmed = { userConfirmed: true, personConfirmed: decision.personConfirmed };
         }
       }
       if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
@@ -110,7 +104,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
         return;
       }
       setProgress({ stage: 'generate', startedAt: Date.now() });
-      const result = await requestStepBrief(brief, briefCtx, lang, confirmed);
+      const result = await requestStepBrief(brief, briefCtx, lang);
       if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
         setCancelled(true);
         return;

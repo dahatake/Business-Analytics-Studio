@@ -57,7 +57,7 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
   }, lang) : '';
   const freshness = version ? anchorFreshness(version.anchor, new Date()) : null;
   const estimate = proposal ? preflight({
-    use: 'alignmentProposal', lang, prompt: proposal, userConfirmed: true, personConfirmed: true,
+    use: 'alignmentProposal', lang, prompt: proposal,
     maxOutputTokens: PER_USE_LIMITS.alignmentProposal?.maxOutputTokens,
   }) : null;
 
@@ -114,7 +114,7 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
     setMessage(null);
     try {
       const result = await aiLive({
-        use: 'alignmentProposal', lang, prompt: proposal, userConfirmed: true, personConfirmed: true,
+        use: 'alignmentProposal', lang, prompt: proposal,
         maxOutputTokens: PER_USE_LIMITS.alignmentProposal?.maxOutputTokens, scope: project.id,
       }, controller.signal);
       const next = parseAlignmentProposal(result.text, version);

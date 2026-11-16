@@ -19,7 +19,7 @@ import {
 } from './discussion.ts';
 import { parseImport } from './exportFormat.ts';
 import { requestSuggestions, suggestionRequest } from './mocks.ts';
-import { isUseApproved, preflight, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { preflight, type AiRequest, type AiResponse } from '../../ai/client.ts';
 import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { DiscussionRecord, RecordKind, Theme } from './model.ts';
@@ -286,7 +286,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
   const [entry, setEntry] = useState<EntryTarget | null>(null);
   usePackVersion((s) => s.version);
   const cap = useMediaCapability();
-  const live = useAiSettings((s) => liveReady(s)) && isUseApproved('recommend');
+  const live = useAiSettings((s) => liveReady(s));
   const { dialog: liveDialog, confirmLive } = useLiveConfirm();
   const [aiOutcome, setAiOutcome] = useState<AiResponse | 'cancelled' | null>(null);
   const idx = theme ? ordered.findIndex((o) => o.theme.id === theme.id) : -1;
@@ -319,17 +319,11 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
     try {
       let send: AiRequest = req;
       if (live) {
-        const pf = preflight({ ...req, userConfirmed: true, personConfirmed: true });
-        // Blocked for a reason a confirmation cannot fix (budget, interval…): answer with the mock, ask nothing.
+        const pf = preflight(req);
+        // Blocked for a reason the saved consent cannot fix (budget, interval…): answer with the mock.
         if (pf.allowed) {
-          const decision = await confirmLive({
-            use: 'ai.use.recommend', scope: t('proj.ai.scope', { theme: loc(theme.title, lang) }), itemCount: ents.length,
-            internalCount: pf.internalCount, personCount: pf.personCount, estimatedCostJpy: pf.estimatedCostJpy,
-            monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: useAiSettings.getState().monthlyBudgetJpy,
-            ...(attached.length ? { attachments: { sent: attached.map((a) => a.name).filter((n) => !plan.skipped.includes(n)), skipped: plan.skipped } } : {}),
-          });
+          const decision = await confirmLive();
           if (!decision.ok) return setAiOutcome('cancelled');
-          send = { ...req, userConfirmed: true, personConfirmed: decision.personConfirmed };
         }
       }
       const { response, lines } = await requestSuggestions(send);
@@ -482,7 +476,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
                     </span>
                   )}
                   {kind === 'suggestion' && busy && <Spinner size="tiny" label={t('ai.loading')} />}
-                  {kind === 'suggestion' && aiOutcome === 'cancelled' && <p role="status" data-testid="proj-ai-cancelled">{t('ai.person.cancelled')}</p>}
+                  {kind === 'suggestion' && aiOutcome === 'cancelled' && <p role="status" data-testid="proj-ai-cancelled">{t('ai.send.cancelled')}</p>}
                   {kind === 'suggestion' && aiOutcome && aiOutcome !== 'cancelled' && (
                     <div role="status" data-testid="proj-ai-outcome">
                       {aiOutcome.mode === 'live'

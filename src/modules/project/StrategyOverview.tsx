@@ -217,21 +217,16 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     setBusy(true); setError(null); setSaved(null);
     const provider = useAiSettings.getState().provider;
     const previousDraft = JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]);
-    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience, step), scope, userConfirmed: true };
+    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience, step), scope };
     try {
       const pf = preflight(request);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
-      const decision = await confirmLive({
-        use: 'ai.use.strategyOverview', scope: t('stg.scope'), itemCount: map.nodes.length,
-        internalCount: ctx.pack.pack.entities.filter((e) => e.classification === 'internal').length, personCount: 0,
-        estimatedCostJpy: pf.estimatedCostJpy, monthSpentJpy: pf.budget.monthSpentJpy, monthBudgetJpy: Math.min(10_000, useAiSettings.getState().monthlyBudgetJpy),
-        contentPreview: request.prompt, freeTextMayContainPersons: true, storesResponse: true,
-      });
+      const decision = await confirmLive();
       if (!decision.ok || !alive.current) return;
       current();
       if (useAiSettings.getState().provider !== provider) throw new Error(t('stg.stale'));
       abort.current = new AbortController();
-      const result = await aiLive({ ...request, personConfirmed: decision.personConfirmed }, abort.current.signal);
+      const result = await aiLive(request, abort.current.signal);
       current();
       if (!alive.current) return;
       if (JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]) !== previousDraft) throw new Error(t('stg.draftChanged'));

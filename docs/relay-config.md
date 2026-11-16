@@ -61,7 +61,7 @@ A zero app budget blocks sends. Copilot also requires no unit price; its charges
 Story video remains mock-only and needs no Foundry price.
 
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
-when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown on `/ai-settings`.
+when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown in the AI settings dialog.
 
 ## Environment variables
 
@@ -139,7 +139,7 @@ A DNS answer that changes between the check and the connection is not fully excl
 (C-01) and the caps bound the impact.
 ## Work IQ retrieval verification (Microsoft Foundry only)
 
-The Work IQ section is included in both AI settings and the **Connect to AI** dialog. A refresh token only proves
+The Work IQ section is part of the single AI settings dialog (D-25). A refresh token only proves
 sign-in, not service enablement, billing assignment or access to Microsoft 365 data. Foundry customer-pack generation
 requires the separate retrieval check; ordinary Foundry explanations and GitHub Copilot SDK behavior are unchanged.
 The SDK's MCP configuration is not read or modified by BAS.

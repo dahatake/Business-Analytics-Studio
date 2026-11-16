@@ -7,3 +7,8 @@ export const useAiPanels = create<{ open: AiPanel | null; setOpen: (p: AiPanel |
   open: null,
   setOpen: (open) => set({ open }),
 }));
+
+/** D-25: AI settings exist only as this one dialog; every entry point (nav, launch, projects, links) opens it. */
+export const useAiSettingsDialog = create<{ open: boolean }>()(() => ({ open: false }));
+export const openAiSettings = () => useAiSettingsDialog.setState({ open: true });
+export const closeAiSettings = () => useAiSettingsDialog.setState({ open: false });

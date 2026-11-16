@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
   ProgressBar, Switch,
@@ -7,13 +7,14 @@ import { Delete20Regular } from '@fluentui/react-icons';
 import { isUseApproved, readLedger } from '../../ai/client.ts';
 import { C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n } from '../../i18n/index.ts';
-import { hrefFor } from '../../state/router.ts';
-import { PageHeader, Panel } from '../../ui/Panel.tsx';
+import { hrefFor, useRoute } from '../../state/router.ts';
+import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
+import { closeAiSettings, openAiSettings, useAiSettingsDialog } from './uiStore.ts';
 import './mocks.ts';
 import './ai.css';
 
@@ -106,8 +107,11 @@ function LedgerPrune({ onChange }: { onChange: () => void }) {
   );
 }
 
-/** Connection, live switch, C-03 table, usage, Copilot pricing, speech and media settings. */
-export function AiSettingsScreen() {
+/**
+ * The one AI settings view: connection, send consent and live switch, C-03 table, usage, prices, speech and media.
+ * It is shown only inside AiSettingsDialog, so every condition of liveReady() is visible wherever settings are opened.
+ */
+export function AiSettingsContent() {
   const { t, fmt } = useI18n();
   const s = useAiSettings();
   const refreshRelay = useAiSettings((x) => x.refreshRelay);
@@ -124,9 +128,8 @@ export function AiSettingsScreen() {
   const tbd = (v: string) => (v === 'TBD' ? t('ai.c03.tbd') : v);
 
   return (
-    <div className="screen ai-screen" data-ledger={ledgerVersion}>
-      <PageHeader title={t('ai.nav.settings')} subtitle={t('ai.settings.subtitle')} />
-      <p><a href={hrefFor('/ai-policy')}>{t('ai.policy.open')}</a></p>
+    <>
+      <p data-ledger={ledgerVersion}><a href={hrefFor('/ai-policy')}>{t('ai.policy.open')}</a></p>
       <D4Warning />
       {!s.relayReachable && (
         <MessageBar intent="warning" data-testid="ai-relay-unreachable"><MessageBarBody>{t('ai.relay.unreachable')}</MessageBarBody></MessageBar>
@@ -245,6 +248,51 @@ export function AiSettingsScreen() {
           </div>
         </Panel>
       </div>
-    </div>
+    </>
   );
+}
+
+/**
+ * D-25: the only place to change AI settings. A dialog rather than a screen, so the launch screen (before a project is
+ * chosen) and the pack generator (unsaved input) keep their state while settings are changed.
+ */
+export function AiSettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useI18n();
+  return (
+    <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
+      <DialogSurface className="ai-settings-dialog" data-testid="ai-settings-dialog">
+        <DialogBody>
+          <DialogTitle>{t('ai.nav.settings')}</DialogTitle>
+          <DialogContent>
+            <div className="ai-settings-body ai-stack">
+              <p className="muted">{t('ai.settings.subtitle')}</p>
+              <AiSettingsContent />
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={onClose} data-testid="ai-settings-dialog-close">{t('ai.dialog.close')}</Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+/**
+ * Mounted once by the App, at every start-up stage, for every entry point outside the pack generator. Moving to another
+ * route closes it; a bookmark of the former /ai-settings screen opens it over Home.
+ */
+export function AiSettingsDialogHost() {
+  const open = useAiSettingsDialog((s) => s.open);
+  const path = useRoute().path;
+  const redirected = useRef(false);
+  useEffect(() => {
+    if (path === '/ai-settings') {
+      redirected.current = true;
+      openAiSettings();
+      window.location.replace(hrefFor('/home'));
+    } else if (redirected.current) redirected.current = false;
+    else closeAiSettings();
+  }, [path]);
+  return <AiSettingsDialog open={open} onClose={closeAiSettings} />;
 }

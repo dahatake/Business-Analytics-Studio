@@ -1,18 +1,19 @@
 import { useMemo, useRef, useState } from 'react';
-import { Badge, Button, Radio, RadioGroup, Select, Switch, Tab, TabList } from '@fluentui/react-components';
+import { Badge, Button, Link, Radio, RadioGroup, Select, Switch, Tab, TabList } from '@fluentui/react-components';
 import { Add20Regular, ArrowRedo20Regular, ArrowUndo20Regular, FullScreenMaximize20Regular, Play20Regular } from '@fluentui/react-icons';
 import { getEntity } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { UndoStack } from '../../state/history.ts';
 import { PERSONA_VIEWS, personaLabel, type Persona } from '../../state/personas.ts';
 import { useCurrentScope } from '../../state/projects.ts';
-import { hrefFor, replaceQuery, useRoute } from '../../state/router.ts';
+import { replaceQuery, useRoute } from '../../state/router.ts';
 import { useReducedMotion } from '../../state/motion.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
+import { openAiSettings } from '../ai/uiStore.ts';
 import { AnimationPlayer } from './AnimationPlayer.tsx';
 import { MockApp } from './MockApp.tsx';
 import { StoryPlayer } from './StoryPlayer.tsx';
@@ -274,7 +275,7 @@ export function UseCasesScreen() {
               <div className="uc-read-aloud">
                 <Switch checked={readAloud && speechSupported()} disabled={!speechSupported()} label={t('uc.speech.toggle')} onChange={(_, d) => setReadAloud(d.checked)} />
                 <span className="muted">{speechSupported() ? t('uc.speech.local') : t('uc.speech.unsupported')}</span>
-                <a href={hrefFor('/ai-settings')}>{t('uc.speech.azureLink')}</a>
+                <Link inline className="text-action" onClick={openAiSettings}>{t('uc.speech.azureLink')}</Link>
               </div>
               <TabList selectedValue={tab} onTabSelect={(_, d) => replaceQuery({ tab: d.value === 'edit' ? undefined : String(d.value) })}>
                 {TABS.map((k) => <Tab key={k} value={k}>{t(`uc.tab.${k}`)}</Tab>)}

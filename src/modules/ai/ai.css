@@ -40,6 +40,8 @@
 .ai-token-table tfoot th, .ai-token-table tfoot td { font-weight: 600; border-bottom: none; border-top: 2px solid var(--colorNeutralStroke1); }
 .ai-float { position: fixed; left: 16px; bottom: 16px; max-width: min(460px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; }
 .ai-float:empty { display: none; }
+/* Beside the 200px nav rail, so live-mode notices never cover its entries (e.g. AI settings). */
+@media (min-width: 861px) { .ai-float { left: 216px; max-width: min(460px, calc(100vw - 232px)); } }
 .ai-applied-notice { background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1); border: 1px solid var(--colorBrandStroke1); border-radius: 8px; padding: 8px 12px; box-shadow: var(--shadow8); display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
 .ai-applied-notice summary { cursor: pointer; min-height: 24px; display: flex; align-items: center; color: var(--colorBrandForegroundLink); }
 .ai-applied-notice li { display: flex; flex-direction: column; gap: 2px; }
@@ -50,9 +52,10 @@
 .ai-dl dt { font-weight: 600; color: var(--colorNeutralForeground2); }
 .ai-dl dd { margin: 0; overflow-wrap: anywhere; }
 
-/* D-12: AI settings as a dialog (launch screen, project management) and the readiness list */
-.ai-settings-dialog { max-width: min(720px, calc(100vw - 32px)); }
-.ai-quick { max-height: min(70vh, 760px); overflow-y: auto; padding-right: 4px; }
+/* The AI settings dialog renders the same content as /ai-settings, stacked in one column */
+.ai-settings-dialog { width: min(960px, calc(100vw - 32px)); max-width: min(960px, calc(100vw - 32px)); }
+.ai-settings-body .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.ai-settings-body > p { margin: 0; }
 .ai-readiness { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .ai-readiness li { display: flex; align-items: center; gap: 6px; }
 

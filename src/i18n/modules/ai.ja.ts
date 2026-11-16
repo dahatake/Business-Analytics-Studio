@@ -25,7 +25,7 @@ export const aiJa = {
   'ai.policy.costBoth': 'Foundry と Copilot の実料金は不明で、アプリの予算上限では制限できません。',
   'ai.policy.costNone': '費用条件が未決のため、送信しません。',
   'ai.policy.settings': 'AI の接続設定を開く',
-  'ai.nav.settings': 'AI の接続設定',
+  'ai.nav.settings': 'AI 設定',
   'ai.close': '閉じる',
   'ai.colon': '：',
   'ai.loading': '処理中…',
@@ -440,5 +440,6 @@ export const aiJa = {
   'ai.ready.verified': 'Foundry のモデル応答を確認して保存',
   'ai.ready.workiq': 'Work IQ の情報取得を検証（Foundry の顧客パックには必須）',
   'ai.ready.live': '実接続を有効化',
+  'ai.ready.consent': '送信に同意（個人情報とデータ所有者の許可を確認）',
   'ai.dialog.close': '閉じる',
 } as const;

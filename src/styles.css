@@ -141,6 +141,9 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--colorBrandForeground1);
 }
 .rail-link:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: -2px; }
+.rail-button { width: 100%; border: 0; background: none; font: inherit; text-align: start; cursor: pointer; }
+/* In-text links that open a dialog render as <button>; keep the surrounding text metrics like an <a>. */
+button.text-action { font: inherit; line-height: inherit; vertical-align: baseline; }
 
 .main { padding: 24px 28px 64px; min-width: 0; outline: none; animation: enter var(--durationSlower) var(--curveDecelerateMid) both; }
 @keyframes enter { from { opacity: 0; transform: translateY(10px) scale(0.995); } }

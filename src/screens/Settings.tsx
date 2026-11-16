@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Label, Radio, RadioGroup, Slider, Switch } from '@fluentui/react-components';
+import { Button, Label, Link, Radio, RadioGroup, Slider, Switch } from '@fluentui/react-components';
 import { PARAMS } from '../config/params.ts';
 import { loaded } from '../data/pack.ts';
 import type { EntityKind } from '../data/schema.ts';
@@ -11,19 +11,27 @@ import { cardSpecs, type CardSpec } from '../ui/cardSpecs.ts';
 import { kindIcon } from '../ui/icons.ts';
 import { hrefFor } from '../state/router.ts';
 import { LEDGER_RETENTION_MONTHS } from '../ai/budget.ts';
+import { openAiSettings } from '../modules/ai/uiStore.ts';
 import type { MessageKey } from '../i18n/index.ts';
 
 /** D-7 (proposal P-03, approved 2026-11-09): what is kept, how it is deleted, and what survives for budget accounting. */
-const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageKey; budget: MessageKey; where?: string }[] = [
+const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageKey; budget: MessageKey; where?: string; aiSettings?: true }[] = [
   { target: 'retention.pack', retention: 'retention.keep.untilReplaced', deletion: 'retention.del.packFile', budget: 'retention.budget.na' },
   { target: 'retention.cache', retention: 'retention.keep.cache', deletion: 'retention.del.cacheFolder', budget: 'retention.budget.na' },
   { target: 'retention.project', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.project', budget: 'retention.budget.kept', where: '/projects' },
   { target: 'retention.importedPack', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.importedPack', budget: 'retention.budget.na', where: '/data' },
-  { target: 'retention.connection', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.connection', budget: 'retention.budget.na', where: '/ai-settings' },
-  { target: 'retention.ledger', retention: 'retention.keep.ledger', deletion: 'retention.del.ledger', budget: 'retention.budget.self', where: '/ai-settings' },
+  { target: 'retention.connection', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.connection', budget: 'retention.budget.na', aiSettings: true },
+  { target: 'retention.ledger', retention: 'retention.keep.ledger', deletion: 'retention.del.ledger', budget: 'retention.budget.self', aiSettings: true },
   { target: 'retention.exports', retention: 'retention.keep.outside', deletion: 'retention.del.exports', budget: 'retention.budget.na' },
   { target: 'retention.chat', retention: 'retention.keep.notStored', deletion: 'retention.del.none', budget: 'retention.budget.na' },
 ];
+
+/** AI rows open the single AI settings dialog (D-25); other rows link to their screen. */
+function deletionCell(r: (typeof RETENTION)[number], label: string) {
+  if (r.aiSettings) return <Link inline className="text-action" onClick={openAiSettings}>{label}</Link>;
+  if (r.where) return <a href={hrefFor(r.where)}>{label}</a>;
+  return label;
+}
 
 function LoadTest() {
   const { t, fmt } = useI18n();
@@ -146,7 +154,7 @@ export function SettingsScreen() {
                 <tr key={r.target}>
                   <th scope="row">{t(r.target)}</th>
                   <td>{t(r.retention, { months: LEDGER_RETENTION_MONTHS })}</td>
-                  <td>{r.where ? <a href={hrefFor(r.where)}>{t(r.deletion)}</a> : t(r.deletion)}</td>
+                  <td>{deletionCell(r, t(r.deletion))}</td>
                   <td>{t(r.budget)}</td>
                 </tr>
               ))}

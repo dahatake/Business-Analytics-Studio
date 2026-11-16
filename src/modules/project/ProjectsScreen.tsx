@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { MAX_PROJECTS_PER_COMPANY, useProjects, type AddProjectResult, type Company, type Project, type ProjectRelation } from '../../state/projects.ts';
 import { hrefFor, navigate } from '../../state/router.ts';
-import { AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
+import { openAiSettings } from '../ai/uiStore.ts';
 import { BackToHome, ScrollRegion } from './common.tsx';
 import { generatePrefillFor, PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
 import type { PackGenInput } from './packGenerate.ts';
@@ -35,7 +35,6 @@ export function ProjectsScreen() {
   const [gen, setGen] = useState<{ target: PackGenTarget; prefill: Partial<PackGenInput> | null } | null>(null);
   const [editCompany, setEditCompany] = useState<Company | null>(null);
   const [editProject, setEditProject] = useState<Project | null>(null);
-  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [message, setMessage] = useState<{ intent: 'success' | 'error'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // Re-read when the generate dialog closes, so a pack saved there shows at once.
@@ -79,7 +78,7 @@ export function ProjectsScreen() {
         actions={(
           <>
             <BackToHome />
-            <Button icon={<Settings20Regular />} onClick={() => setAiSettingsOpen(true)} data-testid="proj-ai-settings">{t('proj.gen.aiSettings')}</Button>
+            <Button icon={<Settings20Regular />} onClick={openAiSettings} data-testid="proj-ai-settings">{t('proj.gen.aiSettings')}</Button>
             <Button icon={<ArrowUpload20Regular />} onClick={() => fileRef.current?.click()}>{t('proj.projects.import')}</Button>
             <input
               ref={fileRef}
@@ -135,7 +134,6 @@ export function ProjectsScreen() {
       {management.dialogs}
       <CompanyEditDialog company={editCompany} onClose={() => setEditCompany(null)} />
       <ProjectEditDialog project={editProject} onClose={() => setEditProject(null)} />
-      <AiSettingsDialog open={aiSettingsOpen} onClose={() => setAiSettingsOpen(false)} />
       {gen && (
         <PackGenerateDialog
           open

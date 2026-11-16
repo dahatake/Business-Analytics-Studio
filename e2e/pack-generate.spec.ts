@@ -55,7 +55,10 @@ test('launch screen: AI settings and the generator are reachable; missing requir
   await expect(settings.getByTestId('ai-workiq')).toHaveCount(0); // D-14: Work IQ belongs to Microsoft Foundry only
   await expect(settings.getByTestId('ai-copilot-signin')).toContainText('Not checked');
   await expect(settings.getByTestId('ai-endpoint')).toHaveCount(0);
-  await expect(settings.getByTestId('ai-price-request')).toBeVisible();
+  await expect(settings.getByTestId('ai-price-request')).toHaveCount(0); // Copilot charges cannot be priced or capped by BAS
+  await expect(settings.getByTestId('ai-provider-cost-note')).toBeVisible();
+  await expect(settings.getByTestId('ai-send-consent')).toBeVisible(); // the dialog is the full AI settings, consent included
+  await expect(settings.getByTestId('ai-readiness-consent')).toBeVisible();
   expect(await scan(page)).toEqual([]);
   await settings.getByTestId('ai-provider-foundry').check();
   await settings.getByTestId('ai-settings-dialog-close').click();

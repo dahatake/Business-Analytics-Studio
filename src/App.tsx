@@ -3,7 +3,7 @@ import {
   Badge, Button, FluentProvider, MessageBar, MessageBarBody, Spinner, Text, Tooltip, createDarkTheme, createLightTheme, type Theme,
 } from '@fluentui/react-components';
 import {
-  Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular,
+  Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular, KeyMultiple24Regular,
 } from '@fluentui/react-icons';
 import { MotionBehaviourProvider } from '@fluentui/react-motion';
 import { useI18n } from './i18n/index.ts';
@@ -23,6 +23,8 @@ import { NotFound } from './screens/NotFound.tsx';
 import { EntityPage } from './screens/EntityPage.tsx';
 import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
 import { ActionSlots, ContextSlot, Overlays, StepBandSlot } from './app/globals.tsx';
+import { AiSettingsDialogHost } from './modules/ai/AiSettingsPanel.tsx';
+import { openAiSettings } from './modules/ai/uiStore.ts';
 import { useBrandVariants } from './modules/ops/theme.ts';
 import { DeviceStorageStatus, useDeviceBlocked } from './ui/DeviceStorageStatus.tsx';
 
@@ -126,6 +128,15 @@ function NavRail({ current }: { current: string }) {
                 </a>
               </li>
             ))}
+            {group === 'manage' && (
+              // D-25: AI settings are a dialog, not a screen, so this entry opens it instead of navigating.
+              <li>
+                <button type="button" className="rail-link rail-button" onClick={() => { sound.play('tap'); openAiSettings(); }} data-testid="nav-ai-settings">
+                  <KeyMultiple24Regular aria-hidden />
+                  <span>{t('ai.nav.settings')}</span>
+                </button>
+              </li>
+            )}
           </ul>
         </div>
       ))}
@@ -143,6 +154,8 @@ function Screen() {
   const route = useRoute();
   const [first, second] = route.segments;
   if (first === 'entity') return second ? <EntityPage id={second} /> : <NotFound />;
+  // The former AI settings screen: AiSettingsDialogHost redirects to Home and opens the dialog.
+  if (first === 'ai-settings') return null;
   const def = screenFor(route.path);
   if (!def) return <NotFound />;
   const Component = def.component;
@@ -243,6 +256,7 @@ export function App() {
           {!restricted && <Overlays />}
         </>
       ) : null}
+      {stage !== 'opening' && <AiSettingsDialogHost />}
       <Opening />
       </div>
       </MotionBehaviourProvider>

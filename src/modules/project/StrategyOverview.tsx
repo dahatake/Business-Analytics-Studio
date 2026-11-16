@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
+import { Badge, Button, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { Checkmark20Regular, Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
@@ -9,13 +9,14 @@ import { useI18n, type Formatters, type Lang } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, IMPROVEMENT_STEPS, useCurrentScope, type ImprovementStep } from '../../state/projects.ts';
-import { hrefFor, revisitRouteTarget, useRoute } from '../../state/router.ts';
+import { revisitRouteTarget, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
 import { wrap } from '../../ui/textWrap.ts';
 import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
+import { openAiSettings } from '../ai/uiStore.ts';
 import { ScrollRegion } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
@@ -310,7 +311,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
             </table>
           </ScrollRegion>
         </details>
-        <p className="muted">{t('stg.liveHint')} <a href={hrefFor('/ai-settings')}>{t('ai.nav.settings')}</a></p>
+        <p className="muted">{t('stg.liveHint')} <Link inline className="text-action" onClick={openAiSettings}>{t('ai.nav.settings')}</Link></p>
         <p className="muted">{t('stg.budget')}</p>
         {error && <MessageBar intent="error" data-testid="strategy-error"><MessageBarBody>{t('stg.error', { message: error })}</MessageBarBody></MessageBar>}
         {saved && <p role="status" data-testid="strategy-saved">{t(saved === 'draft' ? 'stg.draftSaved' : 'stg.saved')}</p>}

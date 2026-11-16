@@ -42,6 +42,15 @@ export async function open(page: Page, route: string, opts: SetupOptions = {}) {
 
 export const card = (page: Page) => page.locator('#bas-detail-card');
 
+/** D-25: AI settings are a single dialog, opened from the nav rail (there is no AI settings screen). */
+export async function openAiSettings(page: Page, opts: SetupOptions = {}) {
+  await open(page, '/home', opts);
+  await page.getByTestId('nav-ai-settings').click();
+  const dialog = page.getByTestId('ai-settings-dialog');
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
 /** Post-boot fixtures must update the canonical device store, not its legacy browser copy. Reload after seeding. */
 export async function seedDeviceData(page: Page, records: Record<string, string>) {
   await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');

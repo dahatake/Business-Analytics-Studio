@@ -8,6 +8,7 @@ import { useReducedMotion } from '../../state/motion.ts';
 import { personaLabel } from '../../state/personas.ts';
 import { hrefFor, navigate } from '../../state/router.ts';
 import { SCREENS } from '../../app/modules.ts';
+import { openAiSettings } from '../ai/uiStore.ts';
 import { WS_PERSONAS } from './personas.ts';
 import { resetLayout, switchPersona } from './store.ts';
 import { filterCommands, type Command } from './commands.ts';
@@ -56,6 +57,7 @@ export function CommandPalette() {
 
   const commands = useMemo<Command[]>(() => [
     ...SCREENS.filter((s) => !s.hiddenFromNav).map((s) => ({ id: `nav:${s.path}`, label: t('ws.cmd.goto', { name: t(s.label) }), run: () => navigate(hrefFor(s.path)) })),
+    { id: 'ai-settings', label: t('ai.nav.settings'), run: () => openAiSettings() },
     ...WS_PERSONAS.map((p) => ({
       id: `persona:${p}`,
       label: t('ws.cmd.persona', { name: t(personaLabel(p)) }),

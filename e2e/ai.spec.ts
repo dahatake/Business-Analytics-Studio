@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { JAPANESE, deviceSnapshot, open, seedDeviceData, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, deviceSnapshot, open, openAiSettings, seedDeviceData, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 // The relay (keys, connection, per-use interval) is shared by every test of this preview server, so this file runs in
 // order in one worker. The live tests need the preview server started with BAS_RELAY_TEST_OUTBOUND=1 (see below).
@@ -44,7 +44,7 @@ test.describe('Strategic overview optimization', () => {
           }],
         }), inputTokens: 500, outputTokens: 300 } });
       });
-      await open(page, '/ai-settings', { lang: 'en' });
+      await openAiSettings(page, { lang: 'en' });
       await page.getByTestId(provider === 'foundry' ? 'ai-provider-foundry' : 'ai-provider-copilot').check();
       await page.getByTestId('ai-send-consent').check();
       await page.getByTestId('ai-live-switch').check();
@@ -198,7 +198,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       const response = await route.fetch();
       await route.fulfill({ json: { ...await response.json(), copilot: { model: 'gpt-5' } } });
     });
-    await open(page, '/ai-settings', { lang: 'ja' });
+    await openAiSettings(page, { lang: 'ja' });
     await page.getByTestId('ai-provider-copilot').check();
     await page.getByTestId('ai-send-consent').check();
     await page.getByTestId('ai-live-switch').check();
@@ -206,6 +206,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(page.getByTestId('ai-provider-cost-note')).toContainText('請求額を制限できません');
     await expect(page.getByTestId('ai-state')).not.toContainText('モック');
     await page.reload();
+    await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
     await expect(page.getByTestId('ai-provider-copilot')).toBeChecked();
     await expect(page.getByTestId('ai-price-request')).toHaveCount(0);
     await expect(page.getByTestId('ai-state')).not.toContainText('モック');
@@ -225,7 +226,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
 
   test('saves a key through the relay without ever showing or returning it, then deletes it', async ({ page }) => {
     const bodies = recordResponses(page);
-    await open(page, '/ai-settings', { lang: 'en' });
+    await openAiSettings(page, { lang: 'en' });
     const foundry = page.getByTestId('ai-foundry-key');
     await expect(foundry.getByTestId('ai-foundry-key-state')).toHaveText('Not set');
     await foundry.getByTestId('ai-foundry-key-input').fill(FAKE_KEY);
@@ -239,6 +240,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(speech.getByTestId('ai-speech-key-state')).toHaveText('Saved');
 
     await page.reload();
+    await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
     expect(await page.content()).not.toContain(FAKE_KEY);
     expect(await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }))).not.toContain(FAKE_KEY);
@@ -259,7 +261,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
   });
 
   test('the relay refuses writes without its header and every AI send while C-03 is TBD', async ({ page }) => {
-    await open(page, '/ai-settings', { lang: 'en' });
+    await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {
       const noHeader = await fetch('/relay/secrets/foundryKey', { method: 'DELETE' });
       const getSession = await fetch('/relay/session');
@@ -299,7 +301,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
         verifiedAt = checks === 1 ? '2026-11-11T05:00:00.000Z' : null;
         await route.fulfill({ status: checks === 1 ? 200 : 403, json: checks === 1 ? { workiq: state() } : { error: 'workiqForbidden' } });
       });
-      await open(page, '/ai-settings', { lang });
+      await openAiSettings(page, { lang });
       await expect(page.getByTestId('ai-workiq-route-app')).toBeChecked();
       await expect(page.getByTestId('ai-workiq-state')).toContainText('user@contoso.example');
       await expect(page.getByTestId('ai-workiq-verification')).not.toContainText('2026-11-11');
@@ -311,6 +313,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'test passed' : '検証に成功');
       await expect(page.getByTestId('ai-workiq-consent')).not.toBeChecked();
       await page.reload();
+      await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
       await expect(page.getByTestId('ai-workiq-verification')).toContainText('2026-11-11T05:00:00.000Z');
       await page.getByTestId('ai-workiq-consent').check();
       await page.getByTestId('ai-workiq-check').click();
@@ -349,7 +352,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
         verifiedAt = '2026-11-11T06:00:00.000Z';
         await route.fulfill({ json: { workiq: state() } });
       });
-      await open(page, '/ai-settings', { lang });
+      await openAiSettings(page, { lang });
       await expect(page.getByTestId('ai-workiq-route-cli')).toBeChecked();
       await expect(page.getByTestId('ai-workiq-tenant')).toHaveCount(0);
       await expect(page.getByTestId('ai-workiq-eula')).toHaveCount(0);
@@ -411,7 +414,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
 
 test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
   test('enabling live mode keeps unapproved uses on a labelled mock with the C-03 reason, and shows the D-4 warning', async ({ page }) => {
-    await open(page, '/ai-settings', { lang: 'en' });
+    await openAiSettings(page, { lang: 'en' });
     const live = page.getByRole('switch', { name: 'Enable the real connection to generative AI' });
     await expect(live).not.toBeChecked();
     await expect(live).toBeDisabled();
@@ -484,7 +487,7 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       sent = [];
       responseStatus = 401;
       const bodies = recordResponses(page);
-      await open(page, '/ai-settings', { lang });
+      await openAiSettings(page, { lang });
       await page.getByTestId('ai-endpoint').fill('https://resource.services.ai.azure.com/api/projects/project');
       await page.getByTestId('ai-deployment').fill('gpt-deployed');
       await expect(page.getByTestId('ai-connection-destination')).toContainText('https://resource.services.ai.azure.com/openai/v1/chat/completions');
@@ -533,6 +536,7 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       await page.getByTestId('ai-connection-consent').check();
       await expect(page.getByTestId('ai-connection-save')).toBeEnabled({ timeout: 7000 });
       await page.reload();
+      await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
       await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
       if (lang === 'en') await noJapanese(page);
       expect(await scan(page)).toEqual([]);
@@ -611,17 +615,38 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
 
 test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => {
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of ['/assistant', '/ai-settings', '/ai-policy']) {
+    for (const route of ['/assistant', '/ai-policy']) {
       test(`${lang} ${route}`, async ({ page }) => {
-        // D-6: a legacy Foundry record makes /ai-settings show the "move" candidate, which is scanned too.
-        await page.addInitScript(() => localStorage.setItem('bas.foundry.settings', JSON.stringify({ endpoint: 'https://legacy.example.com', deployment: 'old', authMethod: 'apiKey' })));
         await open(page, route, { lang });
-        if (route === '/ai-settings') await expect(page.getByTestId('ai-legacy')).toBeVisible();
         await page.waitForTimeout(500);
         expect(await scan(page)).toEqual([]);
         if (lang === 'en') await noJapanese(page);
       });
     }
+
+    test(`${lang} AI settings dialog`, async ({ page }) => {
+      // D-6: a legacy Foundry record makes the settings show the "move" candidate, which is scanned too.
+      await page.addInitScript(() => localStorage.setItem('bas.foundry.settings', JSON.stringify({ endpoint: 'https://legacy.example.com', deployment: 'old', authMethod: 'apiKey' })));
+      const settings = await openAiSettings(page, { lang });
+      await expect(settings.getByTestId('ai-legacy')).toBeVisible();
+      await page.waitForTimeout(500);
+      expect(await scan(page)).toEqual([]);
+      if (lang === 'en') await noJapanese(page);
+    });
+
+    test(`${lang} D-25: AI settings have one place; links and old bookmarks open the same dialog`, async ({ page }) => {
+      await open(page, '/ai-policy', { lang });
+      await page.getByTestId('ai-policy-open-settings').click();
+      const settings = page.getByTestId('ai-settings-dialog');
+      await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
+      await settings.getByTestId('ai-settings-dialog-close').click();
+      await expect(settings).toHaveCount(0);
+      await page.goto('/#/ai-settings');
+      await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
+      await expect(page).toHaveURL(/#\/home$/);
+      await page.goBack();
+      await expect(settings).toHaveCount(0); // leaving the route closes it, so it never covers another screen
+    });
 
     test(`${lang} with the explain panel open`, async ({ page }) => {
       await open(page, '/plan', { lang });
@@ -640,7 +665,7 @@ test.describe('legacy Foundry settings (D-6, P-01)', () => {
     await page.addInitScript((v) => localStorage.setItem('bas.foundry.settings', v), JSON.stringify(legacy));
     const outbound: string[] = [];
     page.on('request', (r) => { if (!r.url().startsWith('http://127.0.0.1')) outbound.push(r.url()); });
-    await open(page, '/ai-settings', { lang: 'en' });
+    await openAiSettings(page, { lang: 'en' });
     const panel = page.getByTestId('ai-legacy');
     await expect(panel.locator('[data-state="legacyOnly"]')).toBeVisible();
     await expect(page.getByTestId('ai-endpoint')).toHaveValue('');
@@ -665,7 +690,7 @@ test.describe('usage ledger retention (D-3, D-7)', () => {
         { at: new Date().toISOString(), use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 },
       ]));
     });
-    await open(page, '/ai-settings', { lang: 'en' });
+    await openAiSettings(page, { lang: 'en' });
     await expect(page.getByTestId('ai-review-budget-input')).toHaveCount(0);
     await expect(page.getByTestId('ai-budget-input')).toHaveValue('100000');
     await expect(page.getByTestId('ai-usage-no-content')).toBeVisible();
@@ -727,7 +752,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
   });
 
   async function configure(page: Page, lang: Lang) {
-    await open(page, '/ai-settings', { lang });
+    await openAiSettings(page, { lang });
     await page.getByTestId('ai-endpoint').fill(stubUrl);
     await page.getByTestId('ai-deployment').fill('gpt-e2e');
     const saved = lang === 'en' ? 'Saved' : '保存済み';
@@ -787,10 +812,10 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(panel).toBeHidden();
 
     // A zero budget still explicitly disables sending, including Foundry calls with unknown costs.
-    await page.goto('/#/ai-settings');
+    await page.getByTestId('nav-ai-settings').click();
     await expect(page.getByTestId('ai-usage-unpriced')).toContainText('2 calls');
     await page.getByTestId('ai-budget-input').fill('0');
-    await page.goto('/#/');
+    await page.getByTestId('ai-settings-dialog-close').click();
     await page.getByTestId('ai-explain-button').click();
     await expect(panel.getByTestId('ai-mock-label').locator('[data-reason="budget"]')).toBeVisible();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
@@ -1108,7 +1133,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(`${page.url()}: ${e.message}`));
     for (const route of ['/', '/home', '/analysis', '/assistant', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
-      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings', '/ai-policy']) {
+      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-policy']) {
       await page.goto(`/#${route}`);
       await expect(page.locator('main#main'), route).toBeVisible();
       await page.waitForTimeout(300);

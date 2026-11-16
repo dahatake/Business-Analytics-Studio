@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
-  Radio, RadioGroup, Select, Spinner, Switch,
+  Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody,
+  Radio, RadioGroup, Select, Spinner,
 } from '@fluentui/react-components';
 import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { D4Warning } from './AiCommon.tsx';
 import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode } from './relayClient.ts';
-import { connectionTestPreflight, isConfigured, liveReady, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { connectionTestPreflight, isConfigured, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
 
@@ -522,20 +521,21 @@ export function PriceFields() {
   );
 }
 
-/** Readiness of the chosen provider for live sends, as one line (used by the settings dialog and the pack generator). */
+/** Readiness of the chosen provider for live sends, as one line: every condition of liveReady() (and Work IQ for Foundry). */
 export function AiReadiness() {
   const { t } = useI18n();
   const s = useAiSettings();
-  const items: ['relay' | 'configured' | 'live' | 'workiq', boolean][] = [
+  const items: ['relay' | 'configured' | 'consent' | 'live' | 'workiq', boolean][] = [
     ['relay', s.relayReachable],
     ['configured', isConfigured(s)],
+    ['consent', s.sendConsent],
     ['live', s.liveEnabled],
   ];
   if (s.provider === 'foundry') items.splice(2, 0, ['workiq', workIqReady(s)]);
   return (
     <ul className="ai-readiness" data-testid="ai-readiness">
       {items.map(([key, ok]) => (
-        <li key={key} data-ok={ok}>
+        <li key={key} data-ok={ok} data-testid={`ai-readiness-${key}`}>
           <Badge appearance="tint" color={ok ? 'success' : 'warning'}>{ok ? t('ai.ready.ok') : t('ai.ready.missing')}</Badge>
           <span>{t(key === 'configured' && s.provider === 'foundry' ? 'ai.ready.verified' : `ai.ready.${key}`)}</span>
         </li>
@@ -544,51 +544,3 @@ export function AiReadiness() {
   );
 }
 
-/** The settings needed before any live send, in one column: provider, its connection, prices, budget and the live switch. */
-export function AiQuickSettings() {
-  const { t } = useI18n();
-  const s = useAiSettings();
-  const refreshRelay = useAiSettings((x) => x.refreshRelay);
-  useEffect(() => {
-    void refreshRelay();
-  }, [refreshRelay]);
-  return (
-    <div className="ai-stack ai-quick" data-testid="ai-quick-settings">
-      <D4Warning />
-      {!s.relayReachable && (
-        <MessageBar intent="warning" data-testid="ai-relay-unreachable"><MessageBarBody>{t('ai.relay.unreachable')}</MessageBarBody></MessageBar>
-      )}
-      <ProviderChoice />
-      {s.provider === 'copilotSdk' ? <CopilotSettings /> : <FoundryFields />}
-      <PriceFields />
-      <BudgetInput />
-      <Switch checked={s.liveEnabled} onChange={(_, d) => s.update({ liveEnabled: d.checked })} label={t('ai.settings.liveSwitch')} data-testid="ai-live-switch" />
-      <p className="muted">{t('ai.settings.liveNote')}</p>
-      <AiReadiness />
-      <p className="ai-status">
-        <span>{t('ai.settings.state')}</span>
-        <Badge appearance="filled" color={liveReady(s) ? 'success' : 'warning'} data-testid="ai-state">{liveReady(s) ? t('ai.settings.stateLive') : t('ai.mock.badge')}</Badge>
-      </p>
-    </div>
-  );
-}
-
-/** The AI settings as a dialog, for screens outside the app shell (launch screen, project management). */
-export function AiSettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t } = useI18n();
-  return (
-    <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface className="ai-settings-dialog" data-testid="ai-settings-dialog">
-        <DialogBody>
-          <DialogTitle>{t('ai.nav.settings')}</DialogTitle>
-          <DialogContent>
-            <AiQuickSettings />
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="primary" onClick={onClose} data-testid="ai-settings-dialog-close">{t('ai.dialog.close')}</Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-}

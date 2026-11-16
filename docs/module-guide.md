@@ -15,7 +15,7 @@ Each feature module owns only its own files:
 | graph | `src/modules/graph/` | `graph.` | `/graph` → `GraphScreen.tsx` |
 | project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
 | usecases | `src/modules/usecases/` | `uc.` | `/usecases`, `/catalog` |
-| ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant`, `/ai-settings` |
+| ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant`, `/ai-policy` (AI settings are one dialog, `AiSettingsDialog`, not a route) |
 | ops | `src/modules/ops/`, `scripts/`, `docs/integration-catalog.md` | `ops.` | `/integrations`, `/brand` |
 
 Also owned by each module: `src/i18n/modules/<prefix>.ja.ts` / `.en.ts`, tests named `tests/<module>*.test.ts`, E2E specs named `e2e/<module>*.spec.ts`, and an optional stylesheet `src/modules/<module>/<module>.css` imported by the module's own files.

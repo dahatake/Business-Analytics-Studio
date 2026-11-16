@@ -38,6 +38,14 @@ afterEach(() => {
 });
 
 describe('connection test action', () => {
+  it('lists the send consent in the readiness, since live sends need it (D-25)', () => {
+    useAiSettings.setState({ provider: 'copilotSdk', copilotModel: 'gpt-5', liveEnabled: true, sendConsent: false });
+    render(<AiReadiness />);
+    const item = () => screen.getByTestId('ai-readiness-consent').textContent;
+    expect(item()).toContain('To do');
+    act(() => useAiSettings.setState({ sendConsent: true }));
+    expect(item()).toContain('OK');
+  });
   it('shows Copilot cost limitations without asking for a price, and displays reported or unavailable tokens', () => {
     useAiSettings.setState({ provider: 'copilotSdk', copilotModel: 'gpt-5', liveEnabled: true });
     const { rerender } = render(<><PriceFields /><AiReadiness /><LiveNotice costJpy={null} usage={{ inputTokens: 10, outputTokens: 20 }} /></>);

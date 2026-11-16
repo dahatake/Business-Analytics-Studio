@@ -1,8 +1,8 @@
-import { Badge } from '@fluentui/react-components';
+import { Badge, Link } from '@fluentui/react-components';
 import { C03_TABLE, approvedProviders, isApproved, type AiUse } from '../../ai/policy.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
-import { hrefFor } from '../../state/router.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
+import { openAiSettings } from './uiStore.ts';
 import './ai.css';
 
 const APPROVED_DATA_KEYS: Partial<Record<AiUse, MessageKey>> = {
@@ -66,7 +66,7 @@ export function AiPolicyScreen() {
           </table>
         </div>
       </Panel>
-      <p><a href={hrefFor('/ai-settings')}>{t('ai.policy.settings')}</a></p>
+      <p><Link inline className="text-action" onClick={openAiSettings} data-testid="ai-policy-open-settings">{t('ai.policy.settings')}</Link></p>
     </div>
   );
 }

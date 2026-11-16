@@ -26,7 +26,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.policy.costBoth': 'Actual Foundry and Copilot charges are unknown and cannot be limited by the app budget.',
   'ai.policy.costNone': 'Cost conditions are undecided, so nothing is sent.',
   'ai.policy.settings': 'Open AI connection settings',
-  'ai.nav.settings': 'AI connection settings',
+  'ai.nav.settings': 'AI settings',
   'ai.close': 'Close',
   'ai.colon': ': ',
   'ai.loading': 'Working…',
@@ -441,5 +441,6 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.ready.verified': 'Verify the Foundry model response and save',
   'ai.ready.workiq': 'Verify Work IQ retrieval (required for Foundry customer packs)',
   'ai.ready.live': 'Live connection on',
+  'ai.ready.consent': 'Consent to send (personal data and data-owner permission checked)',
   'ai.dialog.close': 'Close',
 };

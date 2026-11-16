@@ -3,7 +3,7 @@ import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
-import { ArchitectureExtension, CoreObjectExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, WorkflowExtension } from './extensionSchemas.ts';
+import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, WorkflowExtension } from './extensionSchemas.ts';
 import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } from './companyAnchor.ts';
@@ -200,6 +200,7 @@ export function verifyPack(raw: unknown): VerifyResult {
     glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
     workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension,
+    decisionReport: DecisionReportExtension,
     companyAnchor: CompanyAnchorVersionSchema,
     companyAlignment: CompanyAlignmentSnapshotSchema,
   };
@@ -268,6 +269,16 @@ export function verifyPack(raw: unknown): VerifyResult {
   if (okr.success) {
     okr.data.kpis.forEach((k, i) => sourceRefs(k.sourceIds, `extensions.okr.kpis[${i}].sourceIds`));
     okr.data.objectives.forEach((o, i) => sourceRefs(o.sourceIds, `extensions.okr.objectives[${i}].sourceIds`));
+  }
+  const decision = DecisionReportExtension.safeParse(pack.extensions?.decisionReport);
+  if (decision.success) {
+    sourceRefs([decision.data.sourceId], 'extensions.decisionReport.sourceId');
+    const hypotheses = decision.data.claims.filter((c) => c.evidence === 'hypothesis' || c.evidence === 'toConfirm').length;
+    add({
+      severity: 'warning', code: 'INTERNAL', path: 'extensions.decisionReport',
+      cause: `The decision report keeps the original analysis text (${decision.data.claims.length} labelled claims, ${hypotheses} hypotheses or items to confirm).`,
+      action: 'Review the report before sharing this pack; confirm hypotheses with the customer before treating them as facts.',
+    });
   }
   const engagements = EngagementsExtension.safeParse(pack.extensions?.engagements);
   if (engagements.success) {

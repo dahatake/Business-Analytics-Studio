@@ -15,6 +15,11 @@ Two prompts build a BAS customer pack with Microsoft 365 Copilot alone: prompt 1
 
 Get the data owner's approval before importing. BAS never sends the imported data anywhere (it stays in this browser's storage on this device).
 
+### 業務分析レポートをそのまま取り込む / Importing a business analysis report
+
+Microsoft 365 Copilot に作らせた業務分析レポート（「現状把握」「あるべき姿」「課題」「戦略オプション」「ロードマップ」「KPI」「リスク」などの見出しを持つ Markdown）は、プロンプト 2 を使わずに、.md のまま「データ管理」で選んで「検査する」を押せば取り込めます（FR-321）。BAS は見出しからレポートと判定し、生成 AI に送らずに端末内で課題・ギャップ・選択肢・KPI・リスク・確認事項と【事実】【仮説】【要確認】の根拠ラベルを読み取ります。文は改変せず全段落を保持し、値は作りません。取り込み前に読み取り結果（件数と、段ごとの構造化の割合）を確かめてください。レポートは社内（internal）の資料として扱われ、社外向けの表示には出ません。顧客パックの JSON と一緒に選ぶこともできます（レポートは 1 回に 1 件）。
+
+A business analysis report written by Microsoft 365 Copilot (Markdown with headings such as current state, target state, issues, strategic options, roadmap, KPIs and risks) can be chosen as a .md file in Data management and checked without prompt 2 (FR-321). BAS recognises it by its headings and reads issues, gaps, options, KPIs, risks, open questions and the fact / hypothesis / to-confirm labels on the device, without sending it to generative AI. Every paragraph is kept verbatim and no values are invented. Review the reading summary (counts and how much of each step was structured) before importing. The report is treated as internal and is hidden from external audiences. It can be chosen together with pack JSON (one report per import).
 ### 2 回に分ける理由 / Why two prompts
 
 Copilot は Web を使うとき、プロンプトから数語の検索語を作って Bing に送ります。この検索語は、明示的に参照した社内文書の内容や、Copilot が社内データから見つけた名前（公式の例では上司の名前）からも作られます（[公式](https://learn.microsoft.com/copilot/plan/manage-public-web-access)）。引用欄や Purview で確認できるのは送った後なので、社内の語が送られないことはプロンプトの指示や事後の確認では保証できません。そこで、送る前に効く境界を 2 つ置きます。

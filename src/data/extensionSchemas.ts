@@ -103,6 +103,97 @@ export function hasEngagementContext(item: EngagementsExtension['items'][number]
   return !!(item.period || item.customer || item.customerId || item.status);
 }
 
+/**
+ * FR-321: evidence labels a Microsoft 365 Copilot business report puts on its statements
+ * (【事実】 fact, 【外部】 external, 【仮説】 hypothesis, 【解釈】 interpretation, 【要確認】 toConfirm, 【提案目標】 proposedTarget).
+ */
+export const REPORT_EVIDENCE = ['fact', 'external', 'interpretation', 'hypothesis', 'proposedTarget', 'toConfirm'] as const;
+export type ReportEvidence = (typeof REPORT_EVIDENCE)[number];
+/** The improvement step a report section informs; overview and appendix inform every step. */
+export const REPORT_STEPS = ['overview', 'asis', 'tobe', 'kpi', 'solution', 'deliverable', 'appendix'] as const;
+export type ReportStep = (typeof REPORT_STEPS)[number];
+
+/** Every item keeps the 1-based line of the report it came from, so a reader can check it against the original. */
+const Located = { id: z.string().regex(/^[a-z0-9-]+$/), line: z.number().int().positive() };
+/** The report's own ordinal rating: 1 low, 2 medium, 3 high; ranges such as "low to medium" become 1.5. */
+const Ordinal = z.number().min(1).max(3);
+
+/**
+ * FR-321: a decision report (Microsoft 365 Copilot business analysis) imported without loss. Text stays in the
+ * report's language; nothing is translated, scored or estimated on import. Every paragraph is kept with its line
+ * (`paragraphs`), and the structured lists point back to those lines.
+ */
+export const DecisionReportExtension = z.object({
+  format: z.literal('m365-copilot-report/1'),
+  title: z.string().min(1),
+  subtitle: z.string().optional(),
+  asOf: z.iso.date().optional(),
+  target: z.string().optional(),
+  positioning: z.string().optional(),
+  lang: z.enum(['ja', 'en']),
+  /** The source entity for the report file. */
+  sourceId: z.string().min(1),
+  sections: z.array(z.object({
+    ...Located,
+    title: z.string().min(1),
+    level: z.number().int().min(1).max(6),
+    step: z.enum(REPORT_STEPS),
+    purpose: z.string().optional(),
+    /** Sentences in the section, labelled or not (the denominator of the evidence profile). */
+    sentences: z.number().int().nonnegative(),
+  }).passthrough()),
+  paragraphs: z.array(z.object({ line: z.number().int().positive(), sectionId: z.string(), text: z.string().min(1) }).passthrough()),
+  claims: z.array(z.object({ ...Located, sectionId: z.string(), evidence: z.enum(REPORT_EVIDENCE), text: z.string().min(1) }).passthrough()),
+  issues: z.array(z.object({
+    ...Located,
+    title: z.string().min(1),
+    priority: Ordinal.optional(),
+    phenomenon: z.string().optional(),
+    rootCause: z.string().optional(),
+    impact: z.string().optional(),
+    falsifier: z.string().optional(),
+    evidence: z.array(z.enum(REPORT_EVIDENCE)),
+    text: z.string(),
+  }).passthrough()),
+  gaps: z.array(z.object({
+    ...Located,
+    area: z.string().min(1),
+    asIs: z.string().optional(),
+    toBe: z.string().optional(),
+    gap: z.string().optional(),
+    action: z.string().optional(),
+    priority: Ordinal.optional(),
+  }).passthrough()),
+  options: z.array(z.object({
+    ...Located,
+    label: z.string().min(1),
+    title: z.string().min(1),
+    priority: Ordinal.optional(),
+    effect: z.string().optional(),
+    difficulty: Ordinal.optional(),
+    investment: Ordinal.optional(),
+    risk: z.string().optional(),
+    text: z.string(),
+  }).passthrough()),
+  roadmap: z.array(z.object({
+    ...Located,
+    title: z.string().min(1),
+    actions: z.string().optional(),
+    purpose: z.string().optional(),
+    owners: z.string().optional(),
+    deliverables: z.string().optional(),
+    kpis: z.string().optional(),
+  }).passthrough()),
+  kpis: z.array(z.object({ ...Located, category: z.string().optional(), name: z.string().min(1), definition: z.string().optional() }).passthrough()),
+  risks: z.array(z.object({ ...Located, name: z.string().min(1), description: z.string().optional(), mitigation: z.string().optional() }).passthrough()),
+  openQuestions: z.array(z.object({ ...Located, text: z.string().min(1) }).passthrough()),
+  assumptions: z.array(z.object({ ...Located, text: z.string().min(1) }).passthrough()),
+  swot: z.object({
+    strengths: z.array(z.string()), weaknesses: z.array(z.string()), opportunities: z.array(z.string()), threats: z.array(z.string()),
+  }).optional(),
+}).passthrough();
+export type DecisionReport = z.infer<typeof DecisionReportExtension>;
+
 export const CoreObjectExtension = z.object({
   candidates: z.array(z.object({
     name: z.string().optional(),

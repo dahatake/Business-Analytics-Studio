@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { Entity, LText, type EntityKind } from './schema.ts';
 import { samplePack } from './sample.ts';
 import { verifyPack, type Problem, type VerifyResult } from './verify.ts';
+import { parseDecisionReport, type ReportImport } from './reportImport.ts';
+import type { DecisionReport } from './extensionSchemas.ts';
 import { DEFAULT_PRIMARY, parseBrand } from '../modules/ops/brand.ts';
 
 /**
@@ -33,7 +35,7 @@ export interface FileReport {
 export type NoteCode =
   | 'langFilled' | 'sourceIdsAdded' | 'classificationDefaulted' | 'authorDefaulted' | 'worldTypeFilled'
   | 'illustrationFilled' | 'numberParsed' | 'packIdGenerated' | 'isSampleDefaulted' | 'regionsDefaulted'
-  | 'flowsDefaulted' | 'duplicateDropped' | 'partMissing' | 'conflict';
+  | 'flowsDefaulted' | 'duplicateDropped' | 'partMissing' | 'conflict' | 'reportRead' | 'industryNotStated';
 
 /** A change made to the shape (not the facts) of the input, shown to the user before import. */
 export interface Note {
@@ -109,6 +111,8 @@ export interface ImportAnalysis {
   summary: PackSummary | null;
   /** FR-302: all or nothing — only a pack without errors can be imported. */
   canImport: boolean;
+  /** FR-321: decision reports (Microsoft 365 Copilot Markdown) read from the input, for the coverage check. */
+  reports?: { name: string; report: DecisionReport }[];
 }
 
 /* ---------- 1. Extract JSON from files or a pasted answer ---------- */
@@ -436,10 +440,21 @@ export function isReadableFile(name: string, type: string): boolean {
 export function analyzeImport(docs: InputDoc[], rejected: FileReport[] = [], now: Date = new Date()): ImportAnalysis {
   const files: FileReport[] = [...rejected];
   const parts: Part[] = [];
+  const reports: ReportImport[] = [];
+  const reportFiles: string[] = [];
   let order = 1000;
   for (const doc of docs) {
     const { values, errors } = extractJson(doc.text);
     const docParts = values.map((v) => toPart(v, order++)).filter((p): p is Part => p !== null);
+    // FR-321: a Markdown business report without JSON is read as a decision report.
+    const report = docParts.length ? null : parseDecisionReport(doc.name, doc.text, now.toISOString().slice(0, 10));
+    if (report) {
+      reports.push(report);
+      reportFiles.push(doc.name);
+      parts.push({ order: order++, total: null, label: null, value: report.part });
+      files.push({ name: doc.name, status: 'used', fragments: 1 });
+      continue;
+    }
     parts.push(...docParts);
     if (errors.length && !docParts.length) files.push({ name: doc.name, status: 'parseError', fragments: 0, detail: errors.join('\n') });
     else if (!docParts.length) files.push({ name: doc.name, status: 'unrecognized', fragments: 0 });
@@ -447,6 +462,20 @@ export function analyzeImport(docs: InputDoc[], rejected: FileReport[] = [], now
   }
   if (!parts.length) return { files, notes: [], pack: null, verify: null, summary: null, canImport: false };
   const merged = mergeParts(parts);
+  const reportNotes: Note[] = [];
+  if (reports.length) {
+    reportNotes.push({ code: 'reportRead', count: reports.length, detail: reportFiles.join(', ') });
+    if (reports.length > 1 && isRecord(merged.raw.extensions)) {
+      // One decision report per pack: two reports are a conflict (an import error) rather than being mixed.
+      merged.raw.extensions.decisionReport = reports[reports.length - 1]!.report;
+      merged.notes.push({ code: 'conflict', count: 1, detail: 'extensions.decisionReport (one report per pack)' });
+    }
+    const company = reports.find((r) => r.company)?.company;
+    if (!('company' in merged.raw) && company) {
+      merged.raw.company = company;
+      reportNotes.push({ code: 'industryNotStated', count: 1 });
+    }
+  }
   const normalized = normalizePack(merged.raw, now);
   const verify = verifyPack(normalized.pack);
   const importErrors: Problem[] = [
@@ -463,11 +492,12 @@ export function analyzeImport(docs: InputDoc[], rejected: FileReport[] = [], now
   if (importErrors.length) verify.ok = false;
   return {
     files,
-    notes: [...merged.notes, ...normalized.notes],
+    notes: [...merged.notes, ...reportNotes, ...normalized.notes],
     pack: normalized.pack,
     verify,
     summary: summarize(normalized.pack),
     canImport: verify.ok,
+    ...(reports.length ? { reports: reports.map((r, i) => ({ name: reportFiles[i]!, report: r.report })) } : {}),
   };
 }
 

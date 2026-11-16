@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { crc32 } from 'node:zlib';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
@@ -323,5 +324,98 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('launch-screen')).toBeVisible();
     await expect(page.getByTestId('launch-company-Fabrikam Seiko')).toContainText('Customer pack imported');
     expect(await scan(page)).toEqual([]);
+  });
+
+  test('FR-321/FR-322: a Copilot business analysis report (Markdown) imports on its own, drafts what it leaves open, and drives decision support on every step', async ({ page }) => {
+    const report = readFileSync(new URL('../tests/fixtures/decision-report.md', import.meta.url), 'utf8');
+    await open(page, '/data');
+    await page.getByTestId('pack-file-input').setInputFiles({ name: 'sales-report.md', mimeType: 'text/markdown', buffer: Buffer.from(report) });
+    await page.getByTestId('pack-check').click();
+    await expect(page.getByTestId('pack-verdict')).toContainText('検査に合格しました');
+    const read = page.getByTestId('pack-report');
+    await expect(read).toContainText('sales-report.md');
+    await expect(read.getByTestId('pack-report-issues')).toHaveText('2');
+    await expect(read.getByTestId('pack-report-options')).toHaveText('2');
+    await expect(read.getByTestId('pack-report-questions')).toHaveText('2');
+    await expect(read.getByTestId('pack-report-steps')).toContainText('現状');
+    // FR-322: what the import drafts by logic is announced before importing.
+    await expect(read.getByTestId('pack-report-drafts')).toHaveAttribute('data-decisions', '9');
+    await expect(read.getByTestId('pack-report-drafts')).toContainText('判断 9 件');
+    expect(await scan(page)).toEqual([]);
+    await page.getByTestId('pack-check-approved').check();
+    await page.getByTestId('pack-check-classified').check();
+    await expect(page.getByTestId('pack-check-people')).toHaveCount(0);
+    await expect(page.getByTestId('pack-dest-company')).toHaveValue('架空商事株式会社');
+    await page.getByTestId('pack-dest-project').fill('営業改革');
+    await page.getByTestId('pack-import-apply').click();
+    await expect(page.getByTestId('pack-imported-notice')).toContainText('架空商事株式会社-営業改革', { timeout: 4000 });
+
+    // As-is: issues ranked from the report; the user's rating re-ranks at once and survives a reload.
+    await page.evaluate(() => { window.location.hash = '/step?step=asis'; });
+    const dec = page.getByTestId('step-dash-dec');
+    await expect(dec.getByTestId('step-dash-dec-stack')).toBeVisible();
+    await expect(page.getByTestId('step-dash-dec-issue-issue-1')).toHaveAttribute('data-rank', '1');
+    await expect(page.getByTestId('step-dash-dec-rate-issue-1-impact')).toHaveAttribute('data-origin', 'report');
+    for (const k of ['impact', 'urgency', 'confidence']) await page.getByTestId(`step-dash-dec-rate-issue-2-${k}`).selectOption('5');
+    await expect(page.getByTestId('step-dash-dec-issue-issue-2')).toHaveAttribute('data-rank', '1');
+    await expect(page.getByTestId('step-dash-dec-q-table')).toBeVisible();
+    // FR-322: the missing falsifier is drafted with a recommendation and its reasons; choosing confirms it.
+    const falsifier = page.getByTestId('step-dash-dec-draft-falsifier:issue-2');
+    await expect(falsifier).toHaveAttribute('data-origin', 'inferred');
+    await expect(page.getByTestId('step-dash-dec-drafts-read')).toHaveAttribute('data-open', '1');
+    await falsifier.getByText('起きているかで否定する を推す理由').click();
+    await expect(falsifier).toContainText('見直す条件:');
+    // Opening the reasons scrolls the page under the sticky step header; scan from the top as the step opens.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page)).toEqual([]);
+    await page.getByTestId('step-dash-dec-choice-falsifier:issue-2').selectOption('impact');
+    await expect(falsifier).toHaveAttribute('data-origin', 'user');
+    await expect(page.getByTestId('step-dash-dec-drafts-read')).toHaveAttribute('data-open', '0');
+    expect(await scan(page)).toEqual([]);
+    await page.reload();
+    await expect(page.getByTestId('step-dash-dec-issue-issue-2')).toHaveAttribute('data-rank', '1');
+
+    await page.evaluate(() => { window.location.hash = '/step?step=tobe'; });
+    await expect(page.getByTestId('step-dash-dec-gaps')).toContainText('見積プロセス');
+    expect(await scan(page)).toEqual([]);
+
+    // KPI: the report's 20% gate is simulated; an impossible input is refused instead of computed.
+    await page.evaluate(() => { window.location.hash = '/step?step=kpi'; });
+    await expect(page.getByTestId('step-dash-dec-kpis')).toContainText('見積リードタイム');
+    await expect(page.getByTestId('step-dash-dec-gate-result')).toBeVisible();
+    await expect(page.getByTestId('step-dash-dec-gate-placeholder')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+    await page.getByTestId('step-dash-dec-gate-n').fill('1');
+    await expect(page.getByTestId('step-dash-dec-gate-invalid')).toBeVisible();
+
+    await page.evaluate(() => { window.location.hash = '/step?step=solution'; });
+    await expect(page.getByTestId('step-dash-dec-opt-option-a')).toBeVisible();
+    await expect(page.getByTestId('step-dash-dec-options')).toContainText('課題 1');
+    expect(await scan(page)).toEqual([]);
+
+    await page.evaluate(() => { window.location.hash = '/step?step=deliverable'; });
+    await expect(page.getByTestId('step-dash-dec-roadmap')).toBeVisible();
+    await expect(page.getByTestId('step-dash-dec-risks')).toContainText('説明会を開く');
+    await expect(page.getByTestId('step-dash-dec-check-falsifiers')).toHaveAttribute('data-ok', 'false');
+    // The report alone yields a requirements definition draft; what it leaves out stays to be filled.
+    await expect(page.getByTestId('step-dash-dec-req-read')).toContainText('要求 1 件');
+    await page.getByTestId('step-dash-dec-req').getByText('草案を表示').click();
+    await expect(page.getByTestId('step-dash-dec-req-requirements')).toContainText('REQ-01: 見積プロセス');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('step-dash-dec-req-download').click()]);
+    expect(download.suggestedFilename()).toMatch(/要求定義書（草案）\.md$/);
+    // Links the report leaves open are drafted and marked until confirmed; confirming all clears the marks.
+    await expect(page.getByTestId('step-dash-dec-req-trace')).toContainText('I1（推定）');
+    await expect(page.getByTestId('step-dash-dec-req-read')).toContainText('未確認の【推定】');
+    await page.getByTestId('step-dash-dec-drafts-accept').click();
+    await expect(page.getByTestId('step-dash-dec-drafts-read')).toHaveAttribute('data-open', '0');
+    await expect(page.getByTestId('step-dash-dec-req-trace')).not.toContainText('I1（推定）');
+    await expect(page.getByTestId('step-dash-dec-req-decisions')).toContainText('推奨を確認済み');
+    expect(await scan(page)).toEqual([]);
+
+    // The report is internal: an external audience does not see it.
+    await page.getByTestId('audience-toggle').click();
+    await expect(page.getByTestId('step-dash-dec')).toHaveCount(0);
+    await page.getByTestId('audience-toggle').click();
+    await expect(page.getByTestId('step-dash-dec')).toBeVisible();
   });
 });

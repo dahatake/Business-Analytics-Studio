@@ -9,6 +9,9 @@ import {
 import { basePack, loaded, packOrigin } from '../../data/pack.ts';
 import { CompanyAnchorVersionSchema } from '../../data/companyAnchor.ts';
 import { CustomerPack, type EntityKind } from '../../data/schema.ts';
+import { REPORT_STEPS, type DecisionReport } from '../../data/extensionSchemas.ts';
+import { reportCoverage } from '../../data/reportImport.ts';
+import { buildReportRequirements } from './reportRequirements.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from '../../data/collection.ts';
 import {
   analyzeImport, buildFixPrompt, isReadableFile, MAX_PACK_FILE_BYTES, preparePackLogo, type FileReport, type ImportAnalysis, type InputDoc,
@@ -429,6 +432,57 @@ function ImportPanel() {
   );
 }
 
+const REPORT_COUNTS = ['issues', 'gaps', 'options', 'roadmap', 'kpis', 'risks'] as const;
+const DRAFT_STEPS = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
+
+/** FR-321: what was read from a business analysis report, so nothing is silently lost. */
+function ReportCoverageView({ name, report }: { name: string; report: DecisionReport }) {
+  const { t, fmt, lang } = useI18n();
+  const coverage = reportCoverage(report);
+  // FR-322: what the import will draft by logic, so the user knows what to confirm on each step.
+  const draft = useMemo(() => buildReportRequirements(report, undefined, lang), [report, lang]);
+  const steps = REPORT_STEPS.map((step) => {
+    const rows = coverage.bySection.filter((s) => s.step === step);
+    return { step, sections: rows.length, paragraphs: rows.reduce((n, s) => n + s.paragraphs, 0), structured: rows.reduce((n, s) => n + s.structured, 0) };
+  }).filter((s) => s.sections > 0);
+  return (
+    <section aria-labelledby="pack-report-title" className="pack-notes" data-testid="pack-report">
+      <h4 id="pack-report-title" className="proj-h2">{t('proj.pack.report.title', { name })}</h4>
+      <p data-testid="pack-report-read">{t('proj.pack.report.read', { paragraphs: coverage.paragraphs, structured: coverage.structured, narrative: coverage.paragraphs - coverage.structured })}</p>
+      <p data-testid="pack-report-drafts" data-decisions={draft.decisions.length} data-to-fill={draft.toFill}>
+        {t('proj.pack.report.drafts', {
+          decisions: draft.decisions.length,
+          steps: DRAFT_STEPS.map((s) => [s, draft.decisions.filter((x) => x.step === s).length] as const).filter(([, n]) => n > 0)
+            .map(([s, n]) => t('proj.pack.report.draftStep', { step: t(`proj.pack.report.step.${s}`), n })).join(t('proj.pack.report.draftSep')),
+          reqs: draft.requirements.length, open: draft.toFill,
+        })}
+      </p>
+      <dl className="meta-list pack-meta">
+        {REPORT_COUNTS.map((k) => <div key={k}><dt>{t(`proj.pack.report.${k}`)}</dt><dd data-testid={`pack-report-${k}`}>{fmt.integer(report[k].length)}</dd></div>)}
+        <div><dt>{t('proj.pack.report.questions')}</dt><dd data-testid="pack-report-questions">{fmt.integer(report.openQuestions.length)}</dd></div>
+        <div><dt>{t('proj.pack.report.claims')}</dt><dd data-testid="pack-report-claims">{fmt.integer(report.claims.length)}</dd></div>
+      </dl>
+      <ScrollRegion label={t('proj.pack.report.caption')}>
+        <table className="data-table compact" data-testid="pack-report-steps">
+          <caption>{t('proj.pack.report.caption')}</caption>
+          <thead><tr>
+            <th scope="col">{t('proj.pack.report.col.step')}</th><th scope="col" className="num">{t('proj.pack.report.col.sections')}</th>
+            <th scope="col" className="num">{t('proj.pack.report.col.paragraphs')}</th><th scope="col" className="num">{t('proj.pack.report.col.structured')}</th>
+          </tr></thead>
+          <tbody>
+            {steps.map((s) => (
+              <tr key={s.step}>
+                <th scope="row">{t(`proj.pack.report.step.${s.step}`)}</th>
+                <td className="num">{s.sections}</td><td className="num">{s.paragraphs}</td><td className="num">{s.structured}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollRegion>
+    </section>
+  );
+}
+
 function ResultView({ analysis, picked }: { analysis: ImportAnalysis; picked: Picked[] }) {
   const { t, tx, fmt, lang } = useI18n();
   const { verify, summary } = analysis;
@@ -474,6 +528,7 @@ function ResultView({ analysis, picked }: { analysis: ImportAnalysis; picked: Pi
         </dl>
       )}
       {analysis.pack && <CollectionCoverage raw={analysis.pack} />}
+      {analysis.reports?.map((r) => <ReportCoverageView key={r.name} name={r.name} report={r.report} />)}
 
       {analysis.notes.length > 0 && (
         <section aria-labelledby="pack-notes-title" className="pack-notes" data-testid="pack-notes">

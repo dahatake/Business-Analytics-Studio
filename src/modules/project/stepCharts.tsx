@@ -31,7 +31,7 @@ interface FigureProps {
   table: ReactNode;
 }
 
-function ChartFigure({ id, title, read, visual, legend, table }: FigureProps) {
+export function ChartFigure({ id, title, read, visual, legend, table }: FigureProps) {
   const { t } = useI18n();
   const cap = useId();
   return (
@@ -48,11 +48,11 @@ function ChartFigure({ id, title, read, visual, legend, table }: FigureProps) {
   );
 }
 
-function LegendItem({ kind, label }: { kind: string; label: string }) {
+export function LegendItem({ kind, label }: { kind: string; label: string }) {
   return <span className="step-chart-key"><span className={`step-chart-swatch ${kind}`} />{label}</span>;
 }
 
-function Glyph({ ok }: { ok: boolean }) {
+export function Glyph({ ok }: { ok: boolean }) {
   return <span className={ok ? 'step-chart-ok' : 'step-chart-ng'}>{ok ? OK : NG}</span>;
 }
 

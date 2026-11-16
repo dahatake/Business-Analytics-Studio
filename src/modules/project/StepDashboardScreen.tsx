@@ -14,6 +14,7 @@ import { ScrollRegion } from './common.tsx';
 import { inputKey, type TodoResult } from './deliverables.ts';
 import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
+import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
 import { StrategyOverview } from './StrategyOverview.tsx';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
@@ -640,6 +641,7 @@ export function StepDashboardScreen() {
     return isHidden(e, audience) ? t('proj.dash.chart.hidden') : loc(e.name, lang);
   }, [ctx, audience, lang, t]);
   const n = IMPROVEMENT_STEPS.indexOf(step) + 1;
+  const report = useDecisionReport(ctx.pack.pack.extensions);
   return (
     <div className="screen proj-screen step-dash" data-testid="step-dash" data-step={step}>
       <PageHeader
@@ -661,6 +663,7 @@ export function StepDashboardScreen() {
         </ul>
       </Panel>
       <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} />
+      <DecisionSupport step={step} report={report} visible={report ? visible(report.sourceId) : false} />
       <DocPanel d={d} />
       <InputsPanel d={d} />
     </div>

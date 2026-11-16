@@ -200,7 +200,7 @@ export function BatchDraftDialog() {
                       {(status === 'working' || status === 'waiting') && <Spinner size="tiny" />}
                       {!busy && status === 'done' && job.kind === 'fields' && <Button size="small" onClick={() => review(job)}>{t('dlv.batch.review')}</Button>}
                       {!busy && status === 'done' && job.kind === 'brief' && <a href={hrefFor('/step', { step: job.step })} onClick={close}>{t('dlv.batch.briefLink')}</a>}
-                      {!busy && status === 'done' && job.kind === 'strategy' && <a href={hrefFor('/')} onClick={close}>{t('dlv.batch.strategyLink')}</a>}
+                      {!busy && status === 'done' && job.kind === 'strategy' && <a href={hrefFor('/', { draft: 'shared' })} onClick={close}>{t('dlv.batch.strategyLink')}</a>}
                     </li>
                   );
                 })}

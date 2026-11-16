@@ -20,6 +20,7 @@ import { buildDraft, buildTaskDrafts, draftEntities, draftPrompt, draftRequest, 
 import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContribution, type StrategyData } from '../src/modules/project/strategy.ts';
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
+import { parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, unsupportedNumbers, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -58,6 +59,150 @@ function drafted(c: CheckContext, lang: 'ja' | 'en' = 'ja', audience: 'internal'
 }
 
 const OBJECTIVE = { id: 'obj-mtp-1', text: '中期経営計画: 2027 年度までに納期遵守率 98 %' };
+
+describe('Copilot task repairs', () => {
+  afterEach(() => {
+    setLiveTransport(null);
+    setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
+    writeLedger([]);
+  });
+  const missingLinks = (): ResolutionInput => {
+    const raw = clone();
+    raw.entities = raw.entities.map((e) => e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
+    return { step: 'asis', todoId: 'define-kpi-link', ctx: demoCtx({ pack: loadPack(raw) }), lang: 'ja', audience: 'internal' };
+  };
+  const proposal = (optionIds: string[]) => ({ optionIds });
+  const choice = (id: string, optionIds: string[], extra: object = {}) => ({ id, label: `Choice ${id}`, optionIds, rationale: 'Grounded in the supplied sources.', ...extra });
+  const response = (choices: object[], extra: object = {}) => ({ choices, recommendedId: 'a', reasoning: 'A is better than B because it is fully sourced.', missingInformation: [], ...extra });
+
+  it('repairs all missing KPI relationships without changing observations, sign-offs or unrelated fields', () => {
+    const input = missingLinks();
+    const options = repairOptions(input);
+    expect(options.length).toBeGreaterThan(0);
+    const preview = previewResolution(input, proposal(options.map((o) => o.id)), options, '2026-11-16T00:00:00Z');
+    expect(preview.result.done).toBe(true);
+    expect(resolutionRequest(input, options).use).toBe('deliverableDraft');
+    const entities = preview.changes.flatMap((change) => change.op === 'upsert' ? [change.entity] : []);
+    expect(entities).toHaveLength(5);
+    for (const entity of entities) {
+      expect(entity.kind).toBe('issue');
+      const original = input.ctx.pack.byId.get(entity.id)!;
+      expect({ ...entity, kpiIds: [] }).toEqual(original);
+    }
+    expect(preview.deliverables).toBe(input.ctx.deliverables);
+    expect(byId('asis', input.ctx)['define-kpi-link']!.done).toBe(false);
+  });
+
+  it('rejects invented, duplicate and tampered edits, and does not claim a partial repair is resolved', () => {
+    const input = missingLinks();
+    const options = repairOptions(input);
+    const [first, second] = [options[0]!.id, options[1]!.id];
+    const parse = (value: object) => parseResolution(JSON.stringify(value), options);
+    expect(() => parse(response([choice('a', ['link:invented']), choice('b', [])]))).toThrow(/unknown/);
+    expect(() => parse(response([choice('a', [first, first]), choice('b', [])]))).toThrow(/duplicate/);
+    expect(() => parse(response([choice('a', [first]), choice('b', [])], { target: 999 }))).toThrow();
+    expect(() => parse(response([choice('a', [])]))).toThrow(); // a single choice gives the reviewer nothing to compare
+    expect(() => parse(response([choice('a', [first, second]), choice('b', [second, first])]))).toThrow(/duplicate choices/); // reordering is not an alternative
+    expect(() => parse(response([choice('a', [first]), choice('b', [first], { rationale: ' grounded in the supplied sources ' })]))).toThrow(/duplicate choices/); // relabeling is a paraphrase
+    const sameEdits = parse(response([
+      choice('a', [first], { tradeoffs: 'Apply now; the owner confirms afterwards.' }),
+      choice('b', [first], { rationale: 'Only after the owner confirms the source.', tradeoffs: 'Delays completion until sign-off.' }),
+    ]));
+    expect(sameEdits.choices.map((c) => c.optionIds)).toEqual([[first], [first]]); // same edits, different reasoning
+    expect(() => parse(response([choice('a', [first]), choice('b', [])], { recommendedId: 'z' }))).toThrow(/recommends an unknown/);
+    expect(() => parse(response([choice('a', [first], { texts: { [first]: 'x' } }), choice('b', [])]))).toThrow(/unknown field/);
+    expect(() => parse(response([choice('a', []), choice('b', [], { label: ' choice A ' })]))).toThrow(/duplicate choices/);
+    expect(() => parse(response([choice('a', []), choice('b', [], { label: 'Escalate' })]))).toThrow(/missing/);
+    const parsed = parse(response([choice('a', [first]), choice('b', [], { tradeoffs: 'Leaves the task open.' })], { missingInformation: ['Owner decision'] }));
+    expect(parsed.recommendedId).toBe('a');
+    expect(parsed.choices.map((c) => c.optionIds.length)).toEqual([1, 0]);
+    const one = options[0]!;
+    const bad = one.kind === 'link' ? { ...one, relatedId: 'kpi-invented' } : { ...one, text: '999999' };
+    expect(() => previewResolution(input, proposal([one.id]), [bad], 'now')).toThrow(/no longer/);
+    expect(previewResolution(input, proposal([one.id]), options, 'now').result.done).toBe(false);
+  });
+
+  it('asks for compared choices, forwards reviewer direction, and rejects AI field text with unsupported numbers', () => {
+    const input: ResolutionInput = { ctx: demoCtx(), step: 'asis', todoId: 'asis-doc', lang: 'ja', audience: 'internal' };
+    const options = repairOptions(input);
+    const field = options.find((o) => o.kind === 'field')!;
+    const prompt = resolutionRequest(input, options, '  現場責任者の合意を優先する  ').prompt;
+    expect(prompt).toContain('2 to 4 materially different choices');
+    expect(prompt).toContain('comparing it with every other choice');
+    expect(prompt).toContain('"現場責任者の合意を優先する"');
+    expect(resolutionRequest(input, options).prompt).not.toContain('Reviewer direction');
+    expect(unsupportedNumbers('リードタイム１６日、改善率 37.5 %', '16 days')).toEqual(['37.5']);
+    expect(() => previewResolution(input, { optionIds: [field.id], texts: { [field.id]: '在庫回転を 987654 回改善する。' } }, options, 'now')).toThrow(/unsupported numbers.*987654/);
+    const rewritten = previewResolution(input, { optionIds: [field.id], texts: { [field.id]: '出典の記述に基づき、現状の課題を整理する。' } }, options, 'now');
+    expect(rewritten.selected[0]).toMatchObject({ kind: 'field', text: '出典の記述に基づき、現状の課題を整理する。' });
+    expect(() => previewResolution(input, { optionIds: [], texts: { [field.id]: 'x' } }, options, 'now')).toThrow(/unknown field/);
+  });
+
+  it('does not suggest unsourced or hidden relationships, nor create missing KPI values or human decisions', () => {
+    const input = missingLinks();
+    const raw = clone();
+    raw.entities = raw.entities.map((e) => e.kind === 'kpi' ? { ...e, sourceIds: [] } : e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
+    expect(repairOptions({ ...input, ctx: demoCtx({ pack: loadPack(raw) }) })).toEqual([]);
+    const external = { ...input, audience: 'external' as const };
+    const request = resolutionRequest(external, repairOptions(external));
+    expect(request.prompt).not.toContain('issue-skills');
+    expect(request.prompt).not.toContain('person-');
+    expect(request.entities?.some((e) => e.kind === 'person')).toBe(false);
+    expect(repairOptions({ ...input, todoId: 'define-decision' })).toEqual([]);
+    const empty = clone();
+    empty.entities = empty.entities.filter((e) => e.kind !== 'kpi').map((e) => e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
+    expect(repairOptions({ ...input, ctx: demoCtx({ pack: loadPack(empty) }) })).toEqual([]);
+  });
+
+  it('repairs only failed document fields and refuses a regression of a previously completed numeric check', () => {
+    const ctx = demoCtx();
+    const input: ResolutionInput = { ctx, step: 'asis', todoId: 'asis-doc', lang: 'ja', audience: 'internal' };
+    const options = repairOptions(input);
+    const preview = previewResolution(input, proposal(options.map((o) => o.id)), options, '2026-11-16');
+    expect(preview.result.done).toBe(true);
+    expect(preview.changes).toEqual([]);
+    expect(preview.deliverables.docs.asis?.problem?.author).toBe('ai');
+    expect(preview.deliverables.signOffs).toEqual({});
+    const filledInput = { ...input, ctx: { ...ctx, deliverables: setField(ctx.deliverables, 'asis', 'problem', { text: '16 days, keep this field', author: 'human', updatedAt: 'now' }) } };
+    expect(repairOptions(filledInput).some((o) => o.kind === 'field' && o.field === 'problem')).toBe(false);
+    for (const [step, todoId] of [['tobe', 'tobe-doc'], ['kpi', 'kpi-doc'], ['solution', 'uc-doc'], ['deliverable', 'plan-doc']] as const) {
+      const otherInput = { ...input, step, todoId };
+      const fields = repairOptions(otherInput);
+      expect(fields.length).toBeGreaterThan(0);
+      const otherPreview = previewResolution(otherInput, proposal(fields.map((o) => o.id)), fields, 'now');
+      expect(Object.keys(otherPreview.deliverables.docs[step] ?? {}).length).toBeGreaterThan(0);
+      expect(otherPreview.changes).toEqual([]);
+      expect(otherPreview.deliverables.signOffs).toEqual({});
+    }
+
+    const raw = clone();
+    raw.entities = raw.entities.map((e) => e.id === 'issue-lead-time' && e.kind === 'issue' ? { ...e, description: { ja: '999 日', en: '999 days' }, kpiIds: [] } : e);
+    // Linking a KPI makes an existing unsupported numeric assertion checkable, exposing a regression.
+    const inconsistent = { ...missingLinks(), ctx: demoCtx({ pack: loadPack(raw) }) };
+    const links = repairOptions(inconsistent).filter((o) => o.kind === 'link' && o.relatedId === 'kpi-lead-time');
+    expect(byId('asis', inconsistent.ctx)['asis-reconcile']!.done).toBe(true);
+    expect(() => previewResolution(inconsistent, proposal(links.map((o) => o.id)), links, 'now')).toThrow(/regress/);
+  });
+
+  it('uses the live gate without a mock fallback and reports invalid provider responses', async () => {
+    const input = missingLinks();
+    const options = repairOptions(input);
+    const request = { ...resolutionRequest(input, options), userConfirmed: true, personConfirmed: true };
+    writeLedger([]);
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, provider: 'copilotSdk' }));
+    const transport = vi.fn(async () => ({ text: JSON.stringify(response([choice('a', [options[0]!.id]), choice('b', [])])), inputTokens: 100, outputTokens: 100 }));
+    setLiveTransport(transport);
+    const result = await requestResolution(request, options, new AbortController().signal);
+    expect(result.choices[0]!.optionIds).toEqual([options[0]!.id]);
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ provider: 'copilotSdk', use: 'deliverableDraft' }), expect.any(AbortSignal));
+    writeLedger([]);
+    setLiveTransport(async () => ({ text: 'not JSON', inputTokens: 1, outputTokens: 1 }));
+    await expect(requestResolution(request, options, new AbortController().signal)).rejects.toThrow(/JSON/);
+    writeLedger([]);
+    setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: true }));
+    await expect(requestResolution(request, options, new AbortController().signal)).rejects.toThrow(/blocked/);
+  });
+});
 
 describe('task business impact scenarios', () => {
   const input = { baselineBenefit: '1000', baselineCost: '200', benefit: '1800', cost: '300', investment: '1400', years: '3' };

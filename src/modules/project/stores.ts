@@ -98,6 +98,7 @@ interface ProjTransient {
   /** The step whose deliverable draft dialog is open. */
   draftStep: ImprovementStep | null;
   batchDraftOpen: boolean;
+  resolutionTodoId: string | null;
   /** Last applied draft, announced by the to-do band. */
   draftApplied: { step: ImprovementStep; count: number } | null;
   openExport: (themeId?: string | null) => void;
@@ -107,6 +108,8 @@ interface ProjTransient {
   closeDraft: (applied?: { step: ImprovementStep; count: number }) => void;
   openBatchDraft: () => void;
   closeBatchDraft: () => void;
+  openResolution: (todoId: string) => void;
+  closeResolution: () => void;
 }
 
 export const useProjTransient = create<ProjTransient>()((set) => ({
@@ -116,6 +119,7 @@ export const useProjTransient = create<ProjTransient>()((set) => ({
   undoVersion: 0,
   draftStep: null,
   batchDraftOpen: false,
+  resolutionTodoId: null,
   draftApplied: null,
   openExport: (themeId = null) => set({ exportOpen: true, exportThemeId: themeId }),
   closeExport: () => set({ exportOpen: false }),
@@ -124,6 +128,8 @@ export const useProjTransient = create<ProjTransient>()((set) => ({
   closeDraft: (applied) => set({ draftStep: null, draftApplied: applied ?? null }),
   openBatchDraft: () => set({ batchDraftOpen: true }),
   closeBatchDraft: () => set({ batchDraftOpen: false }),
+  openResolution: (resolutionTodoId) => set({ resolutionTodoId }),
+  closeResolution: () => set({ resolutionTodoId: null }),
 }));
 
 /** One editor (undo stack + history) per scope; rebuilt when the work target changes so projects never share undo. */

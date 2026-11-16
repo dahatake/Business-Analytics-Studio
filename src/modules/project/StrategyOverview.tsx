@@ -9,7 +9,7 @@ import { useI18n, type Formatters, type Lang } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, IMPROVEMENT_STEPS, useCurrentScope, type ImprovementStep } from '../../state/projects.ts';
-import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
+import { hrefFor, revisitRouteTarget, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
@@ -170,6 +170,7 @@ function DraftDiff({ draft, ctx, stale }: { draft: OverviewDraft; ctx: CheckCont
 export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: CheckContext; step: ImprovementStep; analysis?: boolean }) {
   const { t, lang, fmt } = useI18n();
   const audience = useSettings((s) => s.audience);
+  const route = useRoute();
   const scope = useCurrentScope();
   const state = useOverview((s) => s.value);
   const set = useOverview((s) => s.set);
@@ -180,25 +181,31 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   const descending = state.descending !== false;
   const map = useMemo(() => strategyMap(ctx, audience === 'internal' ? state : { objectiveIssues: [] }, axis, lang, descending), [ctx, state, axis, lang, descending, audience]);
   const baseline = overviewBaseline(raw, state);
-  const draft = state.draft?.audience === audience ? state.draft : undefined;
+  const draftKey = `${audience}:${step}`;
+  const stepDraft = state.stepDrafts?.[draftKey];
+  const sharedDraft = state.draft?.audience === audience ? state.draft : undefined;
+  const [showShared, setShowShared] = useState(route.query.get('draft') === 'shared');
+  const draft = showShared ? sharedDraft ?? stepDraft : stepDraft ?? sharedDraft;
+  const isStepDraft = !!draft && draft === stepDraft;
   const approved = state.approved?.audience === audience && state.approved.lang === lang ? state.approved : undefined;
   const stale = !!draft && (draft.baseline !== baseline || draft.lang !== lang);
   const { dialog, confirmLive } = useLiveConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const latest = useRef({ raw, state, scope, audience, lang });
-  latest.current = { raw, state, scope, audience, lang };
+  const [saved, setSaved] = useState<'draft' | 'approved' | null>(null);
+  const latest = useRef({ raw, state, scope, audience, lang, step });
+  latest.current = { raw, state, scope, audience, lang, step };
   const alive = useRef(true);
   const abort = useRef<AbortController | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; abort.current?.abort(); };
   }, []);
-  useEffect(() => { abort.current?.abort(); setError(null); setSaved(false); }, [scope, audience, lang]);
+  useEffect(() => { abort.current?.abort(); setError(null); setSaved(null); }, [scope, audience, lang, step]);
+  useEffect(() => { setShowShared(route.query.get('draft') === 'shared'); }, [route.query, scope, audience, step]);
   const current = () => {
     const x = latest.current;
-    if (currentScope() !== scope || x.scope !== scope || x.audience !== audience || x.lang !== lang || overviewBaseline(x.raw, useOverview.getState().value) !== baseline) throw new Error(t('stg.stale'));
+    if (currentScope() !== scope || x.scope !== scope || x.audience !== audience || x.lang !== lang || x.step !== step || overviewBaseline(x.raw, useOverview.getState().value) !== baseline) throw new Error(t('stg.stale'));
   };
   const fail = (e: unknown) => {
     if (!alive.current) return;
@@ -206,9 +213,10 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     setError(message);
   };
   const generate = async () => {
-    setBusy(true); setError(null); setSaved(false);
+    setBusy(true); setError(null); setSaved(null);
     const provider = useAiSettings.getState().provider;
-    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience), scope, userConfirmed: true };
+    const previousDraft = JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]);
+    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience, step), scope, userConfirmed: true };
     try {
       const pf = preflight(request);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
@@ -225,29 +233,45 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       const result = await aiLive({ ...request, personConfirmed: decision.personConfirmed }, abort.current.signal);
       current();
       if (!alive.current) return;
-      const proposal = parseOverviewResponse(result.text, ctx, lang);
-      set((v) => ({ ...v, draft: { proposal, baseline, lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy } }));
+      if (JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]) !== previousDraft) throw new Error(t('stg.draftChanged'));
+      const proposal = parseOverviewResponse(result.text, ctx, lang, step, audience);
+      set((v) => ({ ...v, stepDrafts: { ...v.stepDrafts, [draftKey]: { proposal, step, baseline, lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy } } }));
+      setShowShared(false);
       await flushDeviceStorage();
+      if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
+    } catch (e) { fail(e); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const saveDraft = async () => {
+    if (!draft) return;
+    setBusy(true); setError(null); setSaved(null);
+    try {
+      current();
+      await flushDeviceStorage();
+      if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
+      if (alive.current) setSaved('draft');
     } catch (e) { fail(e); }
     finally { if (alive.current) setBusy(false); }
   };
   const approve = async () => {
     if (!draft) return;
-    setBusy(true); setError(null); setSaved(false);
+    setBusy(true); setError(null); setSaved(null);
     try {
       current();
       if (stale) throw new Error(t('stg.stale'));
-      const proposal = validateOverviewProposal(draft.proposal, ctx);
+      const proposal = validateOverviewProposal(draft.proposal, ctx, draft.step, draft.audience);
       const entities = proposalEntities(proposal, ctx);
       await commitPackChanges(entities.map((entity) => ({ op: 'upsert' as const, entity })), scope, raw.pack);
       if (currentScope() !== scope) throw new Error(t('stg.stale'));
-      const { draft: _draft, ...rest } = useOverview.getState().value;
+      const value = useOverview.getState().value;
+      const { [draftKey]: _stepDraft, ...remainingDrafts } = value.stepDrafts ?? {};
+      const rest = isStepDraft ? { ...value, stepDrafts: remainingDrafts } : (() => { const { draft: _draft, ...remaining } = value; return remaining; })();
       const next = { ...rest, axis: proposal.axis, objectiveIssues: proposal.objectiveIssues };
       const approvedBaseline = overviewBaseline({ ...raw, pack: loaded }, next);
       set({ ...next, approved: { ...draft, baseline: approvedBaseline, by: useProjUi.getState().editor.trim() } });
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
-      if (alive.current) setSaved(true);
+      if (alive.current) setSaved('approved');
     } catch (e) { fail(e); }
     finally { if (alive.current) setBusy(false); }
   };
@@ -289,7 +313,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
         <p className="muted">{t('stg.liveHint')} <a href={hrefFor('/ai-settings')}>{t('ai.nav.settings')}</a></p>
         <p className="muted">{t('stg.budget')}</p>
         {error && <MessageBar intent="error" data-testid="strategy-error"><MessageBarBody>{t('stg.error', { message: error })}</MessageBarBody></MessageBar>}
-        {saved && <p role="status" data-testid="strategy-saved">{t('stg.saved')}</p>}
+        {saved && <p role="status" data-testid="strategy-saved">{t(saved === 'draft' ? 'stg.draftSaved' : 'stg.saved')}</p>}
       </Panel>
       <Panel title={t('stg.issues')} testId="strategy-ranking" className="span-full">
         <ol>{map.nodes.filter((n) => n.lane === 'issue').map((n) => {
@@ -302,12 +326,22 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       </Panel>
       {draft && <Panel title={t('stg.draft')} testId="strategy-draft" className="span-full">
         <Badge appearance="tint" color="warning">{t('stg.draft')}</Badge>
+        <p>{isStepDraft ? t('stg.stepDraft', { step: t(`proj.step.${step}`) }) : t('stg.sharedDraft')}</p>
+        {stepDraft && sharedDraft && <Button size="small" onClick={() => setShowShared(isStepDraft)}>{t(isStepDraft ? 'stg.showShared' : 'stg.showStep')}</Button>}
         <p>{t('stg.at', { at: stamp(draft.at, fmt), provider: t(`ai.provider.${draft.provider}`) })}</p>
         {stale && <p role="alert" data-testid="strategy-stale">{t('stg.stale')}</p>}
         <DraftDiff draft={draft} ctx={ctx} stale={stale} />
         <div className="strategy-controls">
+          <Button disabled={busy} onClick={() => void saveDraft()} data-testid="strategy-save">{t('stg.saveDraft')}</Button>
           <Button appearance="primary" icon={<Checkmark20Regular />} disabled={busy || stale} onClick={() => void approve()} data-testid="strategy-confirm">{t('stg.confirm')}</Button>
-          <Button icon={<Dismiss20Regular />} disabled={busy} onClick={() => set((v) => { const { draft: _draft, ...rest } = v; return rest; })}>{t('stg.discard')}</Button>
+          <Button icon={<Dismiss20Regular />} disabled={busy} onClick={() => set((v) => {
+            if (isStepDraft) {
+              const { [draftKey]: _draft, ...rest } = v.stepDrafts ?? {};
+              return { ...v, stepDrafts: rest };
+            }
+            const { draft: _draft, ...rest } = v;
+            return rest;
+          })}>{t('stg.discard')}</Button>
         </div>
       </Panel>}
       {approved && <Panel title={t('stg.approved')} testId="strategy-approved" className="span-full">

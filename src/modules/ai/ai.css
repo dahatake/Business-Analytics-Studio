@@ -54,3 +54,12 @@
 .ai-quick { max-height: min(70vh, 760px); overflow-y: auto; padding-right: 4px; }
 .ai-readiness { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .ai-readiness li { display: flex; align-items: center; gap: 6px; }
+
+.ai-progress { display: grid; gap: 8px; margin-block: 8px; }
+.ai-progress-now { margin: 0; font-weight: 600; }
+.ai-progress .muted { margin: 0; }
+.ai-progress-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ai-progress-steps li { display: flex; align-items: center; gap: 8px; }
+.ai-progress-steps li[data-status='pending'] { color: var(--colorNeutralForeground3); }
+.ai-progress-ok { color: var(--colorPaletteGreenForeground1); }
+.ai-progress-dot { width: 10px; height: 10px; margin: 0 5px; border-radius: 50%; border: 2px solid var(--colorNeutralStroke1); display: inline-block; }

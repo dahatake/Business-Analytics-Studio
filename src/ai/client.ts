@@ -228,6 +228,9 @@ export async function aiComplete(req: AiRequest): Promise<AiResponse> {
   }
 }
 
+/** Limit for a live call that does not set its own timeoutMs. */
+export const DEFAULT_LIVE_TIMEOUT_MS = 60_000;
+
 async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Promise<LiveResult & { costJpy: number | null }> {
   const settings = runtime();
   const provider = settings.provider ?? 'foundry';
@@ -242,7 +245,7 @@ async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Pr
       prompt: req.prompt,
       context: pf.context,
       maxOutputTokens: pf.maxOutputTokens,
-      timeoutMs: req.timeoutMs ?? 60_000,
+      timeoutMs: req.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
       ...(req.media?.length ? { media: req.media } : {}),
     }, signal);
   } catch (err) {

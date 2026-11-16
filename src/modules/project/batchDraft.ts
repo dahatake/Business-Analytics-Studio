@@ -61,7 +61,7 @@ export async function runBatchJob(job: BatchJob, personConfirmed: boolean, signa
 }
 
 /** Snapshot all mutable inputs and existing drafts so another tab cannot silently overwrite them. */
-export function batchSourceStamp(): string {
+export function batchSourceStamp(includePack = true): string {
   const projects = useProjects.getState();
   const scope = currentScope();
   const project = projects.projects.find((item) => item.id === scope);
@@ -69,7 +69,7 @@ export function batchSourceStamp(): string {
   const ai = useAiSettings.getState();
   return JSON.stringify({
     scope, project, company, anchor: company ? appStorage.getItem(companyAnchorKey(company.id)) : null,
-    pack: loaded.pack, packVersion: usePackVersion.getState().version,
+    pack: includePack ? loaded.pack : null, packVersion: includePack ? usePackVersion.getState().version : null,
     discussion: useDiscussion.getState().value, kpi: useKpis.getState().value, analysis: useAnalyses.getState().value,
     useCases: useUseCases.getState().value, deliverables: useDeliverables.getState().value, strategy: useStrategy.getState().value,
     fieldDrafts: useFieldDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,

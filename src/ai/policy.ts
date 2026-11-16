@@ -118,7 +118,7 @@ export const C03_TABLE: Record<AiUse, UseApproval> = {
   },
   strategyOverview: {
     provider: ['foundry', 'copilotSdk'],
-    data: 'Audience-visible business objectives, KPI/OKR definitions, issue/cause/solution/source data, confirmed strategy links and contribution estimates. No person entities, attachment bytes, unrelated project data or secret settings. Free text may contain personal information.',
+    data: 'Audience-visible business objectives, KPI/OKR definitions, issue/cause/solution/source data, confirmed strategy links and contribution estimates; for step-specific drafts, the step summary, facts and deliverable text (internal audience only). No person entities, attachment bytes, unrelated project data or secret settings. Free text may contain personal information.',
     enableCondition: 'Live switch + configured provider + per-send content/ownership/cost confirmation; validated draft and explicit human approval before data updates. Known provider charges capped at 10,000 JPY/month or the lower app budget; unknown external charges cannot be capped.',
     costCapJpy: 10_000,
     openQuestions: [],

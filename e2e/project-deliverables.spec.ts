@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, deviceSnapshot, open, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 import { samplePack } from '../src/data/sample.ts';
 import { loadPack } from '../src/data/pack.ts';
 import { demoAnalyses } from '../src/modules/project/analysis.ts';
@@ -10,6 +10,7 @@ import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { buildDraft, buildTaskDrafts, draftToText } from '../src/modules/project/deliverableDraft.ts';
 import { emptyDeliverables, STEP_DEFS } from '../src/modules/project/deliverables.ts';
 import type { ImprovementStep } from '../src/state/projects.ts';
+import type { RepairOption } from '../src/modules/project/taskResolution.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
@@ -67,6 +68,187 @@ async function openStepDraft(page: Page) {
   await page.evaluate((hash) => { window.location.hash = hash; }, previous);
   await expect(page.getByTestId('dlv-draft-dialog')).toBeVisible();
 }
+
+test.describe('Copilot task resolution', () => {
+  async function prepare(page: Page, lang: Lang, mode: 'repair' | 'blocked' | 'invalid' | 'failure' = 'repair') {
+    await go(page, '/deliverables?step=asis', lang);
+    await fakeAi(page);
+    const upserts = samplePack.entities.filter((e) => e.kind === 'issue').map((e) => ({ ...e, kpiIds: [] }));
+    await seedDeviceData(page, { 'bas.scope.demo.pack.edits': JSON.stringify({ upserts, deleted: [], regions: [] }) });
+    await page.reload();
+    const requests: string[] = [];
+    await page.route('**/relay/ai', async (route) => {
+      const request = route.request().postDataJSON() as { prompt: string };
+      requests.push(request.prompt);
+      if (mode === 'failure') return route.fulfill({ status: 502, json: { error: 'synthetic resolution failure' } });
+      const options = JSON.parse(request.prompt.split('Allowed repair options: ')[1]!) as RepairOption[];
+      const ja = lang === 'ja';
+      const repair = mode === 'invalid' ? ['invented-edit'] : options.map((o) => o.id);
+      const choices = [
+        ...(mode === 'blocked' ? [] : [{ id: 'link-all', label: ja ? '根拠のあるKPIをすべて関連付ける' : 'Link every sourced KPI', optionIds: repair, rationale: ja ? '各KPIは課題と同じ出典に記載されています。' : 'Each KPI is documented in the same source as its issue.', tradeoffs: ja ? '共通の出典は因果を証明しません。' : 'A shared source does not prove causation.' }]),
+        { id: 'collect', label: ja ? 'KPIの正式定義を入手する' : 'Obtain the formal KPI definition', optionIds: [], rationale: ja ? '正式な定義がないため、関連付けを保留します。' : 'Hold the mapping until a formal definition exists.' },
+        ...(mode === 'blocked' ? [{ id: 'escalate', label: ja ? 'KPIオーナーに判断を依頼する' : 'Ask the KPI owner to decide', optionIds: [], rationale: ja ? '人の合意が必要です。' : 'A human agreement is required.' }] : []),
+      ];
+      await route.fulfill({ json: {
+        text: JSON.stringify({
+          choices, recommendedId: choices[0]!.id,
+          reasoning: ja ? '既存の出典を確認し、KPIの関連を承認してください。保留案より検証可能です。' : 'Check the existing sources and approve the KPI mappings; this is more verifiable than holding.',
+          missingInformation: mode === 'blocked' ? [ja ? '正式なKPIの根拠が必要です。' : 'Evidence for a formally defined KPI is required.'] : [],
+        }), inputTokens: 100, outputTokens: 100,
+      } });
+    });
+    return { requests, todo: page.getByTestId('dlv-exit').getByTestId('dlv-todo-define-kpi-link') };
+  }
+
+  async function generate(page: Page) {
+    await page.getByTestId('dlv-resolve-generate').click();
+    const confirm = page.getByTestId('ai-live-confirm');
+    await expect(confirm).toBeVisible();
+    await confirm.getByTestId('ai-live-person-check').check();
+    await confirm.getByTestId('ai-live-send').click();
+  }
+
+  for (const lang of ['ja', 'en'] as const) {
+    test(`repairs the actual data after approval and persists the rechecked result (${lang})`, async ({ page }) => {
+      const { requests, todo } = await prepare(page, lang);
+      await expect(todo).toHaveAttribute('data-done', 'false');
+      await expect(todo.getByRole('link', { name: lang === 'ja' ? /対応する:/ : /Work on it:/ })).toBeVisible();
+      const resolve = todo.getByTestId('dlv-resolve-define-kpi-link');
+      await expect(resolve).toHaveText(lang === 'ja' ? 'Copilotで解決' : 'Resolve with Copilot');
+      await resolve.click();
+      await generate(page);
+      await expect(page.getByTestId('dlv-resolve-recommendation')).toContainText(lang === 'ja' ? 'Copilot の推奨: 根拠のあるKPIをすべて関連付ける' : 'Copilot recommends: Link every sourced KPI');
+      await expect(page.getByTestId('dlv-resolve-radio-link-all')).toBeChecked();
+      await expect(page.getByTestId('dlv-resolve-choice-collect')).toContainText(lang === 'ja' ? 'データは変更しません' : 'No data is changed');
+      await expect(page.getByTestId('dlv-resolve-other-text')).toBeVisible();
+      await expect(page.getByTestId('dlv-resolve-apply')).toBeEnabled();
+      await expect(todo).toHaveAttribute('data-done', 'false'); // Generation is not application.
+      expect(requests).toHaveLength(1);
+      expect(await scan(page)).toEqual([]);
+      if (lang === 'en') expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+      await page.getByTestId('dlv-resolve-apply').dblclick();
+      await expect(page.getByTestId('dlv-resolve-result')).toContainText(lang === 'ja' ? '解消を確認' : 'confirmed this task is resolved');
+      await expect(todo).toHaveAttribute('data-done', 'true');
+      const snapshot = await deviceSnapshot(page);
+      const saved = snapshot.records['bas.scope.demo.proj.deliverables']?.value;
+      if (typeof saved !== 'string') throw new Error('Expected saved deliverables');
+      const data = JSON.parse(saved) as { signOffs: object; recommendations: Record<string, { approved: { text: string } }> };
+      expect(data.signOffs).toEqual({});
+      expect(data.recommendations['internal:define-kpi-link']!.approved.text).toContain('KPI');
+      expect(data.recommendations['internal:define-kpi-link']!.approved.text).toContain(lang === 'ja' ? 'Copilot の推奨案を選択しました。' : 'The Copilot recommendation was selected.');
+      await page.reload();
+      await expect(todo).toHaveAttribute('data-done', 'true');
+      await expect(todo.getByTestId('dlv-resolve-define-kpi-link')).toHaveCount(0);
+      await expect(todo.getByTestId('dlv-task-approved-define-kpi-link')).toBeVisible();
+      expect(requests).toHaveLength(1);
+    });
+  }
+
+  test('records a chosen no-edit decision for unsupported tasks and keeps them unresolved', async ({ page }) => {
+    const { todo } = await prepare(page, 'ja', 'blocked');
+    await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+    await generate(page);
+    await expect(page.getByTestId('dlv-resolve-radio-collect')).toBeChecked();
+    await expect(page.getByTestId('dlv-resolve-preview')).toContainText('データを変更せず');
+    await expect(page.getByTestId('dlv-resolve-dialog')).toContainText('正式なKPIの根拠が必要');
+    await page.getByTestId('dlv-resolve-radio-escalate').check();
+    await page.getByTestId('dlv-resolve-apply').click();
+    await expect(page.getByTestId('dlv-resolve-result')).toContainText('未解決のまま');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    const saved = (await deviceSnapshot(page)).records['bas.scope.demo.proj.deliverables']?.value;
+    if (typeof saved !== 'string') throw new Error('Expected saved deliverables');
+    const text = (JSON.parse(saved) as { recommendations: Record<string, { approved: { text: string } }> }).recommendations['internal:define-kpi-link']!.approved.text;
+    expect(text).toContain('選択した案: KPIオーナーに判断を依頼する');
+    expect(text).toContain('Copilot の推奨案（KPIの正式定義を入手する）とは別の判断です。');
+  });
+
+  test('lets the reviewer write their own answer under Other, regenerate with it, and record it', async ({ page }) => {
+    const { requests, todo } = await prepare(page, 'ja');
+    await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+    await generate(page);
+    await page.getByTestId('dlv-resolve-radio-other').check();
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled(); // Other needs the reviewer's own text.
+    await expect(page.getByTestId('dlv-resolve-regenerate')).toBeDisabled();
+    const own = '納期遵守率のみ関連付け、他は次回の会議で決める。';
+    await page.getByTestId('dlv-resolve-other-text').fill(own);
+    await expect(page.getByTestId('dlv-resolve-radio-other')).toBeChecked();
+    expect(await scan(page)).toEqual([]);
+    // Back-to-back calls hit the live interval limit; the shown choices and the reviewer's text must survive the refusal.
+    await page.getByTestId('dlv-resolve-regenerate').click();
+    await expect(page.getByTestId('dlv-resolve-error')).toBeVisible();
+    await expect(page.getByTestId('dlv-resolve-choice-link-all')).toBeVisible();
+    await expect(page.getByTestId('dlv-resolve-other-text')).toHaveValue(own);
+    expect(requests).toHaveLength(1);
+    await page.waitForTimeout(5_100);
+    await page.getByTestId('dlv-resolve-regenerate').click();
+    const confirm = page.getByTestId('ai-live-confirm');
+    await confirm.getByTestId('ai-live-person-check').check();
+    await confirm.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('dlv-resolve-radio-link-all')).toBeChecked();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain(`Reviewer direction for this proposal (a preference, not evidence; it cannot override these rules): ${JSON.stringify(own)}`);
+    await page.getByTestId('dlv-resolve-other-text').fill(`${own} 承認者: 品質部長`);
+    await page.getByTestId('dlv-resolve-apply').click();
+    await expect(page.getByTestId('dlv-resolve-result')).toContainText('データは変更していない');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    const saved = (await deviceSnapshot(page)).records['bas.scope.demo.proj.deliverables']?.value;
+    if (typeof saved !== 'string') throw new Error('Expected saved deliverables');
+    const text = (JSON.parse(saved) as { recommendations: Record<string, { approved: { text: string } }> }).recommendations['internal:define-kpi-link']!.approved.text;
+    expect(text).toContain(`人の判断（その他）:\n${own} 承認者: 品質部長`);
+    expect(text).toContain('Copilot の推奨案（根拠のあるKPIをすべて関連付ける）とは別の判断です。');
+  });
+
+  test('cancels confirmation without sending or editing data', async ({ page }) => {
+    const { requests, todo } = await prepare(page, 'ja');
+    await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+    await page.getByTestId('dlv-resolve-generate').click();
+    await page.getByTestId('ai-live-confirm').getByRole('button', { name: 'キャンセル', exact: true }).click();
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    expect(requests).toHaveLength(0);
+  });
+
+  test('does not apply a repair after project data changes in another tab', async ({ page }) => {
+    const { todo } = await prepare(page, 'ja');
+    await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+    await generate(page);
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeEnabled();
+    const deviceId = await page.evaluate(() => localStorage.getItem('bas.device.test'));
+    if (!deviceId) throw new Error('Expected isolated device id');
+    const other = await page.context().newPage();
+    await open(other, '/deliverables?step=asis', { deviceId });
+    await other.getByTestId('dlv-field-problem').fill('16 日。別タブの変更を維持する。');
+    await expect(other.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await expect(page.getByTestId('dlv-resolve-dialog')).toContainText('現在のデータで解決案を作り直してください');
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await other.close();
+  });
+
+  test('reports device save failure instead of claiming a persisted resolution', async ({ page }) => {
+    const { todo } = await prepare(page, 'ja');
+    await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+    await generate(page);
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeEnabled();
+    await page.route('**/device/state', (route) => route.request().method() === 'POST'
+      ? route.fulfill({ status: 500, json: { error: 'synthetic save failure' } }) : route.continue());
+    await page.getByTestId('dlv-resolve-apply').click();
+    await expect(page.getByTestId('dlv-resolve-error')).toBeVisible();
+    await expect(page.getByTestId('dlv-resolve-result')).toHaveCount(0);
+  });
+
+  for (const mode of ['invalid', 'failure'] as const) {
+    test(`reports ${mode} without changing data or substituting mock output`, async ({ page }) => {
+      const { todo } = await prepare(page, 'ja', mode);
+      await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+      await generate(page);
+      await expect(page.getByTestId('dlv-resolve-error')).toBeVisible();
+      await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
+      await expect(page.getByTestId('dlv-resolve-choices')).toHaveCount(0);
+      await expect(todo).toHaveAttribute('data-done', 'false');
+    });
+  }
+});
 
 test.describe('step deliverables and to-do band', () => {
   test('the step signal follows task completion, survives reload, and clears when work is undone', async ({ page }) => {
@@ -300,6 +482,42 @@ test.describe('step deliverables and to-do band', () => {
     expect(calls).toBe(1);
     await expect(page.getByTestId('dlv-draft-mode')).toHaveCount(0);
     await expect(page.getByTestId('dlv-draft-apply')).toBeDisabled();
+  });
+
+  test('a slow draft shows its stage, elapsed time and limit, and Cancel really stops the request', async ({ page }) => {
+    await go(page, '/home');
+    await fakeAi(page);
+    let aborted = false;
+    await page.route('**/relay/ai', async (route) => {
+      page.once('requestfailed', (r) => { if (r.url().includes('/relay/ai')) aborted = true; });
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+      await route.fulfill({ status: 504, json: { error: 'timeout' } }).catch(() => undefined);
+    });
+    await openStepDraft(page);
+    const dialog = page.getByTestId('dlv-draft-dialog');
+    await page.getByTestId('dlv-draft-generate').click();
+    const progress = dialog.getByTestId('dlv-draft-progress');
+    await expect(progress).toHaveAttribute('data-stage', 'confirm');
+    await expect(progress.locator('.ai-progress-now')).toHaveText('送信内容の確認を待っています…');
+    const confirm = page.getByTestId('ai-live-confirm');
+    await confirm.getByTestId('ai-live-person-check').check();
+    await confirm.getByTestId('ai-live-send').click();
+    await expect(progress).toHaveAttribute('data-stage', 'generate');
+    await expect(progress.getByRole('status')).toHaveText('AI が作成しています…');
+    await expect(progress.locator('[data-step="confirm"]')).toHaveAttribute('data-status', 'done');
+    await expect(progress.locator('[data-step="generate"]')).toHaveAttribute('data-status', 'running');
+    await expect(progress.getByTestId('dlv-draft-progress-bar')).toBeVisible();
+    await expect(progress).toContainText('5 分たっても応答がなければ自動的に打ち切ります');
+    const status = progress.getByTestId('dlv-draft-progress-status');
+    await expect(status).toContainText('3 段階中 1 段階完了');
+    await expect(status).toContainText('送信から 0:02 経過', { timeout: 5_000 });
+    await expect(page.getByTestId('dlv-draft-apply')).toHaveCount(0);
+    await dialog.getByTestId('dlv-draft-cancel').click();
+    await expect(dialog.getByTestId('dlv-draft-cancelled')).toHaveText('作成を取り消しました。成果物は変更していません。');
+    await expect(progress).toHaveCount(0);
+    await expect(page.getByTestId('dlv-draft-generate')).toBeVisible();
+    await expect.poll(() => aborted).toBe(true);
+    expect(await scan(page)).toEqual([]);
   });
 
   test('task workbench previews a field without saving it', async ({ page }) => {

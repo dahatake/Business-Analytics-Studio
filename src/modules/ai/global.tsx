@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
-import { ArrowUndo20Regular, Dismiss20Regular, Lightbulb20Regular, Sparkle20Regular } from '@fluentui/react-icons';
+import { ArrowUndo20Regular, Dismiss20Regular, Lightbulb20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
 import './mocks.ts';
@@ -10,10 +10,9 @@ import { appliedForRoute, undoLastApply, useAiOverrides } from './review.ts';
 import { useAiSettings } from './settingsStore.ts';
 import { useAiPanels } from './uiStore.ts';
 import { ExplainPanel } from './ExplainPanel.tsx';
-import { ReviewPanel } from './ReviewPanel.tsx';
 import './ai.css';
 
-/** Global mounts of the 'ai' module: top-bar buttons for FR-274 and FR-278, and their side panels. */
+/** Global AI actions and panels. */
 export function TopBarSlot() {
   const { t } = useI18n();
   const open = useAiPanels((s) => s.open);
@@ -22,9 +21,6 @@ export function TopBarSlot() {
     <>
       <Button appearance="subtle" icon={<Lightbulb20Regular />} aria-pressed={open === 'explain'} onClick={() => setOpen(open === 'explain' ? null : 'explain')} data-testid="ai-explain-button">
         {t('ai.explain.button')}
-      </Button>
-      <Button appearance="subtle" icon={<Sparkle20Regular />} aria-pressed={open === 'review'} onClick={() => setOpen(open === 'review' ? null : 'review')} data-testid="ai-review-button">
-        {t('ai.review.button')}
       </Button>
     </>
   );
@@ -104,7 +100,6 @@ export function Overlay() {
         <AppliedNotice />
       </div>
       <ExplainPanel />
-      <ReviewPanel />
     </>
   );
 }

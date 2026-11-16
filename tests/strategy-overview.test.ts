@@ -82,6 +82,19 @@ describe('strategic overview mapping and ranking', () => {
     expect(prompt).not.toContain('999991');
     expect(strategyMap(safe, state, 'impact', 'en').nodes.some((n) => n.ref === hidden.id)).toBe(false);
   });
+
+  it('creates distinct step-focused prompts without sending internal deliverables to external audiences', () => {
+    const ctx = context();
+    ctx.deliverables.docs.asis = { problem: { text: 'PRIVATE_DELIVERABLE', author: 'human', updatedAt: '2026-11-16' } };
+    const asis = overviewPrompt(ctx, state, 'en', 'internal', 'asis');
+    const kpi = overviewPrompt(ctx, state, 'en', 'internal', 'kpi');
+    expect(asis).toContain('validate root-cause hypotheses');
+    expect(asis).toContain('PRIVATE_DELIVERABLE');
+    expect(kpi).toContain('define measurable outcomes');
+    expect(kpi).not.toContain('PRIVATE_DELIVERABLE');
+    const external = overviewPrompt(overviewContext(ctx, 'external'), state, 'en', 'external', 'asis');
+    expect(external).not.toContain('PRIVATE_DELIVERABLE');
+  });
 });
 
 describe('validated draft and approval updates', () => {
@@ -109,6 +122,16 @@ describe('validated draft and approval updates', () => {
     ctx.pack.pack.entities.push({ ...kpi, id: 'kpi-text-figure', description: { ja: '出荷後 77 日以内', en: 'within 77 days' } });
     expect(() => validateOverviewProposal({ ...p, answer: `Gap ${gap}, measured within 77 days.`, findings: [{ text: 'Key result.', refs: [ctx.kpi.okrs[0]!.keyResults[0]!.id] }] }, ctx)).not.toThrow();
     expect(() => validateOverviewProposal({ ...p, answer: `Sum ${kpi.current + kpi.target + kpi.baseline + 0.37}.` }, ctx)).toThrow('Unverified figures');
+  });
+
+  it('only accepts step deliverable figures when that deliverable was included in the request', () => {
+    const ctx = context(), p = proposal(ctx);
+    ctx.deliverables.docs.asis = { problem: { text: 'Customer wait is 98765 days', author: 'human', updatedAt: '2026-11-16' } };
+    const withFigure = { ...p, answer: 'Customer wait is 98765 days.' };
+    expect(() => validateOverviewProposal(withFigure, ctx, 'asis', 'internal')).not.toThrow();
+    expect(() => validateOverviewProposal(withFigure, ctx, 'tobe', 'internal')).toThrow('Unverified figures');
+    expect(() => validateOverviewProposal(withFigure, ctx, 'asis', 'external')).toThrow('Unverified figures');
+    expect(() => validateOverviewProposal(withFigure, ctx)).toThrow('Unverified figures');
   });
 
   it('replaces internal IDs written in prose with item names, keeping refs and stored text per language', () => {

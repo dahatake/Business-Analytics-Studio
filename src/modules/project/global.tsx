@@ -16,6 +16,7 @@ import './project.css';
 export { StepTodoBand as StepBand };
 
 const BatchDraftDialog = lazy(() => import('./BatchDraftDialog.tsx').then((m) => ({ default: m.BatchDraftDialog })));
+const TaskResolutionDialog = lazy(() => import('./TaskResolutionDialog.tsx').then((m) => ({ default: m.TaskResolutionDialog })));
 
 /** FR-148 / FR-176: the work-target menu (demo or company → project) at the top of every screen. */
 function WorkTargetMenu() {
@@ -136,6 +137,7 @@ export function TopBarSlot({ restricted = false }: { restricted?: boolean }) {
 export function Overlay() {
   const openExport = useProjTransient((s) => s.openExport);
   const batchOpen = useProjTransient((s) => s.batchDraftOpen);
+  const resolutionTodoId = useProjTransient((s) => s.resolutionTodoId);
   useEffect(() => {
     // FR-052: Ctrl+Shift+E opens the full export from anywhere.
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -152,6 +154,7 @@ export function Overlay() {
       <ExportDialog />
       <DraftDialog />
       {batchOpen && <Suspense fallback={null}><BatchDraftDialog /></Suspense>}
+      {resolutionTodoId && <Suspense fallback={null}><TaskResolutionDialog key={resolutionTodoId} todoId={resolutionTodoId} /></Suspense>}
     </>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
-  Badge, Button, Caption1, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner,
+  Badge, Button, Caption1, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar,
 } from '@fluentui/react-components';
 import {
   CheckmarkCircle20Filled, ChevronDown20Regular, ChevronUp20Regular, DocumentText20Regular, ErrorCircle20Regular, Sparkle20Regular,
@@ -17,6 +17,8 @@ import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
+import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
@@ -218,6 +220,7 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
   const { t, fmt } = useI18n();
   const checkboxId = useId();
   const audience = useSettings((s) => s.audience);
+  const openResolution = useProjTransient((s) => s.openResolution);
   const recommendation = useDeliverables((s) => s.value.recommendations?.[`${audience}:${r.todo.id}`] ?? (audience === 'internal' ? s.value.recommendations?.[r.todo.id] : undefined));
   const label = todoLabel(t, r.todo.id, usePaybackLimit());
   const status = <span className="visually-hidden">{t(r.done ? 'dlv.status.done' : 'dlv.status.todo')}</span>;
@@ -261,9 +264,14 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
         </div>
       )}
       {!r.done && r.todo.kind === 'auto' && (
-        <a className="dlv-fix" href={todoHref(r)} onClick={revisitRouteTarget} aria-label={t('dlv.fixLabel', { todo: label })}>
-          {t('dlv.fix')}
-        </a>
+        <div className="dlv-todo-actions">
+          <a className="dlv-fix" href={todoHref(r)} onClick={revisitRouteTarget} aria-label={t('dlv.fixLabel', { todo: label })}>
+            {t('dlv.fix')}
+          </a>
+          <Button size="small" icon={<Sparkle20Regular />} onClick={() => openResolution(r.todo.id)} aria-label={t('dlv.resolve.label', { todo: label })} data-testid={`dlv-resolve-${r.todo.id}`}>
+            {t('dlv.resolve.button')}
+          </Button>
+        </div>
       )}
       {!detailed && (
         <a
@@ -383,8 +391,9 @@ export function StepTodoBand() {
 type DraftTextMap = Record<string, string>;
 type DraftState =
   | { status: 'idle' }
-  | { status: 'working' }
+  | { status: 'working'; stage: AiStage; startedAt?: number }
   | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap; at: string }
+  | { status: 'cancelled' }
   | { status: 'error'; message: string };
 
 function sameFieldDraft(saved: SavedFieldDraft | undefined, ready: { fields: DraftTextMap; at: string }, lang: Lang): boolean {
@@ -404,8 +413,17 @@ export function DraftDialog() {
   const [overwrite, setOverwrite] = useState(false);
   const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
   const bodyRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const cancel = () => abortRef.current?.abort();
+  // Closing the dialog or switching the target stops the request instead of leaving it running unseen.
+  const close = () => {
+    cancel();
+    closeDraft();
+  };
+  useEffect(() => cancel, []);
 
   useEffect(() => {
+    cancel();
     const saved = step ? useFieldDrafts.getState().value[`${audience}:${step}`] : undefined;
     setState(saved && saved.lang === lang ? {
       status: 'ready',
@@ -445,7 +463,8 @@ export function DraftDialog() {
       setState({ status: 'error', message: t('dlv.draft.tooLarge') });
       return;
     }
-    setState({ status: 'working' });
+    setState({ status: 'working', stage: 'confirm' });
+    const controller = new AbortController();
     try {
       const settings = useAiSettings.getState();
       const decision = await confirmLive({
@@ -472,7 +491,9 @@ export function DraftDialog() {
         setState({ status: 'error', message: t('dlv.draft.destinationChanged') });
         return;
       }
-      const r = await requestDeliverableDraft(input, { ...request, userConfirmed: true, personConfirmed: decision.personConfirmed });
+      abortRef.current = controller;
+      setState({ status: 'working', stage: 'generate', startedAt: Date.now() });
+      const r = await requestDeliverableDraft(input, { ...request, userConfirmed: true, personConfirmed: decision.personConfirmed }, controller.signal);
       if (targetCurrent()) {
         if (!draftsUnchanged()) {
           setState({ status: 'error', message: t('dlv.draft.changed') });
@@ -492,7 +513,9 @@ export function DraftDialog() {
         setState({ status: 'ready', ...r, at });
       }
     } catch (error) {
-      if (targetCurrent()) {
+      if (controller.signal.aborted) {
+        if (targetCurrent()) setState({ status: 'cancelled' });
+      } else if (targetCurrent()) {
         const message = error instanceof AiLiveError
           ? error.reasons.includes('liveFailed')
             ? t('dlv.draft.liveFailed', { detail: error.message })
@@ -500,6 +523,8 @@ export function DraftDialog() {
           : error instanceof Error ? error.message : String(error);
         setState({ status: 'error', message });
       }
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
     }
   };
 
@@ -555,14 +580,15 @@ export function DraftDialog() {
   return (
     <>
     {confirmDialog}
-    <Dialog open onOpenChange={(_, d) => { if (!d.open) closeDraft(); }}>
+    <Dialog open onOpenChange={(_, d) => { if (!d.open) close(); }}>
       <DialogSurface className="dlv-draft-surface" data-testid="dlv-draft-dialog">
         <DialogBody ref={bodyRef} tabIndex={-1}>
           <DialogTitle>{t('dlv.draft.title', { name: t(deliverableNameKey(step)) })}</DialogTitle>
           <DialogContent>
-            {state.status === 'working' && <Spinner label={t('dlv.draft.working')} />}
+            {state.status === 'working' && <AiProgress stage={state.stage} startedAt={state.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS} testId="dlv-draft-progress" />}
+            {state.status === 'cancelled' && <p role="status" data-testid="dlv-draft-cancelled">{t('ai.progress.cancelled')}</p>}
             {state.status === 'error' && <p role="alert">{t('dlv.draft.failed')} {state.message}</p>}
-            {(state.status === 'idle' || state.status === 'error') && <Button appearance="primary" onClick={() => void generate()} data-testid="dlv-draft-generate">{t('dlv.draft.generate')}</Button>}
+            {(state.status === 'idle' || state.status === 'error' || state.status === 'cancelled') && <Button appearance="primary" onClick={() => void generate()} data-testid="dlv-draft-generate">{t('dlv.draft.generate')}</Button>}
             {ready && (
               <>
                 <p className="dlv-draft-note" data-testid="dlv-draft-mode" data-mode={ready.response.mode}>
@@ -625,9 +651,11 @@ export function DraftDialog() {
             )}
           </DialogContent>
           <DialogActions>
-            <Button appearance="primary" disabled={!ready || draftChanged || willApply === 0} onClick={apply} data-testid="dlv-draft-apply">{t('dlv.draft.apply')}</Button>
+            {state.status === 'working' && state.stage === 'generate'
+              ? <Button onClick={cancel} data-testid="dlv-draft-cancel">{t('ai.progress.cancel')}</Button>
+              : <Button appearance="primary" disabled={!ready || draftChanged || willApply === 0} onClick={apply} data-testid="dlv-draft-apply">{t('dlv.draft.apply')}</Button>}
             {ready && <Button disabled={draftChanged} onClick={discard} data-testid="dlv-draft-discard">{t('dlv.draft.discard')}</Button>}
-            <Button appearance="secondary" onClick={() => closeDraft()}>{t('dlv.draft.close')}</Button>
+            <Button appearance="secondary" onClick={close}>{t('dlv.draft.close')}</Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
 import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { isUseApproved, preflight } from '../../ai/client.ts';
+import { DEFAULT_LIVE_TIMEOUT_MS, isUseApproved, preflight } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings, type Audience } from '../../state/settings.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { AppCheckContext } from './deliverables.ts';
 import { stepBriefContext } from './overviewModel.ts';
@@ -79,11 +80,12 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
   const generated = useStepBriefs((s) => s.value[key]);
   const live = useAiSettings((s) => liveReady(s)) && isUseApproved('stepBrief');
   const { dialog, confirmLive } = useLiveConfirm();
-  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ stage: AiStage; startedAt?: number } | null>(null);
+  const busy = progress !== null;
   const [cancelled, setCancelled] = useState(false);
 
   const generate = async () => {
-    setBusy(true);
+    setProgress({ stage: live ? 'confirm' : 'generate', startedAt: live ? undefined : Date.now() });
     setCancelled(false);
     try {
       let confirmed: { userConfirmed: boolean; personConfirmed: boolean } | undefined;
@@ -107,6 +109,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
         setCancelled(true);
         return;
       }
+      setProgress({ stage: 'generate', startedAt: Date.now() });
       const result = await requestStepBrief(brief, briefCtx, lang, confirmed);
       if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
         setCancelled(true);
@@ -114,7 +117,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
       }
       setStepBrief(key, result);
     } finally {
-      setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -158,6 +161,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
             </Button>
           </div>
           <p className="muted">{t(live ? 'proj.dash.brief.liveHint' : 'proj.dash.brief.mockHint')}</p>
+          {progress && <AiProgress stage={progress.stage} startedAt={progress.startedAt} limitMs={live ? DEFAULT_LIVE_TIMEOUT_MS : undefined} testId="step-dash-brief-progress" />}
           {cancelled && <p className="muted" data-testid="step-dash-brief-cancelled">{t('proj.dash.brief.cancelled')}</p>}
           {generated && (
             <div className="step-brief-ai" data-testid="step-dash-brief-ai" data-mode={generated.mode} data-stale={stale}>

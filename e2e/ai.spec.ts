@@ -58,6 +58,9 @@ test.describe('Strategic overview optimization', () => {
       await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
       expect((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']).toEqual(before);
       expect(calls).toBe(1);
+      await page.getByTestId('strategy-save').click();
+      await expect(page.getByTestId('strategy-saved')).toContainText('Draft saved');
+      expect((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']).toEqual(before);
       await page.reload();
       await expect(page.getByTestId('strategy-draft')).toBeVisible();
       const originalKpis = JSON.stringify(kpiData);
@@ -66,6 +69,9 @@ test.describe('Strategic overview optimization', () => {
       await seedDeviceData(page, { 'bas.scope.demo.proj.kpi': JSON.stringify(changedKpis) });
       await page.reload();
       await expect(page.getByTestId('strategy-stale')).toBeVisible();
+      await expect(page.getByTestId('strategy-confirm')).toBeDisabled();
+      await page.getByTestId('strategy-save').click();
+      await expect(page.getByTestId('strategy-saved')).toContainText('Draft saved');
       await expect(page.getByTestId('strategy-confirm')).toBeDisabled();
       await seedDeviceData(page, { 'bas.scope.demo.proj.kpi': originalKpis });
       await page.reload();
@@ -87,6 +93,69 @@ test.describe('Strategic overview optimization', () => {
     await page.getByTestId('strategy-optimize').click();
     await expect(page.getByTestId('strategy-error')).toContainText('real connection');
     await expect(page.getByTestId('strategy-draft')).toHaveCount(0);
+  });
+
+  test('each step saves its own strategy and tactics without changing source data', async ({ page }) => {
+    test.setTimeout(120_000);
+    const steps = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'];
+    const requests: string[] = [];
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+      connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' },
+    } }));
+    await page.route('**/relay/ai', async (route) => {
+      const request = route.request().postDataJSON() as { prompt: string };
+      const input = JSON.parse(request.prompt.slice(request.prompt.lastIndexOf('\n') + 1));
+      requests.push(input.step);
+      const issue = input.items.find((item: { kind: string }) => item.kind === 'issue');
+      await route.fulfill({ json: { text: JSON.stringify({
+        answer: `Strategy for ${input.step}`,
+        findings: [{ text: 'Validate the issue.', refs: [issue.id] }],
+        actions: [{ text: `Tactic for ${input.step}`, refs: [issue.id] }],
+        caveats: ['This is a hypothesis.'], axis: 'impact', axisReason: 'Use recorded impact.',
+        objectiveIssues: [], patches: [],
+      }), inputTokens: 100, outputTokens: 100 } });
+    });
+    await open(page, '/', { lang: 'en' });
+    await seedDeviceData(page, {
+      'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
+    });
+    await page.reload();
+    const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
+    await expect(page.getByTestId('ai-review-button')).toHaveCount(0);
+    for (const [index, step] of steps.entries()) {
+      if (index) await page.waitForTimeout(5_100);
+      await page.goto(`/#/step?step=${step}`);
+      await page.getByTestId('strategy-optimize').click();
+      const confirmation = page.getByTestId('ai-live-confirm');
+      await expect(confirmation).toBeVisible();
+      await confirmation.getByTestId('ai-live-person-check').check();
+      await confirmation.getByTestId('ai-live-send').click();
+      const draft = page.getByTestId('strategy-draft');
+      await expect(draft).toContainText(`Strategy for ${step}`);
+      await expect(draft).toContainText(`Tactic for ${step}`);
+      await draft.getByTestId('strategy-save').click();
+      await expect(page.getByTestId('strategy-saved')).toContainText('Draft saved');
+      await page.reload();
+      await expect(page.getByTestId('strategy-draft')).toContainText(`Strategy for ${step}`);
+      expect((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']).toEqual(before);
+    }
+    expect(requests).toEqual(steps);
+    for (const step of steps) {
+      await page.goto(`/#/step?step=${step}`);
+      await expect(page.getByTestId('strategy-draft')).toContainText(`Strategy for ${step}`);
+    }
+    const key = 'bas.scope.demo.proj.overview';
+    const overview = JSON.parse((await deviceSnapshot(page)).records[key]!.value!);
+    overview.draft = { ...overview.stepDrafts['internal:asis'], proposal: { ...overview.stepDrafts['internal:asis'].proposal, answer: 'Shared batch strategy' } };
+    await seedDeviceData(page, { [key]: JSON.stringify(overview) });
+    await page.goto('/#/?draft=shared');
+    await page.reload();
+    await expect(page.getByTestId('strategy-draft')).toContainText('Shared batch strategy');
+    await page.getByRole('button', { name: 'Show this step’s draft' }).click();
+    await expect(page.getByTestId('strategy-draft')).toContainText('Strategy for deliverable');
+    await page.getByRole('button', { name: 'Show shared batch draft' }).click();
+    await expect(page.getByTestId('strategy-draft')).toContainText('Shared batch strategy');
   });
 });
 
@@ -500,53 +569,6 @@ test.describe('explain current state (FR-274, FR-277)', () => {
   });
 });
 
-test.describe('Analyze with Copilot (FR-278〜FR-283)', () => {
-  test('edit a proposal, apply it, then undo the apply', async ({ page }) => {
-    await open(page, '/', { lang: 'en' });
-    await page.getByTestId('ai-review-button').click();
-    const panel = page.getByTestId('ai-review-panel');
-    await expect(panel).toContainText('No connection settings');
-    await panel.getByTestId('ai-review-run').click();
-    const kpi = panel.getByTestId('ai-proposal-kpi');
-    await expect(kpi).toHaveAttribute('data-status', 'proposed');
-    await expect(panel.getByTestId('ai-mock-label')).toContainText('Mock');
-    await expect(panel).toContainText('ran with the mock');
-    await kpi.getByRole('textbox').fill('Edited by the e2e test');
-    await expect(kpi).toHaveAttribute('data-status', 'editing');
-    await panel.getByTestId('ai-proposal-solution').getByRole('button', { name: 'Discard' }).click();
-    await expect(panel.getByTestId('ai-proposal-solution')).toHaveAttribute('data-status', 'discarded');
-    await noJapanese(page);
-    expect(await scan(page)).toEqual([]);
-
-    await panel.getByTestId('ai-review-apply').click();
-    await expect(panel.getByTestId('ai-review-notice')).toContainText('Applied 2 proposals');
-    await expect(kpi).toHaveAttribute('data-status', 'applied');
-    await expect(panel.getByTestId('ai-applied')).toContainText('Edited by the e2e test');
-
-    // I-2: the screen shows a marker and the diff; the pack values themselves are not replaced.
-    await page.getByRole('button', { name: 'Close' }).click();
-    const notice = page.getByTestId('ai-applied-notice');
-    await expect(notice).toContainText('AI proposals applied (2)');
-    await notice.getByText('Show changes').click();
-    await expect(notice.locator('[data-component="kpi"]')).toContainText('Edited by the e2e test');
-    await expect(notice.locator('[data-component="kpi"] del')).toContainText('None');
-    await noJapanese(page);
-    expect(await scan(page)).toEqual([]);
-    await page.goto('/#/plan');
-    await expect(notice).toHaveCount(0);
-    await page.goto('/#/');
-    await expect(notice).toBeVisible();
-    await page.getByTestId('ai-review-button').click();
-
-    await panel.getByTestId('ai-review-undo').click();
-    await expect(panel.getByTestId('ai-review-notice')).toContainText('undone');
-    await expect(panel.getByTestId('ai-applied')).toHaveCount(0);
-    await expect(kpi).toHaveAttribute('data-status', 'editing');
-    await expect(kpi.getByRole('textbox')).toHaveValue('Edited by the e2e test');
-    await expect(page.getByTestId('ai-applied-notice')).toHaveCount(0);
-  });
-});
-
 test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
   test('search returns EntityRef links and chat answers are labelled mock', async ({ page }) => {
     await open(page, '/assistant', { lang: 'en' });
@@ -596,19 +618,13 @@ test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => 
       });
     }
 
-    test(`${lang} with the explain and review panels open`, async ({ page }) => {
+    test(`${lang} with the explain panel open`, async ({ page }) => {
       await open(page, '/plan', { lang });
       await page.getByTestId('ai-explain-button').click();
       await expect(page.getByTestId('ai-explain-panel').getByTestId('ai-mock-label')).toBeVisible();
       expect(await scan(page)).toEqual([]);
       if (lang === 'en') await noJapanese(page);
-      await page.keyboard.press('Escape');
-      await expect(page.getByTestId('ai-explain-panel')).toBeHidden();
-      await page.getByTestId('ai-review-button').click();
-      await page.getByTestId('ai-review-run').click();
-      await expect(page.getByTestId('ai-proposal-initiative')).toBeVisible();
-      expect(await scan(page)).toEqual([]);
-      if (lang === 'en') await noJapanese(page);
+      await expect(page.getByTestId('ai-review-button')).toHaveCount(0);
     });
   }
 });

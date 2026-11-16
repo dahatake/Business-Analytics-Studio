@@ -8,9 +8,8 @@ import { useI18n } from '../../i18n/index.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
-import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { reasonKey } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
-import { useAiSettings } from '../ai/settingsStore.ts';
 import { batchSourceStamp } from './batchDraft.ts';
 import { evaluateStep, normalizeDeliverables, resultKey, STEP_DEFS, todoKey } from './deliverables.ts';
 import { Refs, todoHref, useCheckContext } from './deliverablesUi.tsx';
@@ -29,7 +28,6 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const ctx = useCheckContext();
   const scope = useCurrentScope();
   const audience = useSettings((s) => s.audience);
-  const settings = useAiSettings();
   const close = useProjTransient((s) => s.closeResolution);
   const uid = useId();
   const [initialTarget] = useState(() => ({ scope, audience, lang }));
@@ -43,7 +41,6 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const [cancelled, setCancelled] = useState(false);
   const running = useRef(false);
   const controller = useRef<AbortController | null>(null);
-  const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
   const step = Object.values(STEP_DEFS).find((def) => def.todos.some((todo) => todo.id === todoId))!.step;
   const input: ResolutionInput = { step, ctx, lang, audience, todoId };
   const result = resolutionTodo(input);
@@ -86,7 +83,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
     setError(null);
     setCancelled(false);
     // Keep the current choices (and the reviewer's own text) until a new proposal actually replaces them.
-    setProgress({ stage: 'confirm' });
+    setProgress({ stage: 'generate', startedAt: Date.now() });
     try {
       const stamp = batchSourceStamp();
       const options = repairOptions(input);
@@ -94,13 +91,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       const check = preflight(request);
       if (!check.allowed) throw new AiLiveError(check.reasons, check.reasons.map((reason) => t(reasonKey(reason))).join(' '), check.budget);
       if (request.prompt.length + check.context.length > 32_000) throw new Error(t('dlv.draft.tooLarge'));
-      const decision = await confirmLive();
-      if (!decision.ok || abort.signal.aborted) {
-        setCancelled(true);
-        return;
-      }
       assertStamp(stamp);
-      setProgress({ stage: 'generate', startedAt: Date.now() });
       const proposal = await requestResolution(request, options, abort.signal);
       if (abort.signal.aborted) {
         setCancelled(true);
@@ -258,7 +249,6 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
             {progress?.stage === 'generate' && <Button onClick={() => controller.current?.abort()}>{t('dlv.batch.stop')}</Button>}
             <Button disabled={busy} onClick={close}>{t('dlv.batch.close')}</Button>
           </DialogActions>
-          {confirmDialog}
         </DialogBody>
       </DialogSurface>
     </Dialog>

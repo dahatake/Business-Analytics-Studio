@@ -152,8 +152,8 @@ describe('FR-121〜FR-123 research cache', () => {
     expect(c.sources.map((s) => s.id)).toEqual(['workiq', 'web', 'llm', 'sample']);
     for (const s of c.sources.slice(0, 3)) {
       expect(s.status).toBe('blocked');
-      expect(s.reason).toMatch(/C-03/);
       expect(s.reason).toMatch(/C-07/);
+      expect(s.reason).not.toMatch(/C-03/);
     }
     expect(c.usedSample).toBe(true);
     expect(c.fetchedAt).toMatch(ISO_WITH_OFFSET);

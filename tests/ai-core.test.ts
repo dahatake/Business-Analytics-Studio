@@ -1,52 +1,31 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { C03_TABLE, isApproved, AI_LIMITS, PER_USE_LIMITS, type AiUse, type UseApproval } from '../src/ai/policy.ts';
+import { AI_USES, AI_LIMITS, PER_USE_LIMITS } from '../src/ai/policy.ts';
 import {
   checkBudget, jstDay, jstMonth, estimateTokens, estimateCostJpy, actualCostJpy, parseUnitPrices, partitionLedger, ledgerCutoffMonth,
   type UsageRecord,
 } from '../src/ai/budget.ts';
 import { evaluateGate } from '../src/ai/gate.ts';
 import { selectOutbound } from '../src/ai/redact.ts';
-import { aiComplete, preflight, readLedger, registerMock, setLiveTransport, setRuntimeSettingsProvider, isUseApproved, type LiveCall } from '../src/ai/client.ts';
+import { aiComplete, preflight, readLedger, registerMock, setLiveTransport, setRuntimeSettingsProvider, type LiveCall } from '../src/ai/client.ts';
 import { loaded } from '../src/data/pack.ts';
 
 const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'explain', estimatedInputTokens: 10, maxOutputTokens: 100, estimatedCostJpy: 1 });
-const allTrue = { liveEnabled: true, userConfirmed: true, configured: true, budget: okBudget, personCount: 0, personConfirmed: true };
+const allTrue = { liveEnabled: true, sendConsent: true, configured: true, budget: okBudget };
 
-describe('C-03 table (D-1: staged approval)', () => {
-  it('approves the specified uses and providers; every other use stays blocked even with every switch on', () => {
-    const approved = (Object.keys(C03_TABLE) as AiUse[]).filter((u) => isApproved(C03_TABLE[u]));
-    expect(approved).toEqual(['recommend', 'explain', 'connectionTest', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief', 'strategyOverview']);
-    expect(C03_TABLE.explain.provider).toBe('foundry');
-    expect(C03_TABLE.recommend.provider).toEqual(['foundry', 'copilotSdk']);
-    expect(C03_TABLE.packBuild.provider).toEqual(['foundry', 'copilotSdk']);
-    expect(C03_TABLE.packBuild.costCapJpy).toBe(100_000);
-    for (const use of Object.keys(C03_TABLE) as AiUse[]) {
-      const d = evaluateGate({ use, ...allTrue });
-      expect(d.allowed, use).toBe(approved.includes(use));
-      if (!approved.includes(use)) expect(d.reasons).toEqual(['c03NotApproved']);
+describe('AI send gate', () => {
+  it('uses the same global consent gate for every AI use', () => {
+    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true }));
+    for (const use of AI_USES) {
+      expect(preflight({ use, lang: 'en', prompt: '' }).allowed, use).toBe(true);
     }
-    // The row also decides the provider: "explain" is never sent to Copilot.
-    expect(evaluateGate({ use: 'explain', provider: 'copilotSdk', ...allTrue }).reasons).toEqual(['c03NotApproved']);
-    expect(evaluateGate({ use: 'packBuild', provider: 'copilotSdk', ...allTrue }).allowed).toBe(true);
-    expect(evaluateGate({ use: 'alignmentProposal', provider: 'copilotSdk', ...allTrue }).allowed).toBe(true);
-    expect(evaluateGate({ use: 'alignmentProposal', provider: 'foundry', ...allTrue, userConfirmed: false }).reasons).toEqual(['notConfirmed']);
-    expect(isUseApproved('explain')).toBe(true);
-    expect(isUseApproved('chat')).toBe(false);
   });
 
-  it('every other condition is still required for the approved row', () => {
-    expect(evaluateGate({ use: 'explain', ...allTrue }).allowed).toBe(true);
-    expect(evaluateGate({ use: 'explain', ...allTrue, liveEnabled: false }).reasons).toEqual(['liveDisabled']);
-    expect(evaluateGate({ use: 'explain', ...allTrue, userConfirmed: false }).reasons).toEqual(['notConfirmed']);
-    expect(evaluateGate({ use: 'explain', ...allTrue, configured: false }).reasons).toEqual(['notConfigured']);
-    expect(evaluateGate({ use: 'explain', ...allTrue, provider: 'foundry' }).allowed).toBe(true);
-    expect(evaluateGate({ use: 'packBuild', ...allTrue, provider: 'copilotSdk' }).allowed).toBe(true);
-    expect(evaluateGate({ use: 'explain', ...allTrue, personCount: 2, personConfirmed: false }).reasons).toEqual(['personNotConfirmed']);
-  });
-
-  it('a fictitious approval of another row works the same way (the table is the only switch)', () => {
-    const approved: UseApproval = { provider: 'foundry', data: 'x', enableCondition: 'x', costCapJpy: 1000, openQuestions: [] };
-    expect(evaluateGate({ use: 'chat', ...allTrue }, { ...C03_TABLE, chat: approved }).allowed).toBe(true);
+  it('requires live mode, saved consent, a configured provider and budget', () => {
+    expect(evaluateGate(allTrue).allowed).toBe(true);
+    expect(evaluateGate({ ...allTrue, liveEnabled: false }).reasons).toEqual(['liveDisabled']);
+    expect(evaluateGate({ ...allTrue, sendConsent: false }).reasons).toEqual(['notConfirmed']);
+    expect(evaluateGate({ ...allTrue, configured: false }).reasons).toEqual(['notConfigured']);
+    expect(evaluateGate({ ...allTrue, budget: { ...okBudget, allowed: false } }).reasons).toEqual(['budget']);
   });
 });
 
@@ -54,13 +33,13 @@ describe('budget guard (PARAM-113〜119, D-3)', () => {
   it('strategy optimization checks the provider-wide 10,000 JPY ceiling and the lower app ceiling', () => {
     localStorage.clear();
     const now = new Date('2026-11-16T00:00:00Z');
-    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true, monthlyBudgetJpy: 100_000 }));
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 100_000 }));
     localStorage.setItem('bas.ai.ledger', JSON.stringify([{ at: '2026-11-01T00:00:00Z', use: 'packBuild', provider: 'foundry', inputTokens: 0, outputTokens: 0, costJpy: 10_001 }]));
-    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x', userConfirmed: true }, now).allowed).toBe(false);
-    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true, monthlyBudgetJpy: 100_000 }));
-    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x', userConfirmed: true }, now).allowed).toBe(true);
-    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true, monthlyBudgetJpy: 1000 }));
-    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x', userConfirmed: true }, now).allowed).toBe(false);
+    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x' }, now).allowed).toBe(false);
+    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 100_000 }));
+    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x' }, now).allowed).toBe(true);
+    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 1000 }));
+    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x' }, now).allowed).toBe(false);
     localStorage.clear();
     setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
   });
@@ -138,7 +117,7 @@ describe('budget guard (PARAM-113〜119, D-3)', () => {
 });
 
 describe('outbound selection (D-2: internal may be sent)', () => {
-  it('includes internal items and reports how many, plus persons for FR-219', () => {
+  it('includes internal and person items under the global request consent', () => {
     const sel = selectOutbound(loaded.pack.entities, loaded.byId);
     expect(sel.included).toHaveLength(loaded.pack.entities.length);
     expect(sel.excludedIds).toEqual([]);
@@ -166,8 +145,8 @@ describe('AI client', () => {
   const kpis = () => loaded.pack.entities.filter((e) => e.kind === 'kpi');
 
   it('sends "explain" live only when every condition holds, and records the actual cost', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
-    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis(), userConfirmed: true });
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis() });
     expect(r.mode).toBe('live');
     expect(calls).toHaveLength(1);
     expect(calls[0]!.maxOutputTokens).toBe(1500);
@@ -178,23 +157,23 @@ describe('AI client', () => {
 
   it('falls back to a labelled mock without calling the transport when any condition fails', async () => {
     registerMock('explain', (q, ctx) => `mock:${q.lang}:${ctx.split('\n').length}`);
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: null }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: false, configured: true, prices: null }));
     const noConfirmation = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis() });
     expect(noConfirmation.mode).toBe('mock');
     expect(noConfirmation.blockedReasons).toEqual(['notConfirmed']);
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
-    const chat = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi', userConfirmed: true });
-    expect(chat.blockedReasons).toContain('c03NotApproved');
-    expect(calls).toHaveLength(0);
-    expect(readLedger()).toHaveLength(0);
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    const chat = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi' });
+    expect(chat.mode).toBe('live');
+    expect(calls).toHaveLength(1);
+    expect(readLedger()).toHaveLength(1);
   });
 
-  it('uses the one-time AI-settings consent for approved data, including person data, and blocks sending without it', async () => {
+  it('uses the one-time AI-settings consent for all request data, including person data', async () => {
     const entities = loaded.pack.entities.filter((entity) => entity.kind === 'person').slice(0, 1);
     setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true, sendConsent: false }));
-    const blocked = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities, userConfirmed: true, personConfirmed: true });
+    const blocked = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities });
     expect(blocked.mode).toBe('mock');
-    expect(blocked.blockedReasons).toEqual(['notConfirmed', 'personNotConfirmed']);
+    expect(blocked.blockedReasons).toEqual(['notConfirmed']);
     expect(calls).toHaveLength(0);
 
     setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true, sendConsent: true }));
@@ -204,29 +183,29 @@ describe('AI client', () => {
   });
 
   it('stops sending once the monthly budget is used up (0 transport calls)', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, monthlyBudgetJpy: 1, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 1, prices: { inputPerM: 300, outputPerM: 1200 } }));
     localStorage.setItem('bas.ai.ledger', JSON.stringify([{ at: new Date().toISOString(), use: 'review', inputTokens: 0, outputTokens: 0, costJpy: 1 }]));
-    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', userConfirmed: true });
+    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain' });
     expect(r.blockedReasons).toContain('budget');
     expect(calls).toHaveLength(0);
   });
 
   it('a failing live call falls back to the mock (FR-283)', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
     setLiveTransport(async () => { throw new Error('network'); });
-    const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: '説明', userConfirmed: true });
+    const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: '説明' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(['liveFailed']);
     expect(readLedger()).toHaveLength(0);
   });
 
-  it('preflight reports content and estimated cost for the confirmation dialog', () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+  it('preflight reports request content and estimated cost without requiring per-send confirmation', () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
     const pf = preflight({ use: 'explain', lang: 'en', prompt: 'Explain', entities: loaded.pack.entities });
     expect(pf.internalCount).toBeGreaterThan(0);
     expect(pf.personCount).toBe(10);
     expect(pf.estimatedCostJpy).toBeGreaterThan(0);
-    expect(pf.reasons).toEqual(['notConfirmed', 'personNotConfirmed']);
+    expect(pf.reasons).toEqual([]);
   });
 
   it('shares a use between modules with matchers (mock registry)', async () => {

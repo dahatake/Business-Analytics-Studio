@@ -73,8 +73,8 @@ function newTargetProblem(companyName: string, projectName: string): 'duplicateP
 
 /**
  * FR-311 (D-12): "Create the customer pack with Copilot". Required and optional inputs (missing required ones are listed
- * from the start), readiness of the configured LLM with the AI settings one click away, the estimate and the
- * confirmations C-03 requires, then a progress bar over the stages; the verified pack is saved with everything that
+ * from the start), readiness of the configured LLM with the AI settings one click away, the estimate and run-specific
+ * opt-ins, then a progress bar over the stages; the verified pack is saved with everything that
  * went into it (inputs, retrieved sources, generation record, cost) and can be opened.
  */
 export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProject }: {

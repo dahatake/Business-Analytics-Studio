@@ -19,8 +19,8 @@ import {
 } from './discussion.ts';
 import { parseImport } from './exportFormat.ts';
 import { requestSuggestions, suggestionRequest } from './mocks.ts';
-import { preflight, type AiRequest, type AiResponse } from '../../ai/client.ts';
-import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
+import type { AiResponse } from '../../ai/client.ts';
+import { LiveNotice, MockNotice } from '../ai/AiCommon.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { DiscussionRecord, RecordKind, Theme } from './model.ts';
 import {
@@ -287,8 +287,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
   usePackVersion((s) => s.version);
   const cap = useMediaCapability();
   const live = useAiSettings((s) => liveReady(s));
-  const { dialog: liveDialog, confirmLive } = useLiveConfirm();
-  const [aiOutcome, setAiOutcome] = useState<AiResponse | 'cancelled' | null>(null);
+  const [aiOutcome, setAiOutcome] = useState<AiResponse | null>(null);
   const idx = theme ? ordered.findIndex((o) => o.theme.id === theme.id) : -1;
   useEffect(() => {
     setEditingTitle(false);
@@ -317,16 +316,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
     setAiOutcome(null);
     setBusy(true);
     try {
-      let send: AiRequest = req;
-      if (live) {
-        const pf = preflight(req);
-        // Blocked for a reason the saved consent cannot fix (budget, interval…): answer with the mock.
-        if (pf.allowed) {
-          const decision = await confirmLive();
-          if (!decision.ok) return setAiOutcome('cancelled');
-        }
-      }
-      const { response, lines } = await requestSuggestions(send);
+      const { response, lines } = await requestSuggestions(req);
       setAiOutcome(response);
       if (!lines.length) return;
       // Re-read: the theme may have changed while the confirmation was open.
@@ -476,8 +466,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
                     </span>
                   )}
                   {kind === 'suggestion' && busy && <Spinner size="tiny" label={t('ai.loading')} />}
-                  {kind === 'suggestion' && aiOutcome === 'cancelled' && <p role="status" data-testid="proj-ai-cancelled">{t('ai.send.cancelled')}</p>}
-                  {kind === 'suggestion' && aiOutcome && aiOutcome !== 'cancelled' && (
+                  {kind === 'suggestion' && aiOutcome && (
                     <div role="status" data-testid="proj-ai-outcome">
                       {aiOutcome.mode === 'live'
                         ? <LiveNotice costJpy={aiOutcome.costJpy ?? null} usage={aiOutcome.usage} />
@@ -502,7 +491,6 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
           {editMode && <AddRecordForm theme={theme} />}
         </div>
       </div>
-      {liveDialog}
     </Panel>
   );
 }

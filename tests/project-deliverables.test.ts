@@ -187,9 +187,9 @@ describe('Copilot task repairs', () => {
   it('uses the live gate without a mock fallback and reports invalid provider responses', async () => {
     const input = missingLinks();
     const options = repairOptions(input);
-    const request = { ...resolutionRequest(input, options), userConfirmed: true, personConfirmed: true };
+    const request = { ...resolutionRequest(input, options) };
     writeLedger([]);
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, provider: 'copilotSdk' }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, provider: 'copilotSdk' }));
     const transport = vi.fn(async () => ({ text: JSON.stringify(response([choice('a', [options[0]!.id]), choice('b', [])])), inputTokens: 100, outputTokens: 100 }));
     setLiveTransport(transport);
     const result = await requestResolution(request, options, new AbortController().signal);
@@ -586,7 +586,8 @@ describe('Draft with Copilot', () => {
     setLiveTransport(send);
     await expect(requestDeliverableDraft(input, draftRequest(input))).rejects.toThrow('notConfirmed');
     expect(send).not.toHaveBeenCalled();
-    await expect(requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true })).rejects.toThrow('offline');
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    await expect(requestDeliverableDraft(input, { ...draftRequest(input) })).rejects.toThrow('offline');
     expect(send).toHaveBeenCalledTimes(1);
   });
 
@@ -598,7 +599,7 @@ describe('Draft with Copilot', () => {
         ...STEP_DEFS.asis.fields.map((f) => `### ${f.id}\nfield`),
         ...STEP_DEFS.asis.todos.map((todo) => `### task-${todo.id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n検証: 記録を照合\n影響: 要試算`),
       ].join('\n');
-      setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true }));
+      setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true }));
       setLiveTransport((call) => new Promise((resolve, reject) => {
         setTimeout(() => {
           if (call.timeoutMs < 75_000) reject(Object.assign(new Error('relay 504 timeout'), { status: 504 }));
@@ -606,7 +607,7 @@ describe('Draft with Copilot', () => {
         }, Math.min(call.timeoutMs, 75_000));
       }));
       const result = expect(requestDeliverableDraft(input, {
-        ...draftRequest(input), userConfirmed: true, personConfirmed: true,
+        ...draftRequest(input),
       })).resolves.toMatchObject({ response: { mode: 'live' }, fields: { problem: 'field' } });
       await Promise.all([result, vi.advanceTimersByTimeAsync(75_000)]);
     } finally {
@@ -615,7 +616,7 @@ describe('Draft with Copilot', () => {
   });
 
   it('accepts complete live sections for every step and rejects incomplete responses', async () => {
-    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true }));
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
     for (const step of IMPROVEMENT_STEPS) {
       writeLedger([]);
       const input = { step, ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
@@ -624,7 +625,7 @@ describe('Draft with Copilot', () => {
         ...STEP_DEFS[step].todos.map((todo) => `### task-${todo.id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n検証: 記録を照合\n影響: 要試算`),
       ].join('\n');
       setLiveTransport(async () => ({ text: sections, inputTokens: 10, outputTokens: 10 }));
-      const result = await requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true });
+      const result = await requestDeliverableDraft(input, { ...draftRequest(input) });
       expect(result.response.mode).toBe('live');
       expect(Object.keys(result.tasks)).toHaveLength(STEP_DEFS[step].todos.length);
       expect(Object.keys(result.fields)).toHaveLength(STEP_DEFS[step].fields.length);
@@ -632,14 +633,14 @@ describe('Draft with Copilot', () => {
     writeLedger([]);
     const input = { step: 'asis', ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
     setLiveTransport(async () => ({ text: '### problem\nincomplete', inputTokens: 10, outputTokens: 10 }));
-    await expect(requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true })).rejects.toThrow('必要な項目がありません');
+    await expect(requestDeliverableDraft(input, { ...draftRequest(input) })).rejects.toThrow('必要な項目がありません');
     writeLedger([]);
     const incompleteTasks = [
       ...STEP_DEFS.asis.fields.map((f) => `### ${f.id}\nfield`),
       ...STEP_DEFS.asis.todos.map((todo) => `### task-${todo.id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n影響: 要試算`),
     ].join('\n');
     setLiveTransport(async () => ({ text: incompleteTasks, inputTokens: 10, outputTokens: 10 }));
-    await expect(requestDeliverableDraft(input, { ...draftRequest(input), userConfirmed: true, personConfirmed: true })).rejects.toThrow('task-define-causes');
+    await expect(requestDeliverableDraft(input, { ...draftRequest(input) })).rejects.toThrow('task-define-causes');
   });
 
   it('keeps task sections separate and links missing causes to the issue', () => {

@@ -1,19 +1,19 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
 import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { DEFAULT_LIVE_TIMEOUT_MS, preflight } from '../../ai/client.ts';
+import { DEFAULT_LIVE_TIMEOUT_MS } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings, type Audience } from '../../state/settings.ts';
 import { Panel } from '../../ui/Panel.tsx';
-import { LiveNotice, MockNotice, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { LiveNotice, MockNotice } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { AppCheckContext } from './deliverables.ts';
 import { stepBriefContext } from './overviewModel.ts';
 import { stepDashboard, type StepDashboard } from './stepDashboard.ts';
-import { briefEntities, buildStepBrief, factText, requestStepBrief, setStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
+import { buildStepBrief, factText, requestStepBrief, setStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
 
 /** SCQA and the pyramid below the answer; shared by the rule-based and the generated brief. */
 export function BriefBody({ content, brief, prefix }: { content: BriefContent; brief?: StepBrief; prefix: string }) {
@@ -79,26 +79,14 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
   const key = `${audience}:${d.step}`;
   const generated = useStepBriefs((s) => s.value[key]);
   const live = useAiSettings((s) => liveReady(s));
-  const { dialog, confirmLive } = useLiveConfirm();
   const [progress, setProgress] = useState<{ stage: AiStage; startedAt?: number } | null>(null);
   const busy = progress !== null;
   const [cancelled, setCancelled] = useState(false);
 
   const generate = async () => {
-    setProgress({ stage: live ? 'confirm' : 'generate', startedAt: live ? undefined : Date.now() });
+    setProgress({ stage: 'generate', startedAt: Date.now() });
     setCancelled(false);
     try {
-      if (live) {
-        const pf = preflight({ use: 'stepBrief', lang, prompt: '', entities: briefEntities(brief, briefCtx) });
-        // Blocked for a reason the saved consent cannot fix (budget, interval…): keep the deterministic brief.
-        if (pf.allowed) {
-          const decision = await confirmLive();
-          if (!decision.ok) {
-            setCancelled(true);
-            return;
-          }
-        }
-      }
       if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
         setCancelled(true);
         return;
@@ -181,7 +169,6 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
           )}
         </div>
       </div>
-      {dialog}
     </Panel>
   );
 }

@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { C03_TABLE, isApproved, type AiUse, type UseApproval } from '../src/ai/policy.ts';
+import { AI_USES } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loaded } from '../src/data/pack.ts';
 import { SecretVault, protectorWorks, windowsDpapi, type KeyProtector } from '../server/vault.ts';
@@ -437,13 +437,12 @@ describe('relay secrets and connection', () => {
     expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
   });
 
-  it('honors outbound/C-03 gates, cancellation and repeated-send limits for diagnostics', async () => {
+  it('honors outbound, cancellation and repeated-send limits for diagnostics', async () => {
     vault.set('foundryKey', FAKE_KEY);
     let sent = 0;
     const fetch: typeof globalThis.fetch = async (...args) => { sent++; return verifiedReply(...args); };
     const lastCall = new Map<string, number>();
     expect((await call(req('PUT', '/relay/connection', c), { fetch, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['other.example'] } })).body).toEqual({ error: 'hostNotAllowed' });
-    expect((await call(req('PUT', '/relay/connection', c), { fetch, table: { ...C03_TABLE, connectionTest: C03_TABLE.chat } })).status).toBe(403);
     expect((await call(req('PUT', '/relay/connection', c), { fetch, signal: AbortSignal.abort() })).status).toBe(499);
     expect(sent).toBe(0);
     expect((await call(req('PUT', '/relay/connection', c), { fetch, lastCall })).status).toBe(200);
@@ -621,21 +620,18 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect(Object.keys(sent).sort()).toEqual(['max_completion_tokens', 'messages']);
   });
 
-  it('refuses every unapproved use without contacting the provider', async () => {
-    for (const use of (Object.keys(C03_TABLE) as AiUse[]).filter((u) => !isApproved(C03_TABLE[u]))) {
-      const r = await call(req('POST', '/relay/ai', aiBody({ use })), ctx());
-      expect(r, use).toEqual({ status: 403, body: { allowed: false, reasons: ['c03NotApproved'] } });
+  it('accepts every declared AI use and rejects unknown uses without contacting the provider', async () => {
+    for (const use of AI_USES.filter((value) => value !== 'connectionTest')) {
+      expect((await call(req('POST', '/relay/ai', aiBody({ use })), ctx())).status, use).toBe(200);
     }
     expect((await call(req('POST', '/relay/ai', aiBody({ use: 'nope' })), ctx())).status).toBe(400);
-    expect(seen).toHaveLength(0);
+    expect(seen).toHaveLength(AI_USES.length - 1);
   });
 
-  it('server-side decision: approved rows only, and only with a complete connection', () => {
-    const approved: UseApproval = { provider: 'foundry', data: 'x', enableCondition: 'x', costCapJpy: 1, openQuestions: [] };
-    expect(relayAiDecision('explain', true)).toEqual([]);
-    expect(relayAiDecision('explain', false)).toEqual(['notConfigured']);
-    expect(relayAiDecision('chat', true)).toEqual(['c03NotApproved']);
-    expect(relayAiDecision('chat', true, { ...C03_TABLE, chat: approved })).toEqual([]);
+  it('server-side decision: only requires a complete connection', () => {
+    expect(relayAiDecision(true)).toEqual([]);
+    expect(relayAiDecision(false)).toEqual(['notConfigured']);
+    expect(relayAiDecision(false)).toEqual(['notConfigured']);
   });
 
   it('accepts known fields and bounded sizes only', async () => {
@@ -732,13 +728,9 @@ describe('D-12 packBuild through the relay', () => {
     mode = 'ok';
   });
 
-  it('C-03: packBuild is approved for Foundry and Copilot; explain stays Foundry only', () => {
-    expect(relayAiDecision('packBuild', true, C03_TABLE, 'foundry')).toEqual([]);
-    expect(relayAiDecision('packBuild', true, C03_TABLE, 'copilotSdk')).toEqual([]);
-    expect(relayAiDecision('explain', true, C03_TABLE, 'copilotSdk')).toEqual(['c03NotApproved']);
-    expect(relayAiDecision('packBuild', false, C03_TABLE, 'copilotSdk')).toEqual(['notConfigured']);
-    expect(relayAiDecision('recommend', true, C03_TABLE, 'foundry')).toEqual([]);
-    expect(relayAiDecision('recommend', true, C03_TABLE, 'copilotSdk')).toEqual([]);
+  it('allows each AI use when the provider is configured', () => {
+    expect(relayAiDecision(true)).toEqual([]);
+    expect(relayAiDecision(false)).toEqual(['notConfigured']);
   });
 
   it('D-20 recommend: suggestion instructions for both providers; prompt + context capped at 32,000 characters', async () => {
@@ -823,8 +815,7 @@ describe('D-12 packBuild through the relay', () => {
     expect(calls[0]!.model).toBe('gpt-5');
     expect(calls[0]!.system).toContain('JSON');
     expect(seen).toHaveLength(0);
-    expect((await call(req('POST', '/relay/ai', { ...packBody({ provider: 'copilotSdk' }), use: 'explain', maxOutputTokens: 100, timeoutMs: 1000 }), { copilot: service })).body)
-      .toEqual({ allowed: false, reasons: ['c03NotApproved'] });
+    expect((await call(req('POST', '/relay/ai', { ...packBody({ provider: 'copilotSdk' }), use: 'explain', maxOutputTokens: 100, timeoutMs: 1000 }), { copilot: service })).status).toBe(200);
     const st = await call(req('POST', '/relay/copilot/status', {}), { copilot: service });
     expect(st.body).toMatchObject({ authenticated: true, login: 'octocat', settings: { model: 'gpt-5' } });
     expect((await call(req('DELETE', '/relay/copilot'))).body).toEqual({ copilot: null });
@@ -847,7 +838,6 @@ describe('D-12 packBuild through the relay', () => {
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig })).status).toBe(200);
     seen = [];
-    expect((await call(req('POST', '/relay/ai', body), { config: testConfig, table: { ...C03_TABLE, alignmentProposal: C03_TABLE.chat } })).status).toBe(403);
     expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 3001 }), { config: testConfig })).status).toBe(400);
     expect(seen).toHaveLength(0);
     expect((await call(req('POST', '/relay/ai', body), { config: testConfig })).status).toBe(200);

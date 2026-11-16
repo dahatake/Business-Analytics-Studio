@@ -57,15 +57,16 @@ describe('ledger attribution', () => {
   });
 
   it('a live call records scope, stage and provider and returns the reported usage; mock answers record nothing', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
     setLiveTransport(async () => ({ text: 'ok', inputTokens: 1200, outputTokens: 340 }));
-    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', userConfirmed: true, scope: 'pj-x', stage: 'foundation' });
+    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', scope: 'pj-x', stage: 'foundation' });
     expect(r.usage).toEqual({ inputTokens: 1200, outputTokens: 340 });
     expect(readLedger()).toEqual([expect.objectContaining({ use: 'explain', scope: 'pj-x', stage: 'foundation', inputTokens: 1200, outputTokens: 340 })]);
     expect(readLedger()[0]!.provider).toBeDefined();
     expect(readLedger()[0]!.estimated).toBeUndefined();
 
-    const mock = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi', userConfirmed: true, scope: 'pj-x' });
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: false, configured: true }));
+    const mock = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi', scope: 'pj-x' });
     expect(mock.mode).toBe('mock');
     expect(mock.usage).toBeUndefined();
     expect(readLedger()).toHaveLength(1);
@@ -81,9 +82,9 @@ describe('ledger attribution', () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
       new Response(JSON.stringify(url === '/relay/session' ? { token: 'test' } : { text: 'ok', inputTokens: null, outputTokens: null }), { status: 200 }));
     try {
-      setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, configured: true, prices: null }));
+      setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true, prices: null }));
       setLiveTransport(relayTransport);
-      const r = await aiComplete({ use: 'packBuild', lang: 'en', prompt: 'x', userConfirmed: true, scope: 'pj-x' });
+      const r = await aiComplete({ use: 'packBuild', lang: 'en', prompt: 'x', scope: 'pj-x' });
       expect(r).toMatchObject({ mode: 'live', usage: { inputTokens: null, outputTokens: null }, costJpy: null });
       expect(readLedger()).toEqual([expect.objectContaining({ scope: 'pj-x', inputTokens: null, outputTokens: null, costJpy: null })]);
     } finally {

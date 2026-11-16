@@ -375,7 +375,7 @@ describe('FR-093 / FR-094 Markdown export', () => {
 });
 
 describe('FR-090 / FR-099 / diagnostics helpers', () => {
-  it('handwriting recognition answers with a labelled mock through aiComplete', async () => {
+  it('handwriting recognition returns a local mock while Azure AI Vision is unavailable', async () => {
     const strokes = seedStrokes(3);
     const en = await recognizeHandwriting(strokes, 'en');
     expect(en.mode).toBe('mock');

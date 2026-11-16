@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Badge, MessageBar, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
 import type { TokenCount } from '../../ai/client.ts';
 import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
@@ -139,16 +139,4 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
       </tfoot>
     </table>
   );
-}
-
-export interface LiveDecision {
-  ok: boolean;
-}
-
-type LiveConfirmFn = () => Promise<LiveDecision>;
-
-export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmFn } {
-  const consent = useAiSettings((s) => s.sendConsent);
-  const confirmLive = useCallback<LiveConfirmFn>(async () => ({ ok: consent }), [consent]);
-  return { dialog: null, confirmLive };
 }

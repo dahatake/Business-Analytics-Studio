@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Field, Select, Spinner } from '@fluentui/react-components';
 import { Pause20Regular, Play20Regular, Video20Regular } from '@fluentui/react-icons';
-import { aiComplete } from '../../ai/client.ts';
 import { getEntity } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useReducedMotion } from '../../state/motion.ts';
@@ -12,7 +11,7 @@ import { useUseCases } from '../usecases/store.ts';
 import { MockNotice } from './AiCommon.tsx';
 import {
   runStoryGeneration, sourceFromUseCase, sourcesFromSolutions,
-  storyInputTokens, storyPrompt, storyState, useStories, type StoryEstimate, type StoryScene, type StoryVideo,
+  storyInputTokens, storyMock, storyPrompt, storyState, useStories, type StoryEstimate, type StoryScene, type StoryVideo,
 } from './story.ts';
 
 /** HTML/CSS/SVG playback of a storyboard (no video file). Never autoplays; reduced motion shows all scenes statically. */
@@ -78,11 +77,10 @@ export function StoryVideoSection() {
   const [selected, setSelected] = useState('');
   const source = sources.find((s) => s.id === selected) ?? sources[0];
   const [busy, setBusy] = useState(false);
-  const [reasons, setReasons] = useState<string[]>([]);
   const cancelled = useRef(false);
 
   if (!source) return <p>{t('ai.story.noSource')}</p>;
-  // This use is mock-only under C-03 and does not incur provider charges.
+  // Keep this deterministic until the story-specific cost cap can be estimated before sending.
   const estimate: StoryEstimate = { ok: true, inputTokens: storyInputTokens(source, lang), perCallJpy: 0, totalJpy: 0 };
   const video = stories[source.id];
   const state = busy ? 'generating' : storyState(video, source);
@@ -92,10 +90,7 @@ export function StoryVideoSection() {
     cancelled.current = false;
     setBusy(true);
     const result = await runStoryGeneration(estimate, async (step) => {
-      const res = await aiComplete({ use: 'storyVideo', lang, prompt: storyPrompt(source, lang, step) });
-      setReasons(res.blockedReasons);
-      // Mock answers are free and do not enter the provider usage ledger.
-      return res.text && res.text !== '[]' ? { text: res.text, costJpy: estimate.perCallJpy } : null;
+      return { text: storyMock(storyPrompt(source, lang, step)), costJpy: estimate.perCallJpy };
     }, () => cancelled.current);
     let scenes: StoryScene[] = [];
     try {
@@ -138,7 +133,7 @@ export function StoryVideoSection() {
       {busy && <Spinner size="tiny" label={t('ai.loading')} />}
       {video && !busy && (
         <>
-          <MockNotice reasons={reasons}>
+          <MockNotice reasons={[]}>
             <p className="muted">{t('ai.story.spent', { calls: video.calls, spent: fmt.yen(Math.ceil(video.spentJpy)) })}</p>
             {video.status === 'aborted' && <p role="status">{t(`ai.story.abort.${video.abortReason ?? 'budget'}`)}</p>}
           </MockNotice>

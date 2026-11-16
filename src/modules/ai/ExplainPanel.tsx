@@ -3,19 +3,19 @@ import {
   Badge, Button, DrawerBody, DrawerHeader, DrawerHeaderTitle, OverlayDrawer, Spinner,
 } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
-import { aiComplete, preflight, readLedger, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { aiComplete, readLedger, type AiRequest, type AiResponse } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
-import { LiveNotice, MockNotice, useLiveConfirm } from './AiCommon.tsx';
+import { LiveNotice, MockNotice } from './AiCommon.tsx';
 import { buildExplanation, componentsForRoute, entitiesOfComponents } from './explain.ts';
 import { usageSummary } from './ledger.ts';
 import { liveReady, useAiSettings } from './settingsStore.ts';
 import { useAiPanels } from './uiStore.ts';
 
-type RunState = { status: 'idle' | 'loading' | 'cancelled' } | { status: 'done'; res: AiResponse };
+type RunState = { status: 'idle' | 'loading' } | { status: 'done'; res: AiResponse };
 
 /**
  * FR-274 / FR-277: "現状の説明" side panel. A saved AI-settings consent and enabled live connection allow
@@ -29,7 +29,6 @@ export function ExplainPanel() {
   const audience = useSettings((s) => s.audience);
   const budget = useAiSettings((s) => s.monthlyBudgetJpy);
   const live = useAiSettings((s) => liveReady(s));
-  const { dialog: liveDialog, confirmLive } = useLiveConfirm();
   const [state, setState] = useState<RunState>({ status: 'idle' });
   const runId = useRef(0);
 
@@ -43,23 +42,13 @@ export function ExplainPanel() {
     setState({ status: 'loading' });
     void (async () => {
       const ents = entitiesOfComponents(componentsForRoute(route.path));
-      const scope = t('ai.scope.screen', { path: route.path });
       const req: AiRequest = { use: 'explain', lang, prompt: t('ai.explain.prompt'), entities: ents };
       const finish = (res: AiResponse) => {
         if (id === runId.current) setState({ status: 'done', res });
       };
-      if (live) {
-        const pf = preflight(req);
-        // Blocked for a reason the saved consent cannot fix (budget, interval…): answer with the mock.
-        if (!pf.allowed) return finish(await aiComplete(req));
-        const decision = await confirmLive();
-        if (id !== runId.current) return;
-        if (!decision.ok) return setState({ status: 'cancelled' });
-        return finish(await aiComplete(req));
-      }
       finish(await aiComplete(req));
     })();
-  }, [open, route.path, lang, confirmLive, live, t]);
+  }, [open, route.path, lang, live, t]);
 
   const usage = usageSummary(readLedger(), new Date(), budget);
   const answeredLive = state.status === 'done' && state.res.mode === 'live';
@@ -88,7 +77,6 @@ export function ExplainPanel() {
               <span>{t('ai.explain.quota', { used: usage.todayCalls, limit: usage.dailyLimit })}</span>
             </p>
             {state.status === 'loading' && <Spinner size="tiny" label={t('ai.loading')} />}
-            {state.status === 'cancelled' && <p role="status">{t('ai.send.cancelled')}</p>}
             {state.status === 'done' && state.res.mode === 'live' && (
               <LiveNotice costJpy={state.res.costJpy ?? null} usage={state.res.usage}>
                 <p className="ai-answer" data-testid="ai-explain-answer">{state.res.text}</p>
@@ -119,7 +107,6 @@ export function ExplainPanel() {
               </ul>
             </section>
           </div>
-          {liveDialog}
         </DrawerBody>
       </OverlayDrawer>
     </>

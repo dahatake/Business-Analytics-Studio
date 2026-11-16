@@ -40,7 +40,7 @@ export interface AiSettingsState {
   authMethod: AuthMethod;
   /** FR-132: explicit enable of the real connection. Off by default. */
   liveEnabled: boolean;
-  /** D-25: one-time permission for approved AI uses and their outbound data, captured in AI settings. */
+  /** D-26: one-time permission for data included in AI requests, captured in AI settings. */
   sendConsent: boolean;
   speechEndpoint: string;
   speechRegion: string;

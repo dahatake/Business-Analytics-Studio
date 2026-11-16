@@ -91,7 +91,7 @@ export const inkJa = {
   'ink.hw.title': '手書き文字の認識',
   'ink.hw.running': '認識しています…',
   'ink.hw.mock': 'モック',
-  'ink.hw.blocked': '実際の認識サービス（Azure AI Vision）への接続は、外部サービスの利用条件（C-07・C-03）が決まるまで行いません。これは模擬の結果です。',
+  'ink.hw.blocked': 'Azure AI Vision の連携はこの版では利用できません。これは端末内で作成した模擬の結果です。',
   'ink.hw.addNote': '付箋にする',
   'ink.hw.mockText': '[モック] {count} 本の線を認識した模擬の文字です',
 

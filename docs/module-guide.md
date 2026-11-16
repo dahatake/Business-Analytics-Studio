@@ -15,7 +15,7 @@ Each feature module owns only its own files:
 | graph | `src/modules/graph/` | `graph.` | `/graph` → `GraphScreen.tsx` |
 | project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
 | usecases | `src/modules/usecases/` | `uc.` | `/usecases`, `/catalog` |
-| ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant`, `/ai-policy` (AI settings are one dialog, `AiSettingsDialog`, not a route) |
+| ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant` (`AiSettingsDialog` is the only settings surface; legacy `/ai-settings` redirects to Home and opens it) |
 | ops | `src/modules/ops/`, `scripts/`, `docs/integration-catalog.md` | `ops.` | `/integrations`, `/brand` |
 
 Also owned by each module: `src/i18n/modules/<prefix>.ja.ts` / `.en.ts`, tests named `tests/<module>*.test.ts`, E2E specs named `e2e/<module>*.spec.ts`, and an optional stylesheet `src/modules/<module>/<module>.css` imported by the module's own files.
@@ -38,7 +38,7 @@ Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/
 - **Motion:** honour `useReducedMotion()` from `src/state/motion.ts` (durations 0, no autoplay). CSS animations are disabled globally under `[data-motion='reduced']`.
 - **Accessibility:** WCAG 2.2 AA. Every interactive element is keyboard operable, has a name containing its visible text, and has a non-drag alternative (NFR-A11Y-004). Minimum target 24 px (PARAM-040). axe runs on every screen in both languages.
 - **Confidentiality:** respect `useSettings().audience`. For an external audience, hide `classification: 'internal'` items (see `isHidden` in `src/ui/cardSpecs.ts`).
-- **Generative AI:** call only `aiComplete()` from `src/ai/client.ts`. It enforces the C-03 gate (only approved rows can go live) and falls back to a registered mock otherwise. The UI must label mock and live answers. Never send data anywhere else.
+- **Generative AI:** call only `aiComplete()` from `src/ai/client.ts`. It enforces the shared consent, connection, and budget gates and falls back to a registered mock otherwise. The UI must label mock and live answers. Never send data anywhere else.
 - **Customer-pack data for a module:** read `loaded.pack.extensions?.<key>` and validate it with your own zod schema. Fall back to your demo data when the pack is the sample.
 - **Styling:** use Fluent tokens via CSS variables (`var(--colorNeutralForeground1)` etc.). Do not hard-code colours for text.
 
@@ -54,5 +54,5 @@ $env:BAS_PORT=<port>; $env:BAS_OUT='dist-<module>'; npx playwright test e2e/<mod
 
 - Live AI tests against a local stub provider run only with `$env:BAS_RELAY_TEST_OUTBOUND='1'` (relay settings: [relay-config.md](relay-config.md)).
 - Timing-sensitive tests are tagged `@perf` and run alone, serially (`playwright test --project=perf --workers=1`). Measurement tools are tagged `@measure` and are not part of `verify`.
-- Generative AI: only C-03 rows marked approved in `src/ai/policy.ts` can go live (currently `explain`). One-time send consent is captured in AI settings; `preflight()` checks send gates and `aiComplete()` sends; `registerMock(use, fn, when?)` takes an optional matcher so modules can share a use.
+- Generative AI: one-time send consent in AI settings covers data included in AI requests; `preflight()` checks shared send gates and technical limits, and `aiComplete()` sends; `registerMock(use, fn, when?)` takes an optional matcher so modules can share a use.
 - Fluent UI motion follows the app's reduced-motion setting through `MotionBehaviourProvider` in `App.tsx`; do not start your own JS animations without checking `useReducedMotion()`.

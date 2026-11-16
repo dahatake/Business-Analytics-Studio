@@ -121,7 +121,7 @@ describe('chat context (PARAM-123)', () => {
     const grounding = ['issue-lead-time', 'deal-tsubasa-cobot'].map((id) => loaded.byId.get(id)!);
     const r = await aiComplete({ use: 'chat', lang: 'en', prompt: chatPrompt('lead time?', turns), entities: grounding });
     expect(r.mode).toBe('mock');
-    expect(r.blockedReasons).toContain('c03NotApproved');
+    expect(r.blockedReasons).toContain('notConfirmed');
     expect(r.text).toContain('Long order-to-ship lead time');
     expect(r.text).toContain('Co-developed'); // internal deal: since D-2 a real model could receive it, so the mock may show it
     expect(r.text).toContain('last 5 pairs');
@@ -285,7 +285,6 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: 'x' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed']));
-    expect(r.blockedReasons).not.toContain('c03NotApproved'); // D-1: "explain" is approved
     expect(calls).toHaveLength(0);
   });
 
@@ -319,17 +318,17 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
 
   it('FR-311 aiLive never answers with a mock: a Copilot answer records reported tokens and unknown cost', async () => {
     writeLedger([]);
-    await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true })).rejects.toBeInstanceOf(AiLiveError);
+    await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x' })).rejects.toBeInstanceOf(AiLiveError);
     useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotStatus: null });
     const seenCalls: LiveCall[] = [];
     setLiveTransport(async (c) => { seenCalls.push(c); return { text: '{}', inputTokens: 10, outputTokens: 20, premiumRequests: 2 }; });
-    const r = await aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true, maxOutputTokens: 16000 });
+    const r = await aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', maxOutputTokens: 16000 });
     expect(r).toMatchObject({ costJpy: null, inputTokens: 10, outputTokens: 20 });
     expect(seenCalls[0]).toMatchObject({ use: 'packBuild', provider: 'copilotSdk', maxOutputTokens: 16000 });
     expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', costJpy: null, inputTokens: 10, outputTokens: 20 })]);
-    await expect(aiLive({ use: 'explain', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true })).rejects.toMatchObject({ reasons: ['c03NotApproved'] });
+    await expect(aiLive({ use: 'explain', lang: 'ja', prompt: 'x' })).resolves.toMatchObject({ text: '{}' });
     setLiveTransport(async () => { throw new Error('relay 503 notSignedIn'); });
-    await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true })).rejects.toMatchObject({ reasons: ['liveFailed'], message: 'relay 503 notSignedIn' });
+    await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x' })).rejects.toMatchObject({ reasons: ['liveFailed'], message: 'relay 503 notSignedIn' });
     useAiSettings.setState({ provider: 'foundry', copilotModel: null });
     writeLedger([]);
   });
@@ -339,7 +338,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotStatus: null });
     const ac = new AbortController();
     setLiveTransport(async (_c, signal) => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))));
-    const pending = aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true }, ac.signal);
+    const pending = aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x' }, ac.signal);
     ac.abort();
     const err = await pending.catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AiLiveError);
@@ -349,12 +348,12 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     writeLedger([]);
   });
 
-  it('unapproved uses stay mock even when everything is configured (C-03)', async () => {
+  it('chat is available with the same saved consent as every other AI use', async () => {
     useAiSettings.setState(READY);
-    const r = await aiComplete({ use: 'chat', lang: 'ja', prompt: 'x', userConfirmed: true, personConfirmed: true });
-    expect(r.mode).toBe('mock');
-    expect(r.blockedReasons).toEqual(['c03NotApproved']);
-    expect(calls).toHaveLength(0);
+    const r = await aiComplete({ use: 'chat', lang: 'ja', prompt: 'x' });
+    expect(r.mode).toBe('live');
+    expect(r.blockedReasons).toEqual([]);
+    expect(calls).toHaveLength(1);
   });
 
   it('"explain" uses saved settings consent and records tokens with unknown cost', async () => {
@@ -384,7 +383,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
 
     // A zero budget still explicitly disables sending, including unpriced Foundry calls.
     useAiSettings.setState({ monthlyBudgetJpy: 0 });
-    const blocked = await aiComplete({ ...req, userConfirmed: true, personConfirmed: true });
+    const blocked = await aiComplete({ ...req });
     expect(blocked.mode).toBe('mock');
     expect(blocked.blockedReasons).toContain('budget');
     expect(calls).toHaveLength(1);
@@ -393,16 +392,16 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
   it('records an interrupted Foundry call as unknown, not free, and retains quota enforcement', async () => {
     useAiSettings.setState(READY);
     setLiveTransport(async () => { throw Object.assign(new Error('timed out'), { name: 'TimeoutError' }); });
-    await expect(aiLive({ use: 'explain', lang: 'en', prompt: 'x', userConfirmed: true, personConfirmed: true }))
+    await expect(aiLive({ use: 'explain', lang: 'en', prompt: 'x' }))
       .rejects.toMatchObject({ recordedCostJpy: null });
     expect(readLedger()).toEqual([expect.objectContaining({ use: 'explain', costJpy: null })]);
-    expect(preflight({ use: 'explain', lang: 'en', prompt: 'x', userConfirmed: true }).budget.reasons).toContain('tooSoon');
+    expect(preflight({ use: 'explain', lang: 'en', prompt: 'x' }).budget.reasons).toContain('tooSoon');
   });
 
   it('falls back to the mock with "liveFailed" when the transport fails, and records nothing', async () => {
     useAiSettings.setState(READY);
     setLiveTransport(async () => { throw new Error('relay 502'); });
-    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'x', userConfirmed: true, personConfirmed: true });
+    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'x' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(['liveFailed']);
     expect(readLedger()).toEqual([]);
@@ -500,7 +499,7 @@ describe('legacy Foundry settings (D-6, P-01)', () => {
     expect(useAiSettings.getState().relayConnection).toBeNull(); // saving in the relay is a separate action
     expect(localStorage.getItem(LEGACY_FOUNDRY_KEY)).toBe(before);
     expect(legacyState(readLegacyFoundry(), common()).kind).toBe('same');
-    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'x', userConfirmed: true, personConfirmed: true });
+    const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'x' });
     expect(r.mode).toBe('mock');
   });
 

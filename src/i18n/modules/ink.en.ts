@@ -92,7 +92,7 @@ export const inkEn: Record<keyof typeof inkJa, string> = {
   'ink.hw.title': 'Handwriting recognition',
   'ink.hw.running': 'Recognizing…',
   'ink.hw.mock': 'Mock',
-  'ink.hw.blocked': 'The real recognition service (Azure AI Vision) is not connected until the external-service conditions (C-07, C-03) are decided. This is a simulated result.',
+  'ink.hw.blocked': 'Azure AI Vision is unavailable in this release. This is a local mock result.',
   'ink.hw.addNote': 'Make a sticky note',
   'ink.hw.mockText': '[mock] Simulated text recognized from {count} strokes',
 

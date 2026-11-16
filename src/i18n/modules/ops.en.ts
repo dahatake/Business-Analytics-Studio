@@ -157,8 +157,7 @@ export const opsEn: Record<keyof typeof opsJa, string> = {
   'ops.gate.companyNews': 'Automatically sends only the public company name and language for news search. Pause in the live bar to stop. Selection here does not enable or disable retrieval.',
   'ops.gate.blocked': 'Never sends ({question} is open)',
   'ops.gate.unknown': 'Never sends (condition unknown)',
-  'ops.gate.c03NotApproved': 'Never sends (C-03 row "{use}" is not approved: {questions})',
-  'ops.gate.c03Approved': 'The C-03 row is approved. Every send still needs the user to confirm',
+  'ops.gate.aiConsent': 'Broad consent in AI settings is required. This catalog does not send data',
 
   'ops.int.settings': 'Settings of selected integrations',
   'ops.int.settingsWhy': 'Records per project how each integration authenticates, where its credential is stored, and whether terms, cost and SLA were checked.',

@@ -213,14 +213,16 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
   });
 
   for (const lang of ['ja', 'en'] as const) {
-    test(`${lang}: AI sending rules explain approved and undecided uses`, async ({ page }) => {
-      await open(page, '/assistant', { lang });
-      await page.getByRole('link', { name: lang === 'ja' ? 'AI に送るデータと利用状況を確認' : 'Review data sent to AI and usage status' }).click();
-      await expect(page.getByTestId('ai-policy-screen')).toBeVisible();
-      await expect(page.getByTestId('ai-policy-rules').locator('[data-use="explain"]')).toHaveAttribute('data-approved', 'true');
-      await expect(page.getByTestId('ai-policy-rules').locator('[data-use="chat"]')).toHaveAttribute('data-approved', 'false');
-      await expect(page.getByTestId('ai-policy-rules').locator('[data-use="chat"]')).toContainText(lang === 'ja' ? '未決のため送信しません' : 'Undecided; nothing is sent');
-      await expect(page.getByTestId('ai-policy-intro')).toContainText(lang === 'ja' ? 'この画面で未決の用途を承認することはできません' : 'This screen cannot approve undecided uses');
+    test(`${lang}: AI settings explain one-time consent for request data`, async ({ page }) => {
+      const settings = await openAiSettings(page, { lang });
+      await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
+      await expect(settings.getByTestId('ai-policy-rules')).toHaveCount(0);
+      await expect(settings.getByText(lang === 'ja' ? '同意は端末に保存され' : 'Consent is saved on this device')).toBeVisible();
+      expect((await settings.boundingBox())?.width).toBe(960);
+      await page.setViewportSize({ width: 720, height: 900 });
+      const narrow = await settings.boundingBox();
+      expect(narrow?.width).toBeGreaterThan(600);
+      expect(narrow?.width).toBeLessThan(720);
     });
   }
 
@@ -260,7 +262,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(bodies.join('\n')).not.toContain(FAKE_KEY);
   });
 
-  test('the relay refuses writes without its header and every AI send while C-03 is TBD', async ({ page }) => {
+  test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {
       const noHeader = await fetch('/relay/secrets/foundryKey', { method: 'DELETE' });
@@ -274,7 +276,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(r.getSession).toBe(403); // a same-origin GET carries no Origin, so it is refused (D-5)
     expect(r.status).toBe(200);
     expect(r.ai).toBe(403);
-    expect(r.body).toEqual({ allowed: false, reasons: ['c03NotApproved', 'notConfigured'] });
+    expect(r.body).toEqual({ allowed: false, reasons: ['notConfigured'] });
     await expect(page.getByTestId('ai-connection-save')).toBeEnabled();
     await page.getByTestId('ai-connection-save').click();
     await expect(page.getByTestId('ai-connection-blockers')).toContainText('No connection test was sent');
@@ -413,7 +415,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
 });
 
 test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
-  test('enabling live mode keeps unapproved uses on a labelled mock with the C-03 reason, and shows the D-4 warning', async ({ page }) => {
+  test('global consent does not bypass connection requirements, and no per-use confirmation is shown', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const live = page.getByRole('switch', { name: 'Enable the real connection to generative AI' });
     await expect(live).not.toBeChecked();
@@ -423,26 +425,15 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr')).toHaveCount(19);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="false"]')).toHaveCount(11);
-    // Earlier approved uses (incl. D-23 "deliverableDraft") plus D-24 "strategyOverview" (last in table order).
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]')).toHaveCount(8);
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').first()).toHaveAttribute('data-use', 'recommend');
-    await expect(page.locator('[data-testid="ai-c03"] tbody tr[data-approved="true"]').last()).toHaveAttribute('data-use', 'strategyOverview');
-
     await page.goto('/#/assistant');
     await page.getByTestId('ai-chat-input').fill('lead time');
     await page.getByRole('button', { name: 'Send' }).click();
-    // The top hits include a person, so FR-219 asks first.
-    const confirm = page.getByTestId('ai-person-confirm');
-    await expect(confirm).toContainText('1 "person" items');
-    await confirm.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByTestId('ai-person-confirm')).toHaveCount(0);
     const answer = page.getByTestId('ai-chat-log').getByTestId('ai-mock-label').first();
     await expect(answer).toContainText('Mock');
-    await expect(answer.locator('[data-reason="c03NotApproved"]')).toBeVisible();
+    await expect(answer.locator('[data-reason="notConfigured"]')).toBeVisible();
     await expect(answer.locator('[data-reason="liveDisabled"]')).toHaveCount(0);
     await expect(answer.locator('[data-entity-ref]').first()).toBeVisible();
-    await expect(page.getByTestId('ai-chat-foundry')).toContainText('blocked');
   });
 });
 
@@ -566,15 +557,17 @@ test.describe('explain current state (FR-274, FR-277)', () => {
     await expect(panel).toBeHidden();
   });
 
-  test('asks before using "person" data (FR-219) and sends nothing on cancel', async ({ page }) => {
+  test('global consent prevents a second confirmation for person data', async ({ page }) => {
+    const settings = await openAiSettings(page, { lang: 'en' });
+    await settings.getByTestId('ai-send-consent').check();
+    await settings.getByTestId('ai-settings-dialog-close').click();
     await open(page, '/entity/person-ito-mariko', { lang: 'en' });
     await page.getByTestId('ai-explain-button').click();
-    const dialog = page.getByTestId('ai-person-confirm');
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('1 "person" items');
-    expect(await scan(page)).toEqual([]);
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByTestId('ai-explain-panel')).toContainText('Nothing was sent');
+    const panel = page.getByTestId('ai-explain-panel');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('ai-person-confirm')).toHaveCount(0);
+    await expect(panel.getByTestId('ai-mock-label')).toBeVisible();
+    await expect(panel.locator('[data-reason="notConfirmed"]')).toHaveCount(0);
   });
 });
 
@@ -596,7 +589,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
     await expect(page.getByTestId('ai-usage-input')).toHaveAttribute('maxlength', '8000');
 
     await expect(page.getByTestId('ai-import-ai')).toBeDisabled();
-    await expect(page.getByTestId('ai-import-reasons')).toContainText('this use are undecided');
+    await expect(page.getByTestId('ai-import-reasons')).toContainText('Connection settings are incomplete');
   });
 
   test('story video creates a free mock without Foundry price input', async ({ page }) => {
@@ -615,7 +608,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
 
 test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => {
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of ['/assistant', '/ai-policy']) {
+    for (const route of ['/assistant', '/ai-settings']) {
       test(`${lang} ${route}`, async ({ page }) => {
         await open(page, route, { lang });
         await page.waitForTimeout(500);
@@ -635,8 +628,8 @@ test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => 
     });
 
     test(`${lang} D-25: AI settings have one place; links and old bookmarks open the same dialog`, async ({ page }) => {
-      await open(page, '/ai-policy', { lang });
-      await page.getByTestId('ai-policy-open-settings').click();
+      await open(page, '/assistant', { lang });
+      await page.getByTestId('nav-ai-settings').click();
       const settings = page.getByTestId('ai-settings-dialog');
       await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
       await settings.getByTestId('ai-settings-dialog-close').click();
@@ -773,7 +766,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
 
   test('confirm unknown charges → live answer and token record without manual pricing; a zero budget stops sending', async ({ page }) => {
     await configure(page, 'en');
-    await expect(page.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
+    await expect(page.getByTestId('ai-state')).toHaveText('Live (consent and settings active)');
     await expect(page.getByTestId('ai-configured')).toContainText('Saved');
     await expect(page.getByTestId('ai-key-protection')).toContainText(process.platform === 'win32' ? 'DPAPI' : 'Key file');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
@@ -1014,7 +1007,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     received.length = 0;
     await settings.getByTestId('ai-send-consent').check();
     await settings.getByTestId('ai-live-switch').check();
-    await expect(settings.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
+    await expect(settings.getByTestId('ai-state')).toHaveText('Live (consent and settings active)');
     await settings.getByTestId('ai-settings-dialog-close').click();
 
     await page.getByTestId('launch-generate-pj-c').click();
@@ -1133,7 +1126,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(`${page.url()}: ${e.message}`));
     for (const route of ['/', '/home', '/analysis', '/assistant', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
-      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-policy']) {
+      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings']) {
       await page.goto(`/#${route}`);
       await expect(page.locator('main#main'), route).toBeVisible();
       await page.waitForTimeout(300);

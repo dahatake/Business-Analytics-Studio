@@ -5,16 +5,15 @@ export interface OutboundSelection {
   included: Entity[];
   /** Ids withheld. Empty since D-2 (internal may be sent); kept so callers can show what was withheld if a rule returns. */
   excludedIds: string[];
-  /** Number of internal entities included, shown in the send confirmation for transparency (D-2). */
+  /** Number of internal entities in the request, retained for diagnostics. */
   internalCount: number;
-  /** Number of "person" entities included: FR-219 requires an explicit confirmation before sending/exporting them. */
+  /** Number of person entities in the request. AI settings consent covers these request contents (D-26). */
   personCount: number;
 }
 
 /**
  * What may leave the PC. D-2 (user, 2026-11-09): internal information may be sent externally, which amends Q-055.
- * Two rules remain: the user sees how many internal and person items are included before sending, and person data
- * needs the FR-219 confirmation (enforced by the gate).
+ * AI settings consent covers all data included in a request; unrelated local data is not included.
  */
 export function selectOutbound(entities: Entity[], byId: Map<string, Entity>): OutboundSelection {
   const included = [...entities];

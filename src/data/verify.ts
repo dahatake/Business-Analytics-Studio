@@ -169,7 +169,7 @@ export function verifyPack(raw: unknown): VerifyResult {
       add({
         severity: 'warning', code: 'INTERNAL', path: `entities[${i}]`, entityId: e.id,
         cause: 'classified internal (FR-117).',
-        action: 'Hidden for an external audience and never sent to Foundry (C-03). Change to shareable only if the customer may see it.',
+        action: 'Hidden for an external audience and excluded from AI prompts (D-2). Change to shareable only if the customer may see it.',
       });
     }
   }

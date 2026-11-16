@@ -624,9 +624,8 @@ export const projJa = {
   'proj.rec.deleteNamed': '削除: {text}',
 
   'proj.ai.ask': 'AI に提案を依頼',
-  'proj.ai.scope': 'テーマ「{theme}」に関係する項目',
   'proj.ai.adopt': '決定として採用',
-  'proj.ai.mockNote': 'AI の提案は、実接続が有効で設定画面の送信同意があるとき、C-03 で承認された用途だけ生成AIに送信します。それ以外はモックの回答で、「モック」と表示します。',
+  'proj.ai.mockNote': '実接続・AI 設定での送信同意・接続設定・予算などの条件を満たすと、AI の提案を生成 AI に送信します。満たさない場合は「モック」と表示します。',
 
   'proj.goal.title': '論点ごとの件数',
   'proj.goal.decisions': '決定事項',
@@ -1266,5 +1265,4 @@ export const projJa = {
   'proj.dash.brief.dismiss': '閉じる',
   'proj.dash.brief.unverified': 'ファクト台帳にない数値があります: {list}。根拠を確かめてから使ってください。',
   'proj.dash.brief.verified': '数値 {n} 件はすべてファクト台帳と一致しています。',
-  'proj.dash.brief.scope': '「{step}」のファクト {n} 件と、それが参照する項目名',
 } as const;

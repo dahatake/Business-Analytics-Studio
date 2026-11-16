@@ -143,7 +143,7 @@ export function ConnectDialog({ open, items, onClose, onConnect }: { open: boole
   );
 }
 
-/** FR-090: recognition result. The answer is a mock while the real service is blocked (C-07 / C-03). */
+/** FR-090: recognition result. The Azure AI Vision integration is unavailable under C-07, so this is a local mock. */
 export function RecognizeDialog({ open, result, onClose, onAddNote }: { open: boolean; result: AiResponse | null; onClose: () => void; onAddNote: (text: string) => void }) {
   const { t } = useI18n();
   return (

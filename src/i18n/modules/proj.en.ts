@@ -625,9 +625,8 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.rec.deleteNamed': 'Delete: {text}',
 
   'proj.ai.ask': 'Ask AI for suggestions',
-  'proj.ai.scope': 'items related to theme "{theme}"',
   'proj.ai.adopt': 'Adopt as decision',
-  'proj.ai.mockNote': 'When the live connection and AI-settings consent are on, only uses approved in C-03 send data to generative AI. Otherwise they are mock answers labelled "Mock".',
+  'proj.ai.mockNote': 'AI suggestions are sent to generative AI when live connection, AI-settings consent, connection setup, budget, and other gates allow it. Otherwise they are labelled "Mock".',
 
   'proj.goal.title': 'Counts per theme',
   'proj.goal.decisions': 'Decisions',
@@ -1267,5 +1266,4 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.dash.brief.dismiss': 'Dismiss',
   'proj.dash.brief.unverified': 'Figures not in the fact ledger: {list}. Check them before using this text.',
   'proj.dash.brief.verified': 'All {n} figures match the fact ledger.',
-  'proj.dash.brief.scope': 'The {n} facts of "{step}" and the names of the items they cite',
 };

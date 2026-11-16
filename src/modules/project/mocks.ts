@@ -84,7 +84,7 @@ export function parseDraft(method: MethodId, text: string, lang: Lang = 'ja'): D
   });
 }
 
-/** FR-140: ask for an analysis draft. Only through aiComplete (C-03 gate); answers are labelled as mock. */
+/** FR-140: ask for an analysis draft through the shared AI gate; fallback answers are labelled as mock. */
 export async function requestAnalysisDraft(method: MethodId, lang: Lang, entities: Entity[]): Promise<{ response: AiResponse; items: DraftItem[] }> {
   // Registered right before the call so another module's mock for the same use cannot answer this request.
   registerMock('structure', (req) => (req.prompt.includes(MARK_STRUCTURE) ? structureMock(req.prompt, req.lang) : `[mock] ${req.prompt.slice(0, 80)}`));

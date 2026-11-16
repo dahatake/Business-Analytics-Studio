@@ -7,7 +7,7 @@ import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { currentScope } from '../../state/projects.ts';
 import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
-import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { reasonKey } from '../ai/AiCommon.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob } from './batchDraft.ts';
 import { useCheckContext } from './deliverablesUi.tsx';
@@ -37,7 +37,6 @@ export function BatchDraftDialog() {
   const source = useRef(initialSource);
   const running = useRef(false);
   const controller = useRef<AbortController | null>(null);
-  const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
 
   useEffect(() => () => controller.current?.abort(), []);
 
@@ -90,12 +89,7 @@ export function BatchDraftDialog() {
     try {
       assertCurrent();
       const pending = jobs.filter((job) => !completed.current.has(batchJobId(job)));
-      const checks = prepare(pending);
-      const decision = await confirmLive();
-      if (!decision.ok || abort.signal.aborted) {
-        setInterrupted(true);
-        return;
-      }
+      prepare(pending);
       assertCurrent();
       for (const job of pending) {
         active = job;
@@ -181,7 +175,6 @@ export function BatchDraftDialog() {
                 </Button>}
               <Button disabled={busy} onClick={close}>{t('dlv.batch.close')}</Button>
             </DialogActions>
-            {confirmDialog}
           </DialogBody>
         </DialogSurface>
       </Dialog>

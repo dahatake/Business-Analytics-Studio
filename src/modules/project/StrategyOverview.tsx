@@ -14,7 +14,7 @@ import { useSettings } from '../../state/settings.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
 import { wrap } from '../../ui/textWrap.ts';
-import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { reasonKey } from '../ai/AiCommon.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { openAiSettings } from '../ai/uiStore.ts';
 import { ScrollRegion } from './common.tsx';
@@ -190,7 +190,6 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   const isStepDraft = !!draft && draft === stepDraft;
   const approved = state.approved?.audience === audience && state.approved.lang === lang ? state.approved : undefined;
   const stale = !!draft && (draft.baseline !== baseline || draft.lang !== lang);
-  const { dialog, confirmLive } = useLiveConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<'draft' | 'approved' | null>(null);
@@ -221,8 +220,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     try {
       const pf = preflight(request);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
-      const decision = await confirmLive();
-      if (!decision.ok || !alive.current) return;
+      if (!alive.current) return;
       current();
       if (useAiSettings.getState().provider !== provider) throw new Error(t('stg.stale'));
       abort.current = new AbortController();
@@ -355,7 +353,6 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
           </details>;
         })}
       </Panel>}
-      {dialog}
     </>
   );
 }

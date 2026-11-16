@@ -102,7 +102,7 @@ export function ShowScreen() {
   );
 }
 
-/** FR-290: build a story with generative AI (always the labelled mock while C-03 is TBD). */
+/** FR-290: build a story with generative AI; the shared AI gate determines live versus mock. */
 function AiStoryPanel() {
   const { t, lang } = useI18n();
   const audience = useSettings((s) => s.audience);

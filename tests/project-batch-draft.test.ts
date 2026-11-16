@@ -76,7 +76,7 @@ describe('all-step drafts', () => {
     expect(jobs.filter((job) => job.kind === 'brief').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.at(-1)?.kind).toBe('strategy');
 
-    setRuntimeSettingsProvider(() => ({ provider, liveEnabled: true, configured: true }));
+    setRuntimeSettingsProvider(() => ({ provider, liveEnabled: true, sendConsent: true, configured: true }));
     const calls: LiveCall[] = [];
     setLiveTransport(async (call) => {
       calls.push(call);
@@ -85,7 +85,7 @@ describe('all-step drafts', () => {
     const signal = new AbortController().signal;
     for (const job of jobs) {
       writeLedger([]);
-      const result = await runBatchJob(job, true, signal);
+      const result = await runBatchJob(job, signal);
       saveBatchResult(job, result, ctx, 'internal', provider);
     }
 
@@ -144,13 +144,13 @@ describe('all-step drafts', () => {
   it('surfaces failures and incomplete live results without saving a mock', async () => {
     const ctx = context();
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', { objectiveIssues: [] });
-    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true }));
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
     setLiveTransport(vi.fn().mockRejectedValue(new Error('offline')));
-    await expect(runBatchJob(jobs[0]!, true, new AbortController().signal)).rejects.toThrow('offline');
+    await expect(runBatchJob(jobs[0]!, new AbortController().signal)).rejects.toThrow('offline');
     expect(useFieldDrafts.getState().value).toEqual({});
     writeLedger([]);
     setLiveTransport(async () => ({ text: '### answer\n不完全', inputTokens: 10, outputTokens: 10 }));
-    await expect(runBatchJob(jobs[1]!, true, new AbortController().signal)).rejects.toThrow('必要な項目がありません');
+    await expect(runBatchJob(jobs[1]!, new AbortController().signal)).rejects.toThrow('必要な項目がありません');
     expect(useStepBriefs.getState().value).toEqual({});
   });
 

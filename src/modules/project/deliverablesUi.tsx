@@ -16,10 +16,9 @@ import { usePackVersion } from '../../state/packEdits.ts';
 import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
-import { reasonKey, useLiveConfirm } from '../ai/AiCommon.tsx';
+import { reasonKey } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
-import { useAiSettings } from '../ai/settingsStore.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
 import {
@@ -411,7 +410,6 @@ export function DraftDialog() {
   const savedDraft = useFieldDrafts((s) => step ? s.value[`${audience}:${step}`] : undefined);
   const [state, setState] = useState<DraftState>({ status: 'idle' });
   const [overwrite, setOverwrite] = useState(false);
-  const { dialog: confirmDialog, confirmLive } = useLiveConfirm();
   const abortRef = useRef<AbortController | null>(null);
   const cancel = () => abortRef.current?.abort();
   // Closing the dialog or switching the target stops the request instead of leaving it running unseen.
@@ -462,23 +460,12 @@ export function DraftDialog() {
       setState({ status: 'error', message: t('dlv.draft.tooLarge') });
       return;
     }
-    setState({ status: 'working', stage: 'confirm' });
+    setState({ status: 'working', stage: 'generate', startedAt: Date.now() });
     const controller = new AbortController();
     try {
-      const settings = useAiSettings.getState();
-      const decision = await confirmLive();
       if (!targetCurrent()) return;
-      if (!decision.ok) {
-        setState({ status: 'idle' });
-        return;
-      }
       if (!draftsUnchanged()) {
         setState({ status: 'error', message: t('dlv.draft.changed') });
-        return;
-      }
-      const current = useAiSettings.getState();
-      if (current.provider !== settings.provider || current.copilotModel !== settings.copilotModel || JSON.stringify(current.relayConnection) !== JSON.stringify(settings.relayConnection)) {
-        setState({ status: 'error', message: t('dlv.draft.destinationChanged') });
         return;
       }
       abortRef.current = controller;
@@ -569,7 +556,6 @@ export function DraftDialog() {
 
   return (
     <>
-    {confirmDialog}
     <Dialog open onOpenChange={(_, d) => { if (!d.open) close(); }}>
       <DialogSurface className="dlv-draft-surface" data-testid="dlv-draft-dialog">
         <DialogBody>

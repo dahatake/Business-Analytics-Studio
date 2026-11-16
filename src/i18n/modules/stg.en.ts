@@ -54,7 +54,6 @@ export const stgEn: Record<keyof typeof stgJa, string> = {
   'stg.draftChanged': 'The draft changed in another operation and was not overwritten. Review it before regenerating.',
   'stg.error': 'Operation failed: {message}',
   'stg.saved': 'Approved changes saved on this PC.',
-  'stg.scope': 'Visible objectives, KPI/OKR definitions, issues, solutions, sources, relationships and the current step’s deliverable and summary',
   'stg.analysis': 'Senior strategy consultant perspective',
   'stg.analysisHint': 'Review the conclusion, strategic alignment, measurement and execution using each step’s raw data and fact ledger. Non-AI analysis is rule-based; unagreed conclusions remain hypotheses.',
   'stg.issues': 'Issue priorities and related data',

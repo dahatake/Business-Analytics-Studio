@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { C03_TABLE, isApproved, type AiUse } from '../../src/ai/policy.ts';
 import { BRAND_SOURCE_PRIORITY, DEFAULT_PRIMARY, type BrandProfile, type BrandSourceKind } from '../../src/modules/ops/brand.ts';
 import { DEFAULT_PRESET_ID, findPreset } from '../../src/modules/ops/presets.ts';
 import { fetchSitePages, SiteError, type SiteDeps, type SitePage } from '../../server/site.ts';
@@ -47,28 +46,23 @@ export function slugify(customer: string): string {
   return s;
 }
 
-const c03Reason = (use: AiUse) => {
-  const row = C03_TABLE[use];
-  return isApproved(row) ? null : `C-03 row "${use}" is not approved (open: ${row.openQuestions.join(', ')})`;
-};
-
 /**
- * FR-121/FR-122: research a customer. In this template every external source is BLOCKED (C-03 rows TBD, C-07: no
- * external services in this run), so the cache records each attempt with its reason and marks "sample used".
+ * FR-121/FR-122: research a customer. In this template AI-backed sources are unavailable (C-07: no external AI
+ * services in this run), so the cache records each attempt with its reason and marks "sample used".
  */
 export function research(customer: string, input: { industry?: string; lang?: 'ja' | 'en' }, now: Date = new Date()): ResearchCache {
   const industry = input.industry ?? DEFAULT_PRESET_ID;
   if (!findPreset(industry)) throw new Error(`Unknown industry preset "${industry}". Run \`bas presets\` for the list.`);
   const at = isoWithOffset(now);
   const c07 = 'C-07: external services are not used in this run (manual check: BLOCKED)';
-  const blocked = (use: AiUse) => [c03Reason(use), c07].filter(Boolean).join('; ');
+  const blocked = () => c07;
   const sources: ResearchSource[] = [
-    { id: 'workiq', status: 'blocked', reason: blocked('research'), integration: 'workiq', checkedAt: at },
-    { id: 'web', status: 'blocked', reason: blocked('research'), integration: 'web-research', checkedAt: at },
-    { id: 'llm', status: 'blocked', reason: blocked('research'), integration: 'copilot-sdk', checkedAt: at },
+    { id: 'workiq', status: 'blocked', reason: blocked(), integration: 'workiq', checkedAt: at },
+    { id: 'web', status: 'blocked', reason: blocked(), integration: 'web-research', checkedAt: at },
+    { id: 'llm', status: 'blocked', reason: blocked(), integration: 'copilot-sdk', checkedAt: at },
     { id: 'sample', status: 'used', reason: 'Sample used: no research source was available (UC-1).', integration: null, checkedAt: at },
   ];
-  const attempts = BRAND_SOURCE_PRIORITY.filter((k) => k !== 'defaultTheme').map((kind) => ({ kind, status: 'blocked' as const, reason: blocked('brandResearch') }));
+  const attempts = BRAND_SOURCE_PRIORITY.filter((k) => k !== 'defaultTheme').map((kind) => ({ kind, status: 'blocked' as const, reason: blocked() }));
   return {
     schemaVersion: 1,
     customer,

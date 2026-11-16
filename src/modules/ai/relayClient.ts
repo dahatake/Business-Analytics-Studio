@@ -172,7 +172,7 @@ export async function deleteRelayConnection(): Promise<boolean> {
   }
 }
 
-/** Asks the relay whether it would forward a call for a use (refusals list the C-03 / connection reasons). */
+/** Asks the relay whether it would forward a call (refusals list shared consent, connection, and budget reasons). */
 export async function relayAiCheck(use: string): Promise<{ allowed: boolean; reasons: string[] }> {
   try {
     const res = await relayFetch('/relay/ai', {

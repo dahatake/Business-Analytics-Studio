@@ -11,7 +11,7 @@ import { evaluateStep, fieldHintKey, fieldKey, paybackLimit, paybackYears, ranke
 
 /**
  * "Draft with Copilot": a draft of each step's deliverable, grounded only in the customer pack and the project data.
- * The live-only request uses its own C-03 row and never substitutes a mock on failure.
+ * The request uses the shared AI gate and never substitutes a mock on failure.
  */
 
 const MARK = '[bas-proj:deliverable:';

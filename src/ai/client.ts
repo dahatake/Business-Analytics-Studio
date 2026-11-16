@@ -191,7 +191,7 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
 }
 
 /**
- * The only entry point for generative AI. It evaluates the C-03 gate; when every condition holds it sends through the
+ * The only entry point for generative AI. It evaluates the global consent gate; when every condition holds it sends through the
  * relay transport and records the actual cost in the ledger. Otherwise (or when the live call fails) it answers with the
  * registered mock and reports why.
  */

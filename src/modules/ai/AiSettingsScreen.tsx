@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
+  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
   ProgressBar, Switch,
 } from '@fluentui/react-components';
 import { Delete20Regular } from '@fluentui/react-icons';
@@ -146,7 +146,14 @@ export function AiSettingsScreen() {
 
         <Panel title={t('ai.settings.live')} testId="ai-live">
           <div className="ai-stack">
-            <Switch checked={s.liveEnabled} onChange={(_, d) => s.update({ liveEnabled: d.checked })} label={t('ai.settings.liveSwitch')} data-testid="ai-live-switch" />
+            <Checkbox
+              checked={s.sendConsent}
+              onChange={(_, d) => s.update({ sendConsent: d.checked === true, ...(d.checked ? {} : { liveEnabled: false }) })}
+              label={t('ai.settings.sendConsent')}
+              data-testid="ai-send-consent"
+            />
+            <p className="muted">{t('ai.settings.sendConsentNote')}</p>
+            <Switch checked={s.liveEnabled} disabled={!s.sendConsent} onChange={(_, d) => s.update({ liveEnabled: d.checked })} label={t('ai.settings.liveSwitch')} data-testid="ai-live-switch" />
             <p className="muted">{t('ai.settings.liveNote')}</p>
             <p className="ai-status">
               <span>{t('ai.settings.state')}</span>

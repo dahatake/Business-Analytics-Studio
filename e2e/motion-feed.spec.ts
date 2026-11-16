@@ -26,17 +26,48 @@ test.describe('F-3.1.5 motion and sound', () => {
     await expect(page.getByTestId('opening')).toHaveCount(0);
     // Start-up step 2 follows the splash.
     await expect(page.getByTestId('launch-screen')).toBeVisible();
+    await page.getByTestId('launch-open-demo').click();
+    await expect(page.locator('main#main')).toBeVisible();
     await page.reload();
+    await expect(page.getByTestId('opening')).toBeVisible();
+    await expect(page.locator('main#main')).toHaveCount(0);
+    await page.getByRole('button', { name: /スキップ|Skip/ }).click();
     await expect(page.getByTestId('opening')).toHaveCount(0);
+    await expect(page.locator('main#main')).toBeVisible();
+    await expect(page.getByTestId('launch-screen')).toHaveCount(0);
   });
 
-  test('the opening closes itself and Esc also closes it', async ({ page }) => {
+  test('Esc closes the opening', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await setup(page, { motion: 'full', skipOpening: false });
     await page.goto('/#/');
     await expect(page.getByTestId('opening')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('opening')).toHaveCount(0);
+  });
+
+  test('the opening closes itself and shows the selection screen', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await setup(page, { motion: 'full', skipOpening: false });
+    await page.goto('/#/');
+    await expect(page.getByTestId('opening')).toBeVisible();
+    await expect(page.getByTestId('launch-screen')).toHaveCount(0);
+    await expect(page.getByTestId('opening')).toHaveCount(0, { timeout: PARAMS.openingDurationMs + 3000 });
+    await expect(page.getByTestId('launch-screen')).toBeVisible();
+  });
+
+  test('startup failure stays visible and retry shows the opening', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await setup(page, { motion: 'full', skipOpening: false });
+    await page.route('**/device/state', (route) => route.fulfill({ status: 503, json: { error: 'deviceUnavailable' } }));
+    await page.goto('/#/');
+    await expect(page.getByTestId('device-startup-error')).toBeVisible();
+    await expect(page.getByTestId('opening')).toHaveCount(0);
+    await page.unroute('**/device/state');
+    await page.getByRole('button', { name: /再読み込み|Reload/ }).click();
+    await expect(page.getByTestId('opening')).toBeVisible();
+    await page.getByRole('button', { name: /スキップ|Skip/ }).click();
+    await expect(page.getByTestId('launch-screen')).toBeVisible();
   });
 
   test('reduced motion also stops Fluent UI motion (Web Animations), not only CSS animations', async ({ page }) => {

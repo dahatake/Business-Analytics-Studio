@@ -14,7 +14,7 @@
 | F-3.4.2「第 11.7 節で合意」 | 提案値を置き、利用テストの計画を作成（未実施） | [usability-test.md](usability-test.md) |
 | F-3.5.1「API の応答」 | ローカル API（`/api/*`）を Vite の dev／preview に載せ、`lang` → `Accept-Language` → 日本語の順で言語を決める | `src/api/handler.ts` |
 | 「戻ると検索・絞込状態が復元」 | 検索・絞り込み・タブ・選択を URL のクエリに持ち、入力中は履歴を増やさない（`replaceState`）。スクロール位置も URL ごとに復元する | `src/state/router.ts`、`App.tsx` |
-| オープニングの長さ | PARAM-011（15〜30 秒）はショー体験の値。本実装の起動演出は 4.5 秒でスキップ可、動きを減らす設定では表示しない | `PARAMS.openingDurationMs` |
+| オープニングの長さ | PARAM-011（15〜30 秒）はショー体験の値。本実装の起動演出は 4.5 秒でスキップ可、動きを減らす設定では表示しない。通常の再読み込みでも表示し、アプリ内部のデータ切り替えによる再読み込みでは表示しない | `PARAMS.openingDurationMs` |
 
 ## F-3.x → 実装 → 検証
 

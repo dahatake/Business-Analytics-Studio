@@ -213,10 +213,10 @@ export function App() {
       <DeviceStorageStatus />
       <div className={`app ${dark ? 'theme-dark' : 'theme-light'}`} data-motion={reduced ? 'reduced' : 'full'} inert={storageBlocked}>
       <div className="aurora" aria-hidden />
-      {stage !== 'app' ? (
+      {stage === 'select' ? (
         // Start-up step 2: choose a company and project before any project screen (step 3) is shown.
         <LaunchScreen />
-      ) : (
+      ) : stage === 'app' ? (
         <>
           <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>{t('a11y.skip')}</button>
           <div className="chrome" ref={chromeRef}>
@@ -242,7 +242,7 @@ export function App() {
           {!restricted && <DetailCardHost />}
           {!restricted && <Overlays />}
         </>
-      )}
+      ) : null}
       <Opening />
       </div>
       </MotionBehaviourProvider>

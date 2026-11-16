@@ -19,7 +19,7 @@ import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useSettings } from '../../state/settings.ts';
 import { AiReadiness, AiSettingsDialog } from '../ai/AiConnectionForm.tsx';
-import { D4Warning, TokenTable, yenFine } from '../ai/AiCommon.tsx';
+import { TokenTable, yenFine } from '../ai/AiCommon.tsx';
 import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
@@ -574,7 +574,6 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                     {estimate.inputTooLarge && <MessageBar intent="error"><MessageBarBody>{t('proj.gen.inputTooLarge')}</MessageBarBody></MessageBar>}
                     {estimate.callsLeft < estimate.calls && <MessageBar intent="warning" data-testid="gen-daily-short"><MessageBarBody>{t('proj.gen.dailyShort', { left: estimate.callsLeft, max: estimate.calls })}</MessageBarBody></MessageBar>}
                     <p className="muted" data-testid="gen-sends">{t('proj.gen.sends')}{workIqOn ? ` ${t('proj.gen.sendsWorkIq')}` : ''}{input.companyAnchor ? ` ${t('proj.anchor.sendNote')}` : ''}</p>
-                    <D4Warning testId="gen-d4" />
                     <Checkbox checked={approved} onChange={(_, d) => setApproved(d.checked === true)} label={t('proj.gen.checkApproved')} data-testid="gen-check-approved" />
                     <Checkbox checked={costOk} onChange={(_, d) => setCostOk(d.checked === true)} label={t('proj.gen.checkCost')} data-testid="gen-check-cost" />
                   </section>

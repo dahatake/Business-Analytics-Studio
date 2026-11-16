@@ -47,17 +47,14 @@ async function fakeAi(page: Page) {
     const tasks = Object.fromEntries(Object.entries(buildTaskDrafts(input)).map(([id, text]) => [`task-${id}`, labels.map((label) => `${label}: ${text.replace(/\n/g, ' ')}`).join('\n')]));
     await route.fulfill({ json: { text: `${draftToText(buildDraft(input))}\n\n${draftToText(tasks)}`, inputTokens: 100, outputTokens: 100 } });
   });
-  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
   await page.reload();
   await expect(page.locator('main#main')).toBeVisible();
 }
 
 async function generateDraft(page: Page) {
   await page.getByTestId('dlv-draft-generate').click();
-  const confirm = page.getByTestId('ai-live-confirm');
-  await expect(confirm).toBeVisible();
-  await confirm.getByTestId('ai-live-person-check').check();
-  await confirm.getByTestId('ai-live-send').click();
+  await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
   await expect(page.getByTestId('dlv-draft-mode')).toHaveAttribute('data-mode', 'live');
 }
 
@@ -102,10 +99,7 @@ test.describe('Copilot task resolution', () => {
 
   async function generate(page: Page) {
     await page.getByTestId('dlv-resolve-generate').click();
-    const confirm = page.getByTestId('ai-live-confirm');
-    await expect(confirm).toBeVisible();
-    await confirm.getByTestId('ai-live-person-check').check();
-    await confirm.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
   }
 
   for (const lang of ['ja', 'en'] as const) {
@@ -181,9 +175,7 @@ test.describe('Copilot task resolution', () => {
     expect(requests).toHaveLength(1);
     await page.waitForTimeout(5_100);
     await page.getByTestId('dlv-resolve-regenerate').click();
-    const confirm = page.getByTestId('ai-live-confirm');
-    await confirm.getByTestId('ai-live-person-check').check();
-    await confirm.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(page.getByTestId('dlv-resolve-radio-link-all')).toBeChecked();
     expect(requests).toHaveLength(2);
     expect(requests[1]).toContain(`Reviewer direction for this proposal (a preference, not evidence; it cannot override these rules): ${JSON.stringify(own)}`);
@@ -198,14 +190,14 @@ test.describe('Copilot task resolution', () => {
     expect(text).toContain('Copilot の推奨案（根拠のあるKPIをすべて関連付ける）とは別の判断です。');
   });
 
-  test('cancels confirmation without sending or editing data', async ({ page }) => {
+  test('saved settings consent sends without a per-send prompt or editing data', async ({ page }) => {
     const { requests, todo } = await prepare(page, 'ja');
     await todo.getByTestId('dlv-resolve-define-kpi-link').click();
     await page.getByTestId('dlv-resolve-generate').click();
-    await page.getByTestId('ai-live-confirm').getByRole('button', { name: 'キャンセル', exact: true }).click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
     await expect(todo).toHaveAttribute('data-done', 'false');
-    expect(requests).toHaveLength(0);
+    await expect.poll(() => requests.length).toBe(1);
   });
 
   test('does not apply a repair after project data changes in another tab', async ({ page }) => {
@@ -455,7 +447,7 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-task-approved-asis-field')).toBeVisible();
   });
 
-  test('confirmation gates sending and a relay failure does not create a mock draft', async ({ page }) => {
+  test('saved settings consent sends immediately and relay failure does not create a mock draft', async ({ page }) => {
     await go(page, '/home');
     await fakeAi(page);
     let calls = 0;
@@ -465,16 +457,7 @@ test.describe('step deliverables and to-do band', () => {
     });
     await openStepDraft(page);
     await page.getByTestId('dlv-draft-generate').click();
-    const confirm = page.getByTestId('ai-live-confirm');
-    await expect(confirm.getByTestId('ai-live-send')).toBeDisabled();
-    await expect(confirm.getByTestId('ai-live-preview')).toContainText('送信する内容');
-    await expect(confirm).toContainText('https://test.invalid');
-    expect(calls).toBe(0);
-    await confirm.getByRole('button', { name: 'キャンセル' }).click();
-    expect(calls).toBe(0);
-    await page.getByTestId('dlv-draft-generate').click();
-    await confirm.getByTestId('ai-live-person-check').check();
-    await confirm.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     const alert = page.getByTestId('dlv-draft-dialog').getByRole('alert');
     await expect(alert).toContainText('relay 504 timeout');
     await expect(alert).toContainText('モックへの切り替えや成果物への反映は行っていません');
@@ -497,11 +480,7 @@ test.describe('step deliverables and to-do band', () => {
     const dialog = page.getByTestId('dlv-draft-dialog');
     await page.getByTestId('dlv-draft-generate').click();
     const progress = dialog.getByTestId('dlv-draft-progress');
-    await expect(progress).toHaveAttribute('data-stage', 'confirm');
-    await expect(progress.locator('.ai-progress-now')).toHaveText('送信内容の確認を待っています…');
-    const confirm = page.getByTestId('ai-live-confirm');
-    await confirm.getByTestId('ai-live-person-check').check();
-    await confirm.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(progress).toHaveAttribute('data-stage', 'generate');
     await expect(progress.getByRole('status')).toHaveText('AI が作成しています…');
     await expect(progress.locator('[data-step="confirm"]')).toHaveAttribute('data-status', 'done');

@@ -251,9 +251,13 @@ export const appStorage: Storage = {
 
 export const hasDeviceStorage = () => active !== null;
 export const flushDeviceStorage = () => active?.flushAll() ?? Promise.resolve();
+export const SKIP_OPENING_ONCE_KEY = 'bas.skipOpeningOnce';
 export function reloadAfterDeviceSave() {
   queueMicrotask(() => {
-    void flushDeviceStorage().then(() => window.location.reload()).catch(() => {
+    void flushDeviceStorage().then(() => {
+      sessionStorage.setItem(SKIP_OPENING_ONCE_KEY, '1');
+      window.location.reload();
+    }, () => {
       // The storage guard retains the current page and offers a recovery copy.
     });
   });

@@ -54,7 +54,7 @@ async function setupBatch(page: Page, provider: Provider, failOnce?: string, aud
     'asis-field', { at, by: '担当者' });
   data.recommendations = { [`internal:${STEP_DEFS.asis.todos[0]!.id}`]: { approved: { text: '承認済みの提案', mock: false, at, by: '担当者' } } };
   await seedDeviceData(page, {
-    'bas.ai.settings': JSON.stringify({ state: { provider, liveEnabled: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
+    'bas.ai.settings': JSON.stringify({ state: { provider, liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
     'bas.scope.demo.proj.deliverables': JSON.stringify(data),
   });
   await page.reload();
@@ -71,41 +71,23 @@ async function openBatch(page: Page) {
 
 async function confirmBatch(page: Page) {
   await page.getByTestId('dlv-batch-generate').click();
-  const confirmation = page.getByTestId('ai-live-confirm');
-  await expect(confirmation).toBeVisible();
-  await expect(confirmation.getByTestId('ai-live-send')).toBeDisabled();
-  await confirmation.getByTestId('ai-live-person-check').check();
-  await confirmation.getByTestId('ai-live-send').click();
+  await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
 }
 
 test.describe('all-step live drafts', () => {
   test.setTimeout(120_000);
 
   for (const provider of ['foundry', 'copilotSdk'] as const) {
-    test(`${provider}: confirms every send, persists drafts, and protects existing work`, async ({ page }) => {
+    test(`${provider}: saved settings consent sends drafts without per-send prompts and protects existing work`, async ({ page }) => {
       const requests = await setupBatch(page, provider);
       await openBatch(page);
-      await page.getByTestId('dlv-batch-generate').click();
-      const confirmation = page.getByTestId('ai-live-confirm');
-      await expect(confirmation).toBeVisible();
-      await expect(confirmation.getByTestId('ai-live-send')).toBeDisabled();
-      await confirmation.getByTestId('ai-live-preview').locator('summary').click();
-      const preview = (await confirmation.getByTestId('ai-live-preview').innerText());
-      expect(preview.match(/\[bas-proj:deliverable:/g)).toHaveLength(5);
-      expect(preview.match(/\[bas-proj:stepBrief:/g)).toHaveLength(5);
-      expect(preview.match(/\[bas-proj:strategyOverview\]/g)).toHaveLength(1);
-      expect(preview.split('\n').find((line) => line.includes('全ステップ共通: 戦略の最適化')))
-        .toMatch(/対象 [1-9]\d* 件、社内情報 [1-9]\d* 件/);
+      await confirmBatch(page);
       if (provider === 'foundry') {
         const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
           .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
           .exclude('[data-tabster-dummy]').analyze();
         expect(scan.violations.map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target) }))).toEqual([]);
       }
-      await confirmation.getByRole('button', { name: 'キャンセル' }).click();
-      expect(requests).toHaveLength(0);
-
-      await confirmBatch(page);
       await expect(page.getByRole('dialog', { name: '全ステップのドラフトを一括作成' })).toBeVisible();
       await expect(page.getByTestId('dlv-batch-progress')).toContainText('11/11', { timeout: 90_000 });
       expect(requests).toHaveLength(11);
@@ -157,12 +139,7 @@ test.describe('all-step live drafts', () => {
     await expect(page.getByTestId('dlv-batch-fields-asis')).toHaveAttribute('data-status', 'done');
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'failed');
     await page.getByTestId('dlv-batch-generate').click();
-    const confirmation = page.getByTestId('ai-live-confirm');
-    await expect(confirmation).toContainText('送信 9 回');
-    await confirmation.getByTestId('ai-live-preview').locator('summary').click();
-    await expect(confirmation.getByTestId('ai-live-preview')).not.toContainText('[bas-proj:deliverable:asis]');
-    await confirmation.getByTestId('ai-live-person-check').check();
-    await confirmation.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(page.getByTestId('dlv-batch-progress')).toContainText('11/11', { timeout: 90_000 });
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:asis]'))).toHaveLength(1);
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:tobe]'))).toHaveLength(2);
@@ -236,9 +213,7 @@ test.describe('all-step live drafts', () => {
         await page.getByTestId('dlv-screen-draft').click();
         await expect(page.getByTestId('dlv-draft-field-problem')).toContainText('最初の下書き');
         await page.getByTestId('dlv-draft-regenerate').click();
-        const confirmation = page.getByTestId('ai-live-confirm');
-        await confirmation.getByTestId('ai-live-person-check').check();
-        await confirmation.getByTestId('ai-live-send').click();
+        await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
         await requestStarted;
 
         const changedKey = changed === 'field' ? fieldKey : deliverableKey;
@@ -266,18 +241,16 @@ test.describe('all-step live drafts', () => {
     });
   }
 
-  test('external-audience confirmation excludes confidential and privately sourced data', async ({ page }) => {
+  test('external-audience send excludes confidential and privately sourced data without a per-send prompt', async ({ page }) => {
     const requests = await setupBatch(page, 'foundry', undefined, 'external');
-    await openBatch(page);
-    await page.getByTestId('dlv-batch-generate').click();
-    const confirmation = page.getByTestId('ai-live-confirm');
-    await confirmation.getByTestId('ai-live-preview').locator('summary').click();
-    const preview = await confirmation.getByTestId('ai-live-preview').innerText();
+    await page.getByTestId('dlv-screen-draft').click();
+    await page.getByTestId('dlv-draft-generate').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
+    await expect.poll(() => requests.length).toBe(1);
+    const sent = JSON.stringify(requests[0]);
     for (const secret of ['熟練技能の継承', '技能伝承 Copilot', '現場インタビュー記録', 'cause-tacit-knowledge', 'src-interview']) {
-      expect(preview).not.toContain(secret);
+      expect(sent).not.toContain(secret);
     }
-    await confirmation.getByRole('button', { name: 'キャンセル' }).click();
-    expect(requests).toHaveLength(0);
   });
 
   for (const lang of ['ja', 'en'] as const) {

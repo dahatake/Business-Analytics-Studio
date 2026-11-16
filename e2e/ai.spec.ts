@@ -46,14 +46,12 @@ test.describe('Strategic overview optimization', () => {
       });
       await open(page, '/ai-settings', { lang: 'en' });
       await page.getByTestId(provider === 'foundry' ? 'ai-provider-foundry' : 'ai-provider-copilot').check();
+      await page.getByTestId('ai-send-consent').check();
       await page.getByTestId('ai-live-switch').check();
       await page.goto('/#/');
       const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
       await page.getByTestId('strategy-optimize').click();
-      await expect(page.getByTestId('ai-live-confirm')).toBeVisible();
-      expect(calls).toBe(0);
-      await page.getByTestId('ai-live-person-check').check();
-      await page.getByTestId('ai-live-send').click();
+      await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
       await expect(page.getByTestId('strategy-draft')).toBeVisible();
       await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
       expect((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']).toEqual(before);
@@ -118,7 +116,7 @@ test.describe('Strategic overview optimization', () => {
     });
     await open(page, '/', { lang: 'en' });
     await seedDeviceData(page, {
-      'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
+      'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
     });
     await page.reload();
     const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
@@ -127,10 +125,7 @@ test.describe('Strategic overview optimization', () => {
       if (index) await page.waitForTimeout(5_100);
       await page.goto(`/#/step?step=${step}`);
       await page.getByTestId('strategy-optimize').click();
-      const confirmation = page.getByTestId('ai-live-confirm');
-      await expect(confirmation).toBeVisible();
-      await confirmation.getByTestId('ai-live-person-check').check();
-      await confirmation.getByTestId('ai-live-send').click();
+      await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
       const draft = page.getByTestId('strategy-draft');
       await expect(draft).toContainText(`Strategy for ${step}`);
       await expect(draft).toContainText(`Tactic for ${step}`);
@@ -411,6 +406,8 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await open(page, '/ai-settings', { lang: 'en' });
     const live = page.getByRole('switch', { name: 'Enable the real connection to generative AI' });
     await expect(live).not.toBeChecked();
+    await expect(live).toBeDisabled();
+    await page.getByTestId('ai-send-consent').check();
     await live.check();
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
@@ -737,6 +734,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(page.getByTestId('ai-price-output')).toHaveCount(0);
     await saveVerifiedConnection(page, lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
     received.length = 0;
+    await page.getByTestId('ai-send-consent').check();
     await page.getByTestId('ai-live-switch').check();
   }
 
@@ -752,15 +750,10 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
 
     await page.goto('/#/');
     await page.getByTestId('ai-explain-button').click();
-    const dialog = page.getByTestId('ai-live-confirm');
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByTestId('ai-live-internal')).not.toContainText(': 0');
-    await expect(dialog.getByTestId('ai-live-cost')).toContainText('unknown charges are not free');
-    await expect(dialog.getByTestId('ai-d4-warning')).toBeVisible();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
+    await expect(page.getByTestId('ai-explain-panel').getByTestId('ai-live-label')).toContainText('Unknown');
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
-    expect(received).toHaveLength(0);
-    await dialog.getByTestId('ai-live-send').click();
 
     const panel = page.getByTestId('ai-explain-panel');
     await expect(panel.getByTestId('ai-live-label')).toContainText('Live');
@@ -796,37 +789,25 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(received).toHaveLength(1);
   });
 
-  test('ja: the send confirmation passes axe and cancelling sends nothing', async ({ page }) => {
+  test('ja: saved consent sends without a per-send confirmation', async ({ page }) => {
     await configure(page, 'ja');
     expect(await scan(page)).toEqual([]);
     await page.goto('/#/');
     await page.getByTestId('ai-explain-button').click();
-    const dialog = page.getByTestId('ai-live-confirm');
-    await expect(dialog.getByTestId('ai-d4-warning')).toBeVisible();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
-    const before = received.length;
-    await dialog.getByRole('button', { name: 'キャンセル' }).click();
-    await expect(page.getByTestId('ai-explain-panel')).toContainText('送信していません');
-    expect(received.length).toBe(before);
+    await expect(page.getByTestId('ai-explain-panel').getByTestId('ai-live-label')).toContainText('実際の応答');
+    expect(received).toHaveLength(1);
   });
 
-  test('D-22: [Generate with Copilot] on a step dashboard confirms first, labels the answer live and flags a figure not in the fact ledger', async ({ page }) => {
+  test('D-22: [Generate with Copilot] sends without a second confirmation and flags a figure not in the fact ledger', async ({ page }) => {
     await configure(page, 'en');
     await page.goto('/#/step?step=kpi');
     const gen = page.getByTestId('step-dash-brief-generate');
-    await expect(page.getByTestId('step-dash-brief-ai-col')).toContainText('You confirm the items and the cost');
+    await expect(page.getByTestId('step-dash-brief-ai-col')).toContainText('Send consent is given once in AI settings');
     received.length = 0;
     await gen.click();
-    const dialog = page.getByTestId('ai-live-confirm');
-    await expect(dialog).toContainText('Step executive summary');
-    expect(received).toHaveLength(0);
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByTestId('step-dash-brief-cancelled')).toBeVisible();
-    expect(received).toHaveLength(0);
-
-    await gen.click();
-    if (await dialog.getByTestId('ai-live-person-check').count()) await dialog.getByTestId('ai-live-person-check').check();
-    await dialog.getByTestId('ai-live-send').click();
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     const ai = page.getByTestId('step-dash-brief-ai');
     await expect(ai).toHaveAttribute('data-mode', 'live');
     await expect(ai.getByTestId('ai-live-label')).toContainText('Live');
@@ -841,7 +822,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(JSON.stringify(ledger)).not.toContain('Stub brief');
     expect(await scan(page)).toEqual([]);
   });
-  test('D-20: "Ask AI for suggestions" confirms items and attached files, then sends the theme with its text attachment', async ({ page }) => {
+  test('D-20: settings consent sends the approved theme and its text attachment without a per-send confirmation', async ({ page }) => {
     await page.addInitScript(() => {
       if (localStorage.getItem('bas.proj.ui')) return;
       localStorage.setItem('bas.proj.ui', JSON.stringify({ state: { editor: '', editMode: true, lens: 'business', analysisLayout: 'split', firstRunDone: true }, version: 1 }));
@@ -857,14 +838,8 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     received.length = 0;
 
     await canvas.getByTestId('proj-ask-ai').click();
-    const dialog = page.getByTestId('ai-live-confirm');
-    await expect(dialog).toContainText('Recommendations');
-    await expect(dialog).toContainText('Microsoft Foundry');
-    await expect(dialog.getByTestId('ai-live-attachments')).toContainText('notes.md');
+    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
-    expect(received).toHaveLength(0);
-    if (await dialog.getByTestId('ai-live-person-check').count()) await dialog.getByTestId('ai-live-person-check').check();
-    await dialog.getByTestId('ai-live-send').click();
 
     await expect(canvas.getByTestId('proj-ai-outcome').getByTestId('ai-live-label')).toContainText('Live');
     await expect(suggestions).toHaveCount(before + 1);
@@ -1004,6 +979,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(settings.getByTestId('ai-price-output')).toHaveCount(0);
     await saveVerifiedConnection(settings, 'Verified and saved');
     received.length = 0;
+    await settings.getByTestId('ai-send-consent').check();
     await settings.getByTestId('ai-live-switch').check();
     await expect(settings.getByTestId('ai-state')).toHaveText('Live (approved uses only)');
     await settings.getByTestId('ai-settings-dialog-close').click();

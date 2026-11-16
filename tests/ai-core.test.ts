@@ -189,6 +189,20 @@ describe('AI client', () => {
     expect(readLedger()).toHaveLength(0);
   });
 
+  it('uses the one-time AI-settings consent for approved data, including person data, and blocks sending without it', async () => {
+    const entities = loaded.pack.entities.filter((entity) => entity.kind === 'person').slice(0, 1);
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true, sendConsent: false }));
+    const blocked = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities, userConfirmed: true, personConfirmed: true });
+    expect(blocked.mode).toBe('mock');
+    expect(blocked.blockedReasons).toEqual(['notConfirmed', 'personNotConfirmed']);
+    expect(calls).toHaveLength(0);
+
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, configured: true, sendConsent: true }));
+    const allowed = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities });
+    expect(allowed.mode).toBe('live');
+    expect(calls).toHaveLength(1);
+  });
+
   it('stops sending once the monthly budget is used up (0 transport calls)', async () => {
     setRuntimeSettingsProvider(() => ({ liveEnabled: true, configured: true, monthlyBudgetJpy: 1, prices: { inputPerM: 300, outputPerM: 1200 } }));
     localStorage.setItem('bas.ai.ledger', JSON.stringify([{ at: new Date().toISOString(), use: 'review', inputTokens: 0, outputTokens: 0, costJpy: 1 }]));

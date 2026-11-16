@@ -24,7 +24,7 @@ export function parseBudget(raw: string): number | null {
   return Number(s);
 }
 
-type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'liveEnabled' | 'speechEndpoint' | 'speechRegion'
+type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'liveEnabled' | 'sendConsent' | 'speechEndpoint' | 'speechRegion'
   | 'monthlyBudgetJpy';
 
 /**
@@ -40,6 +40,8 @@ export interface AiSettingsState {
   authMethod: AuthMethod;
   /** FR-132: explicit enable of the real connection. Off by default. */
   liveEnabled: boolean;
+  /** D-25: one-time permission for approved AI uses and their outbound data, captured in AI settings. */
+  sendConsent: boolean;
   speechEndpoint: string;
   speechRegion: string;
   /** D-3: one monthly budget for the whole app (PARAM-117), default 100,000 JPY. */
@@ -83,6 +85,7 @@ export const useAiSettings = create<AiSettingsState>()(
       apiVersion: DEFAULT_API_VERSION,
       authMethod: 'apiKey',
       liveEnabled: false,
+      sendConsent: false,
       speechEndpoint: '',
       speechRegion: '',
       monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
@@ -95,7 +98,11 @@ export const useAiSettings = create<AiSettingsState>()(
       copilotModel: null,
       copilotStatus: null,
       workiq: null,
-      update: (patch) => set(patch),
+      update: (patch) => set((state) => {
+        const destinationChanged = patch.provider !== undefined && patch.provider !== state.provider;
+        const revoked = patch.sendConsent === false;
+        return { ...patch, ...(destinationChanged || revoked ? { sendConsent: false, liveEnabled: false } : {}) };
+      }),
       refreshRelay: async () => {
         const s = await fetchRelayStatus();
         set({
@@ -120,12 +127,15 @@ export const useAiSettings = create<AiSettingsState>()(
         return status;
       },
       saveCopilotModel: async (model) => {
+        const previousModel = get().copilotModel;
         const ok = await saveCopilotModel(model);
+        if (ok && previousModel !== model) set({ sendConsent: false, liveEnabled: false });
         await get().refreshRelay();
         return ok;
       },
       deleteCopilot: async () => {
         const ok = await deleteCopilotSettings();
+        if (ok) set({ sendConsent: false, liveEnabled: false });
         await get().refreshRelay();
         return ok;
       },
@@ -154,6 +164,12 @@ export const useAiSettings = create<AiSettingsState>()(
           });
         }
         const current = get();
+        if (r.ok && (
+          s.relayConnection === null
+          || s.relayConnection.endpoint !== r.connection.endpoint
+          || s.relayConnection.deployment !== r.connection.deployment
+          || s.relayConnection.apiVersion !== r.connection.apiVersion
+        )) set({ sendConsent: false, liveEnabled: false });
         if (r.ok && current.endpoint === s.endpoint && current.deployment === s.deployment && current.apiVersion === s.apiVersion) {
           set({ endpoint: r.connection.endpoint, deployment: r.connection.deployment, apiVersion: r.connection.apiVersion });
         }
@@ -162,7 +178,7 @@ export const useAiSettings = create<AiSettingsState>()(
       },
       deleteConnection: async () => {
         const ok = await deleteRelayConnection();
-        if (ok) set({ endpoint: '', deployment: '', apiVersion: DEFAULT_API_VERSION, liveEnabled: false });
+        if (ok) set({ endpoint: '', deployment: '', apiVersion: DEFAULT_API_VERSION, liveEnabled: false, sendConsent: false });
         await get().refreshRelay();
         return ok;
       },
@@ -173,6 +189,7 @@ export const useAiSettings = create<AiSettingsState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, liveEnabled: s.liveEnabled,
+        sendConsent: s.sendConsent,
         speechEndpoint: s.speechEndpoint, speechRegion: s.speechRegion,
         monthlyBudgetJpy: s.monthlyBudgetJpy,
       }),
@@ -218,6 +235,7 @@ export function runtimeSettings(): AiRuntimeSettings {
   return {
     provider: s.provider,
     liveEnabled: s.liveEnabled,
+    sendConsent: s.sendConsent,
     configured: isConfigured(s),
     monthlyBudgetJpy: s.monthlyBudgetJpy,
     prices: null,
@@ -232,7 +250,7 @@ export function mediaCapability(s: Pick<AiSettingsState, 'provider' | 'copilotMo
 }
 
 export function liveReady(s: AiSettingsState): boolean {
-  return s.liveEnabled && isConfigured(s);
+  return s.liveEnabled && s.sendConsent && isConfigured(s);
 }
 
 /** Work IQ requires a successful retrieval diagnostic, not just a saved refresh token. */

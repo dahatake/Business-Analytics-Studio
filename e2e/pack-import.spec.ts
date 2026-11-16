@@ -1,7 +1,7 @@
 import { crc32 } from 'node:zlib';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { open } from './helpers.ts';
+import { open, setup } from './helpers.ts';
 import { COLLECTION_SECTIONS } from '../src/data/collection.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
@@ -167,7 +167,10 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('brand-logo').locator('img')).toHaveJSProperty('naturalWidth', 1);
   });
   test('Copilot answer → check → fix prompt → import into a new project → screens use it → delete', async ({ page }) => {
-    await open(page, '/data');
+    await setup(page, { motion: 'full', skipOpening: false, skipLaunch: true });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto('/#/data');
+    await page.getByRole('button', { name: /スキップ|Skip/ }).click();
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('データ管理');
     await expect(page.getByTestId('pack-origin')).toContainText('アプリに同梱のサンプル');
 
@@ -223,7 +226,8 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await apply.click();
 
     // The app restarts on the imported pack, in the new project.
-    await expect(page.getByTestId('pack-imported-notice')).toContainText('Fabrikam 精工-需要予測');
+    await expect(page.getByTestId('pack-imported-notice')).toContainText('Fabrikam 精工-需要予測', { timeout: 4000 });
+    await expect(page.getByTestId('opening')).toHaveCount(0);
     await expect(page.getByTestId('pack-origin')).toContainText('この画面で取り込んだパック');
     await expect(page.getByTestId('pack-origin')).toContainText('copilot-part2.txt');
     await expect(page.getByTestId('proj-target-menu')).toContainText('Fabrikam 精工-需要予測');
@@ -253,6 +257,7 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     // Catalog items no use-case entity covers are still listed with the data entities.
     await expect(page.getByTestId('uc-catalog-items')).toContainText('Fabrikam Orders');
     await page.reload();
+    await page.getByRole('button', { name: /スキップ|Skip/ }).click();
     await expect(page.getByTestId('uc-import')).toContainText('Fabrikam Orders');
     await page.evaluate(() => { window.location.hash = '/analysis'; });
     await expect(page.getByTestId('proj-engagements')).toContainText('納期改善ワークショップ');
@@ -260,6 +265,7 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('proj-engagements')).toContainText('中期経営計画 2026');
     expect(await scan(page)).toEqual([]);
     await page.reload();
+    await page.getByRole('button', { name: /スキップ|Skip/ }).click();
     await expect(page.getByTestId('proj-engagements')).toContainText('改善案を合意');
     await page.getByTestId('audience-toggle').click();
     await expect(page.getByTestId('proj-engagements')).toHaveCount(0);

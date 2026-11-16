@@ -56,6 +56,8 @@ export interface AiRuntimeSettings {
   provider?: Provider;
   liveEnabled: boolean;
   configured: boolean;
+  /** One-time approval saved in AI settings for the approved uses and their outbound data. */
+  sendConsent?: boolean;
   /** D-3: the user's monthly budget (default 100,000 JPY). */
   monthlyBudgetJpy?: number;
   /** Optional pricing for integrations that can calculate costs. */
@@ -176,11 +178,11 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
     use: req.use,
     provider: settings.provider ?? 'foundry',
     liveEnabled: settings.liveEnabled,
-    userConfirmed: req.userConfirmed ?? false,
+    userConfirmed: settings.sendConsent ?? req.userConfirmed ?? false,
     configured: settings.configured,
     budget,
     personCount: selection.personCount,
-    personConfirmed: req.personConfirmed ?? false,
+    personConfirmed: settings.sendConsent ?? req.personConfirmed ?? false,
   });
   return {
     allowed: gate.allowed,

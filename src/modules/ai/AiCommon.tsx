@@ -1,9 +1,8 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import {
-  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, MessageBarTitle,
+  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, MessageBarTitle,
 } from '@fluentui/react-components';
 import { selectOutbound } from '../../ai/redact.ts';
-import { AI_LIMITS } from '../../ai/policy.ts';
 import type { TokenCount } from '../../ai/client.ts';
 import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
@@ -28,7 +27,7 @@ export function yenFine(locale: string, v: number): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 2 }).format(v);
 }
 
-/** D-4: rights and contracts are assumed settled before the app starts. Shown wherever a real send can be started. */
+/** D-4: rights and contracts are assumed settled before the app starts. Shown in AI setup. */
 export function D4Warning({ testId = 'ai-d4-warning' }: { testId?: string }) {
   const { t } = useI18n();
   return (
@@ -179,7 +178,6 @@ export function usePersonConfirm(): { dialog: ReactNode; confirm: ConfirmFn } {
           <DialogContent className="ai-stack">
             <p>{t('ai.person.body', { count: pending?.count ?? 0, scope: pending?.scope ?? '' })}</p>
             <p className="muted">{t('ai.person.note')}</p>
-            <D4Warning />
           </DialogContent>
           <DialogActions>
             <Button appearance="primary" onClick={() => close(true)}>{t('ai.person.continue')}</Button>
@@ -220,73 +218,7 @@ type LiveConfirmResult = Promise<LiveDecision>;
 type LiveConfirmFn = (info: LiveConfirmInfo) => LiveConfirmResult;
 
 export function useLiveConfirm(): { dialog: ReactNode; confirmLive: LiveConfirmFn } {
-  const { t, fmt } = useI18n();
-  const provider = useAiSettings((s) => s.provider);
-  const [pending, setPending] = useState<LiveConfirmInfo | null>(null);
-  const [personChecked, setPersonChecked] = useState(false);
-  const resolver = useRef<((d: LiveDecision) => void) | null>(null);
-  const confirmLive = useCallback<LiveConfirmFn>((info) => new Promise((resolve: (d: LiveDecision) => void) => {
-    resolver.current = resolve;
-    setPersonChecked(false);
-    setPending(info);
-  }), []);
-  const close = (ok: boolean) => {
-    const needsPerson = (pending?.personCount ?? 0) > 0 || !!pending?.freeTextMayContainPersons;
-    resolver.current?.({ ok, personConfirmed: ok && (!needsPerson || personChecked) });
-    resolver.current = null;
-    setPending(null);
-  };
-  const p = pending;
-  const blocked = p !== null && (p.personCount > 0 || !!p.freeTextMayContainPersons) && !personChecked;
-  const dialog = (
-    <Dialog open={p !== null} modalType="alert" onOpenChange={(_, d) => { if (!d.open) close(false); }}>
-      <DialogSurface data-testid="ai-live-confirm">
-        <DialogBody>
-          <DialogTitle>{t('ai.live.title')}</DialogTitle>
-          <DialogContent className="ai-stack">
-            {p && (
-              <>
-                <p>{t('ai.live.lead', { use: t(p.use), provider: t(`ai.provider.${provider}`) })}</p>
-                {p.destination && <p>{t('ai.live.destination', { destination: p.destination })}</p>}
-                <ul className="ai-reasons" data-testid="ai-live-content">
-                  <li>{t('ai.live.items', { count: p.itemCount, scope: p.scope })}</li>
-                  <li data-testid="ai-live-internal">{t('ai.live.internal', { count: p.internalCount })}</li>
-                  <li data-testid="ai-live-persons">{t('ai.live.persons', { count: p.personCount })}</li>
-                  {p.attachments && p.attachments.sent.length > 0 && (
-                    <li data-testid="ai-live-attachments">{t('ai.live.attachments', { count: p.attachments.sent.length, names: p.attachments.sent.join(', ') })}</li>
-                  )}
-                  {p.attachments && p.attachments.skipped.length > 0 && (
-                    <li data-testid="ai-live-attachments-skipped">{t('ai.live.attachmentsSkipped', { count: p.attachments.skipped.length, names: p.attachments.skipped.join(', ') })}</li>
-                  )}
-                </ul>
-                {p.contentPreview && (
-                  <details data-testid="ai-live-preview">
-                    <summary>{t('ai.live.preview')}</summary>
-                    <pre className="proj-prewrap">{p.contentPreview}</pre>
-                  </details>
-                )}
-                <p data-testid="ai-live-cost">{p.estimatedCostJpy === null ? t(provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown') : t('ai.live.cost', { cost: yenFine(fmt.locale, p.estimatedCostJpy), factor: AI_LIMITS.estimateSafetyFactor })}</p>
-                <p data-testid="ai-live-month">{t('ai.live.month', { spent: yenFine(fmt.locale, p.monthSpentJpy), budget: fmt.yen(p.monthBudgetJpy) })}</p>
-                {(p.personCount > 0 || p.freeTextMayContainPersons) && (
-                  <Checkbox
-                    checked={personChecked}
-                    onChange={(_, d) => setPersonChecked(d.checked === true)}
-                    label={p.freeTextMayContainPersons ? t('ai.live.freeTextPersonCheck') : t('ai.live.personCheck', { count: p.personCount })}
-                    data-testid="ai-live-person-check"
-                  />
-                )}
-                <p className="muted">{t(p.storesResponse ? 'ai.live.responseStored' : 'ai.live.noRecord')}</p>
-                <D4Warning />
-              </>
-            )}
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="primary" disabled={blocked} onClick={() => close(true)} data-testid="ai-live-send">{t('ai.live.send')}</Button>
-            <Button onClick={() => close(false)}>{t('ai.person.cancel')}</Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-  return { dialog, confirmLive };
+  const consent = useAiSettings((s) => s.sendConsent);
+  const confirmLive = useCallback<LiveConfirmFn>(async () => ({ ok: consent, personConfirmed: consent }), [consent]);
+  return { dialog: null, confirmLive };
 }

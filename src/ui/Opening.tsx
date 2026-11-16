@@ -6,8 +6,6 @@ import { useReducedMotion } from '../state/motion.ts';
 import { useLaunch } from '../state/launch.ts';
 import { sound } from '../audio/sound.ts';
 
-export { OPENING_SEEN_KEY } from '../state/launch.ts';
-
 /**
  * F-3.1.5 / FR-076 cinematic opening: letterbox, title reveal, light sweep. Shows the application name only
  * (no customer or project name). Skippable; never shown under reduced motion. Step 1 of the start-up sequence.

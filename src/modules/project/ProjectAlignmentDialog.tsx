@@ -12,7 +12,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useProjects, type Company, type Project } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
-import { D4Warning, yenFine } from '../ai/AiCommon.tsx';
+import { yenFine } from '../ai/AiCommon.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import { ALIGNMENT_KINDS, alignmentPrompt, assessAlignment, emptyAlignment, orderedCompanyObjectives, parseAlignmentProposal, projectEvidenceSources, type Alignment, type ProjectEvidenceSource } from './companyAlignment.ts';
@@ -223,7 +223,6 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
                   <p>{t('proj.align.aiNotice', { provider: t(`ai.provider.${ai.provider}`), cost: estimate?.estimatedCostJpy == null ? t(ai.provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown') : yenFine(fmt.locale, estimate.estimatedCostJpy) })}</p>
                   <p className="muted">{t('proj.align.aiContents')}</p>
                   <pre className="proj-prewrap" data-testid="alignment-ai-preview">{proposal}</pre>
-                  <D4Warning />
                   <Checkbox checked={aiApproved} onChange={(_, data) => setAiApproved(data.checked === true)} label={t('proj.align.aiApprove')} data-testid="alignment-ai-approve" />
                   <Checkbox checked={aiCostOk} onChange={(_, data) => setAiCostOk(data.checked === true)} label={t('proj.align.aiCost')} data-testid="alignment-ai-cost" />
                   {(!estimate?.allowed || proposal.length > 32_000) && <p className="muted">{t('proj.align.aiNotReady', { reason: proposal.length > 32_000 ? 'inputTooLarge' : estimate?.reasons.join(', ') ?? '' })}</p>}

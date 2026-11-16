@@ -23,9 +23,9 @@ export async function setup(page: Page, opts: SetupOptions = {}) {
   await page.addInitScript(({ lang, audience, motion, skipOpening, skipLaunch, deviceId }) => {
     if (deviceId === null) localStorage.removeItem('bas.device.test');
     else localStorage.setItem('bas.device.test', deviceId);
+    if (skipOpening) sessionStorage.setItem('bas.skipOpeningOnce', '1');
     if (sessionStorage.getItem('bas.e2e.seeded')) return;
     sessionStorage.setItem('bas.e2e.seeded', '1');
-    if (skipOpening) sessionStorage.setItem('bas.openingSeen', '1');
     if (skipLaunch) sessionStorage.setItem('bas.launchChosen', '1');
     localStorage.setItem('bas.settings', JSON.stringify({
       state: { lang, theme: 'dark', motion, muted: true, bgm: true, sfx: true, volume: 0.5, audience },

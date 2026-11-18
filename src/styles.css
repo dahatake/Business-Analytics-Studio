@@ -116,15 +116,77 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   flex: 1 1 280px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   cursor: help; border-radius: var(--borderRadiusSmall);
 }
+.outcome-preview-text { animation: outcome-preview-in var(--durationSlow) var(--curveDecelerateMid); }
+@keyframes outcome-preview-in { from { opacity: 0; transform: translateY(6px); filter: blur(2px); } }
 .outcome-preview:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.outcomes-toggle { flex: none; }
+.outcomes-toggle-icon { transition: transform var(--durationSlow) var(--curveEasyEase); }
+.outcomes-toggle[data-open='true'] .outcomes-toggle-icon { transform: rotate(180deg); }
+.outcomes-count {
+  display: inline-block; margin-inline-start: 6px; padding: 0 6px; border-radius: var(--borderRadiusCircular);
+  background: var(--colorNeutralBackground3); color: var(--colorNeutralForeground2); font-variant-numeric: tabular-nums;
+  animation: outcome-pop var(--durationSlow) var(--curveDecelerateMid);
+}
+/* Inline expansion like the ToDo band: the row unfolds (0fr → 1fr), then the cards rise in one by one. */
+.outcome-strip {
+  display: grid; grid-template-rows: 0fr; visibility: hidden;
+  background: color-mix(in srgb, var(--colorNeutralBackground1) 88%, transparent);
+  backdrop-filter: blur(20px);
+  transition: grid-template-rows var(--durationSlower) var(--curveAccelerateMid), visibility 0s linear var(--durationSlower);
+}
+.outcome-strip[data-open='true'] {
+  grid-template-rows: 1fr; visibility: visible; border-bottom: 1px solid var(--colorNeutralStroke2);
+  transition: grid-template-rows var(--durationSlower) var(--curveDecelerateMid), visibility 0s;
+}
+.outcome-strip-inner { min-height: 0; overflow: hidden; }
+.outcome-strip-body { display: grid; gap: 6px; padding: 6px 20px 8px; }
+.outcome-strip-intro { margin: 0; color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+.outcome-strip-scroll { overflow-x: auto; padding: 8px 2px 6px; }
+.outcome-strip-scroll:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.outcome-strip-list { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; align-items: stretch; }
+.outcome-strip-item {
+  position: relative; flex: 0 0 300px; display: flex;
+  opacity: 0; transform: translateY(-8px) scale(0.98);
+  transition: opacity var(--durationNormal) var(--curveAccelerateMid), transform var(--durationNormal) var(--curveAccelerateMid);
+}
+.outcome-strip[data-open='true'] .outcome-strip-item {
+  opacity: 1; transform: none;
+  animation: outcome-card-in var(--durationSlower) var(--curveDecelerateMid) both;
+  animation-delay: calc(min(var(--i, 0), 10) * 45ms + 80ms);
+}
+@keyframes outcome-card-in { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
+.outcome-strip-item > .outcome-card {
+  flex: 1; border-left: 4px solid var(--colorBrandStroke1);
+  transition: transform var(--durationFast) var(--curveDecelerateMid), box-shadow var(--durationFast) var(--curveDecelerateMid);
+}
+.outcome-strip-item > .outcome-card:hover { transform: translateY(-2px); box-shadow: var(--shadow8); }
+.outcome-strip-item > .outcome-card[data-testid^='outcome-solution-'] { border-left-color: var(--colorPaletteBlueBorderActive, var(--colorBrandStroke2)); }
+.outcome-strip-item > .outcome-card[data-testid^='outcome-issue-'] { border-left-color: var(--colorPaletteMarigoldBorderActive, var(--colorNeutralStroke1)); }
+.outcome-card-kind { display: block; margin-bottom: 4px; color: var(--colorNeutralForeground3); font-size: var(--fontSizeBase100); font-weight: var(--fontWeightSemibold); letter-spacing: 0.04em; text-transform: uppercase; }
+/* A changed card glows and gets a badge, so it is clear which outcome moved. */
+.outcome-flash {
+  position: absolute; inset: 0; border-radius: var(--borderRadiusLarge); pointer-events: none;
+  border: 2px solid var(--colorBrandStroke1);
+  animation: outcome-flash 2.4s var(--curveEasyEase) forwards;
+}
+.outcome-strip-item[data-change='new'] .outcome-flash { border-color: var(--colorPaletteGreenBorderActive); --flash: var(--colorPaletteGreenBackground2); }
+@keyframes outcome-flash {
+  0% { opacity: 0; box-shadow: 0 0 0 0 var(--flash, var(--colorBrandBackground2)); }
+  12% { opacity: 1; box-shadow: 0 0 0 6px var(--flash, var(--colorBrandBackground2)); }
+  35% { box-shadow: 0 0 0 2px var(--flash, var(--colorBrandBackground2)); }
+  100% { opacity: 0; box-shadow: 0 0 0 0 transparent; }
+}
+.outcome-strip-item[data-change] > .outcome-card { animation: outcome-nudge var(--durationUltraSlow) var(--curveDecelerateMid); }
+@keyframes outcome-nudge { 20% { transform: translateY(-4px) scale(1.015); } }
+.outcome-change-badge { position: absolute; top: -6px; right: 8px; animation: outcome-pop var(--durationSlow) var(--curveDecelerateMid); }
+@keyframes outcome-pop { from { opacity: 0; transform: scale(0.6); } 70% { transform: scale(1.08); } }
+@media (max-width: 860px) {
+  .outcome-strip-body { padding: 6px 12px 8px; }
+  .outcome-strip-item { flex-basis: min(280px, 82vw); }
+}
 .outcome-tooltip { display: grid; gap: 6px; max-width: 400px; white-space: normal; }
 .outcome-tooltip p { margin: 0; }
 .outcome-warning { color: var(--colorPaletteRedForeground1); }
-.outcome-dialog-surface { width: min(960px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
-.outcome-dialog-surface .fui-DialogContent { overflow-y: auto; }
-.outcome-section { margin-top: 20px; }
-.outcome-section > h3 { margin: 0 0 8px; font-size: var(--fontSizeBase400); }
-.outcome-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px; }
 .outcome-card {
   min-width: 0; padding: 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusLarge);
   background: var(--colorNeutralBackground1);

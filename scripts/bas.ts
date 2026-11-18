@@ -245,10 +245,11 @@ async function dispatch(command: string, args: Args, s: ReturnType<typeof settin
         cpSync(join(ROOT, 'scripts', 'lib', 'serve.ts'), join(dest, 'serve.ts'));
         cpSync(join(ROOT, 'scripts', 'lib', 'device.ts'), join(dest, 'device.ts'));
         cpSync(join(ROOT, 'scripts', 'lib', 'deviceProtocol.ts'), join(dest, 'deviceProtocol.ts'));
+        cpSync(join(ROOT, 'scripts', 'lib', 'deviceLocation.ts'), join(dest, 'deviceLocation.ts'));
         writePackageStarters(dest, customer);
       });
       io.out(`package ${customer}: ${dest}`);
-      io.out('  contents: app/ (built app + data/pack.json), serve.ts, device.ts, deviceProtocol.ts, start.ps1, start.sh, start.command, README.txt');
+      io.out('  contents: app/ (built app + data/pack.json), serve.ts, device.ts, deviceProtocol.ts, deviceLocation.ts, start.ps1, start.sh, start.command, README.txt');
       io.out('  needs only Node.js on the target PC; no npm install, no network, serves on 127.0.0.1 (FR-105).');
       return 0;
     }
@@ -414,8 +415,9 @@ Start (no installation, no network; the app runs on http://127.0.0.1:4180/):
 
 Requires Node.js 22.18 or later. The customer pack is app/data/pack.json; replace it to show another customer (no rebuild).
 Project data, imported packs and boards are saved in .bas-local/device.sqlite, shared across ports and browsers in this package.
+To keep them in another folder, use Settings > Data folder; .bas-local then keeps a pointer to it (storage-location.json).
 For legacy browser-only data, open the updated app once at its original URL and browser profile to migrate it.
-Stop all servers before backing up the whole .bas-local folder. Migration backups and original browser data are managed separately from project deletion.
+Stop all servers before backing up the whole .bas-local folder and the chosen data folder. Migration backups and original browser data are managed separately from project deletion.
 Do not share this folder outside the agreed audience: it contains customer information (C-02).
 `);
 }

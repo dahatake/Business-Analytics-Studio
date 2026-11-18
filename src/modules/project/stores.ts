@@ -68,12 +68,15 @@ interface ProjUiState {
   firstRunDone: boolean;
   /** The step to-do band shows only its summary line. null = automatic (expanded on tall screens). */
   todoCollapsed: boolean | null;
+  /** The expected-outcomes card row under the top bar is unfolded. */
+  outcomesOpen: boolean;
   setEditor: (v: string) => void;
   setEditMode: (v: boolean) => void;
   setLens: (v: Lens) => void;
   setAnalysisLayout: (v: ProjUiState['analysisLayout']) => void;
   setFirstRunDone: (v: boolean) => void;
   setTodoCollapsed: (v: boolean) => void;
+  setOutcomesOpen: (v: boolean) => void;
 }
 
 export const useProjUi = create<ProjUiState>()(
@@ -85,12 +88,14 @@ export const useProjUi = create<ProjUiState>()(
       analysisLayout: 'split',
       firstRunDone: false,
       todoCollapsed: null,
+      outcomesOpen: false,
       setEditor: (editor) => set({ editor }),
       setEditMode: (editMode) => set({ editMode }),
       setLens: (lens) => set({ lens }),
       setAnalysisLayout: (analysisLayout) => set({ analysisLayout }),
       setFirstRunDone: (firstRunDone) => set({ firstRunDone }),
       setTodoCollapsed: (todoCollapsed) => set({ todoCollapsed }),
+      setOutcomesOpen: (outcomesOpen) => set({ outcomesOpen }),
     }),
     { name: 'bas.proj.ui', version: 1, storage: createJSONStorage(() => localStorage) },
   ),

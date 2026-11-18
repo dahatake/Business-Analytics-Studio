@@ -6,7 +6,7 @@ import { downloadBlob } from '../modules/show/recorder.ts';
 
 export function useDeviceBlocked() {
   const status = useSyncExternalStore(subscribeDeviceStatus, deviceStatus);
-  return status === 'error' || status === 'conflict';
+  return status === 'error' || status === 'conflict' || status === 'moved';
 }
 
 export function DeviceStorageStatus() {

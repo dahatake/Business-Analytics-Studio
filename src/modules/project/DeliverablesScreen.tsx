@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Checkbox, Field, Input, Tab, TabList, Textarea } from '@fluentui/react-components';
-import { ArrowDownload20Regular, Sparkle20Regular } from '@fluentui/react-icons';
+import { ArrowDownload20Regular, Checkmark16Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { PARAMS } from '../../config/params.ts';
 import { loadPack } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
@@ -12,7 +12,7 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { AuthorBadge, BackToHome, downloadText, useTargetNames } from './common.tsx';
 import {
-  evaluateStep, fieldHintKey, fieldKey, hasDate, hasNumber, inputKey, normalizeDeliverables, paybackLimit, PAYBACK_LIMIT_RANGE, PAYBACK_MAX_YEARS, progressOf, resultKey,
+  approveField, evaluateStep, fieldHintKey, fieldKey, hasDate, hasNumber, inputKey, normalizeDeliverables, paybackLimit, PAYBACK_LIMIT_RANGE, PAYBACK_MAX_YEARS, progressOf, resultKey,
   setField, setPaybackLimit, setSignOff, STEP_DEFS, type CheckContext, type TodoResult,
 } from './deliverables.ts';
 import { deliverableNameKey, Refs, StrategySummary, TodoItem, todayIn, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
@@ -197,7 +197,7 @@ function PaybackCriterion() {
 
 /** The step deliverables: definition, exit criteria with live verdicts, existing inputs and the fields to add. */
 export function DeliverablesScreen() {
-  const { t, lang } = useI18n();
+  const { t, lang, fmt } = useI18n();
   const route = useRoute();
   const { step: activeStep } = useActiveProject();
   const q = route.query.get('step');
@@ -293,13 +293,18 @@ export function DeliverablesScreen() {
             const text = v?.text ?? '';
             const missing = text.trim() !== '' && ((f.quantified && !hasNumber(text)) || (f.timeBound && !hasDate(text)));
             const message = missing ? t(f.quantified && !hasNumber(text) ? 'dlv.screen.needNumber' : 'dlv.screen.needDate') : undefined;
+            const label = t(fieldKey(step, f.id));
+            const approvedDate = v?.approved ? fmt.date(todayIn(PARAMS.timeZone, new Date(v.approved.at))) : '';
             return (
+              <div key={f.id} className="dlv-field" data-testid={`dlv-field-box-${f.id}`} data-author={v?.author ?? 'none'}>
               <Field
-                key={f.id}
                 label={{ children: (
                   <span className="dlv-field-label">
-                    {t(fieldKey(step, f.id))}
-                    {v && <AuthorBadge author={v.author} mock={v.mock} />}
+                    {label}
+                    {v && !v.approved && <AuthorBadge author={v.author} mock={v.mock} />}
+                    {v?.approved && (
+                      <Badge appearance="filled" color="success" data-testid={`dlv-approved-${f.id}`}>{t('dlv.screen.approved')}</Badge>
+                    )}
                   </span>
                 ) }}
                 hint={t(fieldHintKey(step, f.id))}
@@ -315,6 +320,27 @@ export function DeliverablesScreen() {
                   data-testid={`dlv-field-${f.id}`}
                 />
               </Field>
+              {v?.author === 'ai' && text.trim() !== '' && (
+                <div className="dlv-field-actions">
+                  <Button
+                    size="small"
+                    appearance="primary"
+                    icon={<Checkmark16Regular />}
+                    aria-label={t('dlv.screen.approveField', { field: label })}
+                    onClick={() => set((prev) => approveField(normalizeDeliverables(prev), step, f.id, text, useProjUi.getState().editor.trim(), new Date().toISOString()))}
+                    data-testid={`dlv-approve-${f.id}`}
+                  >
+                    {t('dlv.screen.approve')}
+                  </Button>
+                </div>
+              )}
+              {v?.approved && (
+                <p className="muted dlv-field-approval" data-testid={`dlv-approval-${f.id}`}>
+                  {t(v.approved.by ? 'dlv.screen.approvedBy' : 'dlv.screen.approvedAnon', { date: approvedDate, by: v.approved.by })}
+                  {v.approved.mock ? ` ${t('dlv.screen.approvedMock')}` : ''}
+                </p>
+              )}
+              </div>
             );
           })}
         </div>

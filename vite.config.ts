@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { resolve } from 'node:path';
 import { defineConfig, type Plugin, type ViteDevServer, type PreviewServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { handleApiRequest } from './src/api/handler.ts';
@@ -7,12 +8,19 @@ import { cspPlugin } from './build/csp.ts';
 import { createDeviceService } from './scripts/lib/device.ts';
 
 function deviceStorage(): Plugin {
-  const mount = (server: ViteDevServer | PreviewServer) => {
-    const service = createDeviceService(process.env.BAS_DEVICE_DIR ?? relayDir(server.config.root), process.env.BAS_DEVICE_TEST_MODE === '1');
+  // FR-329: a data folder inside a folder the server exposes could be downloaded over HTTP, so those are refused.
+  const mount = (server: ViteDevServer | PreviewServer, servedRoots: string[]) => {
+    const service = createDeviceService(process.env.BAS_DEVICE_DIR ?? relayDir(server.config.root), process.env.BAS_DEVICE_TEST_MODE === '1', {
+      servedRoots, fixed: Boolean(process.env.BAS_DEVICE_DIR),
+    });
     server.middlewares.use(service.handle);
     server.httpServer?.once('close', service.close);
   };
-  return { name: 'bas-device-storage', configureServer: mount, configurePreviewServer: mount };
+  return {
+    name: 'bas-device-storage',
+    configureServer: (server) => mount(server, [server.config.root]),
+    configurePreviewServer: (server) => mount(server, [resolve(server.config.root, server.config.build.outDir)]),
+  };
 }
 
 function localApi(): Plugin {

@@ -13,6 +13,7 @@ import { hrefFor } from '../state/router.ts';
 import { LEDGER_RETENTION_MONTHS } from '../ai/budget.ts';
 import { openAiSettings } from '../modules/ai/uiStore.ts';
 import type { MessageKey } from '../i18n/index.ts';
+import { DataLocationPanel } from './DataLocationPanel.tsx';
 
 /** D-7 (proposal P-03, approved 2026-11-09): what is kept, how it is deleted, and what survives for budget accounting. */
 const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageKey; budget: MessageKey; where?: string; aiSettings?: true }[] = [
@@ -115,6 +116,7 @@ export function SettingsScreen() {
           <p className="muted">{t('settings.soundNote')}</p>
         </Panel>
       </div>
+      <DataLocationPanel />
       <Panel title={t('settings.loadTest')}>
         <LoadTest />
       </Panel>

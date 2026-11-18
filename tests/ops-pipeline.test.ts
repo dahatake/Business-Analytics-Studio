@@ -286,7 +286,7 @@ describe('FR-120 CLI end to end (in-process)', () => {
     expect(existsSync(join(TMP, 'work', 'contoso-robotics', 'index.html'))).toBe(true);
     expect(await run(['verify', packFile, ...dirs()], io)).toBe(0);
     expect(await run(['package', 'Contoso Robotics', ...dirs()], io)).toBe(0);
-    for (const f of ['app/index.html', 'app/data/pack.json', 'serve.ts', 'device.ts', 'deviceProtocol.ts', 'start.ps1', 'start.sh', 'start.command', 'README.txt']) {
+    for (const f of ['app/index.html', 'app/data/pack.json', 'serve.ts', 'device.ts', 'deviceProtocol.ts', 'deviceLocation.ts', 'start.ps1', 'start.sh', 'start.command', 'README.txt']) {
       expect(existsSync(join(TMP, 'work', 'contoso-robotics-package', f)), f).toBe(true);
     }
     const offline = spawnSync(process.execPath, ['--input-type=module', '-e', `

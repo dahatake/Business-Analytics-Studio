@@ -1,16 +1,16 @@
 import {
-  BINARY_PREFIX, DEVICE_HEADER, DEVICE_PREFIX, DEVICE_TEST_HEADER, isDeviceKey,
-  type DeviceChange, type DeviceSnapshot,
+  BINARY_PREFIX, DEVICE_HEADER, DEVICE_ID_HEADER, DEVICE_PREFIX, DEVICE_TEST_HEADER, isDeviceKey,
+  type DeviceChange, type DeviceFolderListing, type DeviceLocation, type DeviceLocationMode, type DeviceSnapshot,
 } from '../../scripts/lib/deviceProtocol.ts';
 
-export type StorageStatus = 'saved' | 'saving' | 'error' | 'conflict';
+export type StorageStatus = 'saved' | 'saving' | 'error' | 'conflict' | 'moved';
 let active: DeviceStorage | null = null;
 let status: StorageStatus = 'saved';
 const listeners = new Set<() => void>();
 export const deviceStatus = () => status;
 export function subscribeDeviceStatus(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }
 function report(next: StorageStatus, reset = false) {
-  if (!reset && (status === 'error' || status === 'conflict') && (next === 'saving' || next === 'saved')) return;
+  if (!reset && (status === 'error' || status === 'conflict' || status === 'moved') && (next === 'saving' || next === 'saved')) return;
   status = next;
   listeners.forEach((fn) => fn());
 }
@@ -19,23 +19,39 @@ const OUTBOX = 'bas.device.pending.';
 const SAVED = 'bas.device.saved';
 
 export class DeviceStorageError extends Error {
-  constructor(readonly conflict: boolean, readonly migration = false) { super(conflict ? 'deviceConflict' : 'deviceUnavailable'); }
+  /** Server error code, e.g. `deviceMoved` or `locationUnavailable` (FR-339). */
+  readonly code: string | undefined;
+  constructor(readonly conflict: boolean, readonly migration = false, code?: string) {
+    super(code ?? (conflict ? 'deviceConflict' : 'deviceUnavailable'));
+    this.code = code;
+  }
+  get moved() { return this.code === 'deviceMoved'; }
+  get locationUnavailable() { return this.code === 'locationUnavailable'; }
 }
 
-async function request(path: string, token: string | null, body?: unknown): Promise<unknown> {
+/** `id` is the database this window loaded; the server refuses it once the data folder has changed. */
+async function request(path: string, token: string | null, body?: unknown, id?: string): Promise<unknown> {
   const testId = localStorage.getItem('bas.device.test');
   const response = await fetch(`${DEVICE_PREFIX}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
       ...(token ? { [DEVICE_HEADER]: token } : {}),
+      ...(id ? { [DEVICE_ID_HEADER]: id } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(testId ? { [DEVICE_TEST_HEADER]: testId } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(15_000),
+    // Copying a large database to a slow drive can take minutes; ordinary requests keep the short limit.
+    signal: AbortSignal.timeout(path === 'location' && body !== undefined ? 600_000 : 15_000),
     cache: 'no-store',
   });
-  if (!response.ok) throw new DeviceStorageError(response.status === 409);
+  if (!response.ok) {
+    const code = await response.json().then(
+      (b: unknown) => b && typeof b === 'object' && 'error' in b && typeof b.error === 'string' ? b.error : undefined,
+      () => undefined,
+    );
+    throw new DeviceStorageError(response.status === 409 && code !== 'deviceMoved', false, code);
+  }
   return response.json();
 }
 
@@ -140,7 +156,7 @@ class DeviceStorage implements Storage {
   removeItem(key: string) { this.change(key, null); }
   private fail(error: unknown): never {
     this.stopped = true;
-    report(error instanceof DeviceStorageError && error.conflict ? 'conflict' : 'error');
+    report(error instanceof DeviceStorageError && error.moved ? 'moved' : error instanceof DeviceStorageError && error.conflict ? 'conflict' : 'error');
     throw error;
   }
   private persistPending() {
@@ -170,7 +186,7 @@ class DeviceStorage implements Storage {
         while (this.pending.size) {
           if (this.stopped) throw new DeviceStorageError(status === 'conflict');
           const batch = [...this.pending.values()];
-          const next = snapshot(await request('state', this.token, { changes: batch }));
+          const next = snapshot(await request('state', this.token, { changes: batch }, this.state.id));
           for (const change of batch) {
             const record = next.records[change.key];
             if (!record) throw new DeviceStorageError(false);
@@ -209,7 +225,7 @@ class DeviceStorage implements Storage {
     try {
       const next = snapshot(await request('state', this.token, {
         changes: [{ key, value: encoded, expected: this.state.records[key]?.revision ?? 0 }],
-      }));
+      }, this.state.id));
       const record = next.records[key];
       if (!record) throw new DeviceStorageError(false);
       this.state.records[key] = record;
@@ -226,7 +242,7 @@ class DeviceStorage implements Storage {
   async refresh(): Promise<void> {
     if (this.stopped || this.pending.size || this.running || this.binaryWrites) return;
     try {
-      const next = snapshot(await request('state', this.token));
+      const next = snapshot(await request('state', this.token, undefined, this.state.id));
       if (this.stopped || this.pending.size || this.running || this.binaryWrites) return;
       validateApplicationData(next.records);
       for (const [key, record] of Object.entries(next.records)) {
@@ -297,13 +313,17 @@ export async function initializeDeviceStorage(useDeviceCopy = false): Promise<vo
   for (const key of outboxes) {
     const changes: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
     if (!Array.isArray(changes)) throw new DeviceStorageError(false);
-    const replay = snapshot(await request('state', session.token, { changes }));
+    const replay = snapshot(await request('state', session.token, { changes }, state.id));
     state.records = { ...state.records, ...replay.records };
     localStorage.removeItem(key);
   }
-  if (localStorage.getItem(`${MARKER}${state.id}`) !== '1') {
+  // After this origin migrated into any device database, its browser keys mirror that database rather than holding
+  // legacy data, so opening another data folder (FR-339) must not import them as if they were legacy data.
+  const migratedElsewhere = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
+    .some((key) => key !== null && key.startsWith(MARKER) && key !== `${MARKER}${state.id}`);
+  if (localStorage.getItem(`${MARKER}${state.id}`) !== '1' && !migratedElsewhere) {
     const legacy = await legacyDeviceData();
-    if (Object.keys(legacy).length) await request('archive', session.token, { records: legacy });
+    if (Object.keys(legacy).length) await request('archive', session.token, { records: legacy }, state.id);
     if (!useDeviceCopy) {
       const changes: DeviceChange[] = [];
       for (const [key, value] of Object.entries(legacy)) {
@@ -315,19 +335,55 @@ export async function initializeDeviceStorage(useDeviceCopy = false): Promise<vo
         ...state.records, ...Object.fromEntries(changes.map((change) => [change.key, { value: change.value, revision: 0 }])),
       });
       if (changes.length) {
-        const migrated = snapshot(await request('state', session.token, { changes }));
+        const migrated = snapshot(await request('state', session.token, { changes }, state.id));
         state.records = { ...state.records, ...migrated.records };
       }
     }
   }
   validateApplicationData(state.records);
   localStorage.setItem(`${MARKER}${state.id}`, '1');
+  sessionToken = session.token;
   active = new DeviceStorage(state, session.token);
   window.addEventListener('beforeunload', (event) => {
-    if (status === 'saving' || status === 'error' || status === 'conflict') { event.preventDefault(); event.returnValue = ''; }
+    if (!switching && (status === 'saving' || status === 'error' || status === 'conflict' || status === 'moved')) { event.preventDefault(); event.returnValue = ''; }
   });
   window.addEventListener('storage', (event) => {
     if (event.key === SAVED) void active?.refresh().catch(() => { /* Status is visible in the storage guard. */ });
   });
   report('saved', true);
+}
+
+let sessionToken: string | null = null;
+/** Set once the folder changed: the page is reloading and must not ask to stay because of writes aimed at the old folder. */
+let switching = false;
+async function locationToken(): Promise<string> {
+  if (sessionToken) return sessionToken;
+  const session = await request('session', null, {});
+  if (!session || typeof session !== 'object' || !('token' in session) || typeof session.token !== 'string') throw new DeviceStorageError(false);
+  sessionToken = session.token;
+  return session.token;
+}
+
+/** FR-339: where the device database lives. Also usable from the startup error screen, before the app is initialized. */
+export async function getDeviceLocation(): Promise<DeviceLocation> {
+  return await request('location', await locationToken()) as DeviceLocation;
+}
+export async function browseDeviceFolders(path?: string): Promise<DeviceFolderListing> {
+  return await request('folders', await locationToken(), path ? { path } : {}) as DeviceFolderListing;
+}
+export async function createDeviceFolder(parent: string, name: string): Promise<string> {
+  const result = await request('folders/create', await locationToken(), { parent, name }) as { path: string };
+  return result.path;
+}
+/**
+ * Saves pending edits first so the copy is complete, then switches folders and reloads into the new database.
+ * The migration marker for the new database is set so this browser's copy of the old data is not imported as legacy data.
+ */
+export async function changeDeviceLocation(path: string | null, mode: DeviceLocationMode): Promise<void> {
+  if (mode !== 'default') await flushDeviceStorage();
+  const result = await request('location', await locationToken(), mode === 'default' ? { mode } : { path, mode }) as { id?: string };
+  switching = true;
+  if (result.id) localStorage.setItem(`${MARKER}${result.id}`, '1');
+  sessionStorage.setItem(SKIP_OPENING_ONCE_KEY, '1');
+  window.location.reload();
 }

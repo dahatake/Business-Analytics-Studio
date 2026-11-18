@@ -1,0 +1,19 @@
+.folder-picker { max-width: min(760px, 96vw); width: 100%; }
+.folder-picker-content { display: flex; flex-direction: column; gap: 12px; }
+.folder-picker-path, .folder-picker-new { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.folder-picker-path-field { flex: 1 1 320px; }
+.folder-picker-body { display: grid; grid-template-columns: minmax(150px, 200px) 1fr; gap: 12px; min-height: 240px; }
+.folder-picker-body ul { list-style: none; margin: 0; padding: 0; }
+.folder-picker-body li .fui-Button { justify-content: flex-start; width: 100%; text-align: start; min-height: 32px; }
+.folder-picker-roots { border-inline-end: 1px solid var(--colorNeutralStroke2); padding-inline-end: 8px; }
+.folder-picker-list { max-height: 320px; overflow: auto; }
+.folder-picker-heading { font-size: 14px; margin: 0 0 6px; overflow-wrap: anywhere; }
+.data-location-paths { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
+.data-location-paths dd { margin: 0; overflow-wrap: anywhere; }
+.data-location-confirm { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.data-location-confirm p { overflow-wrap: anywhere; margin: 0; }
+.data-location-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .folder-picker-body { grid-template-columns: 1fr; }
+  .folder-picker-roots { border-inline-end: none; padding-inline-end: 0; }
+}

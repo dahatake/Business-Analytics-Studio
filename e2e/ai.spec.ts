@@ -1340,7 +1340,7 @@ async function seedLaunch(page: Page, lang: Lang) {
     await expect(page.getByTestId('brand-logo').locator('img')).toHaveJSProperty('naturalWidth', 1);
     await expect(page.getByTestId('brand-logo')).toContainText('20 px');
     await page.evaluate(() => { window.location.hash = '/analysis'; });
-    await expect(page.getByTestId('proj-analysis-select').locator('option')).toHaveCount(5);
+    await expect.poll(async () => (await page.locator('.proj-method-count').allTextContents()).reduce((n, x) => n + Number.parseInt(x, 10), 0)).toBe(5);
     await expect(page.getByTestId('proj-result-plot').first()).toBeVisible();
     await expect(page.getByTestId('proj-params').getByText('Mock', { exact: true })).toHaveCount(0);
     expect(received).toHaveLength(4); // opening the screen only displays the saved analyses

@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { PARAMS } from '../src/config/params.ts';
 import { open, seedDeviceData, setup } from './helpers.ts';
@@ -134,19 +135,35 @@ test.describe('F-3.1.5 motion and sound', () => {
 });
 
 test.describe('F-3.4.1 expected business outcomes', () => {
-  test('shows source-backed outcomes, detailed hover content, and all KPI/OKR results', async ({ page }) => {
+  test('shows source-backed outcomes, detailed hover content, and all KPI/OKR results as an inline card row (FR-337)', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
     const outcomes = page.getByRole('region', { name: 'Expected business outcomes' });
     await expect(outcomes.getByTestId('outcome-preview')).toContainText(/annual benefit stated in pack/i);
     await outcomes.getByTestId('outcome-preview').hover();
     await expect(page.getByRole('tooltip')).toContainText('not a simulation result or an actual result');
 
-    await outcomes.getByTestId('outcomes-expand').click();
-    const dialog = page.getByTestId('outcomes-dialog');
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByTestId('outcome-kpi-kpi-lead-time')).toContainText('No forecast');
-    await expect(dialog.getByTestId('outcome-okr-okr-demo-delivery')).toBeVisible();
-    await dialog.getByRole('button', { name: 'Close' }).click();
+    const toggle = outcomes.getByTestId('outcomes-expand');
+    const strip = page.getByTestId('outcomes-strip');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(strip).toBeHidden();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(strip).toBeVisible();
+    await expect(strip.getByTestId('outcome-kpi-kpi-lead-time')).toContainText('No forecast');
+    await expect(strip.getByTestId('outcome-okr-okr-demo-delivery')).toBeAttached();
+    // One horizontal row inside the window, like the ToDo band.
+    const boxes = await strip.locator('.outcome-strip-list > li').evaluateAll((items) => items.map((li) => li.getBoundingClientRect().top));
+    expect(boxes.length).toBeGreaterThan(1);
+    expect(new Set(boxes.map((top) => Math.round(top))).size).toBe(1);
+    const stripBox = (await strip.boundingBox())!;
+    expect(stripBox.y + stripBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+    const violations = (await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+      .include('[data-testid="outcomes-strip"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze()).violations;
+    expect(violations.map((v) => v.id)).toEqual([]);
+    await toggle.click();
+    await expect(strip).toBeHidden();
+    await toggle.click();
 
     await seedDeviceData(page, {
       'bas.scope.demo.proj.strategy': JSON.stringify({
@@ -172,8 +189,9 @@ test.describe('F-3.4.1 expected business outcomes', () => {
     await expect(forecast).toContainText('P50');
     await forecast.hover();
     await expect(page.getByRole('tooltip')).toContainText('pilot report');
-    await page.getByTestId('outcomes-expand').click();
-    await expect(page.getByTestId('outcomes-dialog').getByTestId('outcome-kpi-kpi-lead-time')).toContainText('Forecast available');
+    // The open state is remembered across reloads.
+    await expect(page.getByTestId('outcomes-expand')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('outcomes-strip').getByTestId('outcome-kpi-kpi-lead-time')).toContainText('Forecast available');
   });
 
   test(`@perf agreed load: ${PARAMS.liveFeedLoadRatePerSec}/s for ${PARAMS.liveFeedLoadDurationMs / 1000}s keeps p95 latency ≤ ${PARAMS.liveFeedLatencyBudgetP95Ms} ms`, async ({ page }) => {

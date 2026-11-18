@@ -16,6 +16,8 @@ export type Viewer = 'plot' | 'table' | 'matrix' | 'chart';
 
 /** Shared selection of the linked views (BI-style cross-highlighting). */
 export interface LinkView {
+  /** True while anything is selected (items here, or an analysis target whose evidence fills `related`). */
+  active: boolean;
   /** itemKey()s of the selected items. */
   selected: ReadonlySet<string>;
   related: ReadonlyMap<string, Link>;
@@ -29,14 +31,14 @@ export interface LinkView {
 type Mark = 'selected' | 'related' | 'dimmed' | null;
 
 function itemMark(link: LinkView | undefined, key: string): Mark {
-  if (!link || link.selected.size === 0) return null;
+  if (!link?.active) return null;
   if (link.selected.has(key)) return 'selected';
   return link.related.has(key) ? 'related' : 'dimmed';
 }
 
 /** A category is selected when all its items are, related when any of them is selected or related. */
 function categoryMark(link: LinkView | undefined, analysis: Analysis, items: AnalysisItem[]): Mark {
-  if (!link || link.selected.size === 0) return null;
+  if (!link?.active) return null;
   const keys = items.map((i) => itemKey(analysis.id, i.id));
   if (keys.length && keys.every((k) => link.selected.has(k))) return 'selected';
   return keys.some((k) => link.selected.has(k) || link.related.has(k)) ? 'related' : 'dimmed';
@@ -170,7 +172,7 @@ function ResultMatrix({ analysis, result, link }: { analysis: Analysis; result: 
 /** Selected or related items count as highlighted (Power BI-style cross-highlight). */
 function useHighlighted(analysis: Analysis, link: LinkView | undefined) {
   return useMemo(() => {
-    if (!link || link.selected.size === 0) return null;
+    if (!link?.active) return null;
     return (item: AnalysisItem) => {
       const k = itemKey(analysis.id, item.id);
       return link.selected.has(k) || link.related.has(k);
@@ -282,7 +284,7 @@ function ResultPlot({ analysis, link }: { analysis: Analysis; link?: LinkView })
   useEffect(() => {
     if (!ref.current) return;
     const mark = (d: PlotDot): DotMark => {
-      if (!link || link.selected.size === 0) return null;
+      if (!link?.active) return null;
       const key = itemKey(analysis.id, d.itemId);
       if (link.selected.has(key)) return 'selected';
       const rel = link.related.get(key);
@@ -321,7 +323,7 @@ function ResultPlot({ analysis, link }: { analysis: Analysis; link?: LinkView })
       <div className="proj-plot-frame">
         <svg
           ref={ref}
-          className={`proj-plot-svg${link && link.selected.size ? ' has-selection' : ''}`}
+          className={`proj-plot-svg${link?.active ? ' has-selection' : ''}`}
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           role="group"
           aria-label={t('proj.viewer.plotLabel', { title })}

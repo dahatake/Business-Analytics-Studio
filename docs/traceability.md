@@ -33,7 +33,7 @@
 | F-3.3.2 最適な Visual | 表・ガント・サンキー・2×2・地図・リング／数直線・棒。各図に「この表現を選んだ理由」と代替の表 | `e2e/visuals.spec.ts`「every visual explains why」 |
 | F-3.3.3 KPI の目標と達成度 | 名前・実績・目標・基準値・単位・望ましい方向を常に表示 | `tests/domain.test.ts`、`e2e/visuals.spec.ts` |
 | F-3.3.4 前後比較 | 指標ごとに同じ単位・0 始まりの同じ軸。期間・対象（母集団）を明記し、元の数値の表を添える。最適化は最小費用流で厳密に解く | `tests/domain.test.ts`（総当たりとの一致、需要の一致）、`e2e/visuals.spec.ts` |
-| F-3.4.1 期待されるビジネスの成果 | Project の KPI/OKR 試算を上部に表示し、ホバーで根拠を確認、全成果は KPI/OKR ごとに一覧。試算とパック記載値を区別し、指標がない場合は根拠のある提案・課題候補を表示する | `tests/expected-outcomes.test.ts`、`e2e/motion-feed.spec.ts`。表示遅延の負荷測定は設定画面の明示操作時のみ実行 |
+| F-3.4.1 期待されるビジネスの成果 | Project の KPI/OKR 試算を上部に表示し、ホバーで根拠を確認、全成果は ToDo と同じく画面内で開閉する横一列のカード（FR-337、ポップアップなし、変わったカードの強調と通知）。試算とパック記載値を区別し、指標がない場合は根拠のある提案・課題候補を表示する | `tests/expected-outcomes.test.ts`、`tests/expected-outcomes-bar.test.tsx`、`e2e/motion-feed.spec.ts`（一列・画面内・axe）。表示遅延の負荷測定は設定画面の明示操作時のみ実行 |
 | F-3.4.2 使い方・容量レポート・サマリー | 最適化画面の 3 つのパネル | `e2e/visuals.spec.ts`。人による利用テストは [計画](usability-test.md) のみ |
 | F-3.5.1 2 言語 | UI・サンプルデータ・API の応答 | `tests/i18n.test.ts`、`tests/api.test.ts`、`e2e/i18n.spec.ts`（英語表示に日本語が 1 文字もないこと） |
 | F-3.5.2 言語トグル | 上部バーに配置。再読み込みなしで切り替え、`localStorage` に保持、`<html lang>` を更新 | `e2e/i18n.spec.ts` |
@@ -60,6 +60,8 @@
 | ワークスペース | FR-013〜015、FR-109〜113、FR-142〜143、FR-150〜152、FR-173〜175、FR-183〜185、FR-215〜216、FR-295〜300、FR-305、NFR-UX-001・006〜008 | `src/modules/workspace/`（純粋なレイアウトエンジン、ペルソナ別レイアウト、コマンドパレット） | `tests/workspace-*.test.ts`、`e2e/workspace.spec.ts` |
 | ショー・プレゼンテーション | FR-016、FR-057、FR-063、FR-076〜085、FR-177〜179、FR-290、NFR-A11Y-008 | `src/modules/show/` | `tests/show.test.ts`、`e2e/show.spec.ts`（最初のシーン 2 秒以内など） |
 | ポート非依存の端末保存 | [要求定義書 §3.10](requirements-definition.md#310-ポートに依存しない端末保存2026-11-11-追加要求)（2026-11-11 追加要求） | `scripts/lib/device.ts`・`deviceProtocol.ts`（SQLite・トランザクション・版照合・移行バックアップ・同一origin）、`src/data/deviceStorage.ts`（移行・送信待ち保護）、`src/main.tsx`・`bootstrap.tsx`（保存先の初期化を待って起動）、`src/ui/DeviceStorageStatus.tsx`（保存状態・失敗・復旧コピー）、`vite.config.ts`・`scripts/lib/serve.ts`（全起動経路） | `tests/device-storage.test.ts`、`e2e/device-storage.spec.ts`（独立ブラウザー・異なるポート・再起動・競合・失敗・破損）、既存のProject・パック・インク・ポップアウト試験 |
+| データの保存先フォルダーの選択 | FR-339（AC-934〜AC-938、[要求定義書 §3.10.1](requirements-definition.md#3101-データの保存先フォルダーの選択fr-3392026-11-19-追加要求)） | `scripts/lib/deviceLocation.ts`（指し先・対象の検査・一覧・作成）、`scripts/lib/device.ts`（ロック中の検証付きコピー・開く・`deviceMoved`・`/device/location`・`/device/folders`）、`src/data/deviceStorage.ts`（切り替えと再読み込み）、`src/ui/FolderPicker.tsx`、`src/screens/DataLocationPanel.tsx`、`src/main.tsx`（保存先がないときの起動画面） | `tests/device-location.test.ts`、`e2e/data-location.spec.ts`（コピー・開く・保存先なし・axe） |
+| 分析対象と優先順位の参考（分析画面） | FR-340（AC-939〜AC-943） | `src/modules/project/analysisTargets.ts`（ステップ別の分析対象・2 軸・4 区分・概要の事実）、`analysisTargetsRender.ts`（d3 の力学配置と keyed join）、`AnalysisTargets.tsx`（概要・泡のマップ・詳細・表）、`AnalysisScreen.tsx`（タイルの選択でパラメーターを切り替え・双方向の強調）、`project.css`、`src/i18n/modules/proj.*.ts` | `tests/analysis-targets.test.ts`、`e2e/project.spec.ts`（FR-340・axe） |
 | インク・ホワイトボード | FR-086〜099、NFR-PERF-004 | `src/modules/ink/`（依存なしの PDF 1.4 出力、端末保存、自動保存） | `tests/ink.test.ts`（PDF の xref を検証）、`e2e/ink.spec.ts`（20 000 本での描画時間） |
 | 3D | FR-018、FR-020〜021、FR-023、FR-030〜034、FR-036、FR-040、FR-065〜069、FR-146〜147、FR-217 | `src/modules/threed/`（three.js、手続き生成のモデル、WebGL がない場合は 2D） | `tests/threed.test.ts`、`e2e/threed.spec.ts`（最初のフレーム・大きさの追従） |
 | 関係グラフ・Twin・空間 | FR-212〜214、FR-218、FR-235〜241、FR-245〜248、NFR-A11Y-010 | `src/modules/graph/` | `tests/graph.test.ts`、`e2e/graph.spec.ts` |

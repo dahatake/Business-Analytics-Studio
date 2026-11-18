@@ -8,7 +8,7 @@ import { demoDiscussion } from '../src/modules/project/discussion.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import {
-  applyDraft, cyclicInitiatives, emptyDeliverables, evaluateStep, fieldHintKey, fieldKey, inputKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit,
+  applyDraft, approveField, cyclicInitiatives, emptyDeliverables, evaluateStep, fieldHintKey, fieldKey, inputKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit,
   paybackYears, progressOf, resultKey, setField, setPaybackLimit, setSignOff, statedValues, STEP_DEFS, todoKey, todoWhyKey, valueMismatches,
   type CheckContext, type DeliverableData,
 } from '../src/modules/project/deliverables.ts';
@@ -583,6 +583,17 @@ describe('Draft with Copilot', () => {
     expect(kept.data.docs.asis?.impact).toEqual({ text: 'ai impact', author: 'ai', mock: true, updatedAt: 't2' });
     data = applyDraft(data, 'asis', draft, { overwrite: true, mock: false, at: 't3' }).data;
     expect(data.docs.asis?.problem).toEqual({ text: 'ai problem', author: 'ai', updatedAt: 't3' });
+  });
+
+  it('FR-338: approving an AI suggestion confirms the shown text as the person\'s, never a changed or human text', () => {
+    const base = applyDraft(emptyDeliverables(), 'asis', { problem: 'ai problem', impact: 'ai impact' }, { overwrite: false, mock: true, at: 't1' }).data;
+    const approved = approveField(base, 'asis', 'problem', 'ai problem', 'Sato', 't2');
+    expect(approved.docs.asis?.problem).toEqual({ text: 'ai problem', author: 'human', updatedAt: 't2', approved: { at: 't2', by: 'Sato', mock: true } });
+    expect(approved.docs.asis?.impact?.author).toBe('ai');
+    expect(approveField(base, 'asis', 'problem', 'older text', 'Sato', 't2')).toBe(base);
+    expect(approveField(approved, 'asis', 'problem', 'ai problem', 'Kato', 't3')).toBe(approved);
+    expect(approveField(base, 'asis', 'owner', '', 'Sato', 't2')).toBe(base);
+    expect(normalizeDeliverables(JSON.parse(JSON.stringify(approved))).docs.asis?.problem?.approved).toEqual({ at: 't2', by: 'Sato', mock: true });
   });
 
   afterEach(() => {

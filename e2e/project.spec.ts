@@ -383,6 +383,78 @@ test.describe('project module', () => {
     await expect(page.getByTestId('proj-tile-bsc')).toBeHidden();
   });
 
+  test('analysis: selecting a tile switches the parameters; analysis targets per step cross-highlight the dashboard (FR-340)', async ({ page }) => {
+    await go(page, '/analysis');
+    const swot = page.getByTestId('proj-tile-swot');
+    const bsc = page.getByTestId('proj-tile-bsc');
+    const params = page.getByTestId('proj-params-target');
+    // No edit button and no "analysis to edit" field: the tile itself is the selector (AC-939).
+    await expect(page.getByTestId('proj-analysis-select')).toHaveCount(0);
+    await expect(page.getByTestId('proj-edit-swot')).toHaveCount(0);
+    await bsc.getByTestId('proj-tile-pick-bsc').click();
+    await expect(bsc).toHaveAttribute('data-current', 'true');
+    await expect(bsc.getByTestId('proj-tile-current-bsc')).toBeVisible();
+    await expect(params).toContainText('バランスト・スコアカード');
+    await expect(swot).not.toHaveAttribute('data-current', 'true');
+    // A click anywhere on another tile (not only its title) switches too.
+    await swot.locator('.proj-tile-head').click({ position: { x: 4, y: 4 } });
+    await expect(swot).toHaveAttribute('data-current', 'true');
+    await expect(params).toContainText('SWOT');
+
+    // The overview is written from the current data, and its names select the target (AC-940).
+    const overview = page.getByTestId('proj-tg-overview');
+    await expect(overview).toContainText('件の分析');
+    await expect(page.getByTestId('proj-tg-ov-top')).toBeVisible();
+    const before = await overview.textContent();
+    await page.getByRole('slider', { name: '弱み' }).press('Home');
+    await expect(overview).not.toHaveText(before ?? '');
+
+    // Targets of each deliverable step; selecting one highlights its evidence on the dashboard (AC-941).
+    const field = page.getByTestId('proj-tg-field');
+    await page.getByTestId('proj-tg-step-asis').click();
+    await page.getByRole('slider', { name: '弱み' }).press('End');
+    const lead = field.getByTestId('proj-tg-bubble-issue-lead-time');
+    await expect(lead).toBeVisible();
+    await lead.click();
+    await expect(lead).toHaveAttribute('aria-pressed', 'true');
+    await expect(lead).toHaveClass(/is-selected/);
+    await expect(page.getByTestId('proj-tg-detail')).toBeVisible();
+    await expect(page.getByTestId('proj-tg-basis')).toContainText('優先度スコア');
+    await expect(page.getByTestId('proj-tg-evidence').locator('li')).not.toHaveCount(0);
+    await expect(page.getByTestId('proj-link-status')).toContainText('分析対象');
+    await expect(swot.getByRole('button', { name: /受注から出荷までが長い/ })).toHaveClass(/is-related-same/);
+    await expect(field.locator('.proj-tg-bubble.is-dimmed').first()).toBeAttached();
+    expect(await scan(page)).toEqual([]); // AC-943
+    await page.keyboard.press('Escape');
+    await expect(lead).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('proj-tg-detail')).toHaveCount(0);
+
+    // Keyboard: arrow keys walk the bubbles in rank order, Enter selects (AC-942).
+    await lead.focus();
+    await page.keyboard.press('ArrowRight');
+    const focused = field.locator('.proj-tg-bubble:focus');
+    await expect(focused).toHaveCount(1);
+    await page.keyboard.press('Enter');
+    await expect(focused).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Escape');
+
+    // Reverse direction: selecting a dashboard item marks the targets it is evidence for (AC-942).
+    await swot.getByRole('button', { name: /受注から出荷までが長い/ }).click();
+    await expect(page.getByTestId('proj-tg-linked')).toContainText(/分析対象 [1-9]\d* 件/);
+    await expect(lead).toHaveClass(/is-linked/);
+    await page.keyboard.press('Escape');
+
+    // Other steps, and the list view of the same data.
+    await page.getByTestId('proj-tg-step-deliverable').click();
+    await expect(page.getByTestId('proj-tg-step-deliverable')).toHaveAttribute('aria-selected', 'true');
+    await expect(field.locator('.proj-tg-bubble:not(.exiting)')).not.toHaveCount(0);
+    await page.getByTestId('proj-tg-table').locator('summary').click();
+    const row = page.getByTestId('proj-tg-table').getByRole('button').first();
+    await row.click();
+    await expect(row).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('proj-tg-detail')).toBeVisible();
+  });
+
   test('analysis dot plot: editing a score moves the same dot (d3 keyed join), and reduced motion applies it at once (FR-134/135)', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await go(page, '/analysis');

@@ -39,6 +39,8 @@ export const FieldValueSchema = z.object({
   /** The AI text came from the registered mock (must be labelled as mock). */
   mock: z.boolean().optional(),
   updatedAt: z.string(),
+  /** A person approved the AI suggestion as it was (FR-338); `mock` tells whether it was the mock text. Editing drops it. */
+  approved: z.object({ at: z.string(), by: z.string(), mock: z.boolean() }).optional(),
 });
 export type FieldValue = z.infer<typeof FieldValueSchema>;
 
@@ -828,6 +830,16 @@ export function setField(data: DeliverableData, step: ImprovementStep, id: strin
   if (value === null) delete doc[id];
   else doc[id] = value;
   return { ...data, docs: { ...data.docs, [step]: doc } };
+}
+
+/**
+ * Approve an AI suggestion as it was shown (FR-338): the field becomes the person's (`human`) with who and when.
+ * Nothing changes when the field is no longer an AI suggestion or its text changed after it was shown.
+ */
+export function approveField(data: DeliverableData, step: ImprovementStep, id: string, shown: string, by: string, at: string): DeliverableData {
+  const current = data.docs[step]?.[id];
+  if (!current || current.author !== 'ai' || current.text !== shown || !current.text.trim()) return data;
+  return setField(data, step, id, { text: current.text, author: 'human', updatedAt: at, approved: { at, by, mock: current.mock ?? false } });
 }
 
 export function setSignOff(data: DeliverableData, todoId: string, signOff: SignOff | null): DeliverableData {

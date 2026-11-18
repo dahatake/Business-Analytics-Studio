@@ -362,15 +362,19 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('proj-method-panel')).toBeVisible();
   });
 
-  test('the band sits right under the live bar and lists the current step\'s exit criteria', async ({ page }) => {
+  test('the band sits right under company news after business outcomes and lists the current step\'s exit criteria', async ({ page }) => {
     await go(page, '/home');
     const band = page.getByTestId('dlv-band');
+    const outcomesRegion = page.getByRole('region', { name: '期待されるビジネスの成果', exact: true });
+    const newsRegion = page.getByRole('region', { name: '企業ニュース', exact: true });
+    await expect(outcomesRegion).toBeVisible();
+    await expect(newsRegion).toBeVisible();
     await expect(band).toBeVisible();
-    const live = await page.getByRole('region', { name: 'ライブフィード' }).boundingBox();
-    const news = await page.getByRole('region', { name: '企業ニュース' }).boundingBox();
+    const outcomes = await outcomesRegion.boundingBox();
+    const news = await newsRegion.boundingBox();
     const box = await band.boundingBox();
-    expect(box!.y).toBeGreaterThanOrEqual(live!.y + live!.height - 1);
-    expect(box!.y).toBeGreaterThanOrEqual(news!.y + news!.height - 1);
+    expect(news!.y).toBeGreaterThanOrEqual(outcomes!.y + outcomes!.height - 1);
+    expect(Math.abs(box!.y - (news!.y + news!.height))).toBeLessThanOrEqual(1);
     expect(box!.width).toBeGreaterThan(1000); // full width
     await expect(band).toContainText('ステップ 1/5: 現状分析');
     await expect(band).toContainText('成果物: 現状分析レポート（優先順位つき課題一覧と KPI/OKR ギャップ）');
@@ -412,6 +416,28 @@ test.describe('step deliverables and to-do band', () => {
     const problem = page.getByTestId('dlv-field-problem');
     await expect(problem).toHaveValue(/16 日/);
     await expect(page.getByTestId('dlv-fields').getByText('モック')).toHaveCount(0);
+
+    // FR-338: the AI suggestion is confirmed by approving it as it is; the person's later edit drops the approval.
+    const impactBox = page.getByTestId('dlv-field-box-impact');
+    await expect(impactBox).toHaveAttribute('data-author', 'ai');
+    await expect(impactBox.getByText('AI の提案', { exact: true })).toBeVisible();
+    const impactText = await page.getByTestId('dlv-field-impact').inputValue();
+    await page.getByTestId('dlv-approve-impact').click();
+    await expect(impactBox).toHaveAttribute('data-author', 'human');
+    await expect(page.getByTestId('dlv-approved-impact')).toHaveText('確定');
+    await expect(impactBox.getByText('AI の提案', { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('dlv-approve-impact')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-approval-impact')).toContainText('AI の提案を承認して確定');
+    await expect(page.getByTestId('dlv-field-impact')).toHaveValue(impactText);
+    await expect(page.getByTestId('dlv-approve-problem')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+    await page.reload();
+    await expect(page.getByTestId('dlv-approved-impact')).toHaveText('確定');
+    await page.getByTestId('dlv-field-impact').fill(`${impactText} 追記`);
+    await expect(page.getByTestId('dlv-approved-impact')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-approval-impact')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-field-box-impact').getByText('人が入力')).toBeVisible();
+
     await problem.fill('リードタイムを短くする');
     await expect(page.getByText('数値を入れてください')).toBeVisible();
     await expect(page.getByTestId('dlv-screen-progress')).toHaveText('10/11 完了');

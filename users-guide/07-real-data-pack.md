@@ -76,6 +76,14 @@ Foundry の料金は Azure の利用明細で確認し、Azure 側でも予算�
 
 サインアウトするか、別のアカウントでサインインすると、接続は「未確認」に戻り、再テストするまで送信しません。API キー方式に戻すときは、認証方式で **API キー** を選んで再テストします。詳しい仕組みと、送信先を制限している場合に許可するホストは [リレー設定](../docs/relay-config.md#microsoft-entra-id-for-microsoft-foundry) を見てください。
 
+#### 音声（Azure AI Speech）と手書き認識（Azure AI Vision）の接続
+
+AI 設定の **音声設定** と **音声合成・手書き認識の実接続** でも、認証方式を **API キー** と **Microsoft Entra ID** から選べます。
+
+- **API キー**: キーを保存し、エンドポイント（`https://<リソース名>.cognitiveservices.azure.com` または `https://<地域>.api.cognitive.microsoft.com`）を入力します。Speech は地域（例: `japaneast`）だけでも使えます。
+- **Microsoft Entra ID**: Foundry と同じサインインとディレクトリー選択で、使えるリソースを一覧から選びます。Entra ID は独自のサブドメインがあるリソースでだけ使えます。呼び出し権限がなければ **自分にロールを付与** で、Speech は「Cognitive Services Speech User」、Vision は「Cognitive Services User」をそのリソースだけに付けます。
+
+送信先を確認し、テスト送信への同意にチェックを入れて **接続をテストして保存** を押します。Speech は無料の音声一覧、Vision は白い画像 1 枚の読み取り（1 回分の課金）で確認し、成功したときだけ保存します。キーを変えたり、サインアウトしたりすると「未確認」に戻ります。音声合成・手書き認識の機能はまだ無効のままです（接続の保存とテストだけができます）。詳しくは [リレー設定](../docs/relay-config.md#azure-ai-speech-and-azure-ai-vision) を見てください。
 ### Work IQ で社内情報を加える（Microsoft Foundry のときだけ）
 
 Microsoft Work IQ は、あなたが Microsoft 365 でアクセスできるメール・会議・Teams のチャット・OneDrive と SharePoint のファイルから、質問に関係する情報を探すサービスです。接続先が **Microsoft Foundry** のとき、顧客パックの材料に Work IQ で見つけた社内情報を加えられます。GitHub Copilot を選んでいるときは、Work IQ の設定も選択肢も表示されず、何も送りません（GitHub Copilot の MCP サーバーの設定にも BAS は関与しません）。

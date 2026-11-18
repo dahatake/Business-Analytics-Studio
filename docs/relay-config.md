@@ -172,6 +172,33 @@ to GUIDs before any call.
 For a new resource, prefer `disableLocalAuth: true` (keys off) with a custom subdomain, and give each user only the
 *Cognitive Services OpenAI User* role.
 
+## Azure AI Speech and Azure AI Vision
+
+FR-324. AI Settings → **Speech settings** (Azure AI Speech) and **Real connections for speech and handwriting**
+(Azure AI Vision) each choose **API key** or **Microsoft Entra ID**, like the Foundry connection. The feature switches
+that would use them stay off until C-07 is resolved; saving and testing the connection already works.
+
+- **API key.** Save the key (`speechKey` / `visionKey`, vault only) and enter the endpoint: a custom subdomain
+  `https://<name>.cognitiveservices.azure.com` or a regional endpoint `https://<region>.api.cognitive.microsoft.com`.
+  Speech also accepts only a region (voices are listed on `https://<region>.tts.speech.microsoft.com`). Vision needs an
+  endpoint. Requests use `Ocp-Apim-Subscription-Key`.
+- **Microsoft Entra ID.** Uses the same sign-in and directory selection as Foundry. `POST /relay/entra/instances
+  { service: 'speech' | 'vision', tenantId }` (a tenant is required) lists resources of kind `SpeechServices` /
+  `ComputerVision` plus multi-service `AIServices` and `CognitiveServices`. Entra ID tokens work only on the custom
+  subdomain (regional endpoints accept keys only), so resources without one are disabled. Requests send
+  `Authorization: Bearer <token for https://cognitiveservices.azure.com/.default>` to that subdomain.
+  `POST /relay/entra/inspect` and `POST /relay/entra/role` take the same `service`; the role assigned on request is
+  *Cognitive Services Speech User* (`f2dc8367-1007-4938-bd23-fe263f013447`) for Speech and *Cognitive Services User*
+  (`a97b65f3-24c7-4388-baec-2e87135dc908`) for Vision, because Vision has no narrower built-in data-plane role (this
+  role can also list keys; prefer `disableLocalAuth: true` on the resource).
+- **Test and save.** `PUT /relay/media/<service> { auth, endpoint?, region?, tenantId?, resourceId? }` validates the
+  body, checks `BAS_RELAY_OUTBOUND_HOSTS` (the test host must be listed; for Entra ID also the Entra hosts), allows one
+  test per service every 5 s, and calls the service: Speech `GET …/cognitiveservices/voices/list` (free), Vision
+  `POST …/computervision/imageanalysis:analyze?api-version=2024-02-01&features=read` with a blank 64×64 PNG (one billed
+  transaction). Only a successful answer is saved to `media.json` with a signature bound to the key, or for Entra ID to
+  the signed-in account (vault key `foundryEntraKey`). Changing the key, signing out or switching account shows the
+  connection as unverified; `DELETE /relay/media/<service>` removes it. `GET /relay/status` returns
+  `media: { speech, vision }` (`{ connection, verifiedAt }` or `null`) and never the key or a token.
 ## Environment variables
 
 | Variable | Default | Values | Effect |

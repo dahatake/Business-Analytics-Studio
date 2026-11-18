@@ -33,7 +33,7 @@
 | F-3.3.2 最適な Visual | 表・ガント・サンキー・2×2・地図・リング／数直線・棒。各図に「この表現を選んだ理由」と代替の表 | `e2e/visuals.spec.ts`「every visual explains why」 |
 | F-3.3.3 KPI の目標と達成度 | 名前・実績・目標・基準値・単位・望ましい方向を常に表示 | `tests/domain.test.ts`、`e2e/visuals.spec.ts` |
 | F-3.3.4 前後比較 | 指標ごとに同じ単位・0 始まりの同じ軸。期間・対象（母集団）を明記し、元の数値の表を添える。最適化は最小費用流で厳密に解く | `tests/domain.test.ts`（総当たりとの一致、需要の一致）、`e2e/visuals.spec.ts` |
-| F-3.4.1 ライブフィード | 更新時刻・鮮度（最新／遅延／停止中／一時停止中）・「シミュレーション」表示・表示遅延（p50／p95）。ホバー中は表示を止める（WCAG 2.2.2） | `tests/feed.test.ts`、`e2e/motion-feed.spec.ts`（負荷条件での p95） |
+| F-3.4.1 期待されるビジネスの成果 | Project の KPI/OKR 試算を上部に表示し、ホバーで根拠を確認、全成果は KPI/OKR ごとに一覧。試算とパック記載値を区別し、指標がない場合は根拠のある提案・課題候補を表示する | `tests/expected-outcomes.test.ts`、`e2e/motion-feed.spec.ts`。表示遅延の負荷測定は設定画面の明示操作時のみ実行 |
 | F-3.4.2 使い方・容量レポート・サマリー | 最適化画面の 3 つのパネル | `e2e/visuals.spec.ts`。人による利用テストは [計画](usability-test.md) のみ |
 | F-3.5.1 2 言語 | UI・サンプルデータ・API の応答 | `tests/i18n.test.ts`、`tests/api.test.ts`、`e2e/i18n.spec.ts`（英語表示に日本語が 1 文字もないこと） |
 | F-3.5.2 言語トグル | 上部バーに配置。再読み込みなしで切り替え、`localStorage` に保持、`<html lang>` を更新 | `e2e/i18n.spec.ts` |

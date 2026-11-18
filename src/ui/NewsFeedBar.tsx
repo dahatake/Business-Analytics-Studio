@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Badge, Button, Caption1 } from '@fluentui/react-components';
+import { Pause16Regular, Play16Regular } from '@fluentui/react-icons';
 import { loaded } from '../data/pack.ts';
 import { PARAMS } from '../config/params.ts';
 import { NEWS_INTERVAL_MS, NewsFeed, type NewsArticle } from '../data/news.ts';
@@ -25,6 +26,7 @@ function Article({ article }: { article: NewsArticle }) {
 function CompanyNews({ company }: { company: string }) {
   const { lang, t, fmt } = useI18n();
   const paused = useFeed((s) => s.paused);
+  const setPaused = useFeed((s) => s.setPaused);
   const [feed, setFeed] = useState<NewsFeed | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -90,6 +92,15 @@ function CompanyNews({ company }: { company: string }) {
         </Badge>
         <Button size="small" appearance="subtle" disabled={paused || loading} onClick={() => setRefresh((n) => n + 1)} data-testid="news-refresh">
           {t('news.refresh')}
+        </Button>
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={paused ? <Play16Regular /> : <Pause16Regular />}
+          onClick={() => setPaused(!paused)}
+          data-testid="news-pause"
+        >
+          {paused ? t('feed.resume') : t('feed.pause')}
         </Button>
       </span>
       <details className="company-news-list">

@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 describe('device client save guarantees', () => {
-  it.each([0, 1, 2, 3])('preserves AI settings version %i for the existing middleware migration', async (version) => {
+  it.each([0, 1, 2, 3, 4, 5])('preserves AI settings version %i for the existing middleware migration', async (version) => {
     server.records['bas.ai.settings'] = { value: JSON.stringify({ state: { liveEnabled: false }, version }), revision: 1 };
     const client = await import('../src/data/deviceStorage.ts');
     await client.initializeDeviceStorage();

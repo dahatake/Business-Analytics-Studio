@@ -16,7 +16,7 @@ async function seedCompany(page: import('@playwright/test').Page) {
   });
 }
 
-test('company news loads automatically, retains provenance on error, and pauses with the live feed', async ({ page }) => {
+test('company news loads automatically, retains provenance on error, and can be paused', async ({ page }) => {
   await seedCompany(page);
   let requests = 0;
   await page.route('**/relay/news', async (route) => {
@@ -40,14 +40,13 @@ test('company news loads automatically, retains provenance on error, and pauses 
   await expect(news).toContainText('Example Publisher');
   await expect(news.locator('time').first()).toHaveAttribute('datetime', '2026-11-10T10:00:00.000Z');
   await expect(news.getByTestId('news-freshness')).toHaveText('Fresh');
-  await expect(page.getByRole('region', { name: 'Live feed', exact: true })).toContainText('Simulation');
   await news.getByTestId('news-refresh').click();
   await expect(news).toContainText('Refresh failed. Showing previously fetched news.');
   await expect(link).toBeVisible();
-  await page.getByTestId('feed-pause').click();
+  await news.getByTestId('news-pause').click();
   await expect(news.getByTestId('news-freshness')).toHaveText('Paused');
   await expect(news.getByTestId('news-refresh')).toBeDisabled();
-  await page.getByTestId('feed-pause').click();
+  await news.getByTestId('news-pause').click();
   await expect(news.getByTestId('news-freshness')).toHaveText('Fresh');
   await news.locator('summary').focus();
   await page.keyboard.press('Enter');

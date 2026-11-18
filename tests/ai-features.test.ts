@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { DEFAULT_MONTHLY_BUDGET_JPY } from '../src/ai/policy.ts';
 import { loaded } from '../src/data/pack.ts';
-import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, liveReady, parseBudget, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
+import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, isMediaConfigured, liveReady, mediaSaveInput, parseBudget, runtimeSettings, workIqReady, EMPTY_MEDIA_DRAFT } from '../src/modules/ai/settingsStore.ts';
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
 import {
@@ -432,12 +432,34 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(useAiSettings.getState()).not.toHaveProperty('priceInputPerM');
     expect(useAiSettings.getState()).not.toHaveProperty('priceOutputPerM');
     const saved = JSON.parse(localStorage.getItem('bas.ai.settings')!);
-    expect(saved.version).toBe(4);
+    expect(saved.version).toBe(5);
     expect(saved.state).not.toHaveProperty('copilotPricePerRequest');
     expect(saved.state).not.toHaveProperty('priceInputPerM');
     expect(saved.state).not.toHaveProperty('priceOutputPerM');
   });
 
+  it('moves the v4 Speech endpoint and region into the v5 Speech draft (FR-324)', async () => {
+    localStorage.setItem('bas.ai.settings', JSON.stringify({ version: 4, state: { ...CONNECTION, speechEndpoint: 'https://bas-speech.cognitiveservices.azure.com', speechRegion: 'japaneast' } }));
+    await useAiSettings.persist.rehydrate();
+    expect(useAiSettings.getState().mediaDraft).toEqual({
+      speech: { ...EMPTY_MEDIA_DRAFT, auth: 'apiKey', endpoint: 'https://bas-speech.cognitiveservices.azure.com', region: 'japaneast' },
+      vision: EMPTY_MEDIA_DRAFT,
+    });
+    expect(useAiSettings.getState()).not.toHaveProperty('speechEndpoint');
+  });
+
+  it('checks a Speech / Vision draft before the relay and needs the same method and, for Entra ID, a signed-in account (FR-324)', () => {
+    const entraDraft = { ...EMPTY_MEDIA_DRAFT, auth: 'entraId' as const, endpoint: 'https://japaneast.api.cognitive.microsoft.com', tenantId: '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a', resourceId: '' };
+    expect(mediaSaveInput('speech', entraDraft)).toEqual({ ok: false, error: 'customDomainRequired' });
+    expect(mediaSaveInput('vision', { ...EMPTY_MEDIA_DRAFT, auth: 'apiKey', endpoint: ' https://bas.cognitiveservices.azure.com ' }))
+      .toMatchObject({ ok: true, value: { auth: 'apiKey', endpoint: 'https://bas.cognitiveservices.azure.com' } });
+    const media = { speech: { connection: { auth: 'entraId' as const, endpoint: 'https://bas.cognitiveservices.azure.com', region: null, tenantId: entraDraft.tenantId, resourceId: '/x' }, verifiedAt: '2026-11-11T00:00:00Z' }, vision: null };
+    const drafts = { speech: entraDraft, vision: EMPTY_MEDIA_DRAFT };
+    expect(isMediaConfigured({ media, mediaDraft: drafts, entra: { signedIn: true } as never }, 'speech')).toBe(true);
+    expect(isMediaConfigured({ media, mediaDraft: drafts, entra: { signedIn: false } as never }, 'speech')).toBe(false);
+    expect(isMediaConfigured({ media, mediaDraft: { ...drafts, speech: { ...entraDraft, auth: 'apiKey' } }, entra: { signedIn: true } as never }, 'speech')).toBe(false);
+    expect(isMediaConfigured({ media, mediaDraft: drafts, entra: { signedIn: true } as never }, 'vision')).toBe(false);
+  });
   it('accepts only whole JPY ≥ 0 as the budget', () => {
     expect(parseBudget('100000')).toBe(100_000);
     expect(parseBudget('0')).toBe(0);

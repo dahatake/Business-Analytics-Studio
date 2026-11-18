@@ -331,6 +331,62 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(requests).toContain(guest);
   });
 
+  test('Speech and Vision choose API key or Microsoft Entra ID and save only after the relay test (FR-324)', async ({ page }) => {
+    const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+    const resourceId = `/subscriptions/d8352616-ed51-492b-929b-5e266d38aedd/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/bas-speech`;
+    let media: Record<string, unknown> = { speech: null, vision: null };
+    const listed: unknown[] = [];
+    const saved: unknown[] = [];
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: false, speechKey: false, visionKey: false }, connection: null, connectionVerifiedAt: null,
+      entra: { signedIn: true, account: 'user@example.com', tenantId: home, signIn: { status: 'idle' } }, media,
+    } }));
+    await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId: home, name: 'Home', signedIn: true }] } }));
+    await page.route('**/relay/entra/instances', (route) => {
+      listed.push(route.request().postDataJSON());
+      return route.fulfill({ json: { instances: [{
+        id: resourceId, name: 'bas-speech', kind: 'SpeechServices', location: 'japaneast', resourceGroup: 'rg', subscriptionId: 'd8352616-ed51-492b-929b-5e266d38aedd',
+        subscriptionName: 'BAS', tenantId: home, endpoint: 'https://bas-speech.cognitiveservices.azure.com', keyAuthDisabled: true,
+      }] } });
+    });
+    await page.route('**/relay/entra/inspect', (route) => route.fulfill({ json: { deployments: [], access: { canCall: true, canAssign: false } } }));
+    await page.route('**/relay/media/speech', (route) => {
+      const body = route.request().postDataJSON();
+      saved.push(body);
+      const result = { connection: { auth: 'entraId', endpoint: body.endpoint, region: body.region ?? null, tenantId: body.tenantId, resourceId: body.resourceId }, verifiedAt: '2026-11-17T00:00:00.000Z' };
+      media = { ...media, speech: result };
+      return route.fulfill({ json: result });
+    });
+    await openAiSettings(page, { lang: 'en' });
+
+    await page.getByTestId('ai-speech-auth-entra').click();
+    await expect(page.getByTestId('ai-speech-key')).toHaveCount(0);
+    await expect(page.getByTestId('ai-speech-region')).toHaveCount(0);
+    await expect(page.getByTestId('ai-speech-entra')).toBeVisible();
+    await page.getByTestId('ai-speech-entra-instance').selectOption({ index: 1 });
+    await expect(page.getByTestId('ai-speech-destination')).toContainText('https://bas-speech.cognitiveservices.azure.com/tts/cognitiveservices/voices/list');
+    expect(listed).toContainEqual({ tenantId: home, service: 'speech' });
+    await page.getByTestId('ai-speech-save').click();
+    await expect(page.getByTestId('ai-speech-blockers')).toContainText('Agree to send the test request');
+    expect(saved).toHaveLength(0);
+    await page.getByTestId('ai-speech-consent').check();
+    await page.getByTestId('ai-speech-save').click();
+    await expect(page.getByTestId('ai-speech-verified')).toHaveText('Verified and saved');
+    expect(saved).toEqual([{ auth: 'entraId', endpoint: 'https://bas-speech.cognitiveservices.azure.com', tenantId: home, resourceId, region: 'japaneast' }]);
+
+    // Vision with a key: a regional or missing endpoint is named before anything is sent.
+    await expect(page.getByTestId('ai-vision-auth-apikey')).toBeChecked();
+    await page.getByTestId('ai-vision-endpoint').fill('https://evil.example');
+    await expect(page.getByTestId('ai-vision-validation')).toBeVisible();
+    await page.getByTestId('ai-vision-endpoint').fill('https://bas-vision.cognitiveservices.azure.com');
+    await expect(page.getByTestId('ai-vision-validation')).toHaveCount(0);
+    await expect(page.getByTestId('ai-vision-destination')).toContainText('/computervision/imageanalysis:analyze');
+    await page.getByTestId('ai-vision-auth-entra').click();
+    await expect(page.getByTestId('ai-vision-entra')).toBeVisible();
+    await expect(page.getByTestId('ai-vision-endpoint')).toHaveCount(0);
+    const scan = await new AxeBuilder({ page }).include('[data-testid="ai-speech-connection"]').include('[data-testid="ai-vision-connection"]').withTags(TAGS).analyze();
+    expect(scan.violations).toEqual([]);
+  });
   test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {

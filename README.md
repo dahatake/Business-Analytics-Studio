@@ -180,7 +180,7 @@ e2e/          Playwright
 
 ## 補足
 
-- ライブフィードは **シミュレーション** です。遅延の測定は設定画面からも実行できます（負荷条件は `src/config/params.ts`）。
+- 画面上部には Project の KPI/OKR 試算と顧客パック記載の便益を分けて表示し、詳細カードと全成果一覧を開けます。試算がない項目は予測値を作らず、データからの提案や不足を明示します。表示遅延の負荷測定は設定画面から実行できます（条件は `src/config/params.ts`）。
 - axe の検査では、Fluent UI のフォーカス管理（Tabster）が `<body>` 直下に置く `data-tabster-dummy` 要素だけを除外しています（axe の既知の誤検知）。
 - 決定の記録と判断資料は [docs/decision-guide.md](docs/decision-guide.md)、人や実機による測定の手順は [docs/measurement-plan.md](docs/measurement-plan.md)、機能モジュールの規約は [docs/module-guide.md](docs/module-guide.md)、要求との対応と BLOCKED の一覧は [docs/traceability.md](docs/traceability.md) にあります。
 - 利用テスト（F-3.4.2）は [計画](docs/usability-test.md) のみで、まだ実施していません。

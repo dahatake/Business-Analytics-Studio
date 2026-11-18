@@ -3,6 +3,7 @@ import { modulesJa } from './modules/index.ts';
 /** Japanese UI strings of the core screens. Feature modules add their own prefixed dictionaries in ./modules. */
 export const coreJa = {
   'app.title': 'Business Analytics Studio',
+  'startup.loading': 'アプリを準備しています…',
   'device.loading': 'このPCの保存データを読み込んでいます…',
   'device.title': 'データ保護のため操作を停止しました',
   'device.saved': 'このPCに保存済み',

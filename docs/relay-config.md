@@ -43,7 +43,8 @@ Supported endpoint formats (HTTPS only, no credentials, query or fragment):
   The UI previews the assembled Chat Completions destination and disables the unused dated API version.
   Conversion does not prove availability: the same API-key connection test must succeed before the normalized
   connection is saved. Project paths on unknown hosts, non-default ports or with extra path segments are refused;
-  no project API or Entra/project authentication is used.
+  no project API or project authentication is used. Microsoft Entra ID is available for resource endpoints with a
+  custom subdomain (see [Microsoft Entra ID for Microsoft Foundry](#microsoft-entra-id-for-microsoft-foundry)).
 
 Only a nonempty model response with valid token usage permits saving. Failure leaves the previous connection intact.
 `connection.json` contains the normalized endpoint, deployment (1–64 letters, digits, dots, underscores or hyphens),
@@ -118,6 +119,46 @@ connection that points to a different resource; configure and verify the intende
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
 when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown in the AI settings dialog.
 
+## Microsoft Entra ID for Microsoft Foundry
+
+FR-323. In AI Settings → Microsoft Foundry, choose **Microsoft Entra ID** instead of **API key** (API keys keep working).
+
+1. **Sign in once.** `POST /relay/entra/signin` starts an authorization-code + PKCE sign-in with a loopback redirect
+   (`http://localhost:<random port>`) and returns the `https://login.microsoftonline.com/…` URL; the UI opens it in the
+   default browser and polls `GET /relay/status` (`entra: { signedIn, account, tenantId, signIn: { status } }`).
+   The public client is Azure CLI's (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`, the same one Azure Identity uses for developer
+   sign-in), so no app registration is needed. Set `BAS_ENTRA_CLIENT_ID` to use your own public client (add
+   `http://localhost` as a mobile/desktop redirect URI and the delegated `Azure Service Management` and
+   `Cognitive Services` permissions).
+2. **Pick a resource.** `POST /relay/entra/instances` lists every tenant the account can see (`GET /tenants`) and, per
+   tenant, runs one Azure Resource Graph query for `Microsoft.CognitiveServices/accounts` of kind `AIServices` or
+   `OpenAI`. Tenants that need another sign-in (MFA, conditional access) are returned with `signedIn: false` and get
+   their own sign-in button. Only resources with a custom subdomain can use Entra ID; their endpoint is
+   `https://<subdomain>.openai.azure.com/openai/v1`. Others are listed but disabled.
+3. **Pick a deployment.** `POST /relay/entra/inspect { resourceId, tenantId }` returns the succeeded chat deployments
+   (model-router and gpt-chat-latest are suggested first) and `access: { canCall, canAssign }` from the ARM permissions
+   API. Being Owner/Contributor does **not** allow data-plane calls. If `canCall` is false and `canAssign` is true,
+   **Assign role** (`POST /relay/entra/role`) assigns *Cognitive Services OpenAI User* to the signed-in user on that
+   resource only, then re-checks. Nothing is assigned without that click; Azure can take up to ~5 minutes to apply it.
+4. **Test and save.** `PUT /relay/connection { endpoint, deployment, auth: 'entraId', tenantId }` runs the same synthetic
+   connection test with `Authorization: Bearer <token for https://cognitiveservices.azure.com/.default>` and no
+   `api-key`. The verification signature additionally binds `entraId`, the tenant and the signed-in account, using a
+   vault-only key (`foundryEntraKey`). Signing out (`DELETE /relay/entra`), switching account or editing
+   `connection.json` makes the connection unconfigured again.
+
+Tokens never reach the browser. The MSAL token cache (refresh token included) is stored as the internal vault secret
+`entraTokenCache` (≤ 1 MiB), encrypted with the DPAPI-protected master key, and `entra.json` keeps only the account
+id, user name and home tenant. Later launches get tokens silently; the user signs in again only when the refresh token
+expires or is revoked (the UI then shows `interactionRequired`). Sign-in uses
+`login.microsoftonline.com`; listing, inspecting and role assignment use `management.azure.com`. When
+`BAS_RELAY_OUTBOUND_HOSTS` is set, both must be listed or these routes return `403 outboundNotAllowed`, and the
+resource host (`<subdomain>.openai.azure.com`) must be listed as for API keys. Resource IDs are validated to
+`/subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.CognitiveServices/accounts/<name>` and tenant IDs
+to GUIDs before any call.
+
+For a new resource, prefer `disableLocalAuth: true` (keys off) with a custom subdomain, and give each user only the
+*Cognitive Services OpenAI User* role.
+
 ## Environment variables
 
 | Variable | Default | Values | Effect |
@@ -126,7 +167,8 @@ when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' |
 | `BAS_RELAY_ALLOW_IPV6_LOOPBACK` | `0` | `0` or `1` | `1` also accepts clients from `::1`. |
 | `BAS_RELAY_ALLOWED_HOSTS` | empty | comma-separated exact `host` or `host:port` | Extra accepted `Host` header values. Compared exactly (case-insensitive). For default ports the browser sends no port, so list `bas.example.com`, not `bas.example.com:443`. |
 | `BAS_RELAY_ALLOWED_ORIGINS` | empty | comma-separated exact origins | Extra accepted `Origin` values, e.g. `https://bas.example.com` (scheme + host + optional port, no trailing slash). |
-| `BAS_RELAY_OUTBOUND_HOSTS` | unset | comma-separated exact hostnames | When set, the provider hostname must also be in this list. Checked when the connection is saved and again before every call. News retrieval additionally requires `news.google.com` in this list. Work IQ (D-14) is refused unless `login.microsoftonline.com` and `workiq.svc.cloud.microsoft` are both listed. GitHub Copilot (D-12) is refused unless `api.githubcopilot.com`, `api.github.com` and `github.com` are all listed, so a Foundry-only list never lets material go to GitHub. |
+| `BAS_RELAY_OUTBOUND_HOSTS` | unset | comma-separated exact hostnames | When set, the provider hostname must also be in this list. Checked when the connection is saved and again before every call. News retrieval additionally requires `news.google.com` in this list. Work IQ (D-14) is refused unless `login.microsoftonline.com` and `workiq.svc.cloud.microsoft` are both listed. GitHub Copilot (D-12) is refused unless `api.githubcopilot.com`, `api.github.com` and `github.com` are all listed, so a Foundry-only list never lets material go to GitHub. Microsoft Entra ID for Foundry (FR-323) needs `login.microsoftonline.com` and `management.azure.com`. |
+| `BAS_ENTRA_CLIENT_ID` | Azure CLI public client | application (client) ID | Public client used for Microsoft Entra ID sign-in (FR-323). |
 | `BAS_RELAY_TEST_OUTBOUND` | `0` | `0` or `1` | **Tests only.** `1` additionally allows `http://127.0.0.1:<port>` as the provider endpoint (local stub servers in `tests/ai-relay.test.ts` and `e2e/ai.spec.ts`). Never set it in normal use. |
 | `BAS_RELAY_DIR` | `.bas-local` | path | Folder for `secrets.enc.json`, the master key and `connection.json`. E2E builds (`BAS_OUT=dist-x`) use `.bas-local/e2e-dist-x`. |
 | `BAS_WORKIQ_CLI` | unset | path to `workiq` (or a `.js` entry) | Work IQ CLI route (D-14): the program the relay starts as `<path> mcp`. Unset runs `npx -y @microsoft/workiq@1 mcp` with npm's npx next to the relay's Node. |

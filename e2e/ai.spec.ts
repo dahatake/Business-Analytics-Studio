@@ -262,6 +262,20 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(bodies.join('\n')).not.toContain(FAKE_KEY);
   });
 
+  test('Microsoft Entra ID replaces the key field with a relay-held sign-in (FR-323)', async ({ page }) => {
+    await openAiSettings(page, { lang: 'en' });
+    await expect(page.getByTestId('ai-foundry-key')).toBeVisible();
+    await page.getByTestId('ai-auth-entra').click();
+    const entra = page.getByTestId('ai-entra');
+    await expect(entra).toBeVisible();
+    await expect(page.getByTestId('ai-foundry-key')).toHaveCount(0);
+    await expect(entra.getByTestId('ai-entra-signin')).toBeVisible();
+    await expect(page.getByTestId('ai-entra-instance')).toHaveCount(0);
+    await expect(page.getByTestId('ai-entra-account')).toContainText('Not signed in');
+    await page.getByTestId('ai-auth-apikey').click();
+    await expect(page.getByTestId('ai-foundry-key')).toBeVisible();
+  });
+
   test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {

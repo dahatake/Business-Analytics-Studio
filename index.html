@@ -5,10 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>Business Analytics Studio</title>
+    <link rel="stylesheet" href="/startup.css" />
     <script src="/csp-init.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="startup" data-testid="startup-splash">
+        <div class="startup-content">
+          <span class="startup-mark" aria-hidden="true"></span>
+          <h1>Business Analytics Studio</h1>
+          <div class="startup-indicator" aria-hidden="true"><span></span></div>
+          <p role="status" data-testid="startup-status">アプリを準備しています…</p>
+        </div>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

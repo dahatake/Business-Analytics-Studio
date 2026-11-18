@@ -7,6 +7,7 @@ import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, 
 import { useI18n } from '../../i18n/index.ts';
 import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode } from './relayClient.ts';
 import { connectionTestPreflight, isConfigured, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { EntraConnection } from './EntraConnection.tsx';
 import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
 
@@ -76,11 +77,13 @@ export function ConnectionActions() {
   }, true);
   const problem = draft.ok ? null : draft.error;
   const precheck = connectionTestPreflight(s);
+  const entra = s.authMethod === 'entraId';
   const blockers = [
     problem ? t(`ai.conn.msg.${problem}`) : null,
     !s.relayReachable ? t('ai.relay.unreachable') : null,
-    s.authMethod !== 'apiKey' ? t('ai.auth.entraIdNote') : null,
-    !s.foundryKeySaved ? t('ai.conn.msg.keyMissing') : null,
+    entra && s.entra?.signedIn !== true ? t('ai.conn.msg.notSignedIn') : null,
+    entra && s.entra?.signedIn === true && !s.entraTenantId ? t('ai.entra.pickInstance') : null,
+    !entra && !s.foundryKeySaved ? t('ai.conn.msg.keyMissing') : null,
     !precheck.budget.allowed ? t('ai.conn.msg.budget') : null,
     !consent ? t('ai.conn.msg.consentRequired') : null,
   ].filter((reason) => reason !== null);
@@ -91,12 +94,13 @@ export function ConnectionActions() {
     const timer = setTimeout(() => refreshBudget((v) => v + 1), 5_000);
     return () => clearTimeout(timer);
   }, [coolingDown]);
-  const differs = relay !== null && (!draft.ok || relay.endpoint !== draft.value.endpoint || relay.deployment !== draft.value.deployment || relay.apiVersion !== draft.value.apiVersion);
+  const differs = relay !== null && (!draft.ok || relay.endpoint !== draft.value.endpoint || relay.deployment !== draft.value.deployment || relay.apiVersion !== draft.value.apiVersion
+    || (relay.auth ?? 'apiKey') !== s.authMethod);
   useEffect(() => {
     setMessage(null);
     setProviderStatus(undefined);
     setConsent(false);
-  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.monthlyBudgetJpy]);
+  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.entraTenantId, s.monthlyBudgetJpy]);
   const save = async () => {
     if (testing) return;
     setMessage(null);
@@ -131,7 +135,7 @@ export function ConnectionActions() {
       {draft.ok && <p className="muted" data-testid="ai-connection-destination">{t('ai.conn.destination', { url: foundryChatUrl(draft.value) })}</p>}
       <p className="muted" data-testid="ai-connection-test-info">{t('ai.conn.testInfo')}</p>
       <p className="muted" data-testid="ai-connection-test-cost">{t('ai.cost.unknown')}</p>
-      {!s.foundryKeySaved && <p className="muted">{t('ai.conn.msg.keyMissing')}</p>}
+      {!entra && !s.foundryKeySaved && <p className="muted">{t('ai.conn.msg.keyMissing')}</p>}
       {!precheck.budget.allowed && <p role="alert">{t('ai.conn.msg.budget')}</p>}
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={testing} label={t('ai.conn.consent')} data-testid="ai-connection-consent" />
       {validationRequested && blockers.length > 0 && (
@@ -208,13 +212,12 @@ export function FoundryFields() {
       <Field label={t('ai.settings.apiVersion')} hint={v1 ? t('ai.settings.v1Hint') : undefined}>
         <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={v1} data-testid="ai-api-version" />
       </Field>
-      <RadioGroup value={s.authMethod} onChange={(_, d) => s.update({ authMethod: d.value as AuthMethod })} aria-labelledby="ai-lbl-auth">
+      <RadioGroup value={s.authMethod} onChange={(_, d) => s.update({ authMethod: d.value as AuthMethod })} aria-labelledby="ai-lbl-auth" data-testid="ai-auth-method">
         <span id="ai-lbl-auth" className="ai-label">{t('ai.settings.auth')}</span>
-        <Radio value="apiKey" label={t('ai.auth.apiKey')} />
-        <Radio value="entraId" label={t('ai.auth.entraId')} />
+        <Radio value="apiKey" label={t('ai.auth.apiKey')} data-testid="ai-auth-apikey" />
+        <Radio value="entraId" label={t('ai.auth.entraId')} data-testid="ai-auth-entra" />
       </RadioGroup>
-      {s.authMethod === 'entraId' && <p className="muted">{t('ai.auth.entraIdNote')}</p>}
-      <KeyField name="foundryKey" label={t('ai.key.foundry')} testId="ai-foundry-key" />
+      {s.authMethod === 'entraId' ? <EntraConnection /> : <KeyField name="foundryKey" label={t('ai.key.foundry')} testId="ai-foundry-key" />}
       <ConnectionActions />
       <p className="ai-status" data-testid="ai-key-protection">
         <span>{t('ai.keyProtection.label')}</span>

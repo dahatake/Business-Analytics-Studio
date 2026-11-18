@@ -6,11 +6,15 @@ import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, ty
 export type SecretName = 'foundryKey' | 'speechKey';
 export type KeyProtection = 'dpapi' | 'file';
 
-/** Non-secret connection held by the relay (endpoint origin, deployment, API version). */
+/** Non-secret connection held by the relay (endpoint origin, deployment, API version, and how it authenticates). */
 export interface RelayConnectionInfo {
   endpoint: string;
   deployment: string;
   apiVersion: string;
+  /** Absent means API key. */
+  auth?: 'apiKey' | 'entraId';
+  /** The tenant of the Foundry resource (Entra ID only). */
+  tenantId?: string | null;
 }
 
 export interface RelayStatus {
@@ -23,6 +27,15 @@ export interface RelayStatus {
   copilot: { model: string } | null;
   /** D-14: Work IQ tenant and app saved in the relay, and whether the user is signed in (never the token). */
   workiq: WorkIqStatus | null;
+  /** Microsoft Entra ID sign-in for Microsoft Foundry (the token cache stays in the relay vault). */
+  entra: EntraStatus | null;
+}
+
+export interface EntraStatus {
+  signedIn: boolean;
+  account: string | null;
+  tenantId: string | null;
+  signIn: 'idle' | 'pending' | 'signedIn' | 'failed';
 }
 
 export interface WorkIqStatus {
@@ -35,7 +48,19 @@ export interface WorkIqStatus {
   verifiedAt: string | null;
 }
 
-const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null };
+const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null };
+
+function asEntra(v: unknown): EntraStatus | null {
+  if (!v || typeof v !== 'object') return null;
+  const e = v as { signedIn?: unknown; account?: unknown; tenantId?: unknown; signIn?: { status?: unknown } };
+  const s = e.signIn?.status;
+  return {
+    signedIn: e.signedIn === true,
+    account: typeof e.account === 'string' ? e.account : null,
+    tenantId: typeof e.tenantId === 'string' ? e.tenantId : null,
+    signIn: s === 'pending' || s === 'signedIn' || s === 'failed' ? s : 'idle',
+  };
+}
 
 function asWorkIq(v: unknown): WorkIqStatus | null {
   if (!v || typeof v !== 'object') return null;
@@ -89,16 +114,16 @@ export async function relayFetch(url: string, init: RequestInit & { extraHeaders
 function asConnection(v: unknown): RelayConnectionInfo | null {
   if (!v || typeof v !== 'object') return null;
   const c = v as Partial<RelayConnectionInfo>;
-  return typeof c.endpoint === 'string' && typeof c.deployment === 'string' && typeof c.apiVersion === 'string'
-    ? { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion }
-    : null;
+  if (typeof c.endpoint !== 'string' || typeof c.deployment !== 'string' || typeof c.apiVersion !== 'string') return null;
+  const base = { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion };
+  return c.auth === 'entraId' && typeof c.tenantId === 'string' ? { ...base, auth: 'entraId', tenantId: c.tenantId } : base;
 }
 
 export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown };
     return {
       reachable: true,
       secrets: { foundryKey: body.secrets?.foundryKey === true, speechKey: body.secrets?.speechKey === true },
@@ -107,6 +132,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
       keyProtection: body.keyProtection === 'dpapi' || body.keyProtection === 'file' ? body.keyProtection : null,
       copilot: typeof body.copilot?.model === 'string' ? { model: body.copilot.model } : null,
       workiq: asWorkIq(body.workiq),
+      entra: asEntra(body.entra),
     };
   } catch {
     return UNREACHABLE;
@@ -135,7 +161,8 @@ export async function deleteSecret(name: SecretName): Promise<boolean> {
   }
 }
 
-export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'budget' | 'failed';
+export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNotAllowed' | 'outboundNotAllowed' | 'keyMissing' | 'keyChanged' | 'tooSoon' | 'budget'
+  | 'notSignedIn' | 'interactionRequired' | 'authFailed' | 'accountChanged' | 'invalidTenant' | 'failed';
 export interface ConnectionUsage { inputTokens: number; outputTokens: number }
 export type ConnectionSaveResult =
   | { ok: true; connection: RelayConnectionInfo; connectionVerifiedAt: string; usage: ConnectionUsage }
@@ -157,7 +184,8 @@ export async function saveRelayConnection(c: RelayConnectionInfo): Promise<Conne
     if (res.ok && saved && usage && typeof body.connectionVerifiedAt === 'string') {
       return { ok: true, connection: saved, connectionVerifiedAt: body.connectionVerifiedAt, usage };
     }
-    const known: ConnectionSaveError[] = [...CONNECTION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon'];
+    const known: ConnectionSaveError[] = [...CONNECTION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon',
+      'notSignedIn', 'interactionRequired', 'authFailed', 'accountChanged', 'invalidTenant'];
     return { ok: false, error: known.find((k) => k === body.error) ?? 'failed', providerStatus: body.providerStatus, usage };
   } catch (error) {
     return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };
@@ -373,11 +401,74 @@ export async function fetchNewsHeadlines(company: string, lang: 'ja' | 'en', sig
   return (await res.json()) as { provider: string; fetchedAt: string; articles: NewsHeadline[] };
 }
 
-/* ---------- Microsoft Work IQ (D-14, Microsoft Foundry only) ---------- */
+/* ---------- Microsoft Entra ID for Microsoft Foundry ---------- */
 
 const jsonInit = (method: string, body: unknown): RequestInit & { extraHeaders: Record<string, string> } => ({
   method, extraHeaders: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
+
+export interface FoundryInstanceInfo {
+  id: string;
+  name: string;
+  kind: string;
+  location: string;
+  resourceGroup: string;
+  subscriptionId: string;
+  subscriptionName: string;
+  tenantId: string;
+  /** `null` when the resource has no custom subdomain, which Entra ID requires. */
+  endpoint: string | null;
+  keyAuthDisabled: boolean;
+}
+export interface FoundryTenantInfo { tenantId: string; name: string; signedIn: boolean }
+export interface FoundryDeploymentDetail { name: string; model: string; version: string; sku: string }
+export interface FoundryInstanceDetail { deployments: FoundryDeploymentDetail[]; access: { canCall: boolean; canAssign: boolean } }
+
+export async function fetchEntraStatus(): Promise<EntraStatus | null> {
+  try {
+    const res = await relayFetch('/relay/entra');
+    return res.ok ? asEntra(((await res.json()) as { entra?: unknown }).entra) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Starts the browser sign-in in the relay; returns the Microsoft sign-in URL to open (the redirect goes to the relay). */
+export async function startEntraSignIn(tenantId?: string): Promise<{ url: string | null }> {
+  const res = await relayFetch('/relay/entra/signin', { ...jsonInit('POST', tenantId ? { tenantId } : {}), signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const url = ((await res.json()) as { url?: unknown }).url;
+  return { url: typeof url === 'string' && url.startsWith('https://login.microsoftonline.com/') ? url : null };
+}
+
+export async function signOutEntra(): Promise<boolean> {
+  try {
+    return (await relayFetch('/relay/entra', { method: 'DELETE' })).ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function listEntraInstances(signal?: AbortSignal): Promise<{ instances: FoundryInstanceInfo[]; tenants: FoundryTenantInfo[] }> {
+  const res = await relayFetch('/relay/entra/instances', { ...jsonInit('POST', {}), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as { instances: FoundryInstanceInfo[]; tenants: FoundryTenantInfo[] };
+}
+
+export async function inspectEntraInstance(resourceId: string, tenantId: string, signal?: AbortSignal): Promise<FoundryInstanceDetail> {
+  const res = await relayFetch('/relay/entra/inspect', { ...jsonInit('POST', { resourceId, tenantId }), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as FoundryInstanceDetail;
+}
+
+/** Grants the signed-in user "Cognitive Services OpenAI User" on the resource (needs Owner or User Access Administrator). */
+export async function assignEntraRole(resourceId: string, tenantId: string): Promise<FoundryInstanceDetail> {
+  const res = await relayFetch('/relay/entra/role', { ...jsonInit('POST', { resourceId, tenantId }), signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return (await res.json()) as FoundryInstanceDetail;
+}
+
+/* ---------- Microsoft Work IQ (D-14, Microsoft Foundry only) ---------- */
 
 export type WorkIqSettingsInput = { method: 'cli' } | { method: 'app'; tenantId: string; clientId: string };
 

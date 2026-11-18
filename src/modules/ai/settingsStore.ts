@@ -8,7 +8,7 @@ import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryCo
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
 import {
   deleteCopilotSettings, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, saveCopilotModel, saveRelayConnection, saveSecret,
-  saveWorkIqSettings, type ConnectionSaveResult, type CopilotStatusInfo, type KeyProtection, type RelayConnectionInfo, type SecretName, type WorkIqSettingsInput, type WorkIqStatus,
+  saveWorkIqSettings, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type RelayConnectionInfo, type SecretName, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
@@ -24,7 +24,7 @@ export function parseBudget(raw: string): number | null {
   return Number(s);
 }
 
-type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'liveEnabled' | 'sendConsent' | 'speechEndpoint' | 'speechRegion'
+type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'entraTenantId' | 'liveEnabled' | 'sendConsent' | 'speechEndpoint' | 'speechRegion'
   | 'monthlyBudgetJpy';
 
 /**
@@ -38,6 +38,8 @@ export interface AiSettingsState {
   deployment: string;
   apiVersion: string;
   authMethod: AuthMethod;
+  /** Entra ID: the tenant of the Foundry resource picked from the instance list. */
+  entraTenantId: string;
   /** FR-132: explicit enable of the real connection. Off by default. */
   liveEnabled: boolean;
   /** D-26: one-time permission for data included in AI requests, captured in AI settings. */
@@ -58,6 +60,8 @@ export interface AiSettingsState {
   copilotStatus: CopilotStatusInfo | null;
   /** D-14: Work IQ settings and sign-in held by the relay (Microsoft Foundry only). */
   workiq: WorkIqStatus | null;
+  /** Microsoft Entra ID sign-in for Foundry held by the relay (never a token). */
+  entra: EntraStatus | null;
   update: (patch: Partial<Pick<AiSettingsState, Editable>>) => void;
   refreshRelay: () => Promise<void>;
   saveWorkIq: (input: WorkIqSettingsInput) => Promise<{ ok: boolean; error?: string }>;
@@ -84,6 +88,7 @@ export const useAiSettings = create<AiSettingsState>()(
       deployment: '',
       apiVersion: DEFAULT_API_VERSION,
       authMethod: 'apiKey',
+      entraTenantId: '',
       liveEnabled: false,
       sendConsent: false,
       speechEndpoint: '',
@@ -98,6 +103,7 @@ export const useAiSettings = create<AiSettingsState>()(
       copilotModel: null,
       copilotStatus: null,
       workiq: null,
+      entra: null,
       update: (patch) => set((state) => {
         const destinationChanged = patch.provider !== undefined && patch.provider !== state.provider;
         const revoked = patch.sendConsent === false;
@@ -108,7 +114,7 @@ export const useAiSettings = create<AiSettingsState>()(
         set({
           relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, speechKeySaved: s.secrets.speechKey,
           relayConnection: s.connection, connectionVerifiedAt: s.connectionVerifiedAt, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
-          workiq: s.workiq,
+          workiq: s.workiq, entra: s.entra,
         });
       },
       saveWorkIq: async (input) => {
@@ -153,7 +159,8 @@ export const useAiSettings = create<AiSettingsState>()(
         const s = get();
         const precheck = connectionTestPreflight(s);
         if (!precheck.budget.allowed) return { ok: false, error: 'budget' };
-        const r = await saveRelayConnection({ endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION });
+        const target = { endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION };
+        const r = await saveRelayConnection(s.authMethod === 'entraId' ? { ...target, auth: 'entraId', tenantId: s.entraTenantId.trim() } : target);
         if (r.usage || (!r.ok && ['timeout', 'aborted', 'networkError', 'providerError', 'badProviderResponse', 'failed'].includes(r.error))) {
           appendLedger({
             at: new Date().toISOString(), use: 'connectionTest', inputTokens: r.usage?.inputTokens ?? 200,
@@ -169,6 +176,8 @@ export const useAiSettings = create<AiSettingsState>()(
           || s.relayConnection.endpoint !== r.connection.endpoint
           || s.relayConnection.deployment !== r.connection.deployment
           || s.relayConnection.apiVersion !== r.connection.apiVersion
+          || (s.relayConnection.auth ?? 'apiKey') !== (r.connection.auth ?? 'apiKey')
+          || (s.relayConnection.tenantId ?? null) !== (r.connection.tenantId ?? null)
         )) set({ sendConsent: false, liveEnabled: false });
         if (r.ok && current.endpoint === s.endpoint && current.deployment === s.deployment && current.apiVersion === s.apiVersion) {
           set({ endpoint: r.connection.endpoint, deployment: r.connection.deployment, apiVersion: r.connection.apiVersion });
@@ -188,7 +197,7 @@ export const useAiSettings = create<AiSettingsState>()(
       version: 4,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
-        provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, liveEnabled: s.liveEnabled,
+        provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, entraTenantId: s.entraTenantId, liveEnabled: s.liveEnabled,
         sendConsent: s.sendConsent,
         speechEndpoint: s.speechEndpoint, speechRegion: s.speechRegion,
         monthlyBudgetJpy: s.monthlyBudgetJpy,
@@ -207,14 +216,16 @@ export const useAiSettings = create<AiSettingsState>()(
 );
 
 /**
- * "Configured" = Foundry endpoint, deployment and current API key have passed a live test in the relay,
- * or a GitHub Copilot model saved in the relay (D-12; the CLI sign-in is re-checked by the relay on every call).
- * Entra ID sign-in for Foundry is a manual step outside this app (C-07: BLOCKED), so it never counts as configured.
+ * "Configured" = the relay's saved Foundry connection has passed a live test with the chosen authentication (the current
+ * API key, or the Entra ID account still signed in to the relay), or a GitHub Copilot model is saved in the relay (D-12;
+ * the CLI sign-in is re-checked by the relay on every call).
  */
-export function isConfigured(s: Pick<AiSettingsState, 'provider' | 'authMethod' | 'foundryKeySaved' | 'relayConnection'> & Partial<Pick<AiSettingsState, 'copilotModel' | 'connectionVerifiedAt'>>): boolean {
+export function isConfigured(s: Pick<AiSettingsState, 'provider' | 'authMethod' | 'foundryKeySaved' | 'relayConnection'> & Partial<Pick<AiSettingsState, 'copilotModel' | 'connectionVerifiedAt' | 'entra'>>): boolean {
   if (s.provider === 'copilotSdk') return (s.copilotModel ?? null) !== null;
-  if (s.authMethod === 'entraId') return false;
-  return s.relayConnection !== null && s.foundryKeySaved && !!s.connectionVerifiedAt;
+  if (s.relayConnection === null || !s.connectionVerifiedAt) return false;
+  const savedAuth = s.relayConnection.auth ?? 'apiKey';
+  if (savedAuth !== s.authMethod) return false;
+  return savedAuth === 'entraId' ? s.entra?.signedIn === true : s.foundryKeySaved;
 }
 
 export function connectionDraftProblem(s: Pick<AiSettingsState, 'endpoint' | 'deployment' | 'apiVersion'>) {

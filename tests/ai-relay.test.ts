@@ -18,6 +18,7 @@ import {
 import { spawn } from 'node:child_process';
 import { MAX_PURPOSE_SEARCHES, WorkIqError, purposeTopics, type WorkIqQuestion } from '../server/workiq.ts';
 import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
+import { EntraError, type EntraTokens } from '../server/entra.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
@@ -564,7 +565,7 @@ describe('relay secrets and connection', () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } } } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -1676,5 +1677,168 @@ process.stdin.on('data', (d) => {
     expect(vault.get('workiqCliKey')).toBeUndefined();
     await call(req('PUT', '/relay/workiq', { method: 'cli' }));
     expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ workiq: { method: 'cli', verifiedAt: null } });
+  });
+});
+
+describe('Microsoft Entra ID for Microsoft Foundry', () => {
+  const TENANT = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+  const OTHER = '72f988bf-86f1-41af-91ab-2d7cd011db47';
+  const OID = '11111111-2222-3333-4444-555555555555';
+  const SUB = 'd8352616-ed51-492b-929b-5e266d38aedd';
+  const RES = `/subscriptions/${SUB}/resourceGroups/rg-bas/providers/Microsoft.CognitiveServices/accounts/bas-foundry`;
+  const testConfig: RelayConfig = { ...STRICT_RELAY_CONFIG, testOutbound: true };
+  let clock = 5_000_000;
+  let account: { username: string; tenantId: string } | null;
+  let tokenCalls: { scope: string; tenantId?: string }[];
+  let refuseTenant: string | null;
+  const entra: EntraTokens = {
+    account: () => account,
+    startSignIn: async () => ({ url: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?x=1' }),
+    signInState: () => ({ status: account ? 'signedIn' : 'idle' }),
+    signOut: async () => { account = null; },
+    token: async (scope, tenantId) => {
+      if (!account) throw new EntraError('notSignedIn');
+      if (tenantId && tenantId === refuseTenant) throw new EntraError('interactionRequired');
+      tokenCalls.push({ scope, tenantId });
+      return { token: `entra-token-${scope.includes('cognitive') ? 'foundry' : 'arm'}`, objectId: OID, tenantId: tenantId ?? account.tenantId };
+    },
+  };
+  const ctx = (extra: Partial<RelayContext> = {}): Partial<RelayContext> => ({ config: testConfig, now: () => (clock += 10_000), entra, ...extra });
+
+  beforeEach(() => {
+    account = { username: 'user@contoso.example', tenantId: TENANT };
+    tokenCalls = [];
+    refuseTenant = null;
+  });
+
+  it('tests and sends with a Microsoft Entra token (no API key), binds the check to the account, and drops it on sign-out', async () => {
+    const sent: { url: string; headers: Record<string, string> }[] = [];
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      sent.push({ url: String(url), headers: init?.headers as Record<string, string> });
+      return verifiedReply(url, init);
+    };
+    const conn = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', auth: 'entraId', tenantId: TENANT };
+    account = null;
+    expect(await call(req('PUT', '/relay/connection', conn), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'notSignedIn' } });
+    expect(sent).toHaveLength(0);
+    account = { username: 'user@contoso.example', tenantId: TENANT };
+    expect(await call(req('PUT', '/relay/connection', { ...conn, tenantId: 'not-a-tenant' }), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'invalidTenant' } });
+
+    const saved = await call(req('PUT', '/relay/connection', conn), ctx({ fetch }));
+    expect(saved.status).toBe(200);
+    expect(vault.get('foundryKey')).toBeUndefined();
+    expect(sent[0]!.url).toBe('https://bas-foundry.openai.azure.com/openai/v1/chat/completions');
+    expect(sent[0]!.headers).toMatchObject({ Authorization: 'Bearer entra-token-foundry' });
+    expect(sent[0]!.headers).not.toHaveProperty('api-key');
+    expect(tokenCalls).toContainEqual({ scope: 'https://cognitiveservices.azure.com/.default', tenantId: TENANT });
+    expect((await call(req('GET', '/relay/status'), ctx())).body).toMatchObject({
+      configured: true, connection: { auth: 'entraId', tenantId: TENANT, deployment: 'model-router' }, entra: { signedIn: true, account: 'user@contoso.example' },
+    });
+
+    const ai = await call(req('POST', '/relay/ai', { use: 'explain', lang: 'en', prompt: 'Synthetic test.', maxOutputTokens: 100, timeoutMs: 1000 }), ctx({ fetch }));
+    expect(ai.status).toBe(200);
+    expect(sent[1]!.headers).toMatchObject({ Authorization: 'Bearer entra-token-foundry' });
+    for (const a of answers) expect(JSON.stringify(a.body)).not.toContain('entra-token');
+
+    // Another account in the same relay never inherits the check.
+    account = { username: 'someone-else@contoso.example', tenantId: TENANT };
+    expect((await call(req('GET', '/relay/status'), ctx())).body).toMatchObject({ configured: false, connectionVerifiedAt: null });
+    account = { username: 'user@contoso.example', tenantId: TENANT };
+    // Editing the saved tenant breaks the seal.
+    const path = join(vault.dir, 'connection.json');
+    const original = readFileSync(path, 'utf8');
+    writeFileSync(path, original.replace(TENANT, OTHER));
+    expect((await call(req('GET', '/relay/status'), ctx())).body).toMatchObject({ configured: false });
+    writeFileSync(path, original);
+    expect((await call(req('GET', '/relay/status'), ctx())).body).toMatchObject({ configured: true });
+
+    expect((await call(req('DELETE', '/relay/entra'), ctx())).status).toBe(200);
+    expect(vault.get('foundryEntraKey')).toBeUndefined();
+    expect((await call(req('GET', '/relay/status'), ctx())).body).toMatchObject({ configured: false, entra: { signedIn: false } });
+    expect((await call(req('POST', '/relay/ai', { use: 'explain', lang: 'en', prompt: 'x', maxOutputTokens: 100, timeoutMs: 1000 }), ctx({ fetch }))).body)
+      .toEqual({ allowed: false, reasons: ['notConfigured'] });
+  });
+
+  it('lists the Foundry resources the account can read in every tenant, marking tenants that need another sign-in', async () => {
+    refuseTenant = OTHER;
+    const graph: { tenantId?: string; query: string }[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      const u = String(url);
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer entra-token-arm' });
+      if (u.startsWith('https://management.azure.com/tenants')) {
+        return new Response(JSON.stringify({ value: [{ tenantId: TENANT, displayName: 'Contoso' }, { tenantId: OTHER, displayName: 'Fabrikam' }] }));
+      }
+      if (u.startsWith('https://management.azure.com/providers/Microsoft.ResourceGraph/resources')) {
+        graph.push({ query: String(JSON.parse(String(init?.body)).query) });
+        return new Response(JSON.stringify({ data: [
+          { id: RES, name: 'bas-foundry', kind: 'AIServices', location: 'eastus2', resourceGroup: 'rg-bas', subscriptionId: SUB, subscriptionName: 'BAS', tenantId: TENANT, customSubDomain: 'bas-foundry', disableLocalAuth: true },
+          { id: RES.replace('bas-foundry', 'legacy'), name: 'legacy', kind: 'OpenAI', location: 'japaneast', resourceGroup: 'rg-bas', subscriptionId: SUB, subscriptionName: 'BAS', tenantId: TENANT, customSubDomain: '' },
+        ] }));
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const r = await call(req('POST', '/relay/entra/instances', {}), ctx({ fetch }));
+    expect(r.status).toBe(200);
+    const body = r.body as { instances: { name: string; endpoint: string | null; keyAuthDisabled: boolean; tenantId: string }[]; tenants: { tenantId: string; signedIn: boolean }[] };
+    expect(body.instances).toEqual([
+      expect.objectContaining({ name: 'bas-foundry', endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', keyAuthDisabled: true, tenantId: TENANT }),
+      expect.objectContaining({ name: 'legacy', endpoint: null }),
+    ]);
+    expect(body.tenants).toEqual([{ tenantId: TENANT, name: 'Contoso', signedIn: true }, { tenantId: OTHER, name: 'Fabrikam', signedIn: false }]);
+    expect(graph).toHaveLength(1);
+    expect(graph[0]!.query).toContain("microsoft.cognitiveservices/accounts");
+  });
+
+  it('reports chat deployments and data-plane access, and assigns the OpenAI User role only on request', async () => {
+    let assigned = false;
+    const puts: { url: string; body: unknown }[] = [];
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (init?.method === 'PUT') {
+        puts.push({ url: u, body: JSON.parse(String(init.body)) });
+        assigned = true;
+        return new Response('{}', { status: 201 });
+      }
+      if (u.includes('/deployments?')) {
+        return new Response(JSON.stringify({ value: [
+          { name: 'model-router', sku: { name: 'GlobalStandard' }, properties: { provisioningState: 'Succeeded', model: { name: 'model-router', version: '2025-11-18' }, capabilities: { chatCompletion: 'true' } } },
+          { name: 'embed', sku: { name: 'Standard' }, properties: { provisioningState: 'Succeeded', model: { name: 'text-embedding-3-small' }, capabilities: { embeddings: 'true' } } },
+          { name: 'creating', sku: { name: 'Standard' }, properties: { provisioningState: 'Creating', model: { name: 'gpt-5' } } },
+        ] }));
+      }
+      if (u.includes('/permissions?')) {
+        return new Response(JSON.stringify({ value: assigned
+          ? [{ actions: ['*'], notActions: [] }, { dataActions: ['Microsoft.CognitiveServices/accounts/OpenAI/*'], notDataActions: [] }]
+          : [{ actions: ['*'], notActions: [], dataActions: [], notDataActions: [] }] }));
+      }
+      return new Response('{}', { status: 404 });
+    };
+    const inspect = await call(req('POST', '/relay/entra/inspect', { resourceId: RES, tenantId: TENANT }), ctx({ fetch }));
+    expect(inspect).toEqual({ status: 200, body: {
+      deployments: [{ name: 'model-router', model: 'model-router', version: '2025-11-18', sku: 'GlobalStandard' }],
+      access: { canCall: false, canAssign: true },
+    } });
+    expect(puts).toHaveLength(0);
+    const role = await call(req('POST', '/relay/entra/role', { resourceId: RES, tenantId: TENANT }), ctx({ fetch }));
+    expect(role.body).toMatchObject({ access: { canCall: true } });
+    expect(puts).toHaveLength(1);
+    expect(puts[0]!.url).toMatch(new RegExp(`^https://management\\.azure\\.com${RES.replace(/[.]/g, '\\.')}/providers/Microsoft\\.Authorization/roleAssignments/[0-9a-f-]{36}\\?`));
+    expect(puts[0]!.body).toEqual({ properties: {
+      roleDefinitionId: `/subscriptions/${SUB}/providers/Microsoft.Authorization/roleDefinitions/5e0bd9bd-7b93-4f28-af87-19fc36ad61bd`, principalId: OID, principalType: 'User',
+    } });
+  });
+
+  it('refuses malformed resource IDs, signed-out calls and an allowlist without Entra hosts before contacting Azure', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    for (const resourceId of [`${RES}/../../other`, '/subscriptions/x/resourceGroups/a/providers/Microsoft.Storage/storageAccounts/b', 'https://evil.example']) {
+      expect(await call(req('POST', '/relay/entra/inspect', { resourceId, tenantId: TENANT }), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'invalidResource' } });
+    }
+    account = null;
+    expect(await call(req('POST', '/relay/entra/instances', {}), ctx({ fetch }))).toEqual({ status: 401, body: { error: 'notSignedIn' } });
+    account = { username: 'user@contoso.example', tenantId: TENANT };
+    expect(await call(req('POST', '/relay/entra/instances', {}), ctx({ fetch, config: { ...testConfig, outboundHosts: ['bas-foundry.openai.azure.com'] } })))
+      .toEqual({ status: 403, body: { error: 'outboundNotAllowed' } });
+    expect(await call(req('POST', '/relay/entra/signin', { tenantId: 'bad' }), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'invalidTenant' } });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@
     "kpi1": "node scripts/kpi1.ts"
   },
   "dependencies": {
+    "@azure/msal-node": "^7.2.2",
     "@fluentui/react-components": "^9.75.1",
     "@fluentui/react-icons": "^2.0.345",
     "@fluentui/react-motion": "^9.16.5",

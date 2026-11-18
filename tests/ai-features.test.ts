@@ -391,12 +391,17 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(readLedger()).toEqual([]);
   });
 
-  it('"configured" means the relay holds what it needs: Foundry endpoint, deployment and key, or (D-12) a Copilot model; Entra ID never counts (C-07)', () => {
+  it('"configured" means the relay holds what it needs: a Foundry connection verified with its saved authentication (key, or the signed-in Entra ID account), or (D-12) a Copilot model', () => {
     const s = { relayConnection: CONNECTION, foundryKeySaved: true, connectionVerifiedAt: '2026-11-10T00:00:00Z' };
     expect(isConfigured({ ...s, provider: 'copilotSdk', authMethod: 'apiKey' })).toBe(false);
     expect(isConfigured({ ...s, provider: 'copilotSdk', authMethod: 'apiKey', copilotModel: 'gpt-5' })).toBe(true);
     expect(isConfigured({ relayConnection: null, foundryKeySaved: false, provider: 'copilotSdk', authMethod: 'entraId', copilotModel: 'gpt-5' })).toBe(true);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'entraId' })).toBe(false);
+    const entraConn = { ...CONNECTION, auth: 'entraId' as const, tenantId: '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a' };
+    const signedIn = { signedIn: true, account: 'user@example.com', tenantId: entraConn.tenantId, signIn: 'idle' as const };
+    expect(isConfigured({ ...s, relayConnection: entraConn, foundryKeySaved: false, provider: 'foundry', authMethod: 'entraId', entra: signedIn })).toBe(true);
+    expect(isConfigured({ ...s, relayConnection: entraConn, provider: 'foundry', authMethod: 'entraId', entra: { ...signedIn, signedIn: false } })).toBe(false);
+    expect(isConfigured({ ...s, relayConnection: entraConn, provider: 'foundry', authMethod: 'apiKey', entra: signedIn })).toBe(false);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'apiKey' })).toBe(true);
     expect(isConfigured({ ...s, provider: 'foundry', authMethod: 'apiKey', connectionVerifiedAt: null })).toBe(false);
     expect(isConfigured({ ...s, relayConnection: null, provider: 'foundry', authMethod: 'apiKey' })).toBe(false);

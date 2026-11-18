@@ -4,6 +4,7 @@ import { modulesEn } from './modules/index.ts';
 /** English UI strings. Typed against the Japanese key set: a missing or extra key is a compile error. */
 const coreEn: Record<keyof typeof coreJa, string> = {
   'app.title': 'Business Analytics Studio',
+  'startup.loading': 'Preparing the app…',
   'device.loading': 'Loading data saved on this PC…',
   'device.title': 'Editing stopped to protect your data',
   'device.saved': 'Saved on this PC',

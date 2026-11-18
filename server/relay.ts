@@ -16,6 +16,10 @@ import {
   validateWorkIqInput, type StoredWorkIq, type WorkIqErrorCode,
 } from './workiq.ts';
 import { WorkIqCliService } from './workiqCli.ts';
+import {
+  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, isFoundryResourceId, isTenantId, listFoundryInstances, saveEntraState,
+  type EntraErrorCode, type EntraTokens,
+} from './entra.ts';
 import { reserveStory, storyQuote, StoryBudgetError } from './storyBudget.ts';
 import { STORY_SYSTEM_PROMPT, StoryOutput } from '../src/ai/storyOutput.ts';
 import {
@@ -179,9 +183,10 @@ export function originAllowed(origin: string, localPort: number | undefined, con
 /* Connection (non-secret) and outbound allowlist                                                                     */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-export type RelayConnection = FoundryConnection;
+/** `auth` is absent for API-key connections (saved before Entra ID existed); `entraId` connections carry their tenant. */
+export type RelayConnection = FoundryConnection & ({ auth?: 'apiKey'; tenantId?: undefined } | { auth: 'entraId'; tenantId: string });
 
-export type ConnectionError = ConnectionInputError | 'hostNotAllowed';
+export type ConnectionError = ConnectionInputError | 'hostNotAllowed' | 'invalidTenant';
 
 function endpointHostAllowed(u: URL, config: RelayConfig): boolean {
   return config.outboundHosts === null || config.outboundHosts.includes(u.hostname.toLowerCase());
@@ -189,43 +194,69 @@ function endpointHostAllowed(u: URL, config: RelayConfig): boolean {
 
 /** Normalize supported Foundry URLs before checking the outbound host. */
 export function validateConnection(input: unknown, config: RelayConfig = STRICT_RELAY_CONFIG): { ok: true; value: RelayConnection } | { ok: false; error: ConnectionError } {
-  const result = parseFoundryConnection(input, config.testOutbound);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: 'invalidBody' };
+  const { auth, tenantId, ...rest } = input as Record<string, unknown>;
+  if (auth !== undefined && auth !== 'apiKey' && auth !== 'entraId') return { ok: false, error: 'invalidBody' };
+  if (auth === 'entraId' ? !isTenantId(tenantId) : tenantId !== undefined) return { ok: false, error: 'invalidTenant' };
+  const result = parseFoundryConnection(rest, config.testOutbound);
   if (!result.ok) return result;
   const u = new URL(result.value.endpoint);
   if (u.protocol !== 'http:' && !endpointHostAllowed(u, config)) return { ok: false, error: 'hostNotAllowed' };
-  return result;
+  return { ok: true, value: auth === 'entraId' ? { ...result.value, auth, tenantId: (tenantId as string).toLowerCase() } : result.value };
 }
 
-interface SavedConnection extends RelayConnection {
+type SavedConnection = RelayConnection & {
   verifiedAt?: string;
   verification?: string;
-}
+};
 
 export function loadConnection(dir: string, config: RelayConfig = STRICT_RELAY_CONFIG): SavedConnection | null {
   const path = join(dir, CONNECTION_FILE);
   if (!existsSync(path)) return null;
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8')) as SavedConnection;
-    const r = validateConnection({ endpoint: saved.endpoint, deployment: saved.deployment, apiVersion: saved.apiVersion }, config);
+    const r = validateConnection({
+      endpoint: saved.endpoint, deployment: saved.deployment, apiVersion: saved.apiVersion, ...(saved.auth === 'entraId' ? { auth: saved.auth, tenantId: saved.tenantId } : {}),
+    }, config);
     return r.ok ? { ...r.value, verifiedAt: saved.verifiedAt, verification: saved.verification } : null;
   } catch {
     return null;
   }
 }
 
-function connectionSignature(c: RelayConnection, at: string, key: string): string {
-  return createHmac('sha256', key).update(JSON.stringify([c.endpoint, c.deployment, c.apiVersion, at])).digest('hex');
+/** An Entra ID check is bound to the signed-in account and tenant, so another account or tenant never inherits it. */
+function connectionSignature(c: RelayConnection, at: string, key: string, account?: string): string {
+  const fields: string[] = [c.endpoint, c.deployment, c.apiVersion, at];
+  if (c.auth === 'entraId') fields.push('entraId', c.tenantId, account ?? '');
+  return createHmac('sha256', key).update(JSON.stringify(fields)).digest('hex');
 }
 
-function verifiedAt(c: SavedConnection | null, vault: SecretVault): string | null {
+function verifiedAt(c: SavedConnection | null, vault: SecretVault, entra: EntraTokens): string | null {
   if (!c || typeof c.verifiedAt !== 'string' || !Number.isFinite(Date.parse(c.verifiedAt)) || typeof c.verification !== 'string') return null;
+  if (c.auth === 'entraId') {
+    const key = vault.get('foundryEntraKey');
+    const account = entra.account();
+    return key && account && tokenMatches(c.verification, connectionSignature(c, c.verifiedAt, key, account.username)) ? c.verifiedAt : null;
+  }
   const key = vault.get('foundryKey');
   return key && tokenMatches(c.verification, connectionSignature(c, c.verifiedAt, key)) ? c.verifiedAt : null;
 }
 
-function publicConnection(c: RelayConnection | null): RelayConnection | null {
-  return c ? { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion } : null;
+function publicConnection(c: RelayConnection | null) {
+  return c ? { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion, auth: c.auth ?? 'apiKey', tenantId: c.tenantId ?? null } : null;
 }
+
+/** What the relay sends to Foundry: the saved API key, or a Microsoft Entra access token minted for this call. */
+type FoundryCredential = { kind: 'key'; key: string } | { kind: 'bearer'; token: string };
+
+export function entraOutboundAllowed(config: RelayConfig): boolean {
+  return config.outboundHosts === null || ENTRA_OUTBOUND_HOSTS.every((h) => config.outboundHosts!.includes(h));
+}
+
+const ENTRA_STATUS: Record<EntraErrorCode, number> = {
+  notSignedIn: 401, interactionRequired: 401, signInPending: 409, signInFailed: 502, authFailed: 502, invalidResource: 400, invalidTenant: 400,
+  armForbidden: 403, armError: 502, armTimeout: 504, roleAssignFailed: 502,
+};
 
 function saveConnection(dir: string, c: SavedConnection) {
   writeJsonAtomic(dir, CONNECTION_FILE, c);
@@ -324,6 +355,8 @@ export interface RelayContext {
   workiq?: WorkIqService;
   /** D-14 Work IQ through Microsoft's Work IQ CLI (MCP stdio); tests inject one with a fake server. */
   workiqCli?: WorkIqCliService;
+  /** Microsoft Entra ID sign-in for Foundry (MSAL; tests inject a stub). */
+  entra?: EntraTokens;
   /** Official-site reader (tests inject a stub). */
   site?: typeof fetchSitePages;
   /** Aborted when the browser closes the request (cancel), so an upstream call stops too. */
@@ -426,7 +459,7 @@ function networkError(error: unknown): FoundryError {
   return 'networkError';
 }
 
-async function forward(call: AiCall, conn: RelayConnection, apiKey: string, config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal): Promise<FoundryResponse> {
+async function forward(call: AiCall, conn: RelayConnection, credential: FoundryCredential, config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal): Promise<FoundryResponse> {
   if (signal?.aborted) return { status: 499, body: { error: 'aborted' } };
   const url = foundryChatUrl(conn);
   if (!outboundAllowed(url, conn.endpoint, config)) return { status: 403, body: { error: 'outboundNotAllowed' } };
@@ -450,7 +483,10 @@ async function forward(call: AiCall, conn: RelayConnection, apiKey: string, conf
   try {
     const send = (asModern: boolean) => doFetch(url, {
       method: 'POST',
-      headers: { ...(isFoundryV1(conn.endpoint) ? { Authorization: `Bearer ${apiKey}` } : { 'api-key': apiKey }), 'Content-Type': 'application/json' },
+      headers: {
+        ...(credential.kind === 'bearer' ? { Authorization: `Bearer ${credential.token}` } : isFoundryV1(conn.endpoint) ? { Authorization: `Bearer ${credential.key}` } : { 'api-key': credential.key }),
+        'Content-Type': 'application/json',
+      },
       body: body(asModern),
       redirect: 'error',
       signal: controller.signal,
@@ -532,8 +568,30 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
 
   const connection = () => loadConnection(vault.dir, config);
   const copilotSettings = () => loadCopilotSettings(vault.dir);
-  const configuredFor = (provider: Provider) => (provider === 'copilotSdk' ? copilotSettings() !== null : verifiedAt(connection(), vault) !== null);
+  const entra = ctx.entra ?? new MsalEntraTokens(vault, saveEntraState(vault.dir, writeJsonAtomic));
+  const configuredFor = (provider: Provider) => (provider === 'copilotSdk' ? copilotSettings() !== null : verifiedAt(connection(), vault, entra) !== null);
   const configured = () => configuredFor('foundry');
+  const entraStatus = () => {
+    const a = entra.account();
+    return { signedIn: a !== null, account: a?.username ?? null, tenantId: a?.tenantId ?? null, signIn: entra.signInState() };
+  };
+  const entraFailure = (error: unknown) => {
+    if (!(error instanceof EntraError)) throw error;
+    return json(ENTRA_STATUS[error.code], { error: error.code });
+  };
+  /** The API key, or an Entra ID token for the saved tenant; an Entra failure is reported as `notConfigured`-style errors. */
+  const credentialFor = async (conn: RelayConnection): Promise<FoundryCredential | RelayResponse> => {
+    if (conn.auth === 'entraId') {
+      if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+      try {
+        return { kind: 'bearer', token: (await entra.token(FOUNDRY_SCOPE, conn.tenantId, ctx.signal)).token };
+      } catch (error) {
+        return entraFailure(error);
+      }
+    }
+    const key = vault.get('foundryKey');
+    return key ? { kind: 'key', key } : json(403, { allowed: false, reasons: ['notConfigured'] });
+  };
   const workiqSettings = () => loadWorkIqSettings(vault.dir);
   const workiq = ctx.workiq ?? workIqServiceFor(vault, ctx);
   const workiqCli = ctx.workiqCli ?? new WorkIqCliService();
@@ -559,9 +617,47 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
     return json(200, {
-      relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault), configured: configured(), keyProtection: vault.keyProtection(),
-      copilot: copilotSettings(), workiq: workiqStatus(),
+      relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault, entra), configured: configured(), keyProtection: vault.keyProtection(),
+      copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(),
     });
+  }
+
+  if (path === '/relay/entra' || path.startsWith('/relay/entra/')) {
+    if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+    const body = method === 'POST' ? parseBody(req.body) : null;
+    if (method === 'POST' && !body) return json(400, { error: 'invalidBody' });
+    const target = () => {
+      const { resourceId, tenantId } = body ?? {};
+      return isFoundryResourceId(resourceId) && isTenantId(tenantId) ? { resourceId, tenantId: tenantId.toLowerCase() } : null;
+    };
+    const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
+    try {
+      if (path === '/relay/entra') {
+        if (method === 'GET') return json(200, { entra: entraStatus() });
+        if (method !== 'DELETE') return json(405, { error: 'methodNotAllowed' });
+        await entra.signOut();
+        vault.delete('foundryEntraKey');
+        return json(200, { entra: entraStatus() });
+      }
+      if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+      if (path === '/relay/entra/signin') {
+        const tenantId = body!.tenantId;
+        if (tenantId !== undefined && !isTenantId(tenantId)) return json(400, { error: 'invalidTenant' });
+        const { url } = await entra.startSignIn(tenantId);
+        return json(200, { url, entra: entraStatus() });
+      }
+      if (path === '/relay/entra/instances') return json(200, await listFoundryInstances(deps));
+      const t = target();
+      if (!t) return json(400, { error: 'invalidResource' });
+      if (path === '/relay/entra/inspect') return json(200, await inspectFoundryInstance(deps, t.resourceId, t.tenantId));
+      if (path === '/relay/entra/role') {
+        await assignFoundryRole(deps, t.resourceId, t.tenantId);
+        return json(200, await inspectFoundryInstance(deps, t.resourceId, t.tenantId));
+      }
+      return json(404, { error: 'notFound' });
+    } catch (error) {
+      return entraFailure(error);
+    }
   }
 
   if (path === '/relay/workiq') {
@@ -758,8 +854,18 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (method === 'PUT') {
       const r = validateConnection(parseBody(req.body), config);
       if (!r.ok) return json(400, { error: r.error });
-      const key = vault.get('foundryKey');
-      if (!key) return json(400, { error: 'keyMissing' });
+      const entraAccount = r.value.auth === 'entraId' ? entra.account() : null;
+      let credential: FoundryCredential;
+      if (r.value.auth === 'entraId') {
+        if (!entraAccount) return json(400, { error: 'notSignedIn' });
+        const c = await credentialFor(r.value);
+        if (!('kind' in c)) return c;
+        credential = c;
+      } else {
+        const key = vault.get('foundryKey');
+        if (!key) return json(400, { error: 'keyMissing' });
+        credential = { kind: 'key', key };
+      }
       const now = (ctx.now ?? Date.now)();
       const last = ctx.lastCall?.get('connectionTest');
       if (last !== undefined && now - last < 5_000) return json(429, { error: 'tooSoon' });
@@ -769,17 +875,30 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         result = await forward({
           use: 'connectionTest', provider: 'foundry', lang: 'en', prompt: CONNECTION_TEST_PROMPT, context: '',
           maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, timeoutMs: CONNECTION_TEST_TIMEOUT_MS, media: [],
-        }, r.value, key, config, ctx.fetch ?? fetch, ctx.signal);
+        }, r.value, credential, config, ctx.fetch ?? fetch, ctx.signal);
       } finally {
         ctx.lastCall?.set('connectionTest', (ctx.now ?? Date.now)());
       }
       if ('error' in result.body) return result;
       const usage = { inputTokens: result.body.inputTokens, outputTokens: result.body.outputTokens };
       if (ctx.signal?.aborted) return json(499, { error: 'aborted', usage });
-      if (vault.get('foundryKey') !== key) return json(409, { error: 'keyChanged', usage });
       const at = new Date((ctx.now ?? Date.now)()).toISOString();
-      saveConnection(vault.dir, { ...r.value, verifiedAt: at, verification: connectionSignature(r.value, at, key) });
-      return json(200, { connection: r.value, connectionVerifiedAt: at, usage });
+      let verification: string;
+      if (r.value.auth === 'entraId') {
+        if (entra.account()?.username !== entraAccount!.username) return json(409, { error: 'accountChanged', usage });
+        let sealKey = vault.get('foundryEntraKey');
+        if (!sealKey) {
+          sealKey = randomBytes(32).toString('hex');
+          vault.set('foundryEntraKey', sealKey);
+        }
+        verification = connectionSignature(r.value, at, sealKey, entraAccount!.username);
+      } else {
+        const key = (credential as { kind: 'key'; key: string }).key;
+        if (vault.get('foundryKey') !== key) return json(409, { error: 'keyChanged', usage });
+        verification = connectionSignature(r.value, at, key);
+      }
+      saveConnection(vault.dir, { ...r.value, verifiedAt: at, verification });
+      return json(200, { connection: publicConnection(r.value), connectionVerifiedAt: at, usage });
     }
     if (method === 'DELETE') {
       rmSync(join(vault.dir, CONNECTION_FILE), { force: true });
@@ -806,8 +925,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (use === 'storyVideo') {
       if (provider !== 'foundry' || call.media.length > 0) return json(400, { error: 'storyPricing' });
       const conn = connection();
-      const apiKey = vault.get('foundryKey');
-      if (!conn || !apiKey) return json(403, { allowed: false, reasons: ['notConfigured'] });
+      if (!conn) return json(403, { allowed: false, reasons: ['notConfigured'] });
       if (!outboundAllowed(foundryChatUrl(conn), conn.endpoint, config)) return json(403, { error: 'outboundNotAllowed' });
       if (ctx.signal?.aborted) return json(499, { error: 'aborted' });
       try {
@@ -817,7 +935,9 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
           : reserveStory(vault.dir, conn, call.prompt, call.context, call.maxOutputTokens, now);
         const { maximumJpy, remainingJpy, source, expiresAt } = quote;
         if (path === '/relay/story/estimate') return json(200, { maximumJpy, remainingJpy, source, expiresAt });
-        const result = await forward(call, conn, apiKey, config, ctx.fetch ?? fetch, ctx.signal);
+        const credential = await credentialFor(conn);
+        if (!('kind' in credential)) return credential;
+        const result = await forward(call, conn, credential, config, ctx.fetch ?? fetch, ctx.signal);
         if (result.status !== 200 || !('text' in result.body)) return result;
         let output: unknown;
         try { output = JSON.parse(result.body.text); } catch { return json(502, { error: 'badProviderResponse' }); }
@@ -842,9 +962,10 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       return forwardCopilot(call, settings.model, ctx.copilot ?? new CopilotService(), ctx.signal);
     }
     const conn = connection();
-    const apiKey = vault.get('foundryKey');
-    if (!conn || !apiKey) return json(403, { allowed: false, reasons: ['notConfigured'] });
-    return forward(call, conn, apiKey, config, ctx.fetch ?? fetch, ctx.signal);
+    if (!conn) return json(403, { allowed: false, reasons: ['notConfigured'] });
+    const credential = await credentialFor(conn);
+    if (!('kind' in credential)) return credential;
+    return forward(call, conn, credential, config, ctx.fetch ?? fetch, ctx.signal);
   }
 
   return json(404, { error: 'notFound' });
@@ -914,6 +1035,7 @@ export function relayMiddleware(vault: SecretVault, token: string = newRelayToke
   const copilot = new CopilotService();
   const workiq = workIqServiceFor(vault);
   const workiqCli = new WorkIqCliService();
+  const entra = new MsalEntraTokens(vault, saveEntraState(vault.dir, writeJsonAtomic));
   return (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url || !req.url.startsWith(RELAY_PREFIX)) return next();
     const aborted = new AbortController();
@@ -927,7 +1049,7 @@ export function relayMiddleware(vault: SecretVault, token: string = newRelayToke
         const request: RelayRequest = {
           method: req.method ?? 'GET', url: req.url!, remoteAddress: req.socket.remoteAddress, localPort: req.socket.localPort, headers: req.headers, body,
         };
-        const r = await handleRelay(request, { vault, token, config, lastCall, news, copilot, workiq, workiqCli, signal: aborted.signal });
+        const r = await handleRelay(request, { vault, token, config, lastCall, news, copilot, workiq, workiqCli, entra, signal: aborted.signal });
         if (!aborted.signal.aborted) send(res, r);
       } catch {
         // Deliberately no logging and no error details: an error could carry request content (NFR-SEC-012).

@@ -1,16 +1,29 @@
 import { DeviceStorageError, initializeDeviceStorage, recoveryDeviceData } from './data/deviceStorage.ts';
-import { translate, type Lang, type MessageKey } from './i18n/core.ts';
+import { isLang, translate, type Lang, type MessageKey } from './i18n/core.ts';
 import { downloadBlob } from './modules/show/recorder.ts';
 import './styles.css';
 
-const lang: Lang = navigator.language.startsWith('ja') ? 'ja' : 'en';
+let lang: Lang = navigator.language.startsWith('ja') ? 'ja' : 'en';
 const t = (key: MessageKey) => translate(lang, key);
+const root = document.getElementById('root')!;
+const splash = root.firstElementChild!.cloneNode(true);
+
+function showStartupStatus(key: MessageKey) {
+  document.documentElement.lang = lang;
+  root.querySelector('[data-testid="startup-status"]')!.textContent = t(key);
+}
 
 async function start(useDeviceCopy = false) {
-  const root = document.getElementById('root')!;
-  root.textContent = t('device.loading');
+  if (!root.querySelector('[data-testid="startup-splash"]')) root.replaceChildren(splash.cloneNode(true));
+  showStartupStatus('device.loading');
   try {
     await initializeDeviceStorage(useDeviceCopy);
+    showStartupStatus('startup.loading');
+    const { useSettings } = await import('./state/settings.ts');
+    const { lang: savedLang, motion } = useSettings.getState();
+    if (isLang(savedLang)) lang = savedLang;
+    if (motion === 'reduce') root.querySelector('[data-testid="startup-splash"]')!.setAttribute('data-reduce-motion', 'true');
+    showStartupStatus('startup.loading');
     const { boot } = await import('./bootstrap.tsx');
     await boot();
   } catch (error) {

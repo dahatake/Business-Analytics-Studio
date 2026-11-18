@@ -64,7 +64,8 @@ describe('connection test action', () => {
     { patch: { deployment: '' }, reason: 'deployment name' },
     { patch: { apiVersion: 'invalid' }, reason: 'API version' },
     { patch: { relayReachable: false }, reason: 'relay process cannot be reached' },
-    { patch: { authMethod: 'entraId' }, reason: 'Entra ID sign-in' },
+    { patch: { authMethod: 'entraId' }, reason: 'Sign in with your Microsoft account first' },
+    { patch: { authMethod: 'entraId', entra: { signedIn: true, account: 'u@example.com', tenantId: null, signIn: 'idle' } }, reason: 'Pick a Foundry resource' },
     { patch: { foundryKeySaved: false }, reason: 'First save the API key' },
     { patch: { monthlyBudgetJpy: 0 }, reason: 'monthly budget' },
   ])('keeps the button usable but refuses sending for $reason', ({ patch, reason }) => {
@@ -76,6 +77,20 @@ describe('connection test action', () => {
     expect(screen.getByTestId('ai-connection-blockers').textContent).toContain(reason);
     expect(save).not.toHaveBeenCalled();
     expect(useAiSettings.getState().relayConnection).toEqual(connection);
+  });
+
+  it('with Entra ID, hides the API key, does not ask for it, and tests once signed in with a resource picked', async () => {
+    useAiSettings.setState({
+      authMethod: 'entraId', foundryKeySaved: false, entraTenantId: '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a',
+      entra: { signedIn: true, account: 'u@example.com', tenantId: '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a', signIn: 'idle' },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instances: [], tenants: [] }), { status: 200 })));
+    render(<FoundryFields />);
+    expect(screen.queryByTestId('ai-foundry-key')).toBeNull();
+    expect(screen.getByTestId('ai-entra-account').textContent).toContain('u@example.com');
+    consent();
+    fireEvent.click(button());
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   });
 
   it('explains every missing prerequisite together, including consent, without sending', () => {

@@ -7,12 +7,17 @@ import { replaceFileSync } from './files.ts';
 /** Secrets the user enters through the relay (C-01 exception, NFR-SEC-001/005/012). Anything else is rejected. */
 export const SECRET_NAMES = ['foundryKey', 'speechKey'] as const;
 export type UserSecretName = (typeof SECRET_NAMES)[number];
-/** Secrets only the relay itself writes (D-14: the Work IQ refresh token, the key that seals a CLI verification); never accepted over HTTP. */
-export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey'] as const;
+/**
+ * Secrets only the relay itself writes (D-14: the Work IQ refresh token, the key that seals a CLI verification; the
+ * MSAL token cache of the Foundry Entra ID sign-in and the key that seals an Entra connection test); never accepted over HTTP.
+ */
+export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey'] as const;
 export type SecretName = UserSecretName | (typeof INTERNAL_SECRET_NAMES)[number];
 export const MAX_SECRET_LENGTH = 4096;
 /** Refresh tokens issued by Microsoft Entra can be longer than an API key. */
 const MAX_INTERNAL_SECRET_LENGTH = 16_384;
+/** MSAL's serialized cache holds tokens for several tenants and resources. */
+const MAX_TOKEN_CACHE_LENGTH = 1024 * 1024;
 
 /** Names the HTTP route /relay/secrets/:name accepts (user-entered secrets only). */
 export function isSecretName(v: string): v is UserSecretName {
@@ -231,7 +236,7 @@ export class SecretVault {
   }
 
   set(name: SecretName, value: string): void {
-    const max = (INTERNAL_SECRET_NAMES as readonly string[]).includes(name) ? MAX_INTERNAL_SECRET_LENGTH : MAX_SECRET_LENGTH;
+    const max = name === 'entraTokenCache' ? MAX_TOKEN_CACHE_LENGTH : (INTERNAL_SECRET_NAMES as readonly string[]).includes(name) ? MAX_INTERNAL_SECRET_LENGTH : MAX_SECRET_LENGTH;
     if (!value || value.length > max) throw new RangeError('invalid secret length');
     const key = this.masterKey(true)!;
     const iv = randomBytes(12);

@@ -144,7 +144,13 @@ test('legacy conflicts require an explicit choice and startup failures never sho
   expect(await legacy.evaluate(() => localStorage.getItem('bas.projects'))).toContain('Do not lose this company');
   expect((await state(page)).records['bas.projects']?.value).toContain('Canonical company');
   // The explicit choice archives the original data on disk before enabling the canonical device copy.
+  let releaseDevice!: () => void;
+  const deviceReady = new Promise<void>((resolve) => { releaseDevice = resolve; });
+  await legacy.route('**/device/state', async (route) => { await deviceReady; await route.continue(); });
   await legacy.getByRole('button', { name: 'Use device data and keep legacy data' }).click();
+  await expect(legacy.getByTestId('startup-splash')).toBeVisible();
+  await expect(legacy.getByTestId('device-startup-error')).toHaveCount(0);
+  releaseDevice();
   await expect(legacy.getByTestId('proj-company-Canonical company')).toBeVisible();
   await context.close();
 

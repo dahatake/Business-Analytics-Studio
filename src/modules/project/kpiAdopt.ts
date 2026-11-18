@@ -92,8 +92,12 @@ export function parseTarget(text: string | undefined, unit?: string): ParsedTarg
   const matches = [...masked.matchAll(NUM)];
   const first = matches[0];
   const value = first ? String(Number(first[0].replace(/,/g, ''))) : '';
+  const last = matches[matches.length - 1];
   let u = normalize(unit ?? '').trim();
-  if (!u && first) u = (raw.slice(first.index! + first[0].length).trim().split(/[\s/、,，（(]/)[0] ?? '').replace(/^(以上|以下|超|未満)$/, '');
+  // A range ("20〜30%") states its unit after the last number.
+  const gap = last && first !== last ? masked.slice(first!.index! + first![0].length, last.index) + (last[0].startsWith('-') ? '-' : '') : '';
+  const after = /^\s*[〜~\-–ー]\s*$/.test(gap) ? last : first;
+  if (!u && after) u = (raw.slice(after.index! + after[0].length).trim().split(/[\s/、,，（(]/)[0] ?? '').replace(/^(以上|以下|超|未満)$/, '');
   return { value: Number.isFinite(Number(value)) ? value : '', unit: u, multiple: matches.length > 1 };
 }
 
@@ -178,12 +182,15 @@ function krKpi(o: ExtObjective, i: number, ext: Ext, data: KpiData, lang: Lang):
 export type AdoptState = 'adopted' | 'draft' | null;
 
 export function kpiAdoptState(candidateId: string, data: KpiData, drafts: KpiDrafts): AdoptState {
-  if (data.kpis.some((k) => k.adoptedFrom === candidateId)) return 'adopted';
+  const imported = candidateId.startsWith('okr.kpi:') ? candidateId.slice('okr.kpi:'.length) : null;
+  if (data.kpis.some((k) => k.adoptedFrom === candidateId || (imported !== null && k.id === imported))) return 'adopted';
   return drafts.kpis.some((d) => d.candidateId === candidateId) ? 'draft' : null;
 }
 
 export function okrAdoptState(candidateId: string, data: KpiData, drafts: KpiDrafts): AdoptState {
-  if (data.okrs.some((o) => o.adoptedFrom === candidateId)) return 'adopted';
+  // packKpis already turns objectives whose key results measure numeric pack KPIs into OKRs with the objective's id.
+  const imported = candidateId.startsWith('okr.obj:') ? candidateId.slice('okr.obj:'.length) : null;
+  if (data.okrs.some((o) => o.adoptedFrom === candidateId || (imported !== null && o.id === imported))) return 'adopted';
   return drafts.okrs.some((d) => d.candidateId === candidateId) ? 'draft' : null;
 }
 
@@ -191,7 +198,7 @@ export function okrAdoptState(candidateId: string, data: KpiData, drafts: KpiDra
 function resolveKpi(target: KrKpi, data: KpiData, drafts: KpiDrafts, by: KpiDraft['by']): string {
   if (target.kind === 'existing') return target.kpiId;
   const cid = target.source.candidateId;
-  const saved = data.kpis.find((k) => k.adoptedFrom === cid);
+  const saved = data.kpis.find((k) => k.adoptedFrom === cid || kpiCandidateId(k.id) === cid);
   if (saved) return saved.id;
   const drafted = drafts.kpis.find((d) => d.candidateId === cid);
   if (drafted) return drafted.id;
@@ -372,7 +379,7 @@ export const discardOkrDraft = (id: string, drafts: KpiDrafts): KpiDrafts => ({ 
 /* ---------- Copilot: choose candidates for the project (AI use kpiOkrDraft, D-28) ---------- */
 
 export const KPI_DRAFT_MARK = '[bas-proj:kpiOkrDraft]';
-/** PARAM-157: at most this many KPIs and OKRs per Copilot draft, so the user can review each one. */
+/** PARAM-163: at most this many KPIs and OKRs per Copilot draft, so the user can review each one. */
 export const MAX_AI_KPIS = 5;
 export const MAX_AI_OKRS = 3;
 /** Candidates sent per request; the relay accepts 32,000 characters. */

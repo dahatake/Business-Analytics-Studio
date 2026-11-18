@@ -70,7 +70,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'nav.map': 'Map',
   'nav.flows': 'Flows',
   'nav.plan': 'Plan',
-  'nav.optimize': 'Optimize',
+  'nav.optimize': 'Resource optimization',
   'nav.directory': 'Directory',
   'nav.settings': 'Settings',
 
@@ -360,9 +360,9 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'plan.today': 'Now',
   'plan.tableTitle': 'All initiatives',
 
-  'optimize.title': 'Supply plan optimization',
-  'optimize.subtitle': 'Allocates supply from 3 plants to 5 regions to minimize production, transport and carbon cost.',
-  'optimize.unavailable': 'This customer pack has no optimization input (plant capacity, regional demand, production and transport costs). Nothing is invented, so the screen stays empty. If the source material has these numbers, add them to optimization in the customer pack and import it again.',
+  'optimize.title': 'Resource optimization',
+  'optimize.subtitle': 'Allocates scarce resources such as people and sites to the highest-priority demand, in the way that fits the customer\'s industry.',
+  'optimize.unavailable': 'This customer pack has no input for allocating sites to regions (site capacity, regional demand, production and transport costs). Nothing is invented, so only the allocation of people to work is shown. If the source material has these numbers, add them to optimization in the customer pack and import it again.',
   'optimize.guide': 'How to use',
   'optimize.guide.1': 'Set the demand change and the internal carbon price.',
   'optimize.guide.2': 'Press "Run optimization".',

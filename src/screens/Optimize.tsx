@@ -12,6 +12,7 @@ import { sound } from '../audio/sound.ts';
 import { BeforeAfterChart, type Comparison } from '../charts/BeforeAfterChart.tsx';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
+import { ResourceWorkbench } from '../modules/resource/ResourceWorkbench.tsx';
 
 interface OptimizeResponse {
   lang: string;
@@ -24,19 +25,20 @@ interface OptimizeResponse {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** A pack without optimization input (FR-241) shows why the screen is empty instead of invented numbers. */
+/**
+ * FR-326: the industry-aware workbench comes first for every pack. The detailed plant → region panels follow when the pack
+ * has optimization input (FR-241: a pack without it never shows invented plant numbers).
+ */
 export function Optimize() {
   const { t } = useI18n();
   const input = loaded.pack.optimization;
-  if (!input) {
-    return (
-      <div className="screen screen-optimize">
-        <PageHeader title={t('optimize.title')} subtitle={t('optimize.subtitle')} />
-        <MessageBar intent="info" data-testid="optimize-unavailable"><MessageBarBody>{t('optimize.unavailable')}</MessageBarBody></MessageBar>
-      </div>
-    );
-  }
-  return <OptimizeBody input={input} />;
+  return (
+    <div className="screen screen-optimize">
+      <PageHeader title={t('optimize.title')} subtitle={t('optimize.subtitle')} />
+      <ResourceWorkbench />
+      {input && <OptimizeBody input={input} />}
+    </div>
+  );
 }
 
 function OptimizeBody({ input }: { input: OptimizationInput }) {
@@ -86,8 +88,7 @@ function OptimizeBody({ input }: { input: OptimizationInput }) {
   const population = t('optimize.population', { plants: input.plants.length, regions: input.regionDemandT.length, demand: fmt.integer(totalDemand) });
 
   return (
-    <div className="screen screen-optimize">
-      <PageHeader title={t('optimize.title')} subtitle={t('optimize.subtitle')} />
+    <>
       <div className="grid-3">
         <Panel title={t('optimize.guide')} testId="optimize-guide">
           <ol className="guide-steps">
@@ -201,7 +202,7 @@ function OptimizeBody({ input }: { input: OptimizationInput }) {
           </Panel>
         </>
       )}
-    </div>
+    </>
   );
 }
 

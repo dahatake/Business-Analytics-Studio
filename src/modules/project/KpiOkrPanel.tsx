@@ -48,7 +48,7 @@ export function KpiOkrPanel() {
       id: editing ?? newId('kpi'),
       name: form.name.trim(), unit: form.unit.trim(), baseline: Number(form.baseline), current: Number(form.current), target: Number(form.target), deadline: form.deadline,
     };
-    set((v) => ({ ...v, kpis: editing ? v.kpis.map((k) => (k.id === editing ? def : k)) : [...v.kpis, def] }));
+    set((v) => ({ ...v, kpis: editing ? v.kpis.map((k) => (k.id === editing ? (k.adoptedFrom ? { ...def, adoptedFrom: k.adoptedFrom } : def) : k)) : [...v.kpis, def] }));
     setForm(EMPTY);
     setEditing(null);
   };

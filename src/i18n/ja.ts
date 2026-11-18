@@ -69,7 +69,7 @@ export const coreJa = {
   'nav.map': '地図',
   'nav.flows': '業務と物の流れ',
   'nav.plan': '計画',
-  'nav.optimize': '最適化',
+  'nav.optimize': 'リソースの最適化',
   'nav.directory': '一覧',
   'nav.settings': '設定',
 
@@ -359,9 +359,9 @@ export const coreJa = {
   'plan.today': '現在',
   'plan.tableTitle': '施策の一覧',
 
-  'optimize.title': '供給計画の最適化',
-  'optimize.subtitle': '3 工場から 5 地域への供給量を、生産費・輸送費・炭素コストの合計が最小になるように配分します。',
-  'optimize.unavailable': 'この顧客パックには最適化の入力（工場の能力・地域の需要・生産費と輸送費）がありません。値を作らずに空のままにしています。元資料にこれらの数値があれば、顧客パックの optimization に追加して取り込み直してください。',
+  'optimize.title': 'リソースの最適化',
+  'optimize.subtitle': '顧客の業種に合わせて、人・拠点などの限られたリソースを、優先度の高い需要へ最適に配分します。',
+  'optimize.unavailable': 'この顧客パックには拠点 → 地域の配分に必要な入力（拠点の能力・地域の需要・生産費と輸送費）がありません。値を作らず、人 → 仕事の配分だけを表示しています。元資料にこれらの数値があれば、顧客パックの optimization に追加して取り込み直してください。',
   'optimize.guide': '使い方',
   'optimize.guide.1': '需要の増減と社内炭素価格を設定します。',
   'optimize.guide.2': '「最適化を実行」を押します。',

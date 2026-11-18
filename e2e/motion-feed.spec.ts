@@ -137,7 +137,7 @@ test.describe('F-3.4.1 expected business outcomes', () => {
   test('shows source-backed outcomes, detailed hover content, and all KPI/OKR results', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
     const outcomes = page.getByRole('region', { name: 'Expected business outcomes' });
-    await expect(outcomes.getByTestId('outcome-preview')).toContainText('Annual benefit stated in pack');
+    await expect(outcomes.getByTestId('outcome-preview')).toContainText(/annual benefit stated in pack/i);
     await outcomes.getByTestId('outcome-preview').hover();
     await expect(page.getByRole('tooltip')).toContainText('not a simulation result or an actual result');
 

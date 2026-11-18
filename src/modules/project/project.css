@@ -241,6 +241,14 @@
 .proj-okr-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .proj-okr ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; }
 .proj-okr li .muted { margin: 0 8px; }
+/* FR-325: drafts adopted from the internal KPI/OKR list stay visibly unsaved until the user saves them. */
+.proj-drafts { display: grid; gap: 10px; margin: 12px 0; }
+.proj-draft { padding: 10px 12px; border-radius: var(--borderRadiusLarge); border: 1px dashed var(--colorPaletteMarigoldBorder2); background: var(--colorNeutralBackground2); display: grid; gap: 8px; }
+.proj-draft-notes { margin: 0; padding-left: 1.2em; }
+.proj-draft-kr { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 12px; }
+@media (max-width: 640px) { .proj-draft-kr { grid-template-columns: minmax(0, 1fr); } }
+.proj-adopt-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.proj-adopt-obj { display: flex; gap: 8px; align-items: flex-start; }
 
 /* Discussion */
 .proj-disc { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(260px, 320px); gap: 16px; align-items: start; }

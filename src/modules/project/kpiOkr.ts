@@ -100,7 +100,7 @@ export function demoKpis(pack: CustomerPack): KpiData {
 }
 
 /** Company-anchor objective ids an OKR objective of the pack says it serves (passthrough field). */
-function companyObjectiveIdsOf(o: unknown): string[] {
+export function companyObjectiveIdsOf(o: unknown): string[] {
   const ids = (o as { companyObjectiveIds?: unknown }).companyObjectiveIds;
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
 }

@@ -2,9 +2,7 @@ import { useState } from 'react';
 import { Badge, Button, Field, Input, MessageBar, MessageBarBody, ProgressBar, Select } from '@fluentui/react-components';
 import { Add20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { loc, type Localizable } from '../../state/text.ts';
-import { getEntity, loaded, packOrigin } from '../../data/pack.ts';
-import { OkrExtension } from '../../data/extensionSchemas.ts';
+import { loc } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { achievementPct, kpiStatusText, okrPct, statusForPct, validateKpi, type KpiField, type KpiStatusText } from './kpiOkr.ts';
 import { newId, type KpiData, type KpiDef } from './model.ts';
@@ -12,6 +10,7 @@ import { useKpis, useScopeKpis } from './stores.ts';
 import { ScrollRegion } from './common.tsx';
 import { useCheckContext } from './deliverablesUi.tsx';
 import { KpiDefinitionPanel, OriginBadge } from './StrategyPanels.tsx';
+import { KpiDraftList, OkrDraftList, PackOkrPanel } from './KpiAdoptUi.tsx';
 
 const EMPTY = { name: '', unit: '', baseline: '', current: '', target: '', deadline: '' };
 const STATUS_COLOR: Record<KpiStatusText, 'success' | 'informative' | 'subtle' | 'warning'> = {
@@ -128,6 +127,7 @@ export function KpiOkrPanel() {
           </table>
         </ScrollRegion>
         {blocked && <MessageBar intent="warning"><MessageBarBody>{t('proj.kpi.inUse', { name: blocked })}</MessageBarBody></MessageBar>}
+        <KpiDraftList data={data} commit={setStore} />
         <form className="proj-kpi-form" onSubmit={(e) => { e.preventDefault(); submitKpi(); }} aria-label={t(editing ? 'proj.kpi.editTitle' : 'proj.kpi.addTitle')}>
           <h3 className="proj-h3">{t(editing ? 'proj.kpi.editTitle' : 'proj.kpi.addTitle')}</h3>
           <div className="proj-kpi-fields">
@@ -177,6 +177,7 @@ export function KpiOkrPanel() {
             );
           })}
         </ul>
+        <OkrDraftList data={data} commit={setStore} />
         <form className="proj-okr-form" onSubmit={(e) => { e.preventDefault(); submitOkr(); }} aria-label={t('proj.okr.addTitle')}>
           <h3 className="proj-h3">{t('proj.okr.addTitle')}</h3>
           <Field label={t('proj.okr.objective')}><Input value={objective} onChange={(_, d) => setObjective(d.value)} /></Field>
@@ -200,78 +201,7 @@ export function KpiOkrPanel() {
           </div>
         </form>
       </Panel>
-      <PackOkrPanel />
+      <PackOkrPanel data={data} />
     </>
   );
-}
-
-/** Internal KPIs/OKRs found by Work IQ (extensions.okr), shown as found: targets are often text, not numbers. */
-function PackOkrPanel() {
-  const { t, lang } = useI18n();
-  const scope = useKpis((s) => s.scope);
-  if (packOrigin.kind !== 'imported' || packOrigin.projectId !== scope) return null;
-  const parsed = OkrExtension.safeParse(loaded.pack.extensions?.okr);
-  if (!parsed.success || (parsed.data.kpis.length === 0 && parsed.data.objectives.length === 0)) return null;
-  const { kpis, objectives } = parsed.data;
-  const text = (v: Localizable | undefined) => (v === undefined ? '' : loc(v, lang));
-  return (
-    <Panel title={t('proj.packOkr.title')} rationale="proj.packOkr.why" className="span-full" testId="proj-pack-okr">
-      {kpis.length > 0 && (
-        <ScrollRegion label={t('proj.packOkr.kpis')}>
-          <table className="data-table compact">
-            <caption>{t('proj.packOkr.kpis')}</caption>
-            <thead>
-              <tr>
-                <th scope="col">{t('proj.kpi.name')}</th>
-                <th scope="col">{t('proj.packOkr.definition')}</th>
-                <th scope="col">{t('proj.kpi.target')}</th>
-                <th scope="col">{t('proj.kpi.current')}</th>
-                <th scope="col">{t('proj.packOkr.period')}</th>
-                <th scope="col">{t('proj.packOkr.owner')}</th>
-                <th scope="col">{t('proj.packOkr.sources')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {kpis.map((k) => (
-                <tr key={k.id}>
-                  <th scope="row">{text(k.name)}</th>
-                  <td>{text(k.definition)}</td>
-                  <td>{[k.target, k.unit].filter(Boolean).join(' ')}</td>
-                  <td>{k.current ?? t('proj.packOkr.unmeasured')}</td>
-                  <td>{k.period ?? ''}</td>
-                  <td>{text(k.owner)}</td>
-                  <td>{fmtSources(k.sourceIds, lang)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </ScrollRegion>
-      )}
-      {objectives.length > 0 && (
-        <ul className="proj-okrs" aria-label={t('proj.packOkr.objectives')}>
-          {objectives.map((o) => (
-            <li key={o.id} className="proj-okr">
-              <div className="proj-okr-head">
-                <strong>{text(o.objective)}</strong>
-                {o.owner !== undefined && <span className="muted">{text(o.owner)}</span>}
-              </div>
-              <ul>
-                {o.keyResults.map((kr, i) => (
-                  <li key={i}>
-                    {text(kr.text)}
-                    {(kr.target || kr.period) && <span className="muted">{[kr.target, kr.period].filter(Boolean).join(' / ')}</span>}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Panel>
-  );
-}
-
-function fmtSources(ids: readonly string[] | undefined, lang: Parameters<typeof loc>[1]): string {
-  if (!ids?.length) return '';
-  return ids.map((id) => getEntity(id)).filter((e) => e?.kind === 'source').map((e) => loc(e.name, lang)).join(', ');
 }

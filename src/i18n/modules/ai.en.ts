@@ -266,6 +266,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.use.deliverableDraft': 'Deliverable drafts',
   'ai.use.stepBrief': 'Step executive summary',
   'ai.use.strategyOverview': 'Strategic overview optimization',
+  'ai.use.kpiOkrDraft': 'KPI/OKR drafts',
   'ai.use.packBuild': 'Customer pack creation',
   'ai.use.alignmentProposal': 'Company-project alignment proposal',
   'ai.usage.title': 'Usage and budget',

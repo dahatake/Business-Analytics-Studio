@@ -66,6 +66,8 @@ export const KpiDefSchema = z.object({
   origin: z.enum(KPI_ORIGINS).optional(),
   /** Pack source entity ids (or anchor source ids) the definition comes from. */
   sourceIds: z.array(z.string()).optional(),
+  /** FR-325: the internal KPI/OKR candidate (extensions.okr) this KPI was adopted from. */
+  adoptedFrom: z.string().optional(),
 });
 export type KpiDef = z.infer<typeof KpiDefSchema>;
 
@@ -76,6 +78,9 @@ export const OkrSchema = z.object({
   origin: z.enum(KPI_ORIGINS).optional(),
   /** Company-anchor objective ids (statedObjectives) this objective serves: the company ↔ project link. */
   companyObjectiveIds: z.array(z.string()).optional(),
+  /** FR-325: the internal KPI/OKR candidate (extensions.okr) this OKR was adopted from. */
+  adoptedFrom: z.string().optional(),
+  sourceIds: z.array(z.string()).optional(),
 });
 export type Okr = z.infer<typeof OkrSchema>;
 

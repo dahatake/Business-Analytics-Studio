@@ -163,12 +163,12 @@ async function saveVerifiedConnection(scope: Page | ReturnType<Page['getByTestId
   }).toPass({ intervals: [1_000, 2_000, 3_000], timeout: 20_000 });
 }
 
-async function scan(page: Page) {
+async function scan(page: Page, includes: string[] = []) {
   // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
+  const builder = new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS);
+  for (const selector of includes) builder.include(selector);
+  // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
+  const result = await builder.exclude('[data-tabster-dummy]').analyze();
   return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
 }
 
@@ -384,8 +384,8 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await page.getByTestId('ai-vision-auth-entra').click();
     await expect(page.getByTestId('ai-vision-entra')).toBeVisible();
     await expect(page.getByTestId('ai-vision-endpoint')).toHaveCount(0);
-    const scan = await new AxeBuilder({ page }).include('[data-testid="ai-speech-connection"]').include('[data-testid="ai-vision-connection"]').withTags(TAGS).analyze();
-    expect(scan.violations).toEqual([]);
+    const violations = await scan(page, ['[data-testid="ai-speech-connection"]', '[data-testid="ai-vision-connection"]']);
+    expect(violations).toEqual([]);
   });
   test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });

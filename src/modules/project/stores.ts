@@ -7,6 +7,7 @@ import { createScopedStore, scopedKey } from '../../state/projects.ts';
 import { demoAnalyses } from './analysis.ts';
 import { demoDiscussion, DiscussionEditor, type ChangeEntry, type Lens } from './discussion.ts';
 import { demoKpis, packKpis } from './kpiOkr.ts';
+import { emptyDrafts, type KpiDrafts } from './kpiAdopt.ts';
 import type { AnalysisData, DiscussionData, KpiData } from './model.ts';
 import { emptyDeliverables, type DeliverableData } from './deliverables.ts';
 import { emptyStrategy, type StrategyData } from './strategy.ts';
@@ -34,6 +35,8 @@ export function useScopeKpis(): KpiData {
   return useMemo(() => kpisForScope(value, scope), [value, scope]);
 }
 export const useAnalyses = createScopedStore<AnalysisData>('proj.analysis', (scope) => (scope === 'demo' ? demoAnalyses(loaded.pack) : { analyses: [], activeId: null }));
+/** FR-325: KPI/OKR drafts adopted from the internal list (or chosen by Copilot), kept until the user saves or discards them. */
+export const useKpiDrafts = createScopedStore<KpiDrafts>('proj.kpiDrafts', () => emptyDrafts());
 /** Save generated analysis results to their project even when the user has not opened that project yet. */
 export function saveAnalysisForProject(projectId: string, value: AnalysisData) {
   const store = useAnalyses.getState();

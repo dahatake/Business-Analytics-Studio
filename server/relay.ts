@@ -17,9 +17,13 @@ import {
 } from './workiq.ts';
 import { WorkIqCliService } from './workiqCli.ts';
 import {
-  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, saveEntraState,
+  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isEntraService, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, saveEntraState,
   type EntraErrorCode, type EntraTokens,
 } from './entra.ts';
+import {
+  MEDIA_FILE, MEDIA_SERVICES, isMediaService, mediaSignature, mediaTestUrl, parseSavedMedia, publicMedia, testMedia, validateMedia,
+  type MediaCredential, type MediaService, type SavedMedia,
+} from './media.ts';
 import { reserveStory, storyQuote, StoryBudgetError } from './storyBudget.ts';
 import { STORY_SYSTEM_PROMPT, StoryOutput } from '../src/ai/storyOutput.ts';
 import {
@@ -244,6 +248,39 @@ function verifiedAt(c: SavedConnection | null, vault: SecretVault, entra: EntraT
 
 function publicConnection(c: RelayConnection | null) {
   return c ? { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion, auth: c.auth ?? 'apiKey', tenantId: c.tenantId ?? null } : null;
+}
+
+/* Speech and Vision connections (FR-324): media.json holds both, each sealed like the Foundry connection. */
+
+type MediaFile = Partial<Record<MediaService, SavedMedia>>;
+
+export function loadMedia(dir: string): MediaFile {
+  const path = join(dir, MEDIA_FILE);
+  if (!existsSync(path)) return {};
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const out: MediaFile = {};
+    for (const s of MEDIA_SERVICES) {
+      const c = parseSavedMedia(s, raw?.[s]);
+      if (c) out[s] = c;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+const MEDIA_KEY = { speech: 'speechKey', vision: 'visionKey' } as const;
+
+function mediaVerifiedAt(service: MediaService, c: SavedMedia | undefined, vault: SecretVault, entra: EntraTokens): string | null {
+  if (!c || typeof c.verifiedAt !== 'string' || !Number.isFinite(Date.parse(c.verifiedAt)) || typeof c.verification !== 'string') return null;
+  if (c.auth === 'entraId') {
+    const key = vault.get('foundryEntraKey');
+    const account = entra.account();
+    return key && account && tokenMatches(c.verification, mediaSignature(service, c, c.verifiedAt, key, account.username)) ? c.verifiedAt : null;
+  }
+  const key = vault.get(MEDIA_KEY[service]);
+  return key && tokenMatches(c.verification, mediaSignature(service, c, c.verifiedAt, key)) ? c.verifiedAt : null;
 }
 
 /** What the relay sends to Foundry: the saved API key, or a Microsoft Entra access token minted for this call. */
@@ -633,11 +670,19 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, s.method === 'cli' ? { method: 'cli' } : { tenantId: s.tenantId, clientId: s.clientId, account: s.account });
   };
 
+  const mediaStatus = () => {
+    const saved = loadMedia(vault.dir);
+    return Object.fromEntries(MEDIA_SERVICES.map((s) => {
+      const c = saved[s];
+      return [s, c ? { connection: publicMedia(c), verifiedAt: mediaVerifiedAt(s, c, vault, entra) } : null];
+    }));
+  };
+
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
     return json(200, {
       relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault, entra), configured: configured(), keyProtection: vault.keyProtection(),
-      copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(),
+      copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(), media: mediaStatus(),
     });
   }
 
@@ -650,6 +695,10 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       return isFoundryResourceId(resourceId) && isTenantId(tenantId) ? { resourceId, tenantId: tenantId.toLowerCase() } : null;
     };
     const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
+    const service = body?.service ?? 'foundry';
+    if (!isEntraService(service)) return json(400, { error: 'invalidBody' });
+    const inspect = (t: { resourceId: string; tenantId: string }) =>
+      service === 'foundry' ? inspectFoundryInstance(deps, t.resourceId, t.tenantId) : inspectMediaResource(deps, t.resourceId, t.tenantId, service);
     try {
       if (path === '/relay/entra') {
         if (method === 'GET') return json(200, { entra: entraStatus() });
@@ -669,14 +718,15 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       if (path === '/relay/entra/instances') {
         const tenantId = body!.tenantId;
         if (tenantId !== undefined && !isTenantId(tenantId)) return json(400, { error: 'invalidTenant' });
-        return tenantId ? json(200, { instances: await listFoundryInstancesForTenant(deps, tenantId) }) : json(200, await listFoundryInstances(deps));
+        return tenantId ? json(200, { instances: await listFoundryInstancesForTenant(deps, tenantId, service) })
+          : service === 'foundry' ? json(200, await listFoundryInstances(deps)) : json(400, { error: 'invalidTenant' });
       }
       const t = target();
       if (!t) return json(400, { error: 'invalidResource' });
-      if (path === '/relay/entra/inspect') return json(200, await inspectFoundryInstance(deps, t.resourceId, t.tenantId));
+      if (path === '/relay/entra/inspect') return json(200, await inspect(t));
       if (path === '/relay/entra/role') {
-        await assignFoundryRole(deps, t.resourceId, t.tenantId);
-        return json(200, await inspectFoundryInstance(deps, t.resourceId, t.tenantId));
+        await assignFoundryRole(deps, t.resourceId, t.tenantId, service);
+        return json(200, await inspect(t));
       }
       return json(404, { error: 'notFound' });
     } catch (error) {
@@ -872,6 +922,67 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       return json(200, { name, configured: false });
     }
     return json(405, { error: 'methodNotAllowed' });
+  }
+
+  const media = /^\/relay\/media\/([a-z]+)$/.exec(path);
+  if (media) {
+    const service = media[1];
+    if (!isMediaService(service)) return json(404, { error: 'notFound' });
+    if (method === 'DELETE') {
+      const others = loadMedia(vault.dir);
+      delete others[service];
+      writeJsonAtomic(vault.dir, MEDIA_FILE, others);
+      return json(200, { connection: null, verifiedAt: null });
+    }
+    if (method !== 'PUT') return json(405, { error: 'methodNotAllowed' });
+    const r = validateMedia(service, parseBody(req.body));
+    if (!r.ok) return json(400, { error: r.error });
+    const conn = r.value;
+    if (!endpointHostAllowed(new URL(mediaTestUrl(service, conn)), config)) return json(400, { error: 'hostNotAllowed' });
+    let credential: MediaCredential;
+    const account = conn.auth === 'entraId' ? entra.account() : null;
+    if (conn.auth === 'entraId') {
+      if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+      if (!account) return json(400, { error: 'notSignedIn' });
+      try {
+        credential = { kind: 'bearer', token: (await entra.token(FOUNDRY_SCOPE, conn.tenantId, ctx.signal)).token };
+      } catch (error) {
+        return entraFailure(error);
+      }
+    } else {
+      const key = vault.get(MEDIA_KEY[service]);
+      if (!key) return json(400, { error: 'keyMissing' });
+      credential = { kind: 'key', key };
+    }
+    const limitKey = `mediaTest:${service}`;
+    const now = (ctx.now ?? Date.now)();
+    const last = ctx.lastCall?.get(limitKey);
+    if (last !== undefined && now - last < 5_000) return json(429, { error: 'tooSoon' });
+    ctx.lastCall?.set(limitKey, Infinity);
+    let result: Awaited<ReturnType<typeof testMedia>>;
+    try {
+      result = await testMedia(service, conn, credential, ctx.fetch ?? fetch, ctx.signal);
+    } finally {
+      ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
+    }
+    if (!result.ok) return json(result.error === 'aborted' ? 499 : 502, { error: result.error, ...(result.providerStatus ? { providerStatus: result.providerStatus } : {}) });
+    const at = new Date((ctx.now ?? Date.now)()).toISOString();
+    let verification: string;
+    if (conn.auth === 'entraId') {
+      if (entra.account()?.username !== account!.username) return json(409, { error: 'accountChanged' });
+      let sealKey = vault.get('foundryEntraKey');
+      if (!sealKey) {
+        sealKey = randomBytes(32).toString('hex');
+        vault.set('foundryEntraKey', sealKey);
+      }
+      verification = mediaSignature(service, conn, at, sealKey, account!.username);
+    } else {
+      const key = (credential as { kind: 'key'; key: string }).key;
+      if (vault.get(MEDIA_KEY[service]) !== key) return json(409, { error: 'keyChanged' });
+      verification = mediaSignature(service, conn, at, key);
+    }
+    writeJsonAtomic(vault.dir, MEDIA_FILE, { ...loadMedia(vault.dir), [service]: { ...conn, verifiedAt: at, verification } });
+    return json(200, { connection: publicMedia(conn), verifiedAt: at });
   }
 
   if (path === '/relay/connection') {

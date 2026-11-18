@@ -148,7 +148,9 @@
 }
 .proj-weights { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 12px; }
 .proj-items td { vertical-align: top; }
-.proj-num { width: 84px; }
+.proj-slider-control { display: flex; align-items: center; gap: 4px; min-width: 88px; }
+.proj-slider-control .fui-Slider { flex: 1; min-width: 0; }
+.proj-slider-value { min-width: 2em; text-align: right; font-variant-numeric: tabular-nums; }
 .proj-result-title { margin: 0; font-weight: var(--fontWeightSemibold); }
 .proj-insight { margin: 6px 0; font-size: var(--fontSizeBase400); }
 .proj-overall { margin: 0 0 8px; color: var(--colorNeutralForeground2); }

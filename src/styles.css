@@ -103,9 +103,38 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   border-bottom: 1px solid var(--colorNeutralStroke2);
   font-size: var(--fontSizeBase200);
 }
-.live-feed-label { display: inline-flex; align-items: center; gap: 4px; font-weight: var(--fontWeightSemibold); color: var(--colorPaletteRedForeground1); }
-.live-feed-label svg { animation: pulse 2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.45; } }
+.business-outcomes-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 20px; min-height: 40px;
+  background: color-mix(in srgb, var(--colorNeutralBackground2) 85%, transparent);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  font-size: var(--fontSizeBase200);
+}
+.business-outcomes-title { flex: none; }
+.outcome-preview {
+  flex: 1 1 280px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  cursor: help; border-radius: var(--borderRadiusSmall);
+}
+.outcome-preview:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.outcome-tooltip { display: grid; gap: 6px; max-width: 400px; white-space: normal; }
+.outcome-tooltip p { margin: 0; }
+.outcome-warning { color: var(--colorPaletteRedForeground1); }
+.outcome-dialog-surface { width: min(960px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+.outcome-dialog-surface .fui-DialogContent { overflow-y: auto; }
+.outcome-section { margin-top: 20px; }
+.outcome-section > h3 { margin: 0 0 8px; font-size: var(--fontSizeBase400); }
+.outcome-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px; }
+.outcome-card {
+  min-width: 0; padding: 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusLarge);
+  background: var(--colorNeutralBackground1);
+}
+.outcome-card p { margin: 6px 0; overflow-wrap: anywhere; }
+.outcome-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.outcome-card-header h4 { min-width: 0; margin: 0; font-size: var(--fontSizeBase300); overflow-wrap: anywhere; }
+.outcome-warnings, .outcome-contributions, .outcome-key-results { margin: 8px 0; padding-left: 20px; }
+.outcome-warnings { color: var(--colorPaletteRedForeground1); }
+.outcome-contributions li, .outcome-key-results li { margin: 4px 0; overflow-wrap: anywhere; }
 .live-feed-message { flex: 1 1 280px; min-width: 0; }
 .live-feed-message .ref { font-size: inherit; }
 .live-feed-meta { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--colorNeutralForeground2); }
@@ -451,7 +480,7 @@ button.text-action { font: inherit; line-height: inherit; vertical-align: baseli
   animation-duration: 0s !important; animation-delay: 0s !important; animation-iteration-count: 1 !important;
   transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important;
 }
-[data-motion='reduced'] .aurora, [data-motion='reduced'] .geo-flow, [data-motion='reduced'] .live-feed-label svg { animation: none !important; }
+[data-motion='reduced'] .aurora, [data-motion='reduced'] .geo-flow { animation: none !important; }
 
 /* ---------- Responsive reflow (PARAM-029: 320 CSS px) ---------- */
 @media (max-width: 1100px) {

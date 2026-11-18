@@ -5,7 +5,7 @@ import { loaded } from '../data/pack.ts';
 import type { EntityKind } from '../data/schema.ts';
 import { useI18n, type Lang } from '../i18n/index.ts';
 import { useSettings, type Audience, type MotionPref, type ThemePref } from '../state/settings.ts';
-import { percentile, runFeed, useFeed } from '../state/feed.ts';
+import { percentile, runFeed, stopFeed, useFeed } from '../state/feed.ts';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { cardSpecs, type CardSpec } from '../ui/cardSpecs.ts';
 import { kindIcon } from '../ui/icons.ts';
@@ -48,7 +48,7 @@ function LoadTest() {
       const l = useFeed.getState().latencies;
       setResult({ p50: percentile(l, 50), p95: percentile(l, 95), n: l.length });
       useFeed.getState().setLoadRate(null);
-      runFeed();
+      stopFeed();
       setRunning(false);
     }, PARAMS.liveFeedLoadDurationMs);
   };

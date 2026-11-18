@@ -64,7 +64,7 @@ function validateApplicationData(records: DeviceSnapshot['records']) {
     if (!raw) continue;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !('version' in parsed) || typeof parsed.version !== 'number' ||
-      !(key === 'bas.ai.settings' ? [0, 1, 2, 3, 4].includes(parsed.version) : parsed.version === 1) ||
+      !(key === 'bas.ai.settings' ? [0, 1, 2, 3, 4, 5].includes(parsed.version) : parsed.version === 1) ||
       !('state' in parsed) || !parsed.state || typeof parsed.state !== 'object') throw new DeviceStorageError(false);
   }
   const registry = records['bas.projects']?.value;

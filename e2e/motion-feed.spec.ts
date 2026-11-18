@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { PARAMS } from '../src/config/params.ts';
-import { open, setup } from './helpers.ts';
+import { open, seedDeviceData, setup } from './helpers.ts';
 
 test.describe('F-3.1.5 motion and sound', () => {
   test('OS reduced-motion: no opening, data-motion=reduced, animations disabled', async ({ page }) => {
@@ -133,17 +133,47 @@ test.describe('F-3.1.5 motion and sound', () => {
   });
 });
 
-test.describe('F-3.4.1 live feed', () => {
-  test('shows update time, freshness and the simulation label; pause works', async ({ page }) => {
+test.describe('F-3.4.1 expected business outcomes', () => {
+  test('shows source-backed outcomes, detailed hover content, and all KPI/OKR results', async ({ page }) => {
     await open(page, '/', { lang: 'en' });
-    const feed = page.getByRole('region', { name: 'Live feed' });
-    await expect(feed).toContainText('Simulation');
-    await expect(feed).toContainText(/Updated \d{1,2}:\d{2}:\d{2}/);
-    await expect(page.getByTestId('feed-freshness')).toHaveText('Fresh');
-    await page.getByTestId('feed-pause').click();
-    await expect(page.getByTestId('feed-freshness')).toHaveText('Paused');
-    await page.getByTestId('feed-pause').click();
-    await expect(page.getByTestId('feed-freshness')).toHaveText('Fresh');
+    const outcomes = page.getByRole('region', { name: 'Expected business outcomes' });
+    await expect(outcomes.getByTestId('outcome-preview')).toContainText('Annual benefit stated in pack');
+    await outcomes.getByTestId('outcome-preview').hover();
+    await expect(page.getByRole('tooltip')).toContainText('not a simulation result or an actual result');
+
+    await outcomes.getByTestId('outcomes-expand').click();
+    const dialog = page.getByTestId('outcomes-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('outcome-kpi-kpi-lead-time')).toContainText('No forecast');
+    await expect(dialog.getByTestId('outcome-okr-okr-demo-delivery')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close' }).click();
+
+    await seedDeviceData(page, {
+      'bas.scope.demo.proj.strategy': JSON.stringify({
+        types: {},
+        contributions: [{
+          id: 'outcome-e2e-contribution',
+          solutionId: 'sol-demand-planning',
+          kpiId: 'kpi-lead-time',
+          lever: 'pilot volume',
+          leverUnit: 'units',
+          amount: { low: 10, mode: 10, high: 10 },
+          effectPerUnit: { low: 0.1, mode: 0.1, high: 0.1 },
+          rampStart: '2026-01-01',
+          fullEffect: '2026-11-01',
+          basis: 'measured',
+          evidence: 'pilot report',
+        }],
+        sections: {},
+      }),
+    });
+    await page.reload();
+    const forecast = page.getByTestId('business-outcomes').getByTestId('outcome-preview');
+    await expect(forecast).toContainText('P50');
+    await forecast.hover();
+    await expect(page.getByRole('tooltip')).toContainText('pilot report');
+    await page.getByTestId('outcomes-expand').click();
+    await expect(page.getByTestId('outcomes-dialog').getByTestId('outcome-kpi-kpi-lead-time')).toContainText('Forecast available');
   });
 
   test(`@perf agreed load: ${PARAMS.liveFeedLoadRatePerSec}/s for ${PARAMS.liveFeedLoadDurationMs / 1000}s keeps p95 latency ≤ ${PARAMS.liveFeedLatencyBudgetP95Ms} ms`, async ({ page }) => {
@@ -154,7 +184,7 @@ test.describe('F-3.4.1 live feed', () => {
     const stats = await page.evaluate(() => (window as unknown as { __basFeed: { stats: () => { count: number; p50: number; p95: number; max: number } } }).__basFeed.stats());
     await page.evaluate(() => (window as unknown as { __basFeed: { stopLoad: () => void } }).__basFeed.stopLoad());
     test.info().annotations.push({ type: 'latency', description: JSON.stringify(stats) });
-    console.log('live feed latency under load', JSON.stringify(stats));
+    console.log('feed render latency under load', JSON.stringify(stats));
     const expected = (PARAMS.liveFeedLoadRatePerSec * PARAMS.liveFeedLoadDurationMs) / 1000;
     expect(stats.count).toBeGreaterThanOrEqual(Math.floor(expected * 0.8));
     expect(stats.p95).toBeLessThanOrEqual(PARAMS.liveFeedLatencyBudgetP95Ms);

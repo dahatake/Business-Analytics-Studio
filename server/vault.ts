@@ -5,11 +5,12 @@ import { join } from 'node:path';
 import { replaceFileSync } from './files.ts';
 
 /** Secrets the user enters through the relay (C-01 exception, NFR-SEC-001/005/012). Anything else is rejected. */
-export const SECRET_NAMES = ['foundryKey', 'speechKey'] as const;
+export const SECRET_NAMES = ['foundryKey', 'speechKey', 'visionKey'] as const;
 export type UserSecretName = (typeof SECRET_NAMES)[number];
 /**
  * Secrets only the relay itself writes (D-14: the Work IQ refresh token, the key that seals a CLI verification; the
- * MSAL token cache of the Foundry Entra ID sign-in and the key that seals an Entra connection test); never accepted over HTTP.
+ * MSAL token cache of the Entra ID sign-in and the key that seals an Entra connection test for Foundry, Speech and
+ * Vision — signing out deletes it, which drops every Entra check); never accepted over HTTP.
  */
 export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey'] as const;
 export type SecretName = UserSecretName | (typeof INTERNAL_SECRET_NAMES)[number];

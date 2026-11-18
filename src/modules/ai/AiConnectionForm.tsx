@@ -14,7 +14,7 @@ import './ai.css';
 /** API key entry: write-only. The value goes to the relay and is cleared; only "saved" is ever shown (NFR-SEC-001/005/012). */
 export function KeyField({ name, label, testId }: { name: SecretName; label: string; testId: string }) {
   const { t } = useI18n();
-  const saved = useAiSettings((s) => (name === 'foundryKey' ? s.foundryKeySaved : s.speechKeySaved));
+  const saved = useAiSettings((s) => (name === 'foundryKey' ? s.foundryKeySaved : name === 'speechKey' ? s.speechKeySaved : s.visionKeySaved));
   const reachable = useAiSettings((s) => s.relayReachable);
   const saveKey = useAiSettings((s) => s.saveKey);
   const deleteKey = useAiSettings((s) => s.deleteKey);

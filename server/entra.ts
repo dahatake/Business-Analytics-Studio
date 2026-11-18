@@ -26,6 +26,12 @@ export const FOUNDRY_SCOPE = 'https://cognitiveservices.azure.com/.default';
 /** Built-in role with exactly the inference data actions (Learn: "Role-based access control for Azure OpenAI"). */
 export const OPENAI_USER_ROLE_ID = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd';
 export const CHAT_DATA_ACTION = 'Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action';
+/** "Cognitive Services Speech User": speech recognition and synthesis data actions only. */
+export const SPEECH_USER_ROLE_ID = 'f2dc8367-1007-4938-bd23-fe263f013447';
+export const SPEECH_DATA_ACTION = 'Microsoft.CognitiveServices/accounts/SpeechServices/unified-speech/frontend/action';
+/** "Cognitive Services User": Azure AI Vision has no narrower built-in data-plane role (this one can also list keys). */
+export const COGNITIVE_USER_ROLE_ID = 'a97b65f3-24c7-4388-baec-2e87135dc908';
+export const VISION_DATA_ACTION = 'Microsoft.CognitiveServices/accounts/ComputerVision/imageanalysis:analyze/action';
 const ROLE_WRITE_ACTION = 'Microsoft.Authorization/roleAssignments/write';
 const STATE_FILE = 'entra.json';
 const SIGN_IN_WAIT_MS = 15_000;
@@ -319,8 +325,26 @@ async function arm<T>(deps: ArmDeps, tenantId: string | undefined, path: string,
   return { status: res.status, body };
 }
 
-const INSTANCE_QUERY = [
-  "resources | where type =~ 'microsoft.cognitiveservices/accounts' and kind =~ 'AIServices'",
+/** Azure service a resource is listed, inspected and granted a role for (one shared sign-in). */
+export type EntraService = 'foundry' | 'speech' | 'vision';
+
+export function isEntraService(v: unknown): v is EntraService {
+  return v === 'foundry' || v === 'speech' || v === 'vision';
+}
+
+/**
+ * Speech and Vision are also served by multi-service resources (AIServices / CognitiveServices); Foundry stays limited
+ * to AIServices. Entra ID tokens need the custom subdomain, and Speech and Vision are called on its
+ * `cognitiveservices.azure.com` host.
+ */
+const SERVICES: Record<EntraService, { kinds: readonly string[]; dataAction: string; roleId: string; endpoint: (sub: string) => string }> = {
+  foundry: { kinds: ['AIServices'], dataAction: CHAT_DATA_ACTION, roleId: OPENAI_USER_ROLE_ID, endpoint: (sub) => `https://${sub}.openai.azure.com/openai/v1` },
+  speech: { kinds: ['SpeechServices', 'AIServices', 'CognitiveServices'], dataAction: SPEECH_DATA_ACTION, roleId: SPEECH_USER_ROLE_ID, endpoint: (sub) => `https://${sub}.cognitiveservices.azure.com` },
+  vision: { kinds: ['ComputerVision', 'AIServices', 'CognitiveServices'], dataAction: VISION_DATA_ACTION, roleId: COGNITIVE_USER_ROLE_ID, endpoint: (sub) => `https://${sub}.cognitiveservices.azure.com` },
+};
+
+const instanceQuery = (service: EntraService) => [
+  `resources | where type =~ 'microsoft.cognitiveservices/accounts' and kind in~ (${SERVICES[service].kinds.map((k) => `'${k}'`).join(', ')})`,
   "| join kind=leftouter (resourcecontainers | where type =~ 'microsoft.resources/subscriptions' | project subscriptionId, subscriptionName = name) on subscriptionId",
   '| project id, name, kind, location, resourceGroup, subscriptionId, subscriptionName, tenantId,',
   '  endpoint = tostring(properties.endpoint), customSubDomain = tostring(properties.customSubDomainName), disableLocalAuth = tobool(properties.disableLocalAuth)',
@@ -334,10 +358,10 @@ interface GraphRow {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
-/** Entra ID tokens need the resource's custom subdomain; the v1 API is served on its Azure OpenAI host. */
-function instanceEndpoint(row: GraphRow): string | null {
+/** Entra ID tokens need the resource's custom subdomain; the Foundry v1 API is served on its Azure OpenAI host. */
+function instanceEndpoint(row: GraphRow, service: EntraService): string | null {
   const sub = str(row.customSubDomain).toLowerCase();
-  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(sub) ? `https://${sub}.openai.azure.com/openai/v1` : null;
+  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(sub) ? SERVICES[service].endpoint(sub) : null;
 }
 
 /** ARM's account tenant list can be paged and need not include every directory where a user is a guest. */
@@ -371,8 +395,8 @@ export async function listFoundryTenants(deps: ArmDeps): Promise<FoundryTenant[]
   return [...tenants.values()];
 }
 
-/** Foundry resources visible in one explicitly selected directory. */
-export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: string): Promise<FoundryInstance[]> {
+/** Resources of one service visible in one explicitly selected directory. */
+export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: string, service: EntraService = 'foundry'): Promise<FoundryInstance[]> {
   if (!deps.tokens.account()) throw new EntraError('notSignedIn');
   if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
   tenantId = tenantId.toLowerCase();
@@ -381,7 +405,7 @@ export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: str
   let skipToken: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
     const r = await arm<{ data?: GraphRow[]; $skipToken?: unknown; resultTruncated?: unknown }>(deps, tenantId, '/providers/Microsoft.ResourceGraph/resources?api-version=2024-04-01', {
-      method: 'POST', body: { query: INSTANCE_QUERY, options: { resultFormat: 'objectArray', $top: 1000, ...(skipToken ? { $skipToken: skipToken } : {}) } },
+      method: 'POST', body: { query: instanceQuery(service), options: { resultFormat: 'objectArray', $top: 1000, ...(skipToken ? { $skipToken: skipToken } : {}) } },
     });
     if (r.status !== 200) throw new EntraError(r.status === 401 || r.status === 403 ? 'armForbidden' : 'armError');
     if (!Array.isArray(r.body?.data)) throw new EntraError('armError');
@@ -396,16 +420,17 @@ export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: str
     skipToken = next;
   }
   const seen = new Set<string>();
+  const kinds = new Set(SERVICES[service].kinds.map((k) => k.toLowerCase()));
   const instances: FoundryInstance[] = [];
   for (const row of rows) {
     const id = str(row.id);
     if (isTenantId(row.tenantId) && row.tenantId.toLowerCase() !== tenantId) continue;
-    if (str(row.kind).toLowerCase() !== 'aiservices' || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
+    if (!kinds.has(str(row.kind).toLowerCase()) || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
     seen.add(id.toLowerCase());
     instances.push({
       id, name: str(row.name), kind: str(row.kind), location: str(row.location), resourceGroup: str(row.resourceGroup),
       subscriptionId: str(row.subscriptionId), subscriptionName: str(row.subscriptionName) || str(row.subscriptionId),
-      tenantId, endpoint: instanceEndpoint(row), keyAuthDisabled: row.disableLocalAuth === true,
+      tenantId, endpoint: instanceEndpoint(row, service), keyAuthDisabled: row.disableLocalAuth === true,
     });
   }
   return instances;
@@ -437,6 +462,25 @@ export function permitted(perms: { actions?: string[]; notActions?: string[]; da
   });
 }
 
+async function resourcePermissions(deps: ArmDeps, resourceId: string, tenantId: string) {
+  return arm<{ value?: { actions?: string[]; notActions?: string[]; dataActions?: string[]; notDataActions?: string[] }[] }>(
+    deps, tenantId, `${resourceId}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01`);
+}
+
+/**
+ * Whether the user may call one Speech or Vision resource (its data action) or grant themselves the role. Speech and
+ * Vision have no deployments; an unreadable resource is reported like Foundry's.
+ */
+export async function inspectMediaResource(deps: ArmDeps, resourceId: string, tenantId: string, service: Exclude<EntraService, 'foundry'>): Promise<{ deployments: FoundryDeploymentInfo[]; access: FoundryAccess }> {
+  if (!isFoundryResourceId(resourceId)) throw new EntraError('invalidResource');
+  if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
+  const permissions = await resourcePermissions(deps, resourceId, tenantId);
+  if (permissions.status === 401 || permissions.status === 403) throw new EntraError('armForbidden');
+  if (permissions.status !== 200) throw new EntraError('armError');
+  const perms = permissions.body?.value ?? [];
+  return { deployments: [], access: { canCall: permitted(perms, SERVICES[service].dataAction, true), canAssign: permitted(perms, ROLE_WRITE_ACTION, false) } };
+}
+
 /** Chat deployments of one resource and whether the user may call it or grant themselves the role. */
 export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, tenantId: string): Promise<{ deployments: FoundryDeploymentInfo[]; access: FoundryAccess }> {
   if (!isFoundryResourceId(resourceId)) throw new EntraError('invalidResource');
@@ -444,8 +488,7 @@ export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, 
   const [deployments, permissions] = await Promise.all([
     arm<{ value?: { name?: unknown; sku?: { name?: unknown }; properties?: { model?: { name?: unknown; version?: unknown }; provisioningState?: unknown; capabilities?: Record<string, unknown> } }[] }>(
       deps, tenantId, `${resourceId}/deployments?api-version=2024-10-01`),
-    arm<{ value?: { actions?: string[]; notActions?: string[]; dataActions?: string[]; notDataActions?: string[] }[] }>(
-      deps, tenantId, `${resourceId}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01`),
+    resourcePermissions(deps, resourceId, tenantId),
   ]);
   if (deployments.status === 403 || deployments.status === 401) throw new EntraError('armForbidden');
   if (deployments.status !== 200) throw new EntraError('armError');
@@ -459,8 +502,11 @@ export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, 
   return { deployments: list, access: { canCall: permitted(perms, CHAT_DATA_ACTION, true), canAssign: permitted(perms, ROLE_WRITE_ACTION, false) } };
 }
 
-/** Assigns "Cognitive Services OpenAI User" on one resource to the signed-in user (explicit request only). */
-export async function assignFoundryRole(deps: ArmDeps, resourceId: string, tenantId: string): Promise<void> {
+/**
+ * Assigns the service's least-privilege role on one resource to the signed-in user (explicit request only):
+ * "Cognitive Services OpenAI User", "Cognitive Services Speech User" or "Cognitive Services User" (Vision).
+ */
+export async function assignFoundryRole(deps: ArmDeps, resourceId: string, tenantId: string, service: EntraService = 'foundry'): Promise<void> {
   if (!isFoundryResourceId(resourceId)) throw new EntraError('invalidResource');
   if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
   const subscriptionId = RESOURCE_ID.exec(resourceId)![1]!;
@@ -468,7 +514,7 @@ export async function assignFoundryRole(deps: ArmDeps, resourceId: string, tenan
   if (!GUID.test(objectId)) throw new EntraError('roleAssignFailed');
   const r = await arm<{ error?: { code?: unknown } }>(deps, tenantId, `${resourceId}/providers/Microsoft.Authorization/roleAssignments/${randomUUID()}?api-version=2022-04-01`, {
     method: 'PUT',
-    body: { properties: { roleDefinitionId: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/${OPENAI_USER_ROLE_ID}`, principalId: objectId, principalType: 'User' } },
+    body: { properties: { roleDefinitionId: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/${SERVICES[service].roleId}`, principalId: objectId, principalType: 'User' } },
   });
   if (r.status === 200 || r.status === 201) return;
   if (r.status === 409 && r.body?.error?.code === 'RoleAssignmentExists') return;

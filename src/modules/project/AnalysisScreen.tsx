@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactElement } from 'react';
 import {
-  Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Tab, TabList, ToggleButton,
+  Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Slider, Tab, TabList, ToggleButton,
   Toolbar, ToolbarRadioButton, ToolbarRadioGroup, Tooltip,
 } from '@fluentui/react-components';
 import {
@@ -336,10 +336,6 @@ function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis:
     const rest = v.analyses.filter((a) => a.id !== analysis.id);
     return { ...v, analyses: rest, activeId: rest.find((a) => a.method === analysis.method)?.id ?? rest[0]?.id ?? null };
   });
-  const num = (raw: string, min: number, max: number): number | null => {
-    const n = Number.parseFloat(raw);
-    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
-  };
   const draft = async () => {
     setBusy(true);
     try {
@@ -369,18 +365,18 @@ function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis:
       <div className="proj-weights">
         {cats.map((c) => (
           <Field key={c} label={t(categoryKey(c))} hint={t('proj.an.weightHint', { min: WEIGHT_MIN, max: WEIGHT_MAX })}>
-            <Input
-              type="number"
-              min={WEIGHT_MIN}
-              max={WEIGHT_MAX}
-              step={0.5}
-              value={String(categoryWeight(analysis, c))}
-              onChange={(_, d) => {
-                const n = num(d.value, WEIGHT_MIN, WEIGHT_MAX);
-                if (n !== null) update((a) => ({ ...a, weights: { ...a.weights, [c]: n } }));
-              }}
-              data-testid={`proj-weight-${c}`}
-            />
+            <div className="proj-slider-control">
+              <Slider
+                min={WEIGHT_MIN}
+                max={WEIGHT_MAX}
+                step={0.5}
+                value={categoryWeight(analysis, c)}
+                onChange={(_, d) => update((a) => ({ ...a, weights: { ...a.weights, [c]: d.value } }))}
+                aria-label={t(categoryKey(c))}
+                data-testid={`proj-weight-${c}`}
+              />
+              <output className="proj-slider-value">{categoryWeight(analysis, c)}</output>
+            </div>
           </Field>
         ))}
       </div>
@@ -419,21 +415,31 @@ function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis:
                     />
                   </td>
                   <td>
-                    <Input
-                      type="number" min={SCORE_MIN} max={SCORE_MAX} step={0.5} className="proj-num"
-                      aria-label={t('proj.an.itemScore', { n: idx + 1 })}
-                      value={String(i.score)}
-                      onChange={(_, d) => { const n = num(d.value, SCORE_MIN, SCORE_MAX); if (n !== null) updateItem(i.id, { score: n }); }}
-                      data-testid={`proj-item-score-${idx + 1}`}
-                    />
+                    <div className="proj-slider-control">
+                      <Slider
+                        min={SCORE_MIN}
+                        max={SCORE_MAX}
+                        step={0.5}
+                        value={i.score}
+                        onChange={(_, d) => updateItem(i.id, { score: d.value })}
+                        aria-label={t('proj.an.itemScore', { n: idx + 1 })}
+                        data-testid={`proj-item-score-${idx + 1}`}
+                      />
+                      <output className="proj-slider-value">{i.score}</output>
+                    </div>
                   </td>
                   <td>
-                    <Input
-                      type="number" min={WEIGHT_MIN} max={WEIGHT_MAX} step={0.5} className="proj-num"
-                      aria-label={t('proj.an.itemWeight', { n: idx + 1 })}
-                      value={String(i.weight)}
-                      onChange={(_, d) => { const n = num(d.value, WEIGHT_MIN, WEIGHT_MAX); if (n !== null) updateItem(i.id, { weight: n }); }}
-                    />
+                    <div className="proj-slider-control">
+                      <Slider
+                        min={WEIGHT_MIN}
+                        max={WEIGHT_MAX}
+                        step={0.5}
+                        value={i.weight}
+                        onChange={(_, d) => updateItem(i.id, { weight: d.value })}
+                        aria-label={t('proj.an.itemWeight', { n: idx + 1 })}
+                      />
+                      <output className="proj-slider-value">{i.weight}</output>
+                    </div>
                   </td>
                   <td><AuthorBadge author={i.author} mock={i.mock ?? i.author === 'ai'} /></td>
                   <td>

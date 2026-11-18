@@ -274,11 +274,11 @@ test.describe('project module', () => {
     const cell = swot.getByTestId('proj-score-strengths');
     await expect(cell).toHaveText('4.00');
     const t0 = Date.now();
-    await page.getByTestId('proj-item-score-1').fill('1');
+    await page.getByRole('slider', { name: '項目 1 の評価' }).press('Home');
     await expect(cell).not.toHaveText('4.00', { timeout: 2000 });
     expect(Date.now() - t0).toBeLessThan(2000);
     const insight = await swot.getByTestId('proj-insight').textContent();
-    await page.getByTestId('proj-weight-threats').fill('5');
+    await page.getByRole('slider', { name: '脅威' }).press('End');
     await expect(swot.getByTestId('proj-insight')).not.toHaveText(insight ?? '', { timeout: 2000 });
     await swot.getByRole('radio', { name: 'グラフ' }).check();
     await expect(swot.getByTestId('proj-result-chart')).toBeVisible();
@@ -383,7 +383,7 @@ test.describe('project module', () => {
     await dots.evaluateAll((els) => els.forEach((el) => { (el as unknown as { bas?: number }).bas = 1; }));
     const before = await read();
     const was = (id: string | null) => before.find((x) => x.id === id)!;
-    await page.getByTestId('proj-item-score-1').fill('1');
+    await page.getByRole('slider', { name: '項目 1 の評価' }).press('Home');
     await expect.poll(async () => (await read()).filter((d) => d.score !== was(d.id).score).length).toBe(1);
     const first = await read();
     const edited = first.find((d) => d.score !== was(d.id).score)!;

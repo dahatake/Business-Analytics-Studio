@@ -137,7 +137,7 @@ export function exposeFeedDiagnostics() {
     },
     stopLoad() {
       useFeed.getState().setLoadRate(null);
-      runFeed();
+      stopFeed();
     },
     stats() {
       const l = useFeed.getState().latencies;

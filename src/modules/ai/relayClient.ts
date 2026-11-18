@@ -1,9 +1,10 @@
 import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
 import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
+import { MEDIA_INPUT_ERRORS, MEDIA_TEST_TIMEOUT_MS, type MediaInputError, type MediaService } from '../../ai/mediaConnection.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
-export type SecretName = 'foundryKey' | 'speechKey';
+export type SecretName = 'foundryKey' | 'speechKey' | 'visionKey';
 export type KeyProtection = 'dpapi' | 'file';
 
 /** Non-secret connection held by the relay (endpoint origin, deployment, API version, and how it authenticates). */
@@ -29,6 +30,21 @@ export interface RelayStatus {
   workiq: WorkIqStatus | null;
   /** Microsoft Entra ID sign-in for Microsoft Foundry (the token cache stays in the relay vault). */
   entra: EntraStatus | null;
+  /** FR-324: Azure AI Speech / Azure AI Vision connections saved in the relay (null = not saved). */
+  media: Record<MediaService, MediaStatus | null>;
+}
+
+/** A saved Speech or Vision connection; `verifiedAt` is null when the sealed check no longer holds (key or account changed). */
+export interface MediaStatus {
+  connection: MediaConnectionInfo;
+  verifiedAt: string | null;
+}
+export interface MediaConnectionInfo {
+  auth: 'apiKey' | 'entraId';
+  endpoint: string | null;
+  region: string | null;
+  tenantId: string | null;
+  resourceId: string | null;
 }
 
 export interface EntraStatus {
@@ -48,7 +64,24 @@ export interface WorkIqStatus {
   verifiedAt: string | null;
 }
 
-const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null };
+const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false, speechKey: false, visionKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null,
+  media: { speech: null, vision: null } };
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+function asMediaConnection(v: unknown): MediaConnectionInfo | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  if (c.auth !== 'apiKey' && c.auth !== 'entraId') return null;
+  return { auth: c.auth, endpoint: str(c.endpoint), region: str(c.region), tenantId: str(c.tenantId), resourceId: str(c.resourceId) };
+}
+
+function asMedia(v: unknown): MediaStatus | null {
+  if (!v || typeof v !== 'object') return null;
+  const m = v as { connection?: unknown; verifiedAt?: unknown };
+  const connection = asMediaConnection(m.connection);
+  return connection ? { connection, verifiedAt: str(m.verifiedAt) } : null;
+}
 
 function asEntra(v: unknown): EntraStatus | null {
   if (!v || typeof v !== 'object') return null;
@@ -123,16 +156,17 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown; media?: { speech?: unknown; vision?: unknown } | null };
     return {
       reachable: true,
-      secrets: { foundryKey: body.secrets?.foundryKey === true, speechKey: body.secrets?.speechKey === true },
+      secrets: { foundryKey: body.secrets?.foundryKey === true, speechKey: body.secrets?.speechKey === true, visionKey: body.secrets?.visionKey === true },
       connection: asConnection(body.connection),
       connectionVerifiedAt: typeof body.connectionVerifiedAt === 'string' ? body.connectionVerifiedAt : null,
       keyProtection: body.keyProtection === 'dpapi' || body.keyProtection === 'file' ? body.keyProtection : null,
       copilot: typeof body.copilot?.model === 'string' ? { model: body.copilot.model } : null,
       workiq: asWorkIq(body.workiq),
       entra: asEntra(body.entra),
+      media: { speech: asMedia(body.media?.speech), vision: asMedia(body.media?.vision) },
     };
   } catch {
     return UNREACHABLE;
@@ -465,23 +499,62 @@ export async function listEntraTenants(signal?: AbortSignal): Promise<FoundryTen
   return ((await res.json()) as { tenants: FoundryTenantInfo[] }).tenants;
 }
 
-export async function listEntraInstances(tenantId: string, signal?: AbortSignal): Promise<FoundryInstanceInfo[]> {
-  const res = await relayFetch('/relay/entra/instances', { ...jsonInit('POST', { tenantId }), signal });
+/** A `service` other than Foundry lists and checks Speech / Vision capable resources (FR-324); Foundry keeps the original body. */
+export type EntraService = 'foundry' | MediaService;
+const withService = (body: Record<string, string>, service: EntraService) => (service === 'foundry' ? body : { ...body, service });
+
+export async function listEntraInstances(tenantId: string, signal?: AbortSignal, service: EntraService = 'foundry'): Promise<FoundryInstanceInfo[]> {
+  const res = await relayFetch('/relay/entra/instances', { ...jsonInit('POST', withService({ tenantId }, service)), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return ((await res.json()) as { instances: FoundryInstanceInfo[] }).instances;
 }
 
-export async function inspectEntraInstance(resourceId: string, tenantId: string, signal?: AbortSignal): Promise<FoundryInstanceDetail> {
-  const res = await relayFetch('/relay/entra/inspect', { ...jsonInit('POST', { resourceId, tenantId }), signal });
+export async function inspectEntraInstance(resourceId: string, tenantId: string, signal?: AbortSignal, service: EntraService = 'foundry'): Promise<FoundryInstanceDetail> {
+  const res = await relayFetch('/relay/entra/inspect', { ...jsonInit('POST', withService({ resourceId, tenantId }, service)), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as FoundryInstanceDetail;
 }
 
-/** Grants the signed-in user "Cognitive Services OpenAI User" on the resource (needs Owner or User Access Administrator). */
-export async function assignEntraRole(resourceId: string, tenantId: string): Promise<FoundryInstanceDetail> {
-  const res = await relayFetch('/relay/entra/role', { ...jsonInit('POST', { resourceId, tenantId }), signal: AbortSignal.timeout(60_000) });
+/**
+ * Grants the signed-in user the data-plane role on the resource (needs Owner or User Access Administrator): Foundry →
+ * Cognitive Services OpenAI User, Speech → Cognitive Services Speech User, Vision → Cognitive Services User.
+ */
+export async function assignEntraRole(resourceId: string, tenantId: string, service: EntraService = 'foundry'): Promise<FoundryInstanceDetail> {
+  const res = await relayFetch('/relay/entra/role', { ...jsonInit('POST', withService({ resourceId, tenantId }, service)), signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as FoundryInstanceDetail;
+}
+
+/* ---------- Azure AI Speech / Azure AI Vision (FR-324) ---------- */
+
+export type MediaSaveInput =
+  | { auth: 'apiKey'; endpoint?: string; region?: string }
+  | { auth: 'entraId'; endpoint: string; region?: string; tenantId: string; resourceId: string };
+export const MEDIA_SAVE_ERRORS = [...MEDIA_INPUT_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'accountChanged', 'tooSoon',
+  'notSignedIn', 'interactionRequired', 'authFailed', 'unauthorized', 'forbidden', 'invalidApiRequest', 'providerBusy', 'providerError', 'badProviderResponse',
+  'timeout', 'networkError', 'aborted'] as const;
+export type MediaSaveError = MediaInputError | (typeof MEDIA_SAVE_ERRORS)[number] | 'failed';
+export type MediaSaveResult = { ok: true; status: MediaStatus } | { ok: false; error: MediaSaveError; providerStatus?: number };
+
+/** The relay saves the connection only after the service itself answered the test request with this credential. */
+export async function saveMediaConnection(service: MediaService, input: MediaSaveInput): Promise<MediaSaveResult> {
+  try {
+    const res = await relayFetch(`/relay/media/${service}`, { ...jsonInit('PUT', input), signal: AbortSignal.timeout(MEDIA_TEST_TIMEOUT_MS + 15_000) });
+    const body = (await res.json()) as { error?: string; providerStatus?: number };
+    const status = res.ok ? asMedia(body) : null;
+    if (status) return { ok: true, status };
+    return { ok: false, error: MEDIA_SAVE_ERRORS.find((k) => k === body.error) ?? 'failed', ...(typeof body.providerStatus === 'number' ? { providerStatus: body.providerStatus } : {}) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };
+  }
+}
+
+export async function deleteMediaConnection(service: MediaService): Promise<boolean> {
+  try {
+    return (await relayFetch(`/relay/media/${service}`, { method: 'DELETE' })).ok;
+  } catch {
+    return false;
+  }
 }
 
 /* ---------- Microsoft Work IQ (D-14, Microsoft Foundry only) ---------- */

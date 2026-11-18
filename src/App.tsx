@@ -13,7 +13,7 @@ import { hrefFor, navigate, useRoute, useRouteTarget } from './state/router.ts';
 import { sound } from './audio/sound.ts';
 import { loaded } from './data/pack.ts';
 import { companyAnchorRequiresInternalView } from './data/companyAnchor.ts';
-import { LiveFeedBar } from './ui/LiveFeedBar.tsx';
+import { ExpectedOutcomesBar } from './ui/ExpectedOutcomesBar.tsx';
 import { DetailCardHost } from './ui/DetailCardHost.tsx';
 import { Opening } from './ui/Opening.tsx';
 import { LanguageToggle } from './ui/LanguageToggle.tsx';
@@ -241,7 +241,7 @@ export function App() {
                 navigate(home);
               }
             }} />
-            {!restricted && <LiveFeedBar />}
+            {!restricted && <ExpectedOutcomesBar />}
             {!restricted && <StepBandSlot />}
           </div>
           <div className="layout">

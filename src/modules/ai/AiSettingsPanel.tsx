@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
+  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, MessageBar, MessageBarBody,
   ProgressBar, Switch,
 } from '@fluentui/react-components';
 import { Delete20Regular } from '@fluentui/react-icons';
@@ -9,7 +9,8 @@ import { useI18n } from '../../i18n/index.ts';
 import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
-import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, KeyField, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
+import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
+import { MediaConnectionForm } from './MediaConnectionForm.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
@@ -188,18 +189,15 @@ export function AiSettingsContent() {
         <Panel title={t('ai.speech.title')} testId="ai-speech">
           <div className="ai-stack">
             <p className="muted">{t('ai.speech.lead')}</p>
-            <Field label={t('ai.speech.endpoint')}>
-              <Input value={s.speechEndpoint} onChange={(_, d) => s.update({ speechEndpoint: d.value })} data-testid="ai-speech-endpoint" />
-            </Field>
-            <Field label={t('ai.speech.region')}>
-              <Input value={s.speechRegion} onChange={(_, d) => s.update({ speechRegion: d.value })} data-testid="ai-speech-region" />
-            </Field>
-            <KeyField name="speechKey" label={t('ai.key.speech')} testId="ai-speech-key" />
+            <MediaConnectionForm service="speech" />
           </div>
         </Panel>
 
         <Panel title={t('ai.media.title')} testId="ai-media">
           <div className="ai-stack">
+            <h3 className="ai-label">{t('ai.media.visionTitle')}</h3>
+            <p className="muted">{t('ai.media.visionLead')}</p>
+            <MediaConnectionForm service="vision" />
             <Switch checked={false} disabled label={t('ai.media.speech')} />
             <Switch checked={false} disabled label={t('ai.media.vision')} />
             <p className="muted" data-testid="ai-media-blocked">{t('ai.media.blocked')}</p>

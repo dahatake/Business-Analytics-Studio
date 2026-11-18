@@ -172,7 +172,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.entra.reload': 'Refresh list',
   'ai.entra.loading': 'Loading the Foundry resources you can access…',
   'ai.entra.instance': 'Microsoft Foundry resource',
-  'ai.entra.instanceHint': 'Azure OpenAI / AI Services resources this account can read.',
+  'ai.entra.instanceHint': 'Microsoft Foundry (AI Services) resources this account can read. Standalone Azure OpenAI resources are not listed.',
   'ai.entra.pickInstance': 'Pick a Foundry resource from the list.',
   'ai.entra.noInstances': 'This account cannot see any Foundry resource. Create one in the Azure portal or ask an administrator for read access.',
   'ai.entra.noSubdomain': '{name} (no custom domain; cannot be used with Entra ID)',

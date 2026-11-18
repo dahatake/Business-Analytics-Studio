@@ -131,8 +131,9 @@ FR-323. In AI Settings → Microsoft Foundry, choose **Microsoft Entra ID** inst
    `http://localhost` as a mobile/desktop redirect URI and the delegated `Azure Service Management` and
    `Cognitive Services` permissions).
 2. **Pick a resource.** `POST /relay/entra/instances` lists every tenant the account can see (`GET /tenants`) and, per
-   tenant, runs one Azure Resource Graph query for `Microsoft.CognitiveServices/accounts` of kind `AIServices` or
-   `OpenAI`. Tenants that need another sign-in (MFA, conditional access) are returned with `signedIn: false` and get
+   tenant, runs one Azure Resource Graph query for Microsoft Foundry resources (`Microsoft.CognitiveServices/accounts`
+   of kind `AIServices`). Standalone Azure OpenAI resources (kind `OpenAI`) are not included. Tenants that need another
+   sign-in (MFA, conditional access) are returned with `signedIn: false` and get
    their own sign-in button. Only resources with a custom subdomain can use Entra ID; their endpoint is
    `https://<subdomain>.openai.azure.com/openai/v1`. Others are listed but disabled.
 3. **Pick a deployment.** `POST /relay/entra/inspect { resourceId, tenantId }` returns the succeeded chat deployments

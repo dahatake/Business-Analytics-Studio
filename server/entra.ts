@@ -311,7 +311,7 @@ async function arm<T>(deps: ArmDeps, tenantId: string | undefined, path: string,
 }
 
 const INSTANCE_QUERY = [
-  "resources | where type =~ 'microsoft.cognitiveservices/accounts' and kind in~ ('AIServices', 'OpenAI')",
+  "resources | where type =~ 'microsoft.cognitiveservices/accounts' and kind =~ 'AIServices'",
   "| join kind=leftouter (resourcecontainers | where type =~ 'microsoft.resources/subscriptions' | project subscriptionId, subscriptionName = name) on subscriptionId",
   '| project id, name, kind, location, resourceGroup, subscriptionId, subscriptionName, tenantId,',
   '  endpoint = tostring(properties.endpoint), customSubDomain = tostring(properties.customSubDomainName), disableLocalAuth = tobool(properties.disableLocalAuth)',
@@ -331,7 +331,7 @@ function instanceEndpoint(row: GraphRow): string | null {
   return /^[a-z0-9][a-z0-9-]{0,62}$/.test(sub) ? `https://${sub}.openai.azure.com/openai/v1` : null;
 }
 
-/** Foundry (AIServices / Azure OpenAI) resources the signed-in user can read, across every tenant that signs in silently. */
+/** Foundry (AIServices) resources the signed-in user can read, across every tenant that signs in silently. */
 export async function listFoundryInstances(deps: ArmDeps): Promise<{ instances: FoundryInstance[]; tenants: FoundryTenant[] }> {
   const account = deps.tokens.account();
   if (!account) throw new EntraError('notSignedIn');
@@ -359,7 +359,7 @@ export async function listFoundryInstances(deps: ArmDeps): Promise<{ instances: 
   for (const { tenant, rows } of results) {
     for (const row of rows) {
       const id = str(row.id);
-      if (!isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
+      if (str(row.kind).toLowerCase() !== 'aiservices' || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
       seen.add(id.toLowerCase());
       instances.push({
         id, name: str(row.name), kind: str(row.kind), location: str(row.location), resourceGroup: str(row.resourceGroup),

@@ -1773,6 +1773,7 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
         return new Response(JSON.stringify({ data: [
           { id: RES, name: 'bas-foundry', kind: 'AIServices', location: 'eastus2', resourceGroup: 'rg-bas', subscriptionId: SUB, subscriptionName: 'BAS', tenantId: TENANT, customSubDomain: 'bas-foundry', disableLocalAuth: true },
           { id: RES.replace('bas-foundry', 'legacy'), name: 'legacy', kind: 'OpenAI', location: 'japaneast', resourceGroup: 'rg-bas', subscriptionId: SUB, subscriptionName: 'BAS', tenantId: TENANT, customSubDomain: '' },
+          { id: RES.replace('bas-foundry', 'no-subdomain'), name: 'no-subdomain', kind: 'aiservices', location: 'japaneast', resourceGroup: 'rg-bas', subscriptionId: SUB, subscriptionName: 'BAS', tenantId: TENANT, customSubDomain: '' },
         ] }));
       }
       return new Response('{}', { status: 404 });
@@ -1782,11 +1783,12 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
     const body = r.body as { instances: { name: string; endpoint: string | null; keyAuthDisabled: boolean; tenantId: string }[]; tenants: { tenantId: string; signedIn: boolean }[] };
     expect(body.instances).toEqual([
       expect.objectContaining({ name: 'bas-foundry', endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', keyAuthDisabled: true, tenantId: TENANT }),
-      expect.objectContaining({ name: 'legacy', endpoint: null }),
+      expect.objectContaining({ name: 'no-subdomain', endpoint: null }),
     ]);
     expect(body.tenants).toEqual([{ tenantId: TENANT, name: 'Contoso', signedIn: true }, { tenantId: OTHER, name: 'Fabrikam', signedIn: false }]);
     expect(graph).toHaveLength(1);
     expect(graph[0]!.query).toContain("microsoft.cognitiveservices/accounts");
+    expect(graph[0]!.query).toContain("kind =~ 'AIServices'");
   });
 
   it('reports chat deployments and data-plane access, and assigns the OpenAI User role only on request', async () => {

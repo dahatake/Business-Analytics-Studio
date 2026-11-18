@@ -93,6 +93,36 @@ describe('connection test action', () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   });
 
+  it('lets a signed-in user select a Foundry resource and its chat deployment', async () => {
+    const tenantId = '16b3c013-d300-468d-ac64-7eda0820b6d3';
+    const instance = {
+      id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/foundry',
+      name: 'foundry', kind: 'AIServices', location: 'japaneast', resourceGroup: 'rg',
+      subscriptionId: 'sub', subscriptionName: 'Subscription', tenantId,
+      endpoint: 'https://foundry.openai.azure.com/openai/v1', keyAuthDisabled: false,
+    };
+    useAiSettings.setState({
+      authMethod: 'entraId',
+      entra: { signedIn: true, account: 'u@example.com', tenantId, signIn: 'idle' },
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/relay/session')) return new Response(JSON.stringify({ token: 'test-token' }));
+      if (String(url).endsWith('/relay/entra/instances')) return new Response(JSON.stringify({ instances: [instance], tenants: [] }));
+      if (String(url).endsWith('/relay/entra/inspect')) return new Response(JSON.stringify({
+        deployments: [{ name: 'gpt-chat-latest', model: 'gpt-chat-latest', version: '', sku: 'GlobalStandard' }],
+        access: { canCall: true, canAssign: false },
+      }));
+      return new Response('{}', { status: 404 });
+    }));
+    render(<FoundryFields />);
+    const select = await screen.findByTestId<HTMLSelectElement>('ai-entra-instance');
+    expect(screen.getByText(/Standalone Azure OpenAI resources are not listed/)).toBeTruthy();
+    fireEvent.change(select, { target: { value: instance.id } });
+    await waitFor(() => expect(useAiSettings.getState()).toMatchObject({
+      endpoint: instance.endpoint, entraTenantId: tenantId, deployment: 'gpt-chat-latest', relayConnection: connection,
+    }));
+  });
+
   it('explains every missing prerequisite together, including consent, without sending', () => {
     useAiSettings.setState({ foundryKeySaved: false });
     render(<ConnectionActions />);

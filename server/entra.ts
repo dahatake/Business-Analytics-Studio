@@ -31,7 +31,7 @@ const STATE_FILE = 'entra.json';
 const SIGN_IN_WAIT_MS = 15_000;
 const SIGN_IN_TTL_MS = 10 * 60_000;
 const ARM_TIMEOUT_MS = 30_000;
-const MAX_TENANTS = 25;
+const MAX_PAGES = 100;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RESOURCE_ID = /^\/subscriptions\/([0-9a-f-]{36})\/resourceGroups\/[A-Za-z0-9._()-]{1,90}\/providers\/Microsoft\.CognitiveServices\/accounts\/[A-Za-z0-9_.-]{2,64}$/i;
@@ -176,7 +176,8 @@ export class MsalEntraTokens implements EntraTokens {
       if (this.pending !== pending) return;
       this.pending = null;
       const a = result.account;
-      if (!a || !isTenantId(a.tenantId)) {
+      if (!a || !isTenantId(a.tenantId) || (tenantId && result.tenantId.toLowerCase() !== tenantId.toLowerCase())
+        || (tenantId && current && current.homeAccountId !== a.homeAccountId)) {
         this.state = { status: 'failed', error: 'signInFailed' };
         return;
       }
@@ -287,13 +288,14 @@ interface ArmDeps {
 }
 
 async function arm<T>(deps: ArmDeps, tenantId: string | undefined, path: string, init: { method?: string; body?: unknown } = {}): Promise<{ status: number; body: T | null }> {
-  const { token } = await deps.tokens.token(ARM_SCOPE, tenantId, deps.signal);
+  const acquired = await deps.tokens.token(ARM_SCOPE, tenantId, deps.signal);
+  if (tenantId && acquired.tenantId.toLowerCase() !== tenantId.toLowerCase()) throw new EntraError('authFailed');
   const timeout = AbortSignal.timeout(ARM_TIMEOUT_MS);
   let res: Response;
   try {
     res = await deps.fetch(`https://${ARM_HOST}${path}`, {
       method: init.method ?? 'GET',
-      headers: { Authorization: `Bearer ${token}`, ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Authorization: `Bearer ${acquired.token}`, ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       redirect: 'error',
       signal: deps.signal ? AbortSignal.any([deps.signal, timeout]) : timeout,
@@ -315,7 +317,7 @@ const INSTANCE_QUERY = [
   "| join kind=leftouter (resourcecontainers | where type =~ 'microsoft.resources/subscriptions' | project subscriptionId, subscriptionName = name) on subscriptionId",
   '| project id, name, kind, location, resourceGroup, subscriptionId, subscriptionName, tenantId,',
   '  endpoint = tostring(properties.endpoint), customSubDomain = tostring(properties.customSubDomainName), disableLocalAuth = tobool(properties.disableLocalAuth)',
-  '| order by subscriptionName asc, name asc',
+  '| order by subscriptionName asc, name asc, id asc',
 ].join('\n');
 
 interface GraphRow {
@@ -331,44 +333,89 @@ function instanceEndpoint(row: GraphRow): string | null {
   return /^[a-z0-9][a-z0-9-]{0,62}$/.test(sub) ? `https://${sub}.openai.azure.com/openai/v1` : null;
 }
 
-/** Foundry (AIServices) resources the signed-in user can read, across every tenant that signs in silently. */
-export async function listFoundryInstances(deps: ArmDeps): Promise<{ instances: FoundryInstance[]; tenants: FoundryTenant[] }> {
+/** ARM's account tenant list can be paged and need not include every directory where a user is a guest. */
+export async function listFoundryTenants(deps: ArmDeps): Promise<FoundryTenant[]> {
   const account = deps.tokens.account();
   if (!account) throw new EntraError('notSignedIn');
-  const listed = await arm<{ value?: { tenantId?: unknown; displayName?: unknown; defaultDomain?: unknown }[] }>(deps, undefined, '/tenants?api-version=2022-12-01');
-  if (listed.status !== 200) throw new EntraError(listed.status === 401 || listed.status === 403 ? 'armForbidden' : 'armError');
-  const tenantList = (listed.body?.value ?? [])
-    .filter((t) => isTenantId(t.tenantId))
-    .map((t) => ({ tenantId: (t.tenantId as string).toLowerCase(), name: str(t.displayName) || str(t.defaultDomain) || (t.tenantId as string) }))
-    .slice(0, MAX_TENANTS);
-  if (!tenantList.some((t) => t.tenantId === account.tenantId.toLowerCase())) tenantList.unshift({ tenantId: account.tenantId.toLowerCase(), name: account.tenantId });
+  const tenants = new Map<string, FoundryTenant>();
+  const visited = new Set<string>();
+  let path = '/tenants?api-version=2022-12-01';
+  while (path) {
+    if (visited.has(path) || visited.size >= MAX_PAGES) throw new EntraError('armError');
+    visited.add(path);
+    const listed = await arm<{ value?: { tenantId?: unknown; displayName?: unknown; defaultDomain?: unknown }[]; nextLink?: unknown }>(deps, undefined, path);
+    if (listed.status !== 200) throw new EntraError(listed.status === 401 || listed.status === 403 ? 'armForbidden' : 'armError');
+    if (!Array.isArray(listed.body?.value)) throw new EntraError('armError');
+    for (const t of listed.body.value) {
+      if (!isTenantId(t.tenantId)) continue;
+      const tenantId = t.tenantId.toLowerCase();
+      tenants.set(tenantId, { tenantId, name: str(t.displayName) || str(t.defaultDomain) || tenantId, signedIn: false });
+    }
+    const next = listed.body.nextLink;
+    if (next === undefined || next === null || next === '') break;
+    if (typeof next !== 'string') throw new EntraError('armError');
+    let url: URL;
+    try { url = new URL(next); } catch { throw new EntraError('armError'); }
+    if (url.protocol !== 'https:' || url.host !== ARM_HOST || url.pathname.toLowerCase() !== '/tenants' || url.username || url.password || url.hash) throw new EntraError('armError');
+    path = `${url.pathname}${url.search}`;
+  }
+  const home = account.tenantId.toLowerCase();
+  if (!tenants.has(home)) tenants.set(home, { tenantId: home, name: home, signedIn: false });
+  return [...tenants.values()];
+}
+
+/** Foundry resources visible in one explicitly selected directory. */
+export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: string): Promise<FoundryInstance[]> {
+  if (!deps.tokens.account()) throw new EntraError('notSignedIn');
+  if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
+  tenantId = tenantId.toLowerCase();
+  const rows: GraphRow[] = [];
+  const visited = new Set<string>();
+  let skipToken: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const r = await arm<{ data?: GraphRow[]; $skipToken?: unknown; resultTruncated?: unknown }>(deps, tenantId, '/providers/Microsoft.ResourceGraph/resources?api-version=2024-04-01', {
+      method: 'POST', body: { query: INSTANCE_QUERY, options: { resultFormat: 'objectArray', $top: 1000, ...(skipToken ? { $skipToken: skipToken } : {}) } },
+    });
+    if (r.status !== 200) throw new EntraError(r.status === 401 || r.status === 403 ? 'armForbidden' : 'armError');
+    if (!Array.isArray(r.body?.data)) throw new EntraError('armError');
+    rows.push(...r.body.data);
+    const next = r.body.$skipToken;
+    if (!next) {
+      if (r.body.resultTruncated === true || r.body.resultTruncated === 'true') throw new EntraError('armError');
+      break;
+    }
+    if (typeof next !== 'string' || visited.has(next) || page === MAX_PAGES - 1) throw new EntraError('armError');
+    visited.add(next);
+    skipToken = next;
+  }
+  const seen = new Set<string>();
+  const instances: FoundryInstance[] = [];
+  for (const row of rows) {
+    const id = str(row.id);
+    if (isTenantId(row.tenantId) && row.tenantId.toLowerCase() !== tenantId) continue;
+    if (str(row.kind).toLowerCase() !== 'aiservices' || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
+    seen.add(id.toLowerCase());
+    instances.push({
+      id, name: str(row.name), kind: str(row.kind), location: str(row.location), resourceGroup: str(row.resourceGroup),
+      subscriptionId: str(row.subscriptionId), subscriptionName: str(row.subscriptionName) || str(row.subscriptionId),
+      tenantId, endpoint: instanceEndpoint(row), keyAuthDisabled: row.disableLocalAuth === true,
+    });
+  }
+  return instances;
+}
+
+/** Backwards-compatible combined listing. */
+export async function listFoundryInstances(deps: ArmDeps): Promise<{ instances: FoundryInstance[]; tenants: FoundryTenant[] }> {
+  const tenantList = await listFoundryTenants(deps);
   const results = await Promise.all(tenantList.map(async (t) => {
     try {
-      const r = await arm<{ data?: GraphRow[] }>(deps, t.tenantId, '/providers/Microsoft.ResourceGraph/resources?api-version=2024-04-01', {
-        method: 'POST', body: { query: INSTANCE_QUERY, options: { resultFormat: 'objectArray', $top: 1000 } },
-      });
-      if (r.status !== 200) return { tenant: { ...t, signedIn: true }, rows: [] as GraphRow[] };
-      return { tenant: { ...t, signedIn: true }, rows: r.body?.data ?? [] };
+      return { tenant: { ...t, signedIn: true }, instances: await listFoundryInstancesForTenant(deps, t.tenantId) };
     } catch (error) {
-      if (error instanceof EntraError && (error.code === 'interactionRequired' || error.code === 'authFailed')) return { tenant: { ...t, signedIn: false }, rows: [] };
+      if (error instanceof EntraError && (error.code === 'interactionRequired' || error.code === 'authFailed')) return { tenant: { ...t, signedIn: false }, instances: [] };
       throw error;
     }
   }));
-  const seen = new Set<string>();
-  const instances: FoundryInstance[] = [];
-  for (const { tenant, rows } of results) {
-    for (const row of rows) {
-      const id = str(row.id);
-      if (str(row.kind).toLowerCase() !== 'aiservices' || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
-      seen.add(id.toLowerCase());
-      instances.push({
-        id, name: str(row.name), kind: str(row.kind), location: str(row.location), resourceGroup: str(row.resourceGroup),
-        subscriptionId: str(row.subscriptionId), subscriptionName: str(row.subscriptionName) || str(row.subscriptionId),
-        tenantId: isTenantId(row.tenantId) ? row.tenantId.toLowerCase() : tenant.tenantId, endpoint: instanceEndpoint(row), keyAuthDisabled: row.disableLocalAuth === true,
-      });
-    }
-  }
-  return { instances, tenants: results.map((r) => r.tenant) };
+  return { instances: results.flatMap((r) => r.instances), tenants: results.map((r) => r.tenant) };
 }
 
 const actionMatches = (pattern: string, action: string) =>

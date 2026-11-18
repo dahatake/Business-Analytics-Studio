@@ -17,7 +17,7 @@ import {
 } from './workiq.ts';
 import { WorkIqCliService } from './workiqCli.ts';
 import {
-  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, isFoundryResourceId, isTenantId, listFoundryInstances, saveEntraState,
+  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, saveEntraState,
   type EntraErrorCode, type EntraTokens,
 } from './entra.ts';
 import { reserveStory, storyQuote, StoryBudgetError } from './storyBudget.ts';
@@ -646,7 +646,12 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         const { url } = await entra.startSignIn(tenantId);
         return json(200, { url, entra: entraStatus() });
       }
-      if (path === '/relay/entra/instances') return json(200, await listFoundryInstances(deps));
+      if (path === '/relay/entra/tenants') return json(200, { tenants: await listFoundryTenants(deps) });
+      if (path === '/relay/entra/instances') {
+        const tenantId = body!.tenantId;
+        if (tenantId !== undefined && !isTenantId(tenantId)) return json(400, { error: 'invalidTenant' });
+        return tenantId ? json(200, { instances: await listFoundryInstancesForTenant(deps, tenantId) }) : json(200, await listFoundryInstances(deps));
+      }
       const t = target();
       if (!t) return json(400, { error: 'invalidResource' });
       if (path === '/relay/entra/inspect') return json(200, await inspectFoundryInstance(deps, t.resourceId, t.tenantId));

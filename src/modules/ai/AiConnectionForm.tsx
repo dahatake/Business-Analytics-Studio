@@ -95,7 +95,7 @@ export function ConnectionActions() {
     return () => clearTimeout(timer);
   }, [coolingDown]);
   const differs = relay !== null && (!draft.ok || relay.endpoint !== draft.value.endpoint || relay.deployment !== draft.value.deployment || relay.apiVersion !== draft.value.apiVersion
-    || (relay.auth ?? 'apiKey') !== s.authMethod);
+    || (relay.auth ?? 'apiKey') !== s.authMethod || (s.authMethod === 'entraId' && (relay.tenantId ?? '') !== s.entraTenantId));
   useEffect(() => {
     setMessage(null);
     setProviderStatus(undefined);

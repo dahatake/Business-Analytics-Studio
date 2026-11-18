@@ -130,11 +130,15 @@ FR-323. In AI Settings → Microsoft Foundry, choose **Microsoft Entra ID** inst
    sign-in), so no app registration is needed. Set `BAS_ENTRA_CLIENT_ID` to use your own public client (add
    `http://localhost` as a mobile/desktop redirect URI and the delegated `Azure Service Management` and
    `Cognitive Services` permissions).
-2. **Pick a resource.** `POST /relay/entra/instances` lists every tenant the account can see (`GET /tenants`) and, per
-   tenant, runs one Azure Resource Graph query for Microsoft Foundry resources (`Microsoft.CognitiveServices/accounts`
-   of kind `AIServices`). Standalone Azure OpenAI resources (kind `OpenAI`) are not included. Tenants that need another
-   sign-in (MFA, conditional access) are returned with `signedIn: false` and get
-   their own sign-in button. Only resources with a custom subdomain can use Entra ID; their endpoint is
+2. **Pick a directory (tenant), then a resource.** `POST /relay/entra/tenants` reads the account's ARM tenant list,
+   including continuation pages. A directory and tenant refer to the same selection here. If the desired guest directory
+   is absent, enter its tenant ID; access is still subject to the user's Azure permissions. The selected tenant may
+   require its own sign-in (MFA or conditional access): use the selected tenant's sign-in button, then retry.
+   `POST /relay/entra/instances { tenantId }` queries Azure Resource Graph with that tenant's token for Microsoft Foundry
+   resources (`Microsoft.CognitiveServices/accounts` of kind `AIServices`), following continuation pages. Failures are
+   shown rather than treated as an empty list. Standalone Azure OpenAI resources (kind `OpenAI`) are not included.
+   Switching directories clears the unsaved resource selection; it does not replace the connection saved in the relay.
+   Only resources with a custom subdomain can use Entra ID; their endpoint is
    `https://<subdomain>.openai.azure.com/openai/v1`. Others are listed but disabled.
 3. **Pick a deployment.** `POST /relay/entra/inspect { resourceId, tenantId }` returns the succeeded chat deployments
    (model-router and gpt-chat-latest are suggested first) and `access: { canCall, canAssign }` from the ARM permissions

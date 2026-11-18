@@ -11,6 +11,7 @@ export interface SettingsState {
   lang: Lang;
   theme: ThemePref;
   motion: MotionPref;
+  showSplash: boolean;
   muted: boolean;
   bgm: boolean;
   sfx: boolean;
@@ -20,6 +21,7 @@ export interface SettingsState {
   setLang: (lang: Lang) => void;
   setTheme: (theme: ThemePref) => void;
   setMotion: (motion: MotionPref) => void;
+  setShowSplash: (showSplash: boolean) => void;
   setMuted: (muted: boolean) => void;
   setBgm: (bgm: boolean) => void;
   setSfx: (sfx: boolean) => void;
@@ -35,6 +37,7 @@ export const useSettings = create<SettingsState>()(
       lang: 'ja',
       theme: 'dark',
       motion: 'system',
+      showSplash: true,
       muted: true,
       bgm: true,
       sfx: true,
@@ -43,6 +46,7 @@ export const useSettings = create<SettingsState>()(
       setLang: (lang) => set({ lang }),
       setTheme: (theme) => set({ theme }),
       setMotion: (motion) => set({ motion }),
+      setShowSplash: (showSplash) => set({ showSplash }),
       setMuted: (muted) => set({ muted }),
       setBgm: (bgm) => set({ bgm }),
       setSfx: (sfx) => set({ sfx }),
@@ -53,7 +57,7 @@ export const useSettings = create<SettingsState>()(
       name: SETTINGS_STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ lang, theme, motion, muted, bgm, sfx, volume, audience }) => ({ lang, theme, motion, muted, bgm, sfx, volume, audience }),
+      partialize: ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience }) => ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience }),
     },
   ),
 );

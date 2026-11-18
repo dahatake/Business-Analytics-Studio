@@ -1791,6 +1791,48 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
     expect(graph[0]!.query).toContain("kind =~ 'AIServices'");
   });
 
+  it('lists all directory pages and reads resources using only the selected tenant token', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      const u = String(url);
+      if (u.includes('/tenants?') && !u.includes('page=2')) {
+        return new Response(JSON.stringify({ value: [{ tenantId: TENANT, displayName: 'Home' }],
+          nextLink: 'https://management.azure.com/tenants?api-version=2022-12-01&page=2' }));
+      }
+      if (u.includes('/tenants?')) return new Response(JSON.stringify({ value: [{ tenantId: OTHER, displayName: 'Guest' }] }));
+      const body = JSON.parse(String(init?.body)) as { options: { $skipToken?: string } };
+      return new Response(JSON.stringify(body.options.$skipToken
+        ? { data: [{ id: RES.replace('bas-foundry', 'second'), name: 'second', kind: 'AIServices', tenantId: OTHER, customSubDomain: 'second' }] }
+        : { data: [{ id: RES, name: 'first', kind: 'AIServices', tenantId: OTHER, customSubDomain: 'first' }], $skipToken: 'next', resultTruncated: 'true' }));
+    });
+    const directories = await call(req('POST', '/relay/entra/tenants', {}), ctx({ fetch }));
+    expect(directories.body).toMatchObject({ tenants: [{ tenantId: TENANT, name: 'Home' }, { tenantId: OTHER, name: 'Guest' }] });
+    tokenCalls = [];
+    const result = await call(req('POST', '/relay/entra/instances', { tenantId: OTHER }), ctx({ fetch }));
+    expect(result.body).toMatchObject({ instances: [{ name: 'first', tenantId: OTHER }, { name: 'second', tenantId: OTHER }] });
+    expect(tokenCalls).toEqual([{ scope: 'https://management.azure.com/.default', tenantId: OTHER }, { scope: 'https://management.azure.com/.default', tenantId: OTHER }]);
+  });
+
+  it('reports selected-tenant failures rather than showing an empty list', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}', { status: 403 }));
+    expect(await call(req('POST', '/relay/entra/instances', { tenantId: OTHER }), ctx({ fetch }))).toEqual({ status: 403, body: { error: 'armForbidden' } });
+    refuseTenant = OTHER;
+    expect(await call(req('POST', '/relay/entra/instances', { tenantId: OTHER }), ctx({ fetch }))).toMatchObject({ body: { error: 'interactionRequired' } });
+    expect(await call(req('POST', '/relay/entra/instances', { tenantId: 'invalid' }), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'invalidTenant' } });
+    refuseTenant = null;
+    const truncated = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ data: [], resultTruncated: 'true' })));
+    expect(await call(req('POST', '/relay/entra/instances', { tenantId: OTHER }), ctx({ fetch: truncated }))).toMatchObject({ body: { error: 'armError' } });
+    const wrongTenant: EntraTokens = { ...entra, token: async () => ({ token: 'wrong', objectId: OID, tenantId: TENANT }) };
+    const notCalled = vi.fn<typeof globalThis.fetch>();
+    expect(await call(req('POST', '/relay/entra/instances', { tenantId: OTHER }), ctx({ fetch: notCalled, entra: wrongTenant }))).toMatchObject({ body: { error: 'authFailed' } });
+    expect(notCalled).not.toHaveBeenCalled();
+  });
+
+  it('does not follow tenant pagination links to an untrusted host', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ value: [], nextLink: 'https://evil.example/tenants?page=2' })));
+    expect(await call(req('POST', '/relay/entra/tenants', {}), ctx({ fetch }))).toMatchObject({ body: { error: 'armError' } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('reports chat deployments and data-plane access, and assigns the OpenAI User role only on request', async () => {
     let assigned = false;
     const puts: { url: string; body: unknown }[] = [];

@@ -276,6 +276,57 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(page.getByTestId('ai-foundry-key')).toBeVisible();
   });
 
+  test('selects a directory and signs in before showing its Foundry resources', async ({ page }) => {
+    const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+    const guest = '16b3c013-d300-468d-ac64-7eda0820b6d3';
+    let guestSignedIn = false;
+    let statusChecks = 0;
+    const requests: string[] = [];
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null,
+      entra: { signedIn: true, account: 'user@example.com', tenantId: home, signIn: {
+        status: guestSignedIn ? (++statusChecks < 3 ? 'pending' : 'signedIn') : 'idle',
+      } },
+    } }));
+    await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [
+      { tenantId: home, name: 'Home', signedIn: true }, { tenantId: guest, name: 'Guest directory', signedIn: false },
+    ] } }));
+    await page.route('**/relay/entra/signin', (route) => {
+      expect(route.request().postDataJSON()).toEqual({ tenantId: guest });
+      guestSignedIn = true;
+      return route.fulfill({ json: { url: null } });
+    });
+    await page.route('**/relay/entra/instances', (route) => {
+      const { tenantId } = route.request().postDataJSON() as { tenantId: string };
+      requests.push(tenantId);
+      if (tenantId === guest && !guestSignedIn) return route.fulfill({ status: 401, json: { error: 'interactionRequired' } });
+      const name = tenantId === home ? 'home-resource' : 'guest-resource';
+      return route.fulfill({ json: { instances: [{
+        id: `/subscriptions/${tenantId}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/${name}`,
+        name, kind: 'AIServices', location: 'eastus', resourceGroup: 'rg', subscriptionId: tenantId,
+        subscriptionName: name, tenantId, endpoint: `https://${name}.openai.azure.com/openai/v1`, keyAuthDisabled: false,
+      }] } });
+    });
+    await page.route('**/relay/entra/inspect', (route) => route.fulfill({ json: {
+      deployments: [{ name: 'gpt-chat-latest', model: 'gpt-chat-latest', version: '', sku: 'Standard' }],
+      access: { canCall: true, canAssign: false },
+    } }));
+    await openAiSettings(page, { lang: 'en' });
+    await page.getByTestId('ai-auth-entra').click();
+    await expect(page.getByTestId('ai-entra-instance')).toContainText('home-resource');
+    await page.getByTestId('ai-entra-directory').selectOption(guest);
+    await expect(page.getByTestId('ai-entra-directory-signin')).toContainText('Additional sign-in required');
+    await expect(page.getByTestId('ai-entra-instance')).toHaveCount(0);
+    await page.getByTestId('ai-entra-directory-signin').click();
+    await expect(page.getByTestId('ai-entra-directory-signin')).toBeDisabled();
+    await expect(page.getByTestId('ai-entra-msg')).toHaveCount(0);
+    await expect(page.getByTestId('ai-entra-instance')).toContainText('guest-resource');
+    await expect(page.getByTestId('ai-entra-instance')).not.toContainText('home-resource');
+    await page.getByTestId('ai-entra-instance').selectOption({ label: 'guest-resource — guest-resource / rg (eastus)' });
+    await expect(page.getByTestId('ai-entra-deployment')).toHaveValue('gpt-chat-latest');
+    expect(requests).toContain(guest);
+  });
+
   test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {

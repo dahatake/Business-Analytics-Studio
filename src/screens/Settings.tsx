@@ -99,6 +99,12 @@ export function SettingsScreen() {
             <Radio value="reduce" label={t('settings.motion.reduce')} />
             <Radio value="full" label={t('settings.motion.full')} />
           </RadioGroup>
+          <Switch
+            checked={s.showSplash}
+            onChange={(_, d) => s.setShowSplash(d.checked)}
+            label={t('settings.showSplash')}
+            data-testid="startup-splash-toggle"
+          />
           <Switch checked={!s.muted} onChange={(_, d) => s.setMuted(!d.checked)} label={t('settings.sound')} />
           <Switch checked={s.bgm} onChange={(_, d) => s.setBgm(d.checked)} label={t('settings.bgm')} disabled={s.muted} />
           <Switch checked={s.sfx} onChange={(_, d) => s.setSfx(d.checked)} label={t('settings.sfx')} disabled={s.muted} />

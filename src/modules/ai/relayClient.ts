@@ -449,10 +449,16 @@ export async function signOutEntra(): Promise<boolean> {
   }
 }
 
-export async function listEntraInstances(signal?: AbortSignal): Promise<{ instances: FoundryInstanceInfo[]; tenants: FoundryTenantInfo[] }> {
-  const res = await relayFetch('/relay/entra/instances', { ...jsonInit('POST', {}), signal });
+export async function listEntraTenants(signal?: AbortSignal): Promise<FoundryTenantInfo[]> {
+  const res = await relayFetch('/relay/entra/tenants', { ...jsonInit('POST', {}), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
-  return (await res.json()) as { instances: FoundryInstanceInfo[]; tenants: FoundryTenantInfo[] };
+  return ((await res.json()) as { tenants: FoundryTenantInfo[] }).tenants;
+}
+
+export async function listEntraInstances(tenantId: string, signal?: AbortSignal): Promise<FoundryInstanceInfo[]> {
+  const res = await relayFetch('/relay/entra/instances', { ...jsonInit('POST', { tenantId }), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return ((await res.json()) as { instances: FoundryInstanceInfo[] }).instances;
 }
 
 export async function inspectEntraInstance(resourceId: string, tenantId: string, signal?: AbortSignal): Promise<FoundryInstanceDetail> {

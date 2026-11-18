@@ -5,7 +5,7 @@ import { setup } from './helpers.ts';
 test.use({ locale: 'en-US', reducedMotion: 'reduce' });
 
 test('shows startup from the initial HTML through device and pack loading', async ({ page }) => {
-  await setup(page, { lang: 'en' });
+  await setup(page, { lang: 'en', showSplash: true });
   let releaseScripts!: () => void;
   let releaseDevice!: () => void;
   let releasePack!: () => void;
@@ -42,7 +42,7 @@ test('shows startup from the initial HTML through device and pack loading', asyn
 
 test('uses saved language and reduced motion while loading the pack', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await setup(page, { lang: 'ja', motion: 'reduce' });
+  await setup(page, { lang: 'ja', motion: 'reduce', showSplash: true });
   let releasePack!: () => void;
   let markPackStarted!: () => void;
   const packReady = new Promise<void>((resolve) => { releasePack = resolve; });
@@ -58,7 +58,7 @@ test('uses saved language and reduced motion while loading the pack', async ({ p
 });
 
 test('startup failure replaces the splash and retry restores it', async ({ page }) => {
-  await setup(page, { lang: 'en' });
+  await setup(page, { lang: 'en', showSplash: true });
   let releaseRetry!: () => void;
   const retryReady = new Promise<void>((resolve) => { releaseRetry = resolve; });
   let fail = true;
@@ -74,6 +74,6 @@ test('startup failure replaces the splash and retry restores it', async ({ page 
   await expect(page.getByTestId('startup-splash')).toBeVisible();
   await expect(page.getByTestId('startup-status')).toHaveText('Loading data saved on this PC…');
   releaseRetry();
+  await expect(page.locator('main#main')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('startup-splash')).toHaveCount(0);
-  await expect(page.locator('main#main')).toBeVisible();
 });

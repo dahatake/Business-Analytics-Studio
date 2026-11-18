@@ -18,12 +18,15 @@ async function start(useDeviceCopy = false) {
   showStartupStatus('device.loading');
   try {
     await initializeDeviceStorage(useDeviceCopy);
-    showStartupStatus('startup.loading');
     const { useSettings } = await import('./state/settings.ts');
-    const { lang: savedLang, motion } = useSettings.getState();
+    const { lang: savedLang, motion, showSplash } = useSettings.getState();
     if (isLang(savedLang)) lang = savedLang;
-    if (motion === 'reduce') root.querySelector('[data-testid="startup-splash"]')!.setAttribute('data-reduce-motion', 'true');
-    showStartupStatus('startup.loading');
+    if (showSplash) {
+      if (motion === 'reduce') root.querySelector('[data-testid="startup-splash"]')!.setAttribute('data-reduce-motion', 'true');
+      showStartupStatus('startup.loading');
+    } else {
+      root.replaceChildren();
+    }
     const { boot } = await import('./bootstrap.tsx');
     await boot();
   } catch (error) {

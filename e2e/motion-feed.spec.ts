@@ -106,6 +106,31 @@ test.describe('F-3.1.5 motion and sound', () => {
     await page.reload();
     await expect(page.getByTestId('sound-toggle')).toHaveAttribute('aria-pressed', 'true');
   });
+
+  test('startup splash visibility is a saved setting', async ({ page }) => {
+    await open(page, '/settings', { lang: 'en' });
+    const splashToggle = page.getByRole('switch', { name: 'Show the startup splash screen' });
+    await expect(splashToggle).not.toBeChecked();
+    await splashToggle.check();
+    await expect(splashToggle).toBeChecked();
+
+    let releasePack!: () => void;
+    let markPackStarted!: () => void;
+    const packReady = new Promise<void>((resolve) => { releasePack = resolve; });
+    const packStarted = new Promise<void>((resolve) => { markPackStarted = resolve; });
+    await page.route('**/data/pack.json', async (route) => { markPackStarted(); await packReady; await route.continue(); });
+    await page.reload();
+    await packStarted;
+    await expect(page.getByTestId('startup-splash')).toBeVisible();
+    releasePack();
+    await expect(page.locator('main#main')).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Show the startup splash screen' })).toBeChecked();
+
+    await page.getByRole('switch', { name: 'Show the startup splash screen' }).uncheck();
+    await page.reload();
+    await expect(page.getByTestId('startup-splash')).toHaveCount(0);
+    await expect(page.locator('main#main')).toBeVisible();
+  });
 });
 
 test.describe('F-3.4.1 live feed', () => {

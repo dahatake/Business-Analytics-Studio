@@ -107,6 +107,7 @@ describe('connection test action', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
       if (String(url).endsWith('/relay/session')) return new Response(JSON.stringify({ token: 'test-token' }));
+      if (String(url).endsWith('/relay/entra/tenants')) return new Response(JSON.stringify({ tenants: [{ tenantId, name: 'Test directory', signedIn: true }] }));
       if (String(url).endsWith('/relay/entra/instances')) return new Response(JSON.stringify({ instances: [instance], tenants: [] }));
       if (String(url).endsWith('/relay/entra/inspect')) return new Response(JSON.stringify({
         deployments: [{ name: 'gpt-chat-latest', model: 'gpt-chat-latest', version: '', sku: 'GlobalStandard' }],
@@ -121,6 +122,103 @@ describe('connection test action', () => {
     await waitFor(() => expect(useAiSettings.getState()).toMatchObject({
       endpoint: instance.endpoint, entraTenantId: tenantId, deployment: 'gpt-chat-latest', relayConnection: connection,
     }));
+  });
+
+  it('switches directories without retaining an old resource or allowing a late response to replace the selected list', async () => {
+    const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+    const guest = '16b3c013-d300-468d-ac64-7eda0820b6d3';
+    const resource = (tenantId: string, name: string) => ({
+      id: `/subscriptions/${tenantId}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/${name}`,
+      name, kind: 'AIServices', location: 'eastus', resourceGroup: 'rg', subscriptionId: tenantId,
+      subscriptionName: name, tenantId, endpoint: `https://${name}.openai.azure.com/openai/v1`, keyAuthDisabled: false,
+    });
+    let finishHome!: (r: Response) => void;
+    useAiSettings.setState({
+      authMethod: 'entraId', entra: { signedIn: true, account: 'u@example.com', tenantId: home, signIn: 'idle' },
+      endpoint: resource(home, 'home').endpoint, entraTenantId: home, deployment: 'old',
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/relay/session')) return new Response(JSON.stringify({ token: 'test-token' }));
+      if (String(url).endsWith('/relay/entra/tenants')) return new Response(JSON.stringify({ tenants: [
+        { tenantId: home, name: 'Home', signedIn: true }, { tenantId: guest, name: 'Guest', signedIn: false },
+      ] }));
+      if (String(url).endsWith('/relay/entra/instances')) {
+        const tenantId = (JSON.parse(String(init?.body)) as { tenantId: string }).tenantId;
+        if (tenantId === home) return new Promise<Response>((resolve) => { finishHome = resolve; });
+        return new Response(JSON.stringify({ instances: [resource(guest, 'guest')] }));
+      }
+      if (String(url).endsWith('/relay/entra/inspect')) return new Response(JSON.stringify({ deployments: [], access: { canCall: true, canAssign: false } }));
+      return new Response('{}', { status: 404 });
+    }));
+    render(<FoundryFields />);
+    await screen.findByText(`Guest (${guest})`);
+    fireEvent.change(screen.getByTestId('ai-entra-directory'), { target: { value: guest } });
+    await screen.findByText(/guest —/);
+    await act(async () => finishHome(new Response(JSON.stringify({ instances: [resource(home, 'home')] }))));
+    expect(screen.queryByText(/home —/)).toBeNull();
+    expect(useAiSettings.getState()).toMatchObject({ endpoint: '', entraTenantId: '', deployment: '', relayConnection: connection });
+    fireEvent.change(screen.getByTestId('ai-entra-instance'), { target: { value: resource(guest, 'guest').id } });
+    expect(useAiSettings.getState()).toMatchObject({ endpoint: resource(guest, 'guest').endpoint, entraTenantId: guest });
+  });
+
+  it('allows a directory ID missing from the list and shows tenant sign-in failures', async () => {
+    const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+    const guest = '16b3c013-d300-468d-ac64-7eda0820b6d3';
+    useAiSettings.setState({ authMethod: 'entraId', entra: { signedIn: true, account: 'u@example.com', tenantId: home, signIn: 'idle' } });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/relay/session')) return new Response(JSON.stringify({ token: 'test-token' }));
+      if (String(url).endsWith('/relay/entra/tenants')) return new Response(JSON.stringify({ tenants: [{ tenantId: home, name: 'Home', signedIn: true }] }));
+      if (String(url).endsWith('/relay/entra/instances')) {
+        const tenantId = (JSON.parse(String(init?.body)) as { tenantId: string }).tenantId;
+        return tenantId === guest ? new Response(JSON.stringify({ error: 'interactionRequired' }), { status: 401 })
+          : new Response(JSON.stringify({ instances: [] }));
+      }
+      return new Response('{}', { status: 404 });
+    }));
+    render(<FoundryFields />);
+    fireEvent.change(screen.getByTestId('ai-entra-directory-id'), { target: { value: 'bad' } });
+    fireEvent.click(screen.getByTestId('ai-entra-directory-use'));
+    expect(screen.getByTestId('ai-entra-msg').textContent).toContain('tenant ID is not valid');
+    fireEvent.change(screen.getByTestId('ai-entra-directory-id'), { target: { value: guest } });
+    fireEvent.click(screen.getByTestId('ai-entra-directory-use'));
+    await waitFor(() => expect(screen.getByTestId('ai-entra-directory-signin').textContent).toContain('Additional sign-in required'));
+    expect(screen.queryByTestId('ai-entra-empty')).toBeNull();
+    expect(screen.getByTestId<HTMLSelectElement>('ai-entra-directory').value).toBe(guest);
+  });
+
+  it('ignores a late deployment inspection from the previous directory', async () => {
+    const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+    const guest = '16b3c013-d300-468d-ac64-7eda0820b6d3';
+    const instance = {
+      id: `/subscriptions/${home}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/home`,
+      name: 'home', kind: 'AIServices', location: 'eastus', resourceGroup: 'rg', subscriptionId: home,
+      subscriptionName: 'Home', tenantId: home, endpoint: 'https://home.openai.azure.com/openai/v1', keyAuthDisabled: false,
+    };
+    let finishInspect!: (r: Response) => void;
+    useAiSettings.setState({ authMethod: 'entraId', entra: { signedIn: true, account: 'u@example.com', tenantId: home, signIn: 'idle' } });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/relay/session')) return new Response(JSON.stringify({ token: 'test-token' }));
+      if (String(url).endsWith('/relay/entra/tenants')) return new Response(JSON.stringify({ tenants: [
+        { tenantId: home, name: 'Home' }, { tenantId: guest, name: 'Guest' },
+      ] }));
+      if (String(url).endsWith('/relay/entra/instances')) {
+        const tenantId = (JSON.parse(String(init?.body)) as { tenantId: string }).tenantId;
+        return new Response(JSON.stringify({ instances: tenantId === home ? [instance] : [] }));
+      }
+      if (String(url).endsWith('/relay/entra/inspect')) return new Promise<Response>((resolve) => { finishInspect = resolve; });
+      return new Response('{}', { status: 404 });
+    }));
+    render(<FoundryFields />);
+    const select = await screen.findByTestId('ai-entra-instance');
+    fireEvent.change(select, { target: { value: instance.id } });
+    await waitFor(() => expect(finishInspect).toBeTypeOf('function'));
+    fireEvent.change(screen.getByTestId('ai-entra-directory'), { target: { value: guest } });
+    await act(async () => finishInspect(new Response(JSON.stringify({
+      deployments: [{ name: 'old-deployment', model: 'gpt-chat-latest', version: '', sku: 'Standard' }],
+      access: { canCall: true, canAssign: false },
+    }))));
+    expect(useAiSettings.getState()).toMatchObject({ endpoint: '', entraTenantId: '', deployment: '' });
+    expect(screen.queryByTestId('ai-entra-deployment')).toBeNull();
   });
 
   it('explains every missing prerequisite together, including consent, without sending', () => {

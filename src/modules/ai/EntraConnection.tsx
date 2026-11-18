@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Button, Field, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
+import { Badge, Button, Field, Input, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { ArrowSync20Regular, PersonKey20Regular, ShieldKeyhole20Regular, SignOut20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import {
-  RelayError, assignEntraRole, inspectEntraInstance, listEntraInstances, signOutEntra, startEntraSignIn,
+  RelayError, assignEntraRole, inspectEntraInstance, listEntraInstances, listEntraTenants, signOutEntra, startEntraSignIn,
   type FoundryInstanceDetail, type FoundryInstanceInfo, type FoundryTenantInfo,
 } from './relayClient.ts';
 import { useAiSettings } from './settingsStore.ts';
@@ -19,6 +19,7 @@ const entraMessage = (error: unknown): EntraMessage => {
 };
 const POLL_MS = 2_000;
 const POLL_LIMIT_MS = 10 * 60_000;
+const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Deployments the app prefers when a resource has several (the router first, then the latest chat model). */
 const PREFERRED = [/^model-router/i, /gpt-chat-latest/i, /chat-latest/i];
 const preferredDeployment = (d: FoundryInstanceDetail['deployments']) =>
@@ -38,40 +39,65 @@ export function EntraConnection() {
   const { update, refreshRelay } = useAiSettings.getState();
   const [instances, setInstances] = useState<FoundryInstanceInfo[] | null>(null);
   const [tenants, setTenants] = useState<FoundryTenantInfo[]>([]);
+  const [directory, setDirectory] = useState(() => tenantId || entra?.tenantId || '');
+  const [directoryInput, setDirectoryInput] = useState('');
+  const [reload, setReload] = useState(0);
   const [detail, setDetail] = useState<FoundryInstanceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [inspecting, setInspecting] = useState(false);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
   const [signInUrl, setSignInUrl] = useState<string | null>(null);
   const [message, setMessage] = useState<{ intent: 'error' | 'success'; text: string } | null>(null);
   const polling = useRef(0);
+  const instanceRequest = useRef(0);
+  const inspectRequest = useRef(0);
   const signedIn = entra?.signedIn === true;
   const pending = entra?.signIn === 'pending';
   const selected = instances?.find((i) => i.endpoint !== null && i.endpoint === endpoint && i.tenantId === tenantId) ?? null;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await listEntraInstances(AbortSignal.timeout(90_000));
-      setInstances(r.instances);
-      setTenants(r.tenants);
-    } catch (error) {
-      setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  useEffect(() => {
+    if (signedIn && !directory && entra?.tenantId) setDirectory(entra.tenantId.toLowerCase());
+  }, [signedIn, directory, entra?.tenantId]);
 
   useEffect(() => {
-    if (signedIn && instances === null && !loading) void load();
-  }, [signedIn, instances, loading, load]);
+    if (!signedIn) return;
+    let active = true;
+    void listEntraTenants(AbortSignal.timeout(90_000)).then((result) => {
+      if (active) setTenants(result);
+    }, (error: unknown) => {
+      if (active) setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
+    });
+    return () => { active = false; };
+  }, [signedIn, entra?.account, reload, t]);
 
-  useEffect(() => () => { polling.current += 1; }, []);
+  useEffect(() => {
+    if (!signedIn || !directory) return;
+    const request = ++instanceRequest.current;
+    setLoading(true);
+    setInstances(null);
+    setNeedsSignIn(false);
+    void listEntraInstances(directory, AbortSignal.timeout(90_000)).then((result) => {
+      if (request === instanceRequest.current) setInstances(result);
+    }, (error: unknown) => {
+      if (request !== instanceRequest.current) return;
+      const code = entraMessage(error);
+      setNeedsSignIn(code === 'interactionRequired' || code === 'authFailed');
+      setMessage({ intent: 'error', text: t(`ai.entra.err.${code}`) });
+    }).finally(() => {
+      if (request === instanceRequest.current) setLoading(false);
+    });
+    return () => { instanceRequest.current += 1; };
+  }, [signedIn, directory, entra?.account, reload, t]);
+
+  useEffect(() => () => { polling.current += 1; inspectRequest.current += 1; }, []);
 
   const inspect = useCallback(async (instance: FoundryInstanceInfo, pickDeployment: boolean) => {
+    const request = ++inspectRequest.current;
     setInspecting(true);
     setDetail(null);
     try {
       const d = await inspectEntraInstance(instance.id, instance.tenantId, AbortSignal.timeout(60_000));
+      if (request !== inspectRequest.current) return;
       setDetail(d);
       const current = useAiSettings.getState().deployment;
       if (pickDeployment || !d.deployments.some((x) => x.name === current)) {
@@ -79,9 +105,9 @@ export function EntraConnection() {
         if (best) update({ deployment: best.name });
       }
     } catch (error) {
-      setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
+      if (request === inspectRequest.current) setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
     } finally {
-      setInspecting(false);
+      if (request === inspectRequest.current) setInspecting(false);
     }
   }, [t, update]);
 
@@ -98,6 +124,7 @@ export function EntraConnection() {
     const run = ++polling.current;
     try {
       const { url } = await startEntraSignIn(tenant);
+      if (polling.current !== run) return;
       if (url) {
         setSignInUrl(url);
         window.open(url, '_blank', 'noopener,noreferrer');
@@ -111,7 +138,8 @@ export function EntraConnection() {
         const state = useAiSettings.getState().entra?.signIn;
         if (state === 'signedIn') {
           setSignInUrl(null);
-          setInstances(null);
+          setMessage(null);
+          setReload((n) => n + 1);
           return;
         }
         if (state !== 'pending') {
@@ -120,24 +148,52 @@ export function EntraConnection() {
           return;
         }
       }
+      if (polling.current === run) {
+        setSignInUrl(null);
+        setMessage({ intent: 'error', text: t('ai.entra.signInFailed') });
+      }
     } catch (error) {
-      setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
+      if (polling.current === run) setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
     }
   };
 
   const signOut = async () => {
     polling.current += 1;
     setSignInUrl(null);
-    await signOutEntra();
+    if (!await signOutEntra()) {
+      setMessage({ intent: 'error', text: t('ai.entra.err.failed') });
+      return;
+    }
+    instanceRequest.current += 1;
+    inspectRequest.current += 1;
     setInstances(null);
     setTenants([]);
     setDetail(null);
+    setDirectory('');
+    setLoading(false);
+    setInspecting(false);
     await refreshRelay();
     setMessage({ intent: 'success', text: t('ai.entra.signedOut') });
   };
 
+  const chooseDirectory = (value: string) => {
+    const next = value.toLowerCase();
+    if (next === directory) return;
+    instanceRequest.current += 1;
+    inspectRequest.current += 1;
+    setDirectory(next);
+    setInstances(null);
+    setDetail(null);
+    setInspecting(false);
+    setNeedsSignIn(false);
+    setMessage(null);
+    update({ endpoint: '', entraTenantId: '', deployment: '' });
+  };
+
   const choose = (id: string) => {
     const instance = instances?.find((i) => i.id === id);
+    inspectRequest.current += 1;
+    setInspecting(false);
     setMessage(null);
     setDetail(null);
     if (!instance?.endpoint) {
@@ -150,19 +206,24 @@ export function EntraConnection() {
 
   const assign = async () => {
     if (!selected) return;
+    const request = ++inspectRequest.current;
     setInspecting(true);
     setMessage(null);
     try {
-      setDetail(await assignEntraRole(selected.id, selected.tenantId));
-      setMessage({ intent: 'success', text: t('ai.entra.assigned') });
+      const result = await assignEntraRole(selected.id, selected.tenantId);
+      if (request === inspectRequest.current) {
+        setDetail(result);
+        setMessage({ intent: 'success', text: t('ai.entra.assigned') });
+      }
     } catch (error) {
-      setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
+      if (request === inspectRequest.current) setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
     } finally {
-      setInspecting(false);
+      if (request === inspectRequest.current) setInspecting(false);
     }
   };
 
-  const missingTenants = tenants.filter((x) => !x.signedIn);
+  const directories = directory && !tenants.some((x) => x.tenantId === directory)
+    ? [...tenants, { tenantId: directory, name: directory, signedIn: false }] : tenants;
 
   return (
     <div className="ai-stack" data-testid="ai-entra">
@@ -179,12 +240,40 @@ export function EntraConnection() {
         )}
         {signedIn && (
           <>
-            <Button icon={loading ? <Spinner size="tiny" /> : <ArrowSync20Regular />} onClick={() => void load()} disabled={loading} data-testid="ai-entra-reload">{t('ai.entra.reload')}</Button>
+            <Button icon={loading ? <Spinner size="tiny" /> : <ArrowSync20Regular />} onClick={() => { setMessage(null); setReload((n) => n + 1); }} disabled={loading} data-testid="ai-entra-reload">{t('ai.entra.reload')}</Button>
             <Button icon={<SignOut20Regular />} onClick={() => void signOut()} data-testid="ai-entra-signout">{t('ai.entra.signOut')}</Button>
           </>
         )}
       </div>
       {signInUrl && <p className="muted" data-testid="ai-entra-signin-link">{t('ai.entra.signInPending')} <Link href={signInUrl} target="_blank" rel="noopener noreferrer">{t('ai.entra.openSignIn')}</Link></p>}
+      {signedIn && (
+        <>
+          <Field label={t('ai.entra.directory')} hint={t('ai.entra.directoryHint')}>
+            <Select value={directory} onChange={(_, d) => chooseDirectory(d.value)} data-testid="ai-entra-directory">
+              <option value="" disabled>{t('ai.entra.pickDirectory')}</option>
+              {directories.map((x) => <option key={x.tenantId} value={x.tenantId}>{x.name === x.tenantId ? x.tenantId : `${x.name} (${x.tenantId})`}</option>)}
+            </Select>
+          </Field>
+          <Field label={t('ai.entra.directoryId')} hint={t('ai.entra.directoryIdHint')}>
+            <Input value={directoryInput} onChange={(_, d) => setDirectoryInput(d.value)} data-testid="ai-entra-directory-id" />
+          </Field>
+          <div className="ai-row">
+            <Button onClick={() => {
+              const id = directoryInput.trim();
+              if (!TENANT_ID.test(id)) {
+                setMessage({ intent: 'error', text: t('ai.entra.err.invalidTenant') });
+                return;
+              }
+              chooseDirectory(id);
+            }} data-testid="ai-entra-directory-use">{t('ai.entra.useDirectory')}</Button>
+          </div>
+          {directory && (
+            <Button onClick={() => void signIn(directory)} disabled={pending} data-testid="ai-entra-directory-signin">
+              {t(needsSignIn ? 'ai.entra.signInRequired' : 'ai.entra.signInDirectory')}
+            </Button>
+          )}
+        </>
+      )}
       {signedIn && loading && instances === null && <p className="muted" role="status"><Spinner size="tiny" /> {t('ai.entra.loading')}</p>}
       {signedIn && instances !== null && instances.length === 0 && <p className="muted" data-testid="ai-entra-empty">{t('ai.entra.noInstances')}</p>}
       {signedIn && instances !== null && instances.length > 0 && (
@@ -228,16 +317,6 @@ export function EntraConnection() {
               <Button icon={<ShieldKeyhole20Regular />} onClick={() => void assign()} disabled={inspecting} data-testid="ai-entra-assign">{t('ai.entra.assign')}</Button>
             </div>
           )}
-        </div>
-      )}
-      {signedIn && missingTenants.length > 0 && (
-        <div className="ai-stack" data-testid="ai-entra-tenants">
-          <span className="ai-label">{t('ai.entra.otherTenants')}</span>
-          <div className="ai-row">
-            {missingTenants.map((x) => (
-              <Button key={x.tenantId} size="small" onClick={() => void signIn(x.tenantId)} disabled={pending}>{t('ai.entra.signInTenant', { name: x.name || x.tenantId })}</Button>
-            ))}
-          </div>
         </div>
       )}
       {message && <MessageBar intent={message.intent} data-testid="ai-entra-msg"><MessageBarBody>{message.text}</MessageBarBody></MessageBar>}

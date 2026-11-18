@@ -8,6 +8,7 @@ export interface SetupOptions {
   lang?: Lang;
   audience?: 'internal' | 'external';
   motion?: 'system' | 'reduce' | 'full';
+  showSplash?: boolean;
   skipOpening?: boolean;
   /** Skip start-up step 2 (company and project selection). Defaults to skipOpening. */
   skipLaunch?: boolean;
@@ -17,10 +18,10 @@ export interface SetupOptions {
 
 /** Seed persisted settings before the app boots (same shape zustand/persist writes). */
 export async function setup(page: Page, opts: SetupOptions = {}) {
-  const { lang = 'ja', audience = 'internal', motion = 'reduce', skipOpening = true } = opts;
+  const { lang = 'ja', audience = 'internal', motion = 'reduce', showSplash = false, skipOpening = true } = opts;
   const skipLaunch = opts.skipLaunch ?? skipOpening;
   const deviceId = opts.deviceId === undefined ? randomUUID() : opts.deviceId;
-  await page.addInitScript(({ lang, audience, motion, skipOpening, skipLaunch, deviceId }) => {
+  await page.addInitScript(({ lang, audience, motion, showSplash, skipOpening, skipLaunch, deviceId }) => {
     if (deviceId === null) localStorage.removeItem('bas.device.test');
     else localStorage.setItem('bas.device.test', deviceId);
     if (skipOpening) sessionStorage.setItem('bas.skipOpeningOnce', '1');
@@ -28,10 +29,10 @@ export async function setup(page: Page, opts: SetupOptions = {}) {
     sessionStorage.setItem('bas.e2e.seeded', '1');
     if (skipLaunch) sessionStorage.setItem('bas.launchChosen', '1');
     localStorage.setItem('bas.settings', JSON.stringify({
-      state: { lang, theme: 'dark', motion, muted: true, bgm: true, sfx: true, volume: 0.5, audience },
+      state: { lang, theme: 'dark', motion, showSplash, muted: true, bgm: true, sfx: true, volume: 0.5, audience },
       version: 1,
     }));
-  }, { lang, audience, motion, skipOpening, skipLaunch, deviceId });
+  }, { lang, audience, motion, showSplash, skipOpening, skipLaunch, deviceId });
 }
 
 export async function open(page: Page, route: string, opts: SetupOptions = {}) {

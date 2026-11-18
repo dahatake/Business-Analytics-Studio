@@ -20,7 +20,7 @@ import { MAX_PURPOSE_SEARCHES, WorkIqError, purposeTopics, type WorkIqQuestion }
 import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
 import { blankTestImage } from '../server/media.ts';
-import { foundryMediaEndpoint } from '../src/ai/mediaConnection.ts';
+import { foundryMediaEndpoint, separateSpeechTestUrl, validateSeparateSpeech } from '../src/ai/mediaConnection.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
@@ -520,6 +520,19 @@ describe('relay secrets and connection', () => {
     expect(readFileSync(join(vault.dir, 'connection.json'), 'utf8')).toBe(before);
   });
 
+  it('reports an Azure content-filter refusal as contentFiltered without retrying or passing provider content', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', c), { fetch: verifiedReply });
+    let calls = 0;
+    const fetch: typeof globalThis.fetch = async () => {
+      calls++;
+      return Response.json({ error: { code: 'content_filter', message: `secret ${FAKE_KEY}`, innererror: { code: 'ResponsibleAIPolicyViolation', content_filter_result: { jailbreak: { filtered: true, detected: true } } } } }, { status: 400 });
+    };
+    const result = await call(req('POST', '/relay/ai', { use: 'kpiOkrDraft', lang: 'ja', prompt: 'Synthetic.', maxOutputTokens: 100, timeoutMs: 1000 }), { fetch });
+    expect(result).toEqual({ status: 502, body: { error: 'contentFiltered', providerStatus: 400 } });
+    expect(calls).toBe(1);
+  });
+
   it('passes only the sanitized longest Foundry retry delay on HTTP 429', async () => {
     vault.set('foundryKey', FAKE_KEY);
     await call(req('PUT', '/relay/connection', c), { fetch: verifiedReply });
@@ -613,7 +626,7 @@ describe('relay secrets and connection', () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null } } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null }, speechConnection: { route: 'foundry', eligible: false, separate: null } } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -2100,6 +2113,153 @@ describe('FR-328 Azure AI Speech and Azure AI Vision through the Microsoft Found
     expect((await test('speech', { fetch: ok.fetch, ...fixed })).status).toBe(200);
     expect(await test('speech', { fetch: ok.fetch, ...fixed })).toEqual({ status: 429, body: { error: 'tooSoon' } });
     expect((await test('vision', { fetch: recorder(() => new Response(JSON.stringify({ modelVersion: 'x', metadata: {} }))).fetch, ...fixed })).status).toBe(200);
+    expect(ok.sent).toHaveLength(1);
+  });
+});
+describe('FR-329 Speech on a separate Azure AI Speech resource, offered once Speech on Foundry is verified', () => {
+  const TENANT = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
+  const FOUNDRY = 'https://bas-foundry.openai.azure.com/openai/v1';
+  const SEPARATE_KEY = 'speech-FAKE-SEPARATE-KEY-0123456789';
+  const SEPARATE_HOST = 'https://bas-speech.cognitiveservices.azure.com';
+  const testConfig: RelayConfig = { ...STRICT_RELAY_CONFIG, testOutbound: true };
+  let clock = 19_000_000;
+  let account: { username: string; tenantId: string } | null;
+  const entra: EntraTokens = {
+    account: () => account,
+    startSignIn: async () => ({ url: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?x=1' }),
+    signInState: () => ({ status: account ? 'signedIn' : 'idle' }),
+    signOut: async () => { account = null; },
+    token: async (_scope, tenantId) => {
+      if (!account) throw new EntraError('notSignedIn');
+      return { token: 'entra-token-data', objectId: 'oid', tenantId: tenantId ?? account.tenantId };
+    },
+  };
+  const ctx = (extra: Partial<RelayContext> = {}): Partial<RelayContext> => ({ config: testConfig, now: () => (clock += 10_000), entra, ...extra });
+  type Sent = { url: string; headers: Record<string, string> };
+  const recorder = (reply: () => Response) => {
+    const sent: Sent[] = [];
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      sent.push({ url: String(url), headers: init?.headers as Record<string, string> });
+      return reply();
+    };
+    return { sent, fetch };
+  };
+  type SpeechConnection = { route: string; eligible: boolean; separate: { auth: string; endpoint: string | null; region: string | null; verifiedAt: string | null } | null };
+  const status = async () => ((await call(req('GET', '/relay/status'), ctx())).body as { speechConnection: SpeechConnection }).speechConnection;
+  const verifyFoundrySpeech = async (auth: 'apiKey' | 'entraId') => {
+    if (auth === 'apiKey') vault.set('foundryKey', FAKE_KEY);
+    const body = { endpoint: FOUNDRY, deployment: 'model-router', ...(auth === 'entraId' ? { auth, tenantId: TENANT } : {}) };
+    expect((await call(req('PUT', '/relay/connection', body), ctx({ fetch: verifiedReply }))).status).toBe(200);
+    expect((await call(req('PUT', '/relay/media/speech', {}), ctx({ fetch: recorder(() => new Response('[]')).fetch }))).status).toBe(200);
+  };
+  const separate = (body: unknown, extra: Partial<RelayContext> = {}) => call(req('PUT', '/relay/speech/separate', body), ctx(extra));
+  const route = (r: string) => call(req('PUT', '/relay/speech/route', { route: r }), ctx());
+
+  beforeEach(() => { account = { username: 'user@contoso.example', tenantId: TENANT }; });
+  afterEach(() => { for (const a of answers) expect(JSON.stringify(a.body)).not.toMatch(/FAKE|entra-token/); });
+
+  it('validates the separate connection the same way in the relay and the settings screen', () => {
+    expect(validateSeparateSpeech({ auth: 'apiKey', region: 'JapanEast', key: ' k ' })).toEqual({ ok: true, value: { auth: 'apiKey', endpoint: null, region: 'japaneast' }, key: 'k' });
+    expect(validateSeparateSpeech({ auth: 'apiKey', endpoint: 'https://japaneast.api.cognitive.microsoft.com/' })).toMatchObject({ ok: true, value: { endpoint: 'https://japaneast.api.cognitive.microsoft.com', region: 'japaneast' } });
+    expect(validateSeparateSpeech({ auth: 'apiKey', endpoint: 'https://japaneast.api.cognitive.microsoft.com', region: 'eastus' })).toEqual({ ok: false, error: 'regionMismatch' });
+    expect(validateSeparateSpeech({ auth: 'apiKey', endpoint: `${SEPARATE_HOST}/tts` })).toEqual({ ok: false, error: 'invalidEndpoint' });
+    expect(validateSeparateSpeech({ auth: 'apiKey', endpoint: 'https://evil.example' })).toEqual({ ok: false, error: 'invalidEndpoint' });
+    expect(validateSeparateSpeech({ auth: 'apiKey' })).toEqual({ ok: false, error: 'invalidRegion' });
+    expect(validateSeparateSpeech({ auth: 'apiKey', region: 'japaneast', key: 'a\nb' })).toEqual({ ok: false, error: 'invalidKey' });
+    expect(validateSeparateSpeech({ auth: 'entraId', endpoint: 'https://japaneast.api.cognitive.microsoft.com' })).toEqual({ ok: false, error: 'customDomainRequired' });
+    expect(validateSeparateSpeech({ auth: 'entraId', endpoint: SEPARATE_HOST, key: 'k' })).toEqual({ ok: false, error: 'invalidBody' });
+    expect(validateSeparateSpeech({ auth: 'apiKey', region: 'japaneast', extra: 1 })).toEqual({ ok: false, error: 'invalidBody' });
+    expect(separateSpeechTestUrl({ auth: 'apiKey', endpoint: SEPARATE_HOST, region: null })).toBe(`${SEPARATE_HOST}/tts/cognitiveservices/voices/list`);
+    expect(separateSpeechTestUrl({ auth: 'apiKey', endpoint: 'https://japaneast.api.cognitive.microsoft.com', region: 'japaneast' })).toBe('https://japaneast.tts.speech.microsoft.com/cognitiveservices/voices/list');
+  });
+
+  it('refuses the separate route until the Foundry connection and Speech on it are verified, without calling out', async () => {
+    const never = recorder(() => new Response('[]'));
+    expect(await status()).toEqual({ route: 'foundry', eligible: false, separate: null });
+    expect(await separate({ auth: 'apiKey', region: 'japaneast', key: SEPARATE_KEY }, { fetch: never.fetch })).toEqual({ status: 409, body: { error: 'notEligible' } });
+    expect(await route('separate')).toEqual({ status: 409, body: { error: 'notEligible' } });
+    expect((await route('foundry')).status).toBe(200);
+    expect((await call(req('PUT', '/relay/secrets/speechSeparateKey', { value: SEPARATE_KEY }))).status).toBe(404);
+
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', { endpoint: FOUNDRY, deployment: 'model-router' }), ctx({ fetch: verifiedReply }))).status).toBe(200);
+    expect((await status()).eligible).toBe(false); // Foundry verified, Speech on it not yet
+    expect(await separate({ auth: 'apiKey', region: 'japaneast', key: SEPARATE_KEY }, { fetch: never.fetch })).toEqual({ status: 409, body: { error: 'notEligible' } });
+    expect(never.sent).toEqual([]);
+    expect(vault.get('speechSeparateKey')).toBeUndefined();
+  });
+
+  it('saves the separate API-key connection only after its test passes, keeps the key in the vault, and goes back to Foundry at any time', async () => {
+    await verifyFoundrySpeech('apiKey');
+    expect(await status()).toEqual({ route: 'foundry', eligible: true, separate: null });
+
+    const failing = recorder(() => new Response('{}', { status: 401 }));
+    expect(await separate({ auth: 'apiKey', region: 'japaneast', key: SEPARATE_KEY }, { fetch: failing.fetch })).toEqual({ status: 502, body: { error: 'unauthorized', providerStatus: 401 } });
+    expect(failing.sent).toEqual([{ url: 'https://japaneast.tts.speech.microsoft.com/cognitiveservices/voices/list', headers: { 'Ocp-Apim-Subscription-Key': SEPARATE_KEY } }]);
+    expect(await status()).toEqual({ route: 'foundry', eligible: true, separate: null });
+    expect(vault.get('speechSeparateKey')).toBeUndefined();
+
+    const ok = recorder(() => new Response('[]'));
+    const saved = await separate({ auth: 'apiKey', region: 'japaneast', key: SEPARATE_KEY }, { fetch: ok.fetch });
+    expect(saved).toEqual({ status: 200, body: { route: 'separate', eligible: true, separate: { auth: 'apiKey', endpoint: null, region: 'japaneast', verifiedAt: expect.any(String) } } });
+    expect(vault.get('speechSeparateKey')).toBe(SEPARATE_KEY);
+    expect(readFileSync(join(vault.dir, 'speech.json'), 'utf8')).not.toContain(SEPARATE_KEY);
+    expect(vault.status()).toEqual({ foundryKey: true });
+
+    // A retest without a key reuses the saved one; a failed retest leaves the saved connection and route as they were.
+    const custom = recorder(() => new Response('{}', { status: 500 }));
+    expect((await separate({ auth: 'apiKey', endpoint: SEPARATE_HOST }, { fetch: custom.fetch })).status).toBe(502);
+    expect(custom.sent[0]).toEqual({ url: `${SEPARATE_HOST}/tts/cognitiveservices/voices/list`, headers: { 'Ocp-Apim-Subscription-Key': SEPARATE_KEY } });
+    expect(await status()).toMatchObject({ route: 'separate', separate: { region: 'japaneast', endpoint: null } });
+
+    expect(await route('foundry')).toMatchObject({ status: 200, body: { route: 'foundry', separate: { verifiedAt: expect.any(String) } } });
+    expect(await route('separate')).toMatchObject({ status: 200, body: { route: 'separate' } });
+
+    // Another key on the separate resource drops its check; the saved route is reported as is, never silently changed.
+    vault.set('speechSeparateKey', `${SEPARATE_KEY}-replaced`);
+    expect(await status()).toMatchObject({ route: 'separate', separate: { verifiedAt: null } });
+    expect((await route('foundry')).status).toBe(200);
+    expect(await route('separate')).toEqual({ status: 409, body: { error: 'separateNotVerified' } });
+
+    expect(await call(req('DELETE', '/relay/speech/separate'), ctx())).toEqual({ status: 200, body: { route: 'foundry', eligible: true, separate: null } });
+    expect(vault.get('speechSeparateKey')).toBeUndefined();
+    expect(await call(req('PUT', '/relay/speech/route', { route: 'cloud' }), ctx())).toEqual({ status: 400, body: { error: 'invalidBody' } });
+  });
+
+  it('lets an existing separate route go back to Foundry, but not be re-chosen, once Speech on Foundry is no longer verified', async () => {
+    await verifyFoundrySpeech('apiKey');
+    expect((await separate({ auth: 'apiKey', region: 'japaneast', key: SEPARATE_KEY }, { fetch: recorder(() => new Response('[]')).fetch })).status).toBe(200);
+    vault.set('foundryKey', `${FAKE_KEY}-replaced`);
+    expect(await status()).toMatchObject({ route: 'separate', eligible: false, separate: { verifiedAt: expect.any(String) } });
+    expect((await route('foundry')).status).toBe(200);
+    expect(await route('separate')).toEqual({ status: 409, body: { error: 'notEligible' } });
+  });
+
+  it('uses the Foundry Microsoft Entra sign-in and tenant on a custom subdomain and binds the check to the account', async () => {
+    await verifyFoundrySpeech('apiKey');
+    expect(await separate({ auth: 'entraId', endpoint: SEPARATE_HOST })).toEqual({ status: 400, body: { error: 'notEntra' } });
+
+    await verifyFoundrySpeech('entraId');
+    expect(await separate({ auth: 'entraId', endpoint: 'https://japaneast.api.cognitive.microsoft.com' })).toEqual({ status: 400, body: { error: 'customDomainRequired' } });
+    const ok = recorder(() => new Response('[]'));
+    expect(await separate({ auth: 'entraId', endpoint: SEPARATE_HOST }, { fetch: ok.fetch })).toMatchObject({ status: 200, body: { route: 'separate', separate: { auth: 'entraId', endpoint: SEPARATE_HOST, verifiedAt: expect.any(String) } } });
+    expect(ok.sent).toEqual([{ url: `${SEPARATE_HOST}/tts/cognitiveservices/voices/list`, headers: { Authorization: 'Bearer entra-token-data' } }]);
+
+    account = { username: 'someone-else@contoso.example', tenantId: TENANT };
+    expect(await status()).toMatchObject({ route: 'separate', separate: { verifiedAt: null } });
+    account = { username: 'user@contoso.example', tenantId: TENANT };
+    expect(await status()).toMatchObject({ separate: { verifiedAt: expect.any(String) } });
+  });
+
+  it('refuses a disallowed outbound host and repeated tests within five seconds', async () => {
+    await verifyFoundrySpeech('apiKey');
+    const ok = recorder(() => new Response('[]'));
+    const body = { auth: 'apiKey', region: 'japaneast', key: SEPARATE_KEY };
+    expect(await separate(body, { fetch: ok.fetch, config: { ...testConfig, outboundHosts: ['bas-foundry.openai.azure.com'] } })).toEqual({ status: 400, body: { error: 'hostNotAllowed' } });
+    const lastCall = new Map<string, number>();
+    const fixed = { now: () => clock, lastCall };
+    expect((await separate(body, { fetch: ok.fetch, ...fixed })).status).toBe(200);
+    expect(await separate(body, { fetch: ok.fetch, ...fixed })).toEqual({ status: 429, body: { error: 'tooSoon' } });
     expect(ok.sent).toHaveLength(1);
   });
 });

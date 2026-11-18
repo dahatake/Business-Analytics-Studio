@@ -45,6 +45,13 @@ export type FieldValue = z.infer<typeof FieldValueSchema>;
 export const SignOffSchema = z.object({ at: z.string(), by: z.string() });
 export type SignOff = z.infer<typeof SignOffSchema>;
 
+/** One output item of a step as it was when the step was confirmed: its content hash detects later changes. */
+export const HandoffItemSchema = z.object({ id: z.string(), kind: z.string(), label: z.string(), hash: z.string() });
+export type HandoffItem = z.infer<typeof HandoffItemSchema>;
+/** A confirmed step: who confirmed it, the items it hands to the next step and the upstream items it was built on. */
+export const HandoffSchema = z.object({ at: z.string(), by: z.string(), items: z.array(HandoffItemSchema), upstream: z.string() });
+export type Handoff = z.infer<typeof HandoffSchema>;
+
 /** A judging criterion the project decided itself, with who set it and when. */
 export const CriterionSchema = z.object({ value: z.number().min(PAYBACK_LIMIT_RANGE.min).max(PAYBACK_LIMIT_RANGE.max), at: z.string(), by: z.string() });
 export type Criterion = z.infer<typeof CriterionSchema>;
@@ -60,6 +67,8 @@ export const DeliverableDataSchema = z.object({
   })).optional(),
   /** Project-specific judging criteria. Absent = the app's defaults. A broken value falls back to the default. */
   criteria: z.object({ paybackMaxYears: CriterionSchema.optional().catch(undefined) }).optional().catch(undefined),
+  /** step → the person's confirmation that the step is finished and its items go to the next step (handoff.ts). */
+  handoffs: z.record(z.string(), HandoffSchema).optional().catch(undefined),
 });
 export type DeliverableData = z.infer<typeof DeliverableDataSchema>;
 
@@ -271,9 +280,13 @@ const dayMs = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
  * last initiative ends (conservative), so the build period is added to investment ÷ annual benefit.
  */
 export function paybackYears(s: EntityOf<'solution'>, inits: EntityOf<'initiative'>[]): number {
-  const own = inits.filter((i) => i.solutionId === s.id);
-  const build = own.length ? Math.max(0, (Math.max(...own.map((i) => dayMs(i.end))) - Math.min(...own.map((i) => dayMs(i.start)))) / YEAR_MS) : 0;
-  return build + (s.annualBenefitJpy > 0 ? s.costJpy / s.annualBenefitJpy : Infinity);
+  return buildYears(s.id, inits) + (s.annualBenefitJpy > 0 ? s.costJpy / s.annualBenefitJpy : Infinity);
+}
+
+/** Years from the start of the solution's first initiative to the end of its last (0 without initiatives). */
+export function buildYears(solutionId: string, inits: EntityOf<'initiative'>[]): number {
+  const own = inits.filter((i) => i.solutionId === solutionId);
+  return own.length ? Math.max(0, (Math.max(...own.map((i) => dayMs(i.end))) - Math.min(...own.map((i) => dayMs(i.start)))) / YEAR_MS) : 0;
 }
 
 export function setPaybackLimit(data: DeliverableData, value: Criterion | null): DeliverableData {

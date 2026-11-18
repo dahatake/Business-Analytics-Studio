@@ -60,6 +60,19 @@ function drafted(c: CheckContext, lang: 'ja' | 'en' = 'ja', audience: 'internal'
 
 const OBJECTIVE = { id: 'obj-mtp-1', text: '中期経営計画: 2027 年度までに納期遵守率 98 %' };
 
+it('passes applied upstream text to the next step draft without leaking it to the external request', () => {
+  const ctx = demoCtx();
+  ctx.deliverables = setField(ctx.deliverables, 'asis', 'problem', { text: 'INTERNAL-UPSTREAM-HYPOTHESIS', author: 'ai', mock: true, updatedAt: 'now' });
+  ctx.deliverables = setField(ctx.deliverables, 'solution', 'options', { text: 'FUTURE-STEP-TEXT', author: 'human', updatedAt: 'now' });
+  const input = { step: 'tobe' as const, ctx, lang: 'en' as const, audience: 'internal' as const };
+  const prompt = draftPrompt(input);
+  expect(prompt).toContain('"problem":{"text":"INTERNAL-UPSTREAM-HYPOTHESIS","author":"ai","mock":true}');
+  expect(prompt).not.toContain('FUTURE-STEP-TEXT');
+  expect(prompt).toContain('not independently verified evidence');
+  expect(draftPrompt({ ...input, audience: 'external' })).not.toContain('INTERNAL-UPSTREAM-HYPOTHESIS');
+  expect(draftPrompt({ ...input, step: 'asis' })).not.toContain('INTERNAL-UPSTREAM-HYPOTHESIS');
+});
+
 describe('Copilot task repairs', () => {
   afterEach(() => {
     setLiveTransport(null);

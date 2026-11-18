@@ -205,6 +205,40 @@ them stay off until C-07 is resolved; testing already works.
   verification time or `null`) and never a key or a token.
 - **Upgrade.** `GET /relay/status` deletes FR-324's vault secrets `speechKey` and `visionKey`; the settings store
   (version 6) drops the old Speech endpoint, region and drafts.
+- **MAI models (D-31, checked 2026-11-19).** Not used. MAI-Voice-2.1 / MAI-Voice-2.1-Flash are preview voices served by
+  the same Speech API (`<locale>-<name>:MAI-Voice-2.1` in SSML), and they have no `ja-JP` voice: the voices list of a
+  Japan East Foundry resource returned 289 MAI voices in 26 locales and none in `ja-JP`. No MAI model reads text from
+  images (MAI-Image generates images; MAI-Thinking-1 takes text only), so Vision stays. The app has no speech-to-text
+  feature, so MAI-Transcribe does not apply. To recheck, look for `ja-JP` voices with `MAI-Voice` in their name in the
+  same free voices list that the Speech test calls.
+
+### Separate Azure AI Speech connection (FR-329)
+
+Speech uses the Foundry connection by default. Once both the Foundry connection and the Speech test on it are verified,
+**Speech settings** offers a second choice: **Set up the Speech connection separately** for another Azure AI Speech
+resource. Vision always stays on the Foundry connection. Until both checks hold, the screen shows the condition instead
+of the choice, and the relay refuses the separate route (`409 notEligible`) without calling Azure.
+
+- **Input.** API key: a custom subdomain (`https://<name>.cognitiveservices.azure.com`), a regional endpoint
+  (`https://<region>.api.cognitive.microsoft.com`) or only a region (`japaneast`), plus the key. Microsoft Entra ID: a
+  custom subdomain only (regional endpoints do not accept Entra ID tokens), and only when the Foundry connection uses
+  Entra ID; the relay uses the same sign-in and tenant (`400 notEntra` otherwise).
+- **Test and save.** `PUT /relay/speech/separate` with `{ auth, endpoint?, region?, key? }` checks the input, the
+  eligibility, `BAS_RELAY_OUTBOUND_HOSTS` (`hostNotAllowed`) and one test every 5 s (`429 tooSoon`). It then calls
+  the free voices list: `https://<name>.cognitiveservices.azure.com/tts/cognitiveservices/voices/list` or
+  `https://<region>.tts.speech.microsoft.com/cognitiveservices/voices/list`. Only when the test succeeds does it save
+  `speech.json`, switch Speech to the separate connection and, for API key, store the key in the vault as
+  `speechSeparateKey`. A blank key reuses the saved one. A failed or aborted test changes nothing, and the current
+  connection stays in use.
+- **Saved state.** `speech.json` holds the route, the endpoint or region, the auth method, the tenant and a signature
+  bound to the key (API key) or to the signed-in account and tenant (Entra ID, vault key `foundryEntraKey`). If the key
+  or the account changes, the separate connection shows as unverified; Speech does not silently fall back to Foundry.
+  `speechSeparateKey` is relay-only: `/relay/secrets/speechSeparateKey` answers 404, and no response returns the key.
+- **Switch and delete.** `PUT /relay/speech/route` with `{ route: 'foundry' | 'separate' }` returns to the Foundry
+  connection at any time. Switching to `separate` needs eligibility and a still-valid separate test
+  (`409 separateNotVerified`). `DELETE /relay/speech/separate` removes `speech.json`'s connection and the key.
+- **Status.** `GET /relay/status` adds `speechConnection: { route, eligible, separate: { auth, endpoint, region,
+  verifiedAt } | null }`.
 
 ## Environment variables
 

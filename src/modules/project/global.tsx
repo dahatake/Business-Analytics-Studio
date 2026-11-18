@@ -10,6 +10,7 @@ import { navigate, hrefFor } from '../../state/router.ts';
 import { ExportDialog } from './ExportDialog.tsx';
 import { DraftDialog, StepTodoBand, useCheckContext } from './deliverablesUi.tsx';
 import { evaluateStep, progressOf } from './deliverables.ts';
+import { handoffViews } from './handoff.ts';
 import { useProjTransient } from './stores.ts';
 import './project.css';
 
@@ -71,10 +72,11 @@ function WorkTargetMenu() {
 
 /** FR-136 / G-006: the five improvement steps (PARAM-030), current step marked, keyboard operable, ≥ 44 px (PARAM-086). FR-317: a click also opens the step dashboard. */
 function Stepper() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { step } = useActiveProject();
   const setStep = useProjects((s) => s.setStep);
   const ctx = useCheckContext();
+  const handoffs = handoffViews(ctx, lang);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const current = IMPROVEMENT_STEPS.indexOf(step);
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -98,7 +100,8 @@ function Stepper() {
                 aria-current={isCurrent ? 'step' : undefined}
                 data-step={s}
                 data-complete={complete}
-                title={`${i + 1} ${t(`proj.step.${s}`)}${complete ? ` — ${t('dlv.status.done')}` : ''}`}
+                data-handoff={handoffs[i]?.status}
+                title={`${i + 1} ${t(`proj.step.${s}`)}${complete ? ` — ${t('dlv.status.done')}` : ''} — ${t(`dlv.handoff.status.${handoffs[i]?.status ?? 'none'}`)}`}
                 onClick={() => { setStep(s); navigate(hrefFor('/step', { step: s })); }}
                 onKeyDown={(e) => onKey(e, i)}
               >

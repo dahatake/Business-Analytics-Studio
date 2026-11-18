@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { DEFAULT_MONTHLY_BUDGET_JPY } from '../src/ai/policy.ts';
 import { loaded } from '../src/data/pack.ts';
-import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, isMediaConfigured, liveReady, parseBudget, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
+import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, isMediaConfigured, isSpeechReady, liveReady, parseBudget, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
 import {
@@ -458,6 +458,15 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(isMediaConfigured({ media, entra: { signedIn: true } as never }, 'vision')).toBe(false);
     expect(isMediaConfigured({ media: { ...media, auth: 'apiKey' }, entra: null }, 'speech')).toBe(true);
     expect(isMediaConfigured({ media: { ...media, endpoint: null, auth: null, unavailable: 'noConnection' }, entra: { signedIn: true } as never }, 'speech')).toBe(false);
+  });
+
+  it('treats Speech as ready by the chosen route: Foundry check, or the separate resource check without falling back (FR-329)', () => {
+    const media = { endpoint: 'https://bas.cognitiveservices.azure.com', auth: 'apiKey' as const, unavailable: null, verifiedAt: { speech: '2026-11-11T00:00:00Z', vision: null } };
+    const separate = { auth: 'apiKey' as const, endpoint: null, region: 'japaneast', verifiedAt: '2026-11-19T00:00:00Z' };
+    expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'foundry', eligible: true, separate } })).toBe(true);
+    expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(true);
+    expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'separate', eligible: true, separate: { ...separate, verifiedAt: null } } })).toBe(false);
+    expect(isSpeechReady({ media, entra: { signedIn: false } as never, speechConnection: { route: 'separate', eligible: true, separate: { ...separate, auth: 'entraId', endpoint: 'https://my-speech.cognitiveservices.azure.com', region: null } } })).toBe(false);
   });  it('accepts only whole JPY ≥ 0 as the budget', () => {
     expect(parseBudget('100000')).toBe(100_000);
     expect(parseBudget('0')).toBe(0);

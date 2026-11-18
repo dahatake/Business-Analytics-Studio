@@ -1,7 +1,7 @@
 /**
  * FR-326: industry archetypes for resource optimization. The customer's industry text (as entered by the user, or the
  * pack's company.industry) decides which resources and which demand the optimization looks at, and which assumptions
- * fill the numbers a pack rarely states (PARAM-159, PARAM-160).
+ * fill the numbers a pack rarely states (PARAM-164, PARAM-165).
  */
 export const ARCHETYPES = [
   'manufacturing', 'retail', 'logistics', 'itServices', 'healthcare', 'construction', 'energy', 'finance', 'public', 'generic',
@@ -14,10 +14,10 @@ export type Lens = 'people' | 'network';
 export interface ArchetypeProfile {
   /** The lens an expert of the industry starts from when the data for it exists. */
   preferredLens: Lens;
-  /** PARAM-159: productive hours per person per month and the utilization ceiling the plan should respect. */
+  /** PARAM-164: productive hours per person per month and the utilization ceiling the plan should respect. */
   hoursPerPersonMonth: number;
   maxUtilization: number;
-  /** PARAM-160: hours a month one work item of medium impact (3 of 5) needs when the pack states no effort. */
+  /** PARAM-165: hours a month one work item of medium impact (3 of 5) needs when the pack states no effort. */
   effortBaseHours: number;
 }
 

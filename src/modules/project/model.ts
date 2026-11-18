@@ -112,6 +112,13 @@ export const AnalysisSchema = z.object({
   weights: z.record(z.string(), z.number()),
   createdAt: z.string(),
   updatedAt: z.string(),
+  draft: z.object({
+    items: z.array(AnalysisItemSchema),
+    baseline: z.string(),
+    lang: z.enum(['ja', 'en']),
+    audience: z.enum(['internal', 'external']),
+    at: z.string(),
+  }).optional(),
 });
 export type Analysis = z.infer<typeof AnalysisSchema>;
 

@@ -129,25 +129,30 @@ export function ResourceFlowMap({ scenario, view, selected, onSelect, unit }: Pr
               key={p.id}
               className={`res-node res-pool${nodeClass(p.id)}${over ? ' is-over' : ''}${p.off ? ' is-off' : ''}`}
               transform={`translate(0 ${y})`}
-              role="button"
-              tabIndex={0}
-              aria-pressed={selected?.id === p.id}
-              aria-label={t('res.map.poolAria', { name, capacity: fmt.integer(cap), load: fmt.integer(load), unit, util: Number.isFinite(util) ? fmt.percent(util) : '—' })}
-              data-testid={`resource-node-${p.id}`}
-              onClick={() => onSelect(selected?.id === p.id ? null : sel)}
-              onKeyDown={(e) => keySelect(e, sel)}
+              data-node={p.id}
             >
-              <title>{name}</title>
               <rect className="res-node-box" width={NODE_W} height={ROW_H} rx={8} />
-              <text className="res-node-name" x={12} y={21}>{clip(name, 24)}</text>
-              <text className="res-node-meta" x={12} y={40}>
+              <text className="res-node-name" aria-hidden="true" x={12} y={21}>{clip(name, 24)}</text>
+              <text className="res-node-meta" aria-hidden="true" x={12} y={40}>
                 {p.off ? t('res.map.off') : `${fmt.integer(load)} / ${fmt.integer(cap)} ${unit}`}
               </text>
               <rect className="res-bar-track" x={12} y={ROW_H - 8} width={NODE_W - 24} height={4} rx={2} />
               <rect className="res-bar-fill" x={12} y={ROW_H - 8} width={(NODE_W - 24) * Math.min(1, cap ? load / cap : 0)} height={4} rx={2} />
               {Number.isFinite(util) && cap > 0 && (
-                <text className="res-node-util" x={NODE_W - 12} y={21} textAnchor="end">{fmt.percent(util)}</text>
+                <text className="res-node-util" aria-hidden="true" x={NODE_W - 12} y={21} textAnchor="end">{fmt.percent(util)}</text>
               )}
+              <rect
+                className="res-node-hit" width={NODE_W} height={ROW_H} rx={8}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected?.id === p.id}
+                aria-label={t('res.map.poolAria', { name, capacity: fmt.integer(cap), load: fmt.integer(load), unit, util: Number.isFinite(util) ? fmt.percent(util) : '—' })}
+                data-testid={`resource-node-${p.id}`}
+                onClick={() => onSelect(selected?.id === p.id ? null : sel)}
+                onKeyDown={(e) => keySelect(e, sel)}
+              >
+                <title>{name}</title>
+              </rect>
             </g>
           );
         })}
@@ -164,23 +169,29 @@ export function ResourceFlowMap({ scenario, view, selected, onSelect, unit }: Pr
               key={d.id}
               className={`res-node res-demand${nodeClass(d.id)}${unmet ? ' is-unmet' : ''}${d.off ? ' is-off' : ''}`}
               transform={`translate(${W - NODE_W} ${y})`}
-              role="button"
-              tabIndex={0}
-              aria-pressed={selected?.id === d.id}
-              aria-label={t('res.map.demandAria', { name, need: fmt.integer(need), served: fmt.integer(served), unit })}
-              data-testid={`resource-node-${d.id}`}
-              onClick={() => onSelect(selected?.id === d.id ? null : sel)}
-              onKeyDown={(e) => keySelect(e, sel)}
+              data-node={d.id}
             >
-              <title>{name}</title>
               <rect className="res-node-box" width={NODE_W} height={ROW_H} rx={8} />
-              <text className="res-node-kind" x={12} y={16}>{t(`res.kind.${d.kind}`)}</text>
-              <text className="res-node-name" x={12} y={33}>{clip(name, 24)}</text>
-              <text className="res-node-meta" x={NODE_W - 12} y={16} textAnchor="end">
+              <text className="res-node-kind" aria-hidden="true" x={12} y={16}>{t(`res.kind.${d.kind}`)}</text>
+              <text className="res-node-name" aria-hidden="true" x={12} y={33}>{clip(name, unmet ? 17 : 24)}</text>
+              {unmet && <text className="res-node-unmet" aria-hidden="true" x={NODE_W - 12} y={33} textAnchor="end">{t('res.map.unmet')}</text>}
+              <text className="res-node-meta" aria-hidden="true" x={NODE_W - 12} y={16} textAnchor="end">
                 {d.off ? t('res.map.off') : `${fmt.integer(served)} / ${fmt.integer(need)}`}
               </text>
               <rect className="res-bar-track" x={12} y={ROW_H - 12} width={NODE_W - 24} height={6} rx={3} />
               <rect className="res-bar-fill" x={12} y={ROW_H - 12} width={(NODE_W - 24) * (need ? served / need : 0)} height={6} rx={3} />
+              <rect
+                className="res-node-hit" width={NODE_W} height={ROW_H} rx={8}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected?.id === d.id}
+                aria-label={`${t('res.map.demandAria', { name, need: fmt.integer(need), served: fmt.integer(served), unit })}${unmet ? ` — ${t('res.map.unmet')}` : ''}`}
+                data-testid={`resource-node-${d.id}`}
+                onClick={() => onSelect(selected?.id === d.id ? null : sel)}
+                onKeyDown={(e) => keySelect(e, sel)}
+              >
+                <title>{name}</title>
+              </rect>
             </g>
           );
         })}

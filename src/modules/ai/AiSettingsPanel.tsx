@@ -11,6 +11,7 @@ import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
 import { MediaConnectionForm } from './MediaConnectionForm.tsx';
+import { SpeechRouteChoice } from './SpeechRouteChoice.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
@@ -190,6 +191,7 @@ export function AiSettingsContent() {
           <div className="ai-stack">
             <p className="muted">{t('ai.speech.lead')}</p>
             <MediaConnectionForm service="speech" />
+            <SpeechRouteChoice />
           </div>
         </Panel>
 

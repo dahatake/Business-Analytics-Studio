@@ -700,6 +700,14 @@ export interface GeneratedBrief {
   check: NumberCheck;
   costJpy?: number | null;
   usage?: AiResponse['usage'];
+  approval?: { at: string; by: string };
+}
+
+export function approveGeneratedBrief(generated: GeneratedBrief, current: StepBrief, lang: Lang, by: string, at: string): GeneratedBrief {
+  if (generated.hash !== current.hash || generated.lang !== lang || generated.check.unverified.length > 0) {
+    throw new Error('The summary is stale or contains unverified figures');
+  }
+  return { ...generated, approval: { by, at } };
 }
 
 /** Entities the live model is grounded in: the items the brief names (already filtered for the audience). */

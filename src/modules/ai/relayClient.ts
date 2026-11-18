@@ -1,7 +1,7 @@
 import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
 import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
-import { MEDIA_TEST_TIMEOUT_MS, type MediaService, type MediaUnavailable } from '../../ai/mediaConnection.ts';
+import { MEDIA_TEST_TIMEOUT_MS, SPEECH_INPUT_ERRORS, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
 export type SecretName = 'foundryKey';
@@ -32,7 +32,20 @@ export interface RelayStatus {
   entra: EntraStatus | null;
   /** FR-324/FR-328: Azure AI Speech / Azure AI Vision through the Foundry connection. */
   media: MediaStatus;
+  /** FR-329: whether Speech uses the Foundry connection or a separate Speech resource. */
+  speechConnection: SpeechConnectionStatus;
 }
+
+/**
+ * `eligible`: the Foundry connection and Speech on it are verified now, so the separate route may be chosen. `route` is
+ * the saved choice as is; `separate.verifiedAt` is null until its test passes and again when its key or sign-in changes.
+ */
+export interface SpeechConnectionStatus {
+  route: SpeechRoute;
+  eligible: boolean;
+  separate: { auth: 'apiKey' | 'entraId'; endpoint: string | null; region: string | null; verifiedAt: string | null } | null;
+}
+export const NO_SPEECH_CONNECTION: SpeechConnectionStatus = { route: 'foundry', eligible: false, separate: null };
 
 /**
  * Speech / Vision use the saved Foundry connection: `endpoint` is the resource's `cognitiveservices.azure.com` host, or
@@ -65,9 +78,19 @@ export interface WorkIqStatus {
 }
 
 const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null,
-  media: NO_MEDIA };
+  media: NO_MEDIA, speechConnection: NO_SPEECH_CONNECTION };
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+function asSpeechConnection(v: unknown): SpeechConnectionStatus {
+  if (!v || typeof v !== 'object') return NO_SPEECH_CONNECTION;
+  const o = v as Record<string, unknown>;
+  const s = o.separate && typeof o.separate === 'object' ? (o.separate as Record<string, unknown>) : null;
+  const separate = s && (s.auth === 'apiKey' || s.auth === 'entraId')
+    ? { auth: s.auth === 'entraId' ? 'entraId' as const : 'apiKey' as const, endpoint: str(s.endpoint), region: str(s.region), verifiedAt: str(s.verifiedAt) }
+    : null;
+  return { route: o.route === 'separate' && separate ? 'separate' : 'foundry', eligible: o.eligible === true, separate };
+}
 
 function asMedia(v: unknown): MediaStatus {
   if (!v || typeof v !== 'object') return NO_MEDIA;
@@ -150,7 +173,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown; media?: unknown };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown; media?: unknown; speechConnection?: unknown };
     return {
       reachable: true,
       secrets: { foundryKey: body.secrets?.foundryKey === true },
@@ -161,6 +184,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
       workiq: asWorkIq(body.workiq),
       entra: asEntra(body.entra),
       media: asMedia(body.media),
+      speechConnection: asSpeechConnection(body.speechConnection),
     };
   } catch {
     return UNREACHABLE;
@@ -549,6 +573,38 @@ export async function mediaAccess(service: MediaService, action: 'access' | 'rol
   const res = await relayFetch(`/relay/media/${service}/${action}`, { ...jsonInit('POST', {}), signal: AbortSignal.timeout(action === 'role' ? 60_000 : 30_000) });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as MediaAccess;
+}
+
+/* ---------- FR-329: Speech on a separate Azure AI Speech resource ---------- */
+
+export const SPEECH_SEPARATE_ERRORS = [...SPEECH_INPUT_ERRORS, ...MEDIA_TEST_ERRORS, 'notEligible', 'notEntra', 'separateNotVerified'] as const;
+export type SpeechSeparateError = (typeof SPEECH_SEPARATE_ERRORS)[number] | 'failed';
+export type SpeechSeparateResult = { ok: true; status: SpeechConnectionStatus } | { ok: false; error: SpeechSeparateError; providerStatus?: number };
+export interface SeparateSpeechInput { auth: 'apiKey' | 'entraId'; endpoint?: string; region?: string; key?: string }
+
+async function speechCall(url: string, init: RequestInit): Promise<SpeechSeparateResult> {
+  try {
+    const res = await relayFetch(url, init);
+    const body = (await res.json()) as { error?: string; providerStatus?: number };
+    if (res.ok) return { ok: true, status: asSpeechConnection(body) };
+    return { ok: false, error: SPEECH_SEPARATE_ERRORS.find((k) => k === body.error) ?? 'failed', ...(typeof body.providerStatus === 'number' ? { providerStatus: body.providerStatus } : {}) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };
+  }
+}
+
+/** Tests the separate resource; only a passing test saves it (and its key, in the vault) and switches Speech to it. */
+export function saveSeparateSpeech(input: SeparateSpeechInput): Promise<SpeechSeparateResult> {
+  return speechCall('/relay/speech/separate', { ...jsonInit('PUT', input), signal: AbortSignal.timeout(MEDIA_TEST_TIMEOUT_MS + 15_000) });
+}
+
+export function setSpeechRoute(route: SpeechRoute): Promise<SpeechSeparateResult> {
+  return speechCall('/relay/speech/route', { ...jsonInit('PUT', { route }), signal: AbortSignal.timeout(15_000) });
+}
+
+/** Deletes the separate connection and its key; Speech goes back to the Foundry connection. */
+export function deleteSeparateSpeech(): Promise<SpeechSeparateResult> {
+  return speechCall('/relay/speech/separate', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
 }
 /* ---------- Microsoft Work IQ (D-14, Microsoft Foundry only) ---------- */
 

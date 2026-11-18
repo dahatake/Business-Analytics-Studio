@@ -4,7 +4,7 @@ import { samplePack } from '../src/data/sample.ts';
 import { loadPack } from '../src/data/pack.ts';
 import type { Entity } from '../src/data/schema.ts';
 import { useProjects } from '../src/state/projects.ts';
-import { computeAnalysis, demoAnalyses, categoryScore, newAnalysis, shownMethodsOf, validateItems } from '../src/modules/project/analysis.ts';
+import { analysisDraftBaseline, approveAnalysisDraft, computeAnalysis, demoAnalyses, categoryScore, newAnalysis, shownMethodsOf, validateItems } from '../src/modules/project/analysis.ts';
 import { itemEntities, itemKey, relatedItems } from '../src/modules/project/analysisLinks.ts';
 import { highlightedScore, layoutPlot } from '../src/modules/project/analysisPlot.ts';
 import { nextDot } from '../src/modules/project/analysisPlotRender.ts';
@@ -20,7 +20,7 @@ import {
 } from '../src/modules/project/exportFormat.ts';
 import { parseDraft, parseSuggestions, suggestionRequest } from '../src/modules/project/mocks.ts';
 import { RECOMMEND_MAX_PROMPT_CHARS } from '../src/ai/policy.ts';
-import type { AnalysisItem, MethodId, ProjectData } from '../src/modules/project/model.ts';
+import { AnalysisSchema, type AnalysisItem, type MethodId, type ProjectData } from '../src/modules/project/model.ts';
 import { exportProject, importProject } from '../src/modules/project/projectFile.ts';
 import { saveAnalysisForProject } from '../src/modules/project/stores.ts';
 import { scopedKey } from '../src/state/projects.ts';
@@ -31,6 +31,31 @@ const analysisOf = (method: MethodId, items: AnalysisItem[], weights: Record<str
 const tEn = (k: Parameters<typeof translate>[1], v?: Parameters<typeof translate>[2]) => translate('en', k, v);
 
 describe('analysis computations (FR-133/134)', () => {
+  it('keeps a persisted AI draft out of calculations until explicit approval and prevents double adoption', () => {
+    const base = newAnalysis('fiveForces', 'Review', 'an-review', '2026-11-18');
+    const draft = { ...base, draft: {
+      items: [{ ...item('rivalry', 5), author: 'ai' as const, mock: true }],
+      baseline: analysisDraftBaseline(base), lang: 'en' as const, audience: 'internal' as const, at: '2026-11-19',
+    } };
+    const restored = AnalysisSchema.parse(JSON.parse(JSON.stringify(draft)));
+    expect(computeAnalysis(restored).overall).toBeNull();
+    const approved = approveAnalysisDraft(restored, 'en', 'internal', '2026-11-20');
+    expect(approved.items).toHaveLength(1);
+    expect(computeAnalysis(approved).overall).toBe(5);
+    expect(approved.draft).toBeUndefined();
+    expect(() => approveAnalysisDraft(approved, 'en', 'internal', 'later')).toThrow();
+    expect(draft.items).toEqual([]);
+  });
+
+  it('refuses analysis draft approval after edits or a change of language or audience', () => {
+    const base = newAnalysis('swot', 'Review', 'an-review', '2026-11-18');
+    const draft = { ...base, draft: { items: [item('strengths', 4)], baseline: analysisDraftBaseline(base), lang: 'ja' as const, audience: 'internal' as const, at: 'now' } };
+    expect(() => approveAnalysisDraft({ ...draft, weights: { strengths: 5 } }, 'ja', 'internal', 'later')).toThrow(/inputs/);
+    expect(() => approveAnalysisDraft({ ...draft, items: [item('threats', 3)] }, 'ja', 'internal', 'later')).toThrow(/inputs/);
+    expect(() => approveAnalysisDraft(draft, 'en', 'internal', 'later')).toThrow();
+    expect(() => approveAnalysisDraft(draft, 'ja', 'external', 'later')).toThrow();
+  });
+
   it('category score is the weighted mean of item scores; weight 0 is ignored', () => {
     const items = [item('strengths', 5, 1, 'a'), item('strengths', 2, 2, 'b'), item('strengths', 1, 0, 'c')];
     expect(categoryScore(items, 'strengths')).toBe(3);

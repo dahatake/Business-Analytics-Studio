@@ -40,7 +40,7 @@ const narrativeCache = new Map<string, AiResponse>();
  * and the assumptions; the facts, the visual and the simulation all read the same scenario.
  */
 export function ResourceWorkbench() {
-  const { t, tx } = useI18n();
+  const { t, tx, lang } = useI18n();
   const { company } = useActiveProject();
   const pack = loaded.pack;
   const entered = company?.industry?.trim();
@@ -49,6 +49,9 @@ export function ResourceWorkbench() {
     () => classifyIndustry(entered || `${pack.company.industry.ja} ${pack.company.industry.en}`),
     [entered, pack.company.industry.ja, pack.company.industry.en],
   );
+  // The pack's industry is classified in both languages; show the matched words of the UI language when there are any.
+  const inLang = detected.matched.filter((w) => /[\u3040-\u9fff]/.test(w) === (lang === 'ja'));
+  const matchedWords = inLang.length ? inLang : detected.matched;
   const [override, setOverride] = useState<Archetype | 'auto'>('auto');
   const archetype = override === 'auto' ? detected.archetype : override;
   const networkAvailable = !!pack.optimization;
@@ -69,7 +72,7 @@ export function ResourceWorkbench() {
               <Badge appearance="filled" color="brand" data-testid="resource-archetype" data-archetype={archetype}>{t(`res.arch.${archetype}`)}</Badge>
             </div>
             <Caption1 className="muted">
-              {detected.matched.length ? t('res.industry.matched', { words: detected.matched.join(', ') }) : t('res.industry.unmatched')}
+              {matchedWords.length ? t('res.industry.matched', { words: matchedWords.join(', ') }) : t('res.industry.unmatched')}
             </Caption1>
           </div>
           <Field label={t('res.industry.override')} className="res-industry-pick">
@@ -124,13 +127,19 @@ function ScenarioView({ archetype, lens, industryLabel }: { archetype: Archetype
   const facts = buildFacts(scenario, {
     archetype, simulatedChanges: changes, hoursPerPerson: people.hoursPerPerson, maxUtilization: people.maxUtilization, effortBase: people.effortBase,
   }, { integer: fmt.integer, number: fmt.number, percent: fmt.percent, unit, name: poolName });
+  // People are never named in the AI prompt (C-03 sends persons only after the FR-219 check); they become aliases.
+  const aiFacts = lens === 'people'
+    ? buildFacts(scenario, {
+      archetype, simulatedChanges: changes, hoursPerPerson: people.hoursPerPerson, maxUtilization: people.maxUtilization, effortBase: people.effortBase,
+    }, { integer: fmt.integer, number: fmt.number, percent: fmt.percent, unit, name: (id) => t('res.ai.personAlias', { n: scenario.model.pools.findIndex((p) => p.id === id) + 1 }) })
+    : facts;
 
   const reset = () => { setOverrides(emptyOverrides()); setPeople(defaultPeopleParams(archetype)); setNetwork({ growth: 0, carbon: 10000 }); };
 
   return (
     <>
       <FactList facts={facts} />
-      <Narrative facts={facts} industryLabel={industryLabel} signature={`${lang}|${archetype}|${lens}|${facts.map((f) => JSON.stringify(f.vars)).join('|')}`} />
+      <Narrative facts={aiFacts} industryLabel={industryLabel} signature={`${lang}|${archetype}|${lens}|${facts.map((f) => JSON.stringify(f.vars)).join('|')}`} />
       <section className="res-stage" aria-labelledby="res-flow-title" data-testid="resource-flow">
         <div className="res-stage-head">
           <div>
@@ -378,7 +387,7 @@ function Inspector(p: InspectorProps) {
           <dl className="res-insp-stats">
             <div><dt>{t('res.insp.loadBefore')}</dt><dd>{fmt.integer(scenario.beforeMetrics.load[pool.id] ?? 0)} {unit}</dd></div>
             <div><dt>{t('res.insp.loadAfter')}</dt><dd>{fmt.integer(scenario.afterMetrics.load[pool.id] ?? 0)} {unit}</dd></div>
-            <div><dt>{t('res.insp.marginal', { unit })}</dt><dd>{marginal ? t('res.insp.marginalValue', { value: fmt.number(marginal.objectivePerUnit), served: fmt.number(marginal.servedPerUnit), unit }) : t('res.insp.marginalNone')}</dd></div>
+            <div><dt>{t('res.insp.marginal', { unit })}</dt><dd>{!marginal ? t('res.insp.marginalNone') : marginal.servedPerUnit > 1e-9 ? t('res.insp.marginalServed', { served: fmt.number(marginal.servedPerUnit), unit }) : t('res.insp.marginalCost', { value: fmt.number(marginal.objectivePerUnit), unit })}</dd></div>
           </dl>
         </div>
       )}

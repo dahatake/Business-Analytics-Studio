@@ -46,6 +46,19 @@ export function categoriesOf(method: MethodId): readonly CategoryId[] {
   return METHOD_CATEGORIES[method];
 }
 
+export function analysisDraftBaseline(a: Analysis): string {
+  return JSON.stringify([a.method, a.title, a.items, a.weights]);
+}
+
+export function approveAnalysisDraft(a: Analysis, lang: 'ja' | 'en', audience: 'internal' | 'external', at: string): Analysis {
+  const draft = a.draft;
+  if (!draft || draft.lang !== lang || draft.audience !== audience || draft.baseline !== analysisDraftBaseline(a)) {
+    throw new Error('Analysis draft no longer matches its inputs');
+  }
+  const { draft: _draft, ...rest } = a;
+  return { ...rest, items: [...a.items, ...draft.items], updatedAt: at };
+}
+
 export function categoryWeight(a: Pick<Analysis, 'weights'>, id: string): number {
   const w = a.weights[id];
   return typeof w === 'number' && Number.isFinite(w) ? w : 1;

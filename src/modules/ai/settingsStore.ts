@@ -7,10 +7,12 @@ import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSet
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
 import {
-  clearMediaCheck, deleteCopilotSettings, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, saveCopilotModel, saveRelayConnection, saveSecret,
-  saveWorkIqSettings, testMediaConnection, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaStatus, type MediaTestResult, type RelayConnectionInfo, type SecretName, type WorkIqSettingsInput, type WorkIqStatus,
+  clearMediaCheck, deleteCopilotSettings, deleteRelayConnection, deleteSecret, deleteSeparateSpeech, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, NO_SPEECH_CONNECTION,
+  saveCopilotModel, saveRelayConnection, saveSecret, saveSeparateSpeech, setSpeechRoute,
+  saveWorkIqSettings, testMediaConnection, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaStatus, type MediaTestResult, type RelayConnectionInfo, type SecretName,
+  type SeparateSpeechInput, type SpeechConnectionStatus, type SpeechSeparateResult, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
-import type { MediaService } from '../../ai/mediaConnection.ts';
+import type { MediaService, SpeechRoute } from '../../ai/mediaConnection.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
@@ -50,6 +52,8 @@ export interface AiSettingsState {
   foundryKeySaved: boolean;
   /** FR-324/FR-328: Speech / Vision through the relay's Foundry connection. */
   media: MediaStatus;
+  /** FR-329: the Speech route (Foundry connection or a separate Speech resource) held by the relay. */
+  speechConnection: SpeechConnectionStatus;
   relayConnection: RelayConnectionInfo | null;
   connectionVerifiedAt: string | null;
   keyProtection: KeyProtection | null;
@@ -65,6 +69,9 @@ export interface AiSettingsState {
   /** Tests Speech / Vision on the Foundry resource through the relay, which seals the result to the Foundry connection. */
   testMedia: (service: MediaService) => Promise<MediaTestResult>;
   clearMedia: (service: MediaService) => Promise<boolean>;
+  saveSeparateSpeech: (input: SeparateSpeechInput) => Promise<SpeechSeparateResult>;
+  setSpeechRoute: (route: SpeechRoute) => Promise<SpeechSeparateResult>;
+  deleteSeparateSpeech: () => Promise<SpeechSeparateResult>;
   refreshRelay: () => Promise<void>;
   saveWorkIq: (input: WorkIqSettingsInput) => Promise<{ ok: boolean; error?: string }>;
   deleteWorkIq: () => Promise<boolean>;
@@ -97,6 +104,7 @@ export const useAiSettings = create<AiSettingsState>()(
       relayReachable: false,
       foundryKeySaved: false,
       media: NO_MEDIA,
+      speechConnection: NO_SPEECH_CONNECTION,
       relayConnection: null,
       connectionVerifiedAt: null,
       keyProtection: null,
@@ -119,10 +127,25 @@ export const useAiSettings = create<AiSettingsState>()(
         await get().refreshRelay();
         return ok;
       },
+      saveSeparateSpeech: async (input) => {
+        const r = await saveSeparateSpeech(input);
+        await get().refreshRelay();
+        return r;
+      },
+      setSpeechRoute: async (route) => {
+        const r = await setSpeechRoute(route);
+        await get().refreshRelay();
+        return r;
+      },
+      deleteSeparateSpeech: async () => {
+        const r = await deleteSeparateSpeech();
+        await get().refreshRelay();
+        return r;
+      },
       refreshRelay: async () => {
         const s = await fetchRelayStatus();
         set({
-          relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, media: s.media,
+          relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, media: s.media, speechConnection: s.speechConnection,
           relayConnection: s.connection, connectionVerifiedAt: s.connectionVerifiedAt, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
           workiq: s.workiq, entra: s.entra,
         });
@@ -291,4 +314,12 @@ syncDeviceStore(AI_SETTINGS_KEY, () => useAiSettings.persist.rehydrate());
 export function isMediaConfigured(s: Pick<AiSettingsState, 'media' | 'entra'>, service: MediaService): boolean {
   if (!s.media.endpoint || !s.media.verifiedAt[service]) return false;
   return s.media.auth === 'entraId' ? s.entra?.signedIn === true : true;
+}
+
+/** FR-329: Speech is usable on the chosen route: the Foundry connection's check, or the separate resource's check. */
+export function isSpeechReady(s: Pick<AiSettingsState, 'media' | 'entra' | 'speechConnection'>): boolean {
+  if (s.speechConnection.route === 'foundry') return isMediaConfigured(s, 'speech');
+  const sep = s.speechConnection.separate;
+  if (!sep?.verifiedAt) return false;
+  return sep.auth === 'entraId' ? s.entra?.signedIn === true : true;
 }

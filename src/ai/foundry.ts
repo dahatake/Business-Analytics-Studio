@@ -12,7 +12,7 @@ export const CONNECTION_INPUT_ERRORS = ['invalidBody', 'invalidEndpoint', 'proje
 export type ConnectionInputError = (typeof CONNECTION_INPUT_ERRORS)[number];
 export const FOUNDRY_ERRORS = [
   'dnsFailure', 'networkError', 'tlsError', 'unauthorized', 'forbidden', 'deploymentNotFound',
-  'invalidApiRequest', 'providerBusy', 'providerError', 'badProviderResponse', 'timeout', 'aborted',
+  'invalidApiRequest', 'contentFiltered', 'providerBusy', 'providerError', 'badProviderResponse', 'timeout', 'aborted',
 ] as const;
 export type FoundryError = (typeof FOUNDRY_ERRORS)[number];
 

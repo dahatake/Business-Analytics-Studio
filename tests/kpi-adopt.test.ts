@@ -117,6 +117,35 @@ describe('adopting internal OKRs as drafts', () => {
     }
   });
 
+  it('measures an unlinked key result that restates an internal KPI by that KPI (PARAM-174)', () => {
+    // Real packs restate KPIs as key results without kpiId, and list some KPIs twice.
+    const real = {
+      kpis: [...ext.kpis, { id: 'k-eng2', name: 'Annual Engagement Delivery', target: '50件以上', unit: '件', sourceIds: [] }, { id: 'k-acr', name: 'Influenced ACR', target: '20%', unit: '%', sourceIds: [] }],
+      objectives: [{
+        id: 'o-hub', objective: 'Deliver Hub Journeys', sourceIds: [],
+        keyResults: [
+          { text: 'Deliver and lead ≥50 engagements annually' },
+          { text: 'FY27に顧客リーチを10倍へ拡大' },
+          { text: 'Platform win 5件と ACR 20% を両立' },
+          { text: 'Raise satisfaction by 20%' },
+          { text: 'Agents at the core' },
+        ],
+      }],
+    };
+    const pre = addKpiDrafts(['okr.kpi:k-eng2'], real, empty(), emptyDrafts(), 'ja').drafts;
+    const { drafts } = addOkrDrafts(['okr.obj:o-hub'], real, empty(), pre, 'ja');
+    const linked = drafts.okrs[0]!.keyResults.map((kr) => drafts.kpis.find((k) => k.id === kr.kpiId)!.candidateId);
+    expect(linked).toEqual([
+      'okr.kpi:k-eng2', // twin of k-eng: the one already drafted is reused
+      'okr.kpi:k-reach', // same number and a unit other than %
+      'okr.kr:o-hub:2', // bundles two measures (5 and 20): not linked
+      'okr.kr:o-hub:3', // only the number and % are shared
+      'okr.kr:o-hub:4',
+    ]);
+    expect(drafts.kpis).toHaveLength(5);
+    expect(addKpiDrafts(['okr.obj:o-hub', 'okr.kpi:k-reach'], real, empty(), emptyDrafts(), 'ja')).toMatchObject({ added: 5, skipped: 0 });
+  });
+
   it('save-all keeps invalid drafts and discarding a KPI draft unlinks key results', () => {
     const { drafts } = addOkrDrafts(['okr.kpi:k-wins'], ext, empty(), emptyDrafts(), 'ja');
     const r = saveAllDrafts(empty(), drafts);
@@ -135,6 +164,9 @@ describe('Copilot drafts (kpiOkrDraft)', () => {
     expect(p).not.toContain('okr.kpi:k-reach');
     expect(p).toContain('okr.kpi:k-wins');
     expect(p).toContain('顧客接点の拡大');
+    // Existing KPIs carry their targets so a twin with another name is recognizable (both models picked one 6/6 without).
+    const data: KpiData = { kpis: [{ id: 'x', name: 'Engagements Led', unit: 'engagements', baseline: 0, current: 0, target: 50, deadline: '2027-06-30' }], okrs: [] };
+    expect(kpiDraftPrompt(input({ data }))).toContain('Project にすでにある KPI（目標）: Engagements Led (50 engagements)');
   });
 
   it('drops unknown or duplicate ids, caps counts, and flags invented numbers', () => {

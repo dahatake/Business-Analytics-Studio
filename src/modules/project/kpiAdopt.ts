@@ -168,9 +168,43 @@ function kpiSourceOfExt(k: ExtKpi, lang: Lang): KpiSource {
 /** The KPI a key result is measured by: an internal KPI candidate, a KPI the project already has, or the KR itself. */
 type KrKpi = { kind: 'existing'; kpiId: string } | { kind: 'candidate'; source: KpiSource };
 
-function krKpi(o: ExtObjective, i: number, ext: Ext, data: KpiData, lang: Lang): KrKpi {
+const STOP = new Set(['and', 'the', 'for', 'with', 'per', 'min', 'max', 'all', 'our', 'your', 'are', 'fy27']);
+const stem = (w: string) => w.replace(/(ing|ly|ed|s)$/, '').replace(/e$/, '');
+const words = (text: string) => new Set((normalize(text).toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? []).filter((w) => !STOP.has(w)).map(stem));
+const numbers = (text: string) => new Set((normalize(text).match(NUM) ?? []).map((n) => Number(n.replace(/,/g, ''))));
+const allText = (v: Localizable | undefined) => (v === undefined ? '' : typeof v === 'string' ? v : `${v.ja} ${v.en}`);
+
+/**
+ * PARAM-174: a key result without kpiId that restates an internal KPI — every number of the KPI's target appears in the KR,
+ * and they share a word or a unit other than % — is measured by that KPI instead of a duplicate KPI drafted from its text.
+ * When the KR matches KPIs with different targets (it bundles several measures), nothing is linked.
+ */
+function matchKpi(krText: string, ext: Ext, data: KpiData, drafts: KpiDrafts | undefined): ExtKpi | undefined {
+  const t = krText;
+  const krNums = numbers(t);
+  if (!krNums.size) return undefined;
+  const krWords = words(t);
+  const matches = ext.kpis.flatMap((k) => {
+    const nums = numbers(k.target ?? '');
+    if (!nums.size || ![...nums].every((n) => krNums.has(n))) return [];
+    const shared = [...words(`${allText(k.name)} ${allText(k.definition)} ${k.target ?? ''} ${k.unit ?? ''}`)].filter((w) => krWords.has(w)).length;
+    const unit = normalize(k.unit ?? '').trim();
+    if (!shared && !(unit && unit !== '%' && normalize(t).includes(unit))) return [];
+    return [{ k, nums, shared }];
+  });
+  if (!matches.length) return undefined;
+  const sameMeasure = (a: Set<number>, b: Set<number>) => [...a].every((n) => b.has(n)) || [...b].every((n) => a.has(n));
+  if (!matches.every((m) => sameMeasure(m.nums, matches[0]!.nums))) return undefined;
+  const rank = (k: ExtKpi) => {
+    const cid = kpiCandidateId(k.id);
+    return kpiAdoptState(cid, data, drafts ?? { kpis: [], okrs: [] }) === 'adopted' ? 2 : drafts?.kpis.some((d) => d.candidateId === cid) ? 1 : 0;
+  };
+  return matches.sort((a, b) => rank(b.k) - rank(a.k) || b.shared - a.shared)[0]!.k;
+}
+
+function krKpi(o: ExtObjective, i: number, ext: Ext, data: KpiData, lang: Lang, drafts?: KpiDrafts): KrKpi {
   const kr = o.keyResults[i]!;
-  const linked = kr.kpiId ? ext.kpis.find((k) => k.id === kr.kpiId) : undefined;
+  const linked = kr.kpiId ? ext.kpis.find((k) => k.id === kr.kpiId) : matchKpi(`${allText(kr.text)} ${kr.target ?? ''}`, ext, data, drafts);
   if (linked) return { kind: 'candidate', source: kpiSourceOfExt(linked, lang) };
   if (kr.kpiId && data.kpis.some((k) => k.id === kr.kpiId)) return { kind: 'existing', kpiId: kr.kpiId };
   return {
@@ -234,9 +268,10 @@ export function addKpiDrafts(candidateIds: readonly string[], ext: Ext, data: Kp
     const k = ext.kpis.find((x) => kpiCandidateId(x.id) === cid);
     if (k) sources.push(kpiSourceOfExt(k, lang));
     const o = ext.objectives.find((x) => objectiveCandidateId(x.id) === cid);
-    if (o) o.keyResults.forEach((_, i) => { const r = krKpi(o, i, ext, data, lang); if (r.kind === 'candidate') sources.push(r.source); else skipped++; });
+    if (o) o.keyResults.forEach((_, i) => { const r = krKpi(o, i, ext, data, lang, next); if (r.kind === 'candidate') sources.push(r.source); else skipped++; });
   }
-  for (const src of sources) {
+  const unique = sources.filter((s, i) => sources.findIndex((x) => x.candidateId === s.candidateId) === i);
+  for (const src of unique) {
     if (kpiAdoptState(src.candidateId, data, next)) { skipped++; continue; }
     const why = opts.reasons?.get(src.candidateId);
     next.kpis.push(kpiDraft(src, by, why?.reason, why?.unverified));
@@ -265,7 +300,7 @@ export function addOkrDrafts(candidateIds: readonly string[], ext: Ext, data: Kp
     const meta = { by, ...(why?.reason ? { reason: why.reason } : {}), ...(why?.unverified.length ? { unverified: why.unverified } : {}) };
     const o = ext.objectives.find((x) => objectiveCandidateId(x.id) === cid);
     if (o) {
-      const keyResults = o.keyResults.map((kr, i) => ({ id: newId('kr'), text: krText(txt(kr.text, lang), kr.target), kpiId: resolveKpi(krKpi(o, i, ext, data, lang), data, next, by) }));
+      const keyResults = o.keyResults.map((kr, i) => ({ id: newId('kr'), text: krText(txt(kr.text, lang), kr.target), kpiId: resolveKpi(krKpi(o, i, ext, data, lang, next), data, next, by) }));
       next.okrs.push({
         id: newId('okr'), candidateId: cid, objective: txt(o.objective, lang),
         keyResults: keyResults.length ? keyResults : [{ id: newId('kr'), text: '', kpiId: '' }],
@@ -407,10 +442,12 @@ export function kpiDraftPrompt({ purpose, ext, data, drafts, lang }: DraftPrompt
   const open = openCandidates(ext, data, drafts);
   const kpiLine = (k: ExtKpi) => `- id: ${kpiCandidateId(k.id)} | ${clip(txt(k.name, lang), 120)}${k.definition ? ` | ${ja ? '定義' : 'definition'}: ${clip(txt(k.definition, lang), 200)}` : ''}${k.target ? ` | ${ja ? '目標' : 'target'}: ${clip([k.target, k.unit].filter(Boolean).join(' '), 80)}` : ''}${k.period ? ` | ${ja ? '期間' : 'period'}: ${clip(k.period, 40)}` : ''}${k.owner ? ` | ${ja ? '責任者' : 'owner'}: ${clip(txt(k.owner, lang), 60)}` : ''}`;
   const objLine = (o: ExtObjective) => `- id: ${objectiveCandidateId(o.id)} | ${clip(txt(o.objective, lang), 200)}${o.keyResults.map((kr) => `\n  - KR: ${clip(txt(kr.text, lang), 160)}${kr.target ? ` (${clip(kr.target, 60)})` : ''}`).join('')}`;
+  // Targets let the model see that a differently named candidate measures the same thing as a KPI the project has.
+  const existing = (sep: string) => data.kpis.map((k) => `${loc(k.name, lang)}${Number.isFinite(k.target) ? ` (${[k.target, loc(k.unit, lang)].filter((x) => x !== '').join(' ')})` : ''}`).join(sep);
   const head = [
     KPI_DRAFT_MARK,
     ja ? `Project の目的: ${clip(purpose.trim() || '（未記入）', 1000)}` : `Project purpose: ${clip(purpose.trim() || '(not written)', 1000)}`,
-    ja ? `Project にすでにある KPI: ${data.kpis.map((k) => loc(k.name, lang)).join('、') || 'なし'}` : `KPIs the project already has: ${data.kpis.map((k) => loc(k.name, lang)).join(', ') || 'none'}`,
+    ja ? `Project にすでにある KPI（目標）: ${existing('、') || 'なし'}` : `KPIs the project already has (target): ${existing(', ') || 'none'}`,
     ja ? `Project にすでにある OKR: ${data.okrs.map((o) => loc(o.objective, lang)).join('、') || 'なし'}` : `OKRs the project already has: ${data.okrs.map((o) => loc(o.objective, lang)).join(', ') || 'none'}`,
   ];
   const tail = ja ? [

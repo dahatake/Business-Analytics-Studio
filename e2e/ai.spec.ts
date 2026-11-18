@@ -381,7 +381,78 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(page.getByTestId('ai-vision-access-badge')).toHaveText('Can call the service');
     const violations = await scan(page, ['[data-testid="ai-speech-connection"]', '[data-testid="ai-vision-connection"]']);
     expect(violations).toEqual([]);
-  });  test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
+  });
+
+  test('Speech can be set up separately only after Foundry and Speech on it are verified; saved only when its test passes (FR-329)', async ({ page }) => {
+    const connection = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2024-10-21', auth: 'apiKey' };
+    let media: Record<string, unknown> = { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'apiKey', unavailable: null, speech: null, vision: null };
+    let speechConnection: Record<string, unknown> = { route: 'foundry', eligible: false, separate: null };
+    const saves: unknown[] = [];
+    const routes: unknown[] = [];
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-19T00:00:00.000Z', entra: null, media, speechConnection,
+    } }));
+    await page.route('**/relay/speech/separate', (route) => {
+      const body = route.request().postDataJSON();
+      saves.push(body);
+      if (saves.length === 1) return route.fulfill({ status: 502, json: { error: 'unauthorized', providerStatus: 401 } });
+      speechConnection = { route: 'separate', eligible: true, separate: { auth: 'apiKey', endpoint: null, region: 'japaneast', verifiedAt: '2026-11-19T01:00:00.000Z' } };
+      return route.fulfill({ json: speechConnection });
+    });
+    await page.route('**/relay/speech/route', (route) => {
+      routes.push(route.request().postDataJSON());
+      speechConnection = { ...speechConnection, route: 'foundry' };
+      return route.fulfill({ json: speechConnection });
+    });
+    await openAiSettings(page, { lang: 'en' });
+
+    // Until Speech on Foundry is verified there is no choice to make, only the reason.
+    await expect(page.getByTestId('ai-speech-route-locked')).toContainText('Once the Microsoft Foundry connection and the Speech connection test above succeed');
+    await expect(page.getByTestId('ai-speech-route-choice')).toHaveCount(0);
+
+    media = { ...media, speech: '2026-11-19T00:00:00.000Z' };
+    speechConnection = { ...speechConnection, eligible: true };
+    await page.reload();
+    await page.getByTestId('nav-ai-settings').click();
+    await expect(page.getByTestId('ai-speech-route-locked')).toHaveCount(0);
+    await expect(page.getByTestId('ai-speech-route-foundry')).toBeChecked();
+    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Use the Microsoft Foundry connection (default)');
+
+    // Choosing "separately" only opens the form; the route does not change before a test passes.
+    await page.getByTestId('ai-speech-route-separate').check();
+    await expect(page.getByTestId('ai-speech-separate')).toBeVisible();
+    await expect(page.getByTestId('ai-speech-separate-auth-entraId')).toBeDisabled();
+    expect(routes).toEqual([]);
+    await page.getByTestId('ai-speech-separate-test').click();
+    await expect(page.getByTestId('ai-speech-separate-blockers')).toContainText('Enter the API key of the separate Speech resource.');
+    await expect(page.getByTestId('ai-speech-separate-blockers')).toContainText('Agree to send the test request.');
+    expect(saves).toEqual([]);
+
+    await page.getByTestId('ai-speech-separate-region').fill('japaneast');
+    await page.getByTestId('ai-speech-separate-key').fill('e2e-separate-speech-key');
+    await expect(page.getByTestId('ai-speech-separate-destination')).toContainText('https://japaneast.tts.speech.microsoft.com/cognitiveservices/voices/list');
+    await page.getByTestId('ai-speech-separate-consent').check();
+    await page.getByTestId('ai-speech-separate-test').click();
+    await expect(page.getByTestId('ai-speech-route-msg')).toContainText('Authentication failed (401)');
+    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Use the Microsoft Foundry connection (default)');
+
+    await page.getByTestId('ai-speech-separate-consent').check();
+    await page.getByTestId('ai-speech-separate-test').click();
+    await expect(page.getByTestId('ai-speech-route-msg')).toContainText('The connection was verified and saved');
+    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Set up the Speech connection separately');
+    await expect(page.getByTestId('ai-speech-separate-verified')).toHaveText('Verified and saved');
+    await expect(page.getByTestId('ai-speech-separate-key')).toHaveValue('');
+    expect(saves).toEqual([{ auth: 'apiKey', region: 'japaneast', key: 'e2e-separate-speech-key' }, { auth: 'apiKey', region: 'japaneast', key: 'e2e-separate-speech-key' }]);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page, ['[data-testid="ai-speech-route"]'])).toEqual([]);
+
+    // Going back to the Foundry connection is always one choice away.
+    await page.getByTestId('ai-speech-route-foundry').check();
+    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Use the Microsoft Foundry connection (default)');
+    expect(routes).toEqual([{ route: 'foundry' }]);
+  });
+
+  test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {
       const noHeader = await fetch('/relay/secrets/foundryKey', { method: 'DELETE' });

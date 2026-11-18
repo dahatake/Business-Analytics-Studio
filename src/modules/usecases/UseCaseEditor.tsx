@@ -4,6 +4,10 @@ import { Add16Regular, ArrowDown16Regular, ArrowUp16Regular, Delete16Regular } f
 import { useI18n } from '../../i18n/index.ts';
 import { ALL_PERSONAS, personaLabel, type Persona } from '../../state/personas.ts';
 import { loc, type Localizable } from '../../state/text.ts';
+import { useCheckContext } from '../project/deliverablesUi.tsx';
+import { FormDraftReview } from '../project/FormDraftReview.tsx';
+import { requestFormDraft } from '../project/formDraft.ts';
+import { inputLabels } from '../project/handoff.ts';
 import { MAX_USECASE_STEPS, newUseCaseId, type UseCase } from './store.ts';
 
 interface Draft {
@@ -51,6 +55,9 @@ export function UseCaseEditor({ initial, onSave, onCancel, onDelete }: {
       return { ...d, steps };
     });
   const focusStep = (i: number) => requestAnimationFrame(() => document.getElementById(`uc-step-title-${i}`)?.focus());
+  const ctx = useCheckContext();
+  const issues = inputLabels('asis', 'issue', ctx, lang).slice(0, 5);
+  const draftContext = { name: draft.name, summary: draft.summary, issues, persona: t(personaLabel(draft.persona)) };
 
   const save = () => {
     setTried(true);
@@ -83,6 +90,22 @@ export function UseCaseEditor({ initial, onSave, onCancel, onDelete }: {
         save();
       }}
     >
+      <FormDraftReview
+        kind="usecase"
+        testId="uc-draft"
+        baseline={JSON.stringify(draftContext)}
+        request={() => requestFormDraft('usecase', draftContext, lang)}
+        preview={(d) => (
+          <dl className="dlv-form-draft-fields">
+            <dt>{t('uc.field.name')}</dt><dd>{d.name}</dd>
+            {d.summary && <><dt>{t('uc.field.summary')}</dt><dd>{d.summary}</dd></>}
+            <dt>{t('uc.field.steps', { n: d.steps.length, max: MAX_USECASE_STEPS })}</dt>
+            <dd><ol>{d.steps.map((s, i) => <li key={i}><strong>{s.title}</strong>{s.description && <> — {s.description}</>}</li>)}</ol></dd>
+            {d.effect && <><dt>{t('uc.field.effect')}</dt><dd>{d.effect}</dd></>}
+          </dl>
+        )}
+        onApprove={(d) => setDraft((x) => ({ ...x, name: d.name, summary: d.summary, effect: d.effect, steps: d.steps.slice(0, MAX_USECASE_STEPS) }))}
+      />
       <Field label={t('uc.field.name')} required validationMessage={nameError ? t('uc.editor.nameRequired') : undefined}>
         <Input id="uc-name" value={draft.name} onChange={(_, d) => setDraft((x) => ({ ...x, name: d.value }))} />
       </Field>

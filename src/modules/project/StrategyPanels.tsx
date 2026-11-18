@@ -10,6 +10,9 @@ import { downloadText, ScrollRegion, useTargetNames } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { threadOf } from './deliverables.ts';
 import { DEFINITION_STATUSES, kpiDefinitionState, proposeKpiDefinition, type DefinitionStatus } from './kpiOkr.ts';
+import { FormDraftReview } from './FormDraftReview.tsx';
+import { requestFormDraft } from './formDraft.ts';
+import { inputLabels } from './handoff.ts';
 import { newId, type KpiData, type KpiOrigin } from './model.ts';
 import { EVIDENCE_BASES, SIM_RUNS, validRange, type EvidenceBasis } from './simulate.ts';
 import { buildSolutionDoc, kindKey, sectionKey, solutionDocMarkdown } from './solutionDocs.ts';
@@ -157,9 +160,13 @@ export function KpiDefinitionPanel({ ctx }: { ctx: CheckContext }) {
   const write = useStrategyWriter();
   const writeKpis = useKpiWriter();
   const [message, setMessage] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<{ next: KpiData; baseline: string } | null>(null);
   const state = useMemo(() => kpiDefinitionState(loaded.pack), []);
   const confirmed = ctx.strategy.definition;
   const status: DefinitionStatus = confirmed?.status ?? state.status;
+  const kpiBaseline = JSON.stringify(ctx.kpi);
+  const proposalStale = !!proposal && proposal.baseline !== kpiBaseline;
+  const known = new Set([...ctx.kpi.kpis.map((k) => k.id), ...ctx.kpi.okrs.map((o) => o.id)]);
 
   const confirm = (v: string) => write((d) => {
     if (v === '') {
@@ -172,8 +179,15 @@ export function KpiDefinitionPanel({ ctx }: { ctx: CheckContext }) {
     const deadline = `${Number(ctx.today.slice(0, 4)) + 1}${ctx.today.slice(4)}`;
     const next = proposeKpiDefinition({ pack: loaded.pack, current: ctx.kpi, objectives: ctx.objectives, deadline, lang });
     const added = next.kpis.length - ctx.kpi.kpis.length + next.okrs.length - ctx.kpi.okrs.length;
-    if (added > 0) writeKpis(() => next);
-    setMessage(added > 0 ? t('sol.def.proposed', { n: added }) : t('sol.def.nothing'));
+    setProposal(added > 0 ? { next, baseline: kpiBaseline } : null);
+    setMessage(added > 0 ? null : t('sol.def.nothing'));
+  };
+  const approveProposal = () => {
+    if (!proposal || proposalStale) return;
+    const added = proposal.next.kpis.length - ctx.kpi.kpis.length + proposal.next.okrs.length - ctx.kpi.okrs.length;
+    writeKpis(() => proposal.next);
+    setProposal(null);
+    setMessage(t('sol.def.proposed', { n: added }));
   };
   const toggleObjective = (okrId: string, objectiveId: string, on: boolean) => writeKpis((d) => ({
     ...d,
@@ -213,6 +227,27 @@ export function KpiDefinitionPanel({ ctx }: { ctx: CheckContext }) {
           {status === 'notRetrieved' && <p className="muted">{t('sol.def.proposeHint')}</p>}
           <Button appearance="primary" icon={<Sparkle20Regular />} onClick={propose} data-testid="sol-def-propose">{t('sol.def.propose')}</Button>
           {message && <p role="status" data-testid="sol-def-message">{message}</p>}
+          {proposal && (
+            <section className="dlv-form-draft-preview" aria-label={t('dlv.fd.preview')} data-testid="sol-def-preview" data-stale={proposalStale}>
+              <p><strong>{t('dlv.fd.preview')}</strong></p>
+              <p className="muted">{t('dlv.fd.notSaved')}</p>
+              <ul>
+                {proposal.next.kpis.filter((k) => !known.has(k.id)).map((k) => (
+                  <li key={k.id}>{t('sol.def.newKpi', { name: loc(k.name, lang), from: fmt.number(k.current), to: fmt.number(k.target), unit: loc(k.unit, lang), deadline: k.deadline })}</li>
+                ))}
+                {proposal.next.okrs.filter((o) => !known.has(o.id)).map((o) => (
+                  <li key={o.id}>{t('sol.def.newOkr', { name: loc(o.objective, lang) })}</li>
+                ))}
+              </ul>
+              {proposalStale && (
+                <MessageBar intent="warning"><MessageBarBody>{t('dlv.fd.stale')}</MessageBarBody></MessageBar>
+              )}
+              <div className="proj-row">
+                <Button appearance="primary" disabled={proposalStale} onClick={approveProposal} data-testid="sol-def-approve">{t('sol.def.approve')}</Button>
+                <Button onClick={() => setProposal(null)} data-testid="sol-def-discard">{t('dlv.fd.discard')}</Button>
+              </div>
+            </section>
+          )}
         </div>
       )}
       <h3 className="proj-h3">{t('sol.okr.title')}</h3>
@@ -338,6 +373,36 @@ function ContributionEditor({ solutionId, ctx }: { solutionId: string; ctx: Chec
               <Input value={form.leverUnit} onChange={(_, d) => setForm({ ...form, leverUnit: d.value })} data-testid="sol-c-unit" />
             </Field>
           </div>
+          {(() => {
+            const k = kpis.find((x) => x.id === form.kpiId);
+            if (!k) return null;
+            const context = {
+              solution: entityName(solutionId, lang),
+              kpi: { name: loc(k.name, lang), unit: loc(k.unit, lang), current: k.current, target: k.target, deadline: k.deadline },
+              lever: form.lever,
+            };
+            return (
+              <FormDraftReview
+                kind="contribution"
+                testId={`sol-c-draft-${solutionId}`}
+                baseline={JSON.stringify(context)}
+                request={() => requestFormDraft('contribution', context, lang)}
+                preview={(d) => (
+                  <dl className="dlv-form-draft-fields">
+                    <dt>{t('sol.c.lever')}</dt><dd>{d.lever}{d.leverUnit && ` (${d.leverUnit})`}</dd>
+                    <dt>{t('sol.c.amount')}</dt><dd>{[d.amount.low, d.amount.mode, d.amount.high].map(fmt.number).join(' – ')}</dd>
+                    <dt>{t('sol.c.effect')}</dt><dd>{[d.effectPerUnit.low, d.effectPerUnit.mode, d.effectPerUnit.high].map(fmt.number).join(' – ')}</dd>
+                    {d.evidence && <><dt>{t('sol.c.evidence')}</dt><dd>{d.evidence}</dd></>}
+                    <dt>{t('sol.c.basis')}</dt><dd>{t('sol.c.basis.assumption')}</dd>
+                  </dl>
+                )}
+                onApprove={(d) => setForm((f) => f && ({
+                  ...f, lever: d.lever, leverUnit: d.leverUnit, amount: fromRange(d.amount), effectPerUnit: fromRange(d.effectPerUnit),
+                  basis: 'assumption', evidence: d.evidence,
+                }))}
+              />
+            );
+          })()}
           <RangeFields label={t('sol.c.amount')} value={form.amount} onChange={(amount) => setForm({ ...form, amount })} testId="sol-c-amount" />
           <RangeFields label={t('sol.c.effect')} value={form.effectPerUnit} onChange={(effectPerUnit) => setForm({ ...form, effectPerUnit })} testId="sol-c-effect" />
           <div className="proj-kpi-fields">
@@ -440,8 +505,8 @@ export function SimulationPanel({ ctx }: { ctx: CheckContext }) {
 
 /* ---------- Final deliverable per solution: requirements spec or the plan that fits ---------- */
 
-function SectionEditor({ solutionId, id, text, edited }: { solutionId: string; id: string; text: string; edited: boolean }) {
-  const { t } = useI18n();
+function SectionEditor({ solutionId, id, text, edited, kind, facts }: { solutionId: string; id: string; text: string; edited: boolean; kind: string; facts: string[] }) {
+  const { t, lang } = useI18n();
   const write = useStrategyWriter();
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
@@ -449,25 +514,39 @@ function SectionEditor({ solutionId, id, text, edited }: { solutionId: string; i
     if (draft !== text) write((d) => setSection(d, solutionId, id, draft));
     setDraft(null);
   };
+  const context = { solution: entityName(solutionId, lang), document: kind, section: t(sectionKey(id) as MessageKey), current: draft ?? text, facts };
   return (
-    <Field
-      label={{ children: (
-        <span className="dlv-field-label">
-          {t(sectionKey(id) as MessageKey)}
-          {edited && <Badge size="small" appearance="tint" color="brand">{t('sol.doc.edited')}</Badge>}
-          {edited && <Button size="small" appearance="subtle" icon={<ArrowReset20Regular />} onClick={() => write((d) => setSection(d, solutionId, id, null))} data-testid={`sol-doc-reset-${solutionId}-${id}`}>{t('sol.doc.reset')}</Button>}
-        </span>
-      ) }}
-    >
-      <Textarea
-        value={draft ?? text}
-        resize="vertical"
-        rows={Math.min(12, Math.max(3, text.split('\n').length + 1))}
-        onChange={(_, d) => setDraft(d.value)}
-        onBlur={commit}
-        data-testid={`sol-doc-${solutionId}-${id}`}
+    <div className="dlv-section-edit">
+      <Field
+        label={{ children: (
+          <span className="dlv-field-label">
+            {t(sectionKey(id) as MessageKey)}
+            {edited && <Badge size="small" appearance="tint" color="brand">{t('sol.doc.edited')}</Badge>}
+            {edited && <Button size="small" appearance="subtle" icon={<ArrowReset20Regular />} onClick={() => write((d) => setSection(d, solutionId, id, null))} data-testid={`sol-doc-reset-${solutionId}-${id}`}>{t('sol.doc.reset')}</Button>}
+          </span>
+        ) }}
+      >
+        <Textarea
+          value={draft ?? text}
+          resize="vertical"
+          rows={Math.min(12, Math.max(3, text.split('\n').length + 1))}
+          onChange={(_, d) => setDraft(d.value)}
+          onBlur={commit}
+          data-testid={`sol-doc-${solutionId}-${id}`}
+        />
+      </Field>
+      <FormDraftReview
+        kind="section"
+        testId={`sol-doc-draft-${solutionId}-${id}`}
+        baseline={JSON.stringify(context)}
+        request={() => requestFormDraft('section', context, lang)}
+        preview={(d) => <pre className="dlv-form-draft-text">{d.text}</pre>}
+        onApprove={(d) => {
+          write((s) => setSection(s, solutionId, id, d.text));
+          setDraft(null);
+        }}
       />
-    </Field>
+    </div>
   );
 }
 
@@ -479,6 +558,13 @@ export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
     const s = getEntity(ts.id);
     return s?.kind === 'solution' ? [buildSolutionDoc(s, ts, thread, ctx, lang)] : [];
   }), [thread, ctx, lang]);
+  const factsFor = (solutionId: string) => [
+    ...ctx.strategy.contributions.filter((c) => c.solutionId === solutionId).map((c) => {
+      const k = ctx.kpi.kpis.find((x) => x.id === c.kpiId);
+      return `${k ? loc(k.name, lang) : c.kpiId}: ${c.lever}${c.evidence ? ` — ${c.evidence}` : ''}`;
+    }),
+    ...inputLabels('tobe', 'usecase', ctx, lang).slice(0, 3),
+  ];
   const exportDoc = (d: (typeof docs)[number]) => {
     const title = `${entityName(d.solutionId, lang)} — ${t(kindKey(d.kind))}`;
     downloadText(`${names.company}-${names.project}-${title}.md`.replace(/[\\/:*?"<>|]/g, '_'), solutionDocMarkdown(d, title, lang), 'text/markdown');
@@ -502,7 +588,17 @@ export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
               <Button icon={<ArrowDownload20Regular />} onClick={() => exportDoc(d)} data-testid={`sol-doc-export-${d.solutionId}`}>{t('sol.doc.export')}</Button>
             </div>
             <div className="dlv-fields">
-              {d.sections.map((s) => <SectionEditor key={s.id} solutionId={d.solutionId} id={s.id} text={s.text} edited={s.edited} />)}
+              {d.sections.map((s) => (
+                <SectionEditor
+                  key={s.id}
+                  solutionId={d.solutionId}
+                  id={s.id}
+                  text={s.text}
+                  edited={s.edited}
+                  kind={t(kindKey(d.kind))}
+                  facts={factsFor(d.solutionId)}
+                />
+              ))}
             </div>
           </details>
         );

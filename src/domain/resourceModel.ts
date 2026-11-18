@@ -71,7 +71,7 @@ export interface Flow { poolId: string; demandId: string; qty: number }
 
 export const linkKey = (poolId: string, demandId: string) => `${poolId}|${demandId}`;
 
-/** PARAM-161: engagement statuses that mean the work is finished (history, not open demand). */
+/** PARAM-166: engagement statuses that mean the work is finished (history, not open demand). */
 const CLOSED_STATUS = /完了|実施済|終了|クローズ|振り返り|共有済|close|done|complete|retro|shared|finish|ended/i;
 
 export function defaultPeopleParams(archetype: Archetype): PeopleParams {
@@ -123,7 +123,7 @@ const nameKey = (s: string) => s.replace(/[\s\u3000・,.()（）]/g, '').toLower
 
 /**
  * People → work items from pack entities. Pack facts: who the people are, which work exists, impact × feasibility, deal
- * values, progress and owners. Assumptions (PARAM-159/160): hours per person, the utilization ceiling and the hours a work
+ * values, progress and owners. Assumptions (PARAM-164/165): hours per person, the utilization ceiling and the hours a work
  * item needs. Nothing is written back to the pack.
  */
 export function buildPeopleModel(pack: CustomerPack, archetype: Archetype, params: PeopleParams, visible: (e: Entity) => boolean, includeInternalExtensions: boolean): ResourceModel {
@@ -400,9 +400,17 @@ export function measureFlows(model: ResourceModel, flows: Flow[]): ResourceMetri
     }
   }
   let need = 0, servedTotal = 0, weightedNeed = 0, weightedServed = 0;
+  // Hours or tonnes above a pool's capacity cannot actually be delivered: today's overloaded plan counts only its
+  // capacity-scaled share as served, so the current state is never shown better than it is.
+  const deliverable: Record<string, number> = Object.fromEntries(model.demands.map((d) => [d.id, 0]));
+  for (const f of flows) {
+    const cap = capOf(pools.get(f.poolId)!);
+    const l = load[f.poolId]!;
+    deliverable[f.demandId]! += l > cap ? (f.qty * cap) / l : f.qty;
+  }
   for (const d of model.demands) {
     const n = needOf(d);
-    const s = Math.min(n, served[d.id] ?? 0);
+    const s = Math.min(n, deliverable[d.id] ?? 0);
     need += n; servedTotal += s;
     weightedNeed += n * d.value.value; weightedServed += s * d.value.value;
     objective -= (served[d.id] ?? 0) * demands.get(d.id)!.value.value;
@@ -426,7 +434,7 @@ export function measureFlows(model: ResourceModel, flows: Flow[]): ResourceMetri
 export interface Marginal { poolId: string; delta: number; servedPerUnit: number; objectivePerUnit: number }
 
 /**
- * Shadow price per pool: re-solve with slightly more capacity (PARAM-162: 5%, at least one unit). Only pools the optimum
+ * Shadow price per pool: re-solve with slightly more capacity (PARAM-167: 5%, at least one unit). Only pools the optimum
  * uses to the full can have a non-zero value (an unused capacity constraint has dual zero), so only those are re-solved.
  */
 export function marginals(model: ResourceModel, after: ResourceMetrics): Marginal[] {
@@ -441,7 +449,7 @@ export function marginals(model: ResourceModel, after: ResourceMetrics): Margina
     const objectivePerUnit = (after.objective - m.objective) / delta;
     if (servedPerUnit > 1e-9 || objectivePerUnit > 1e-9) out.push({ poolId: p.id, delta, servedPerUnit, objectivePerUnit });
   }
-  return out.sort((a, b) => b.objectivePerUnit - a.objectivePerUnit);
+  return out.sort((a, b) => b.servedPerUnit - a.servedPerUnit || b.objectivePerUnit - a.objectivePerUnit);
 }
 
 export interface Scenario {

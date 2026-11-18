@@ -267,6 +267,10 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
     } catch (e) {
       if (!alive.current) return;
       const blocked = e instanceof AiLiveError && e.reasons.some((r) => r !== 'liveFailed');
+      if (e instanceof AiLiveError && (e.cause as { code?: unknown } | undefined)?.code === 'contentFiltered') {
+        setNotice({ intent: 'error', text: `${t('proj.adopt.aiError')} ${t('proj.adopt.contentFiltered')}` });
+        return;
+      }
       const detail = e instanceof AiLiveError ? `${e.reasons.map((r) => t(reasonKey(r))).join(', ')}${e.message ? `: ${e.message}` : ''}` : e instanceof Error ? e.message : String(e);
       setNotice({ intent: 'error', text: `${t('proj.adopt.aiError')} ${detail}`, settings: blocked });
     } finally {

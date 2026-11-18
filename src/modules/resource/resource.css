@@ -74,7 +74,8 @@
   transition: stroke var(--durationFast) ease, stroke-width var(--durationFast) ease, fill var(--durationFast) ease;
 }
 .res-node:hover .res-node-box { fill: var(--colorNeutralBackground1Hover); stroke: var(--colorBrandStroke1); }
-.res-node:focus-visible .res-node-box { stroke: var(--colorStrokeFocus2); stroke-width: 3; }
+.res-node-hit { fill: transparent; outline: none; }
+.res-node:has(.res-node-hit:focus-visible) .res-node-box { stroke: var(--colorStrokeFocus2); stroke-width: 3; }
 .res-node.is-selected .res-node-box { stroke: var(--colorBrandStroke1); stroke-width: 3; fill: var(--colorBrandBackground2); }
 .res-node.is-related .res-node-box { stroke: var(--colorBrandStroke1); stroke-width: 2; }
 .res-node.is-dim { opacity: .35; }
@@ -99,9 +100,9 @@
 .res-insp-body { display: flex; flex-direction: column; gap: 10px; }
 .res-insp-title { display: flex; flex-direction: column; gap: 2px; }
 .res-insp-stats { margin: 0; display: grid; gap: 4px; }
-.res-insp-stats > div { display: flex; justify-content: space-between; gap: 8px; }
+.res-insp-stats > div { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: 8px; }
 .res-insp-stats dt { color: var(--colorNeutralForeground2); }
-.res-insp-stats dd { margin: 0; text-align: end; font-variant-numeric: tabular-nums; }
+.res-insp-stats dd { margin: 0 0 0 auto; text-align: end; font-variant-numeric: tabular-nums; }
 .res-insp-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
 .res-insp-links li { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 44px; }
 .res-link-qty { color: var(--colorNeutralForeground2); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -118,5 +119,6 @@
   .res-ribbon { stroke: LinkText; }
   .res-node-box { stroke: ButtonText; fill: Canvas; }
   .res-node.is-selected .res-node-box { stroke: Highlight; }
-  .res-node-name, .res-node-meta, .res-node-kind, .res-node-util, .res-col-title { fill: CanvasText; }
+  .res-node-name, .res-node-meta, .res-node-kind, .res-node-util, .res-node-unmet, .res-col-title { fill: CanvasText; }
 }
+.res-node-unmet { font: var(--fontWeightSemibold) var(--fontSizeBase200) / 1 var(--fontFamilyBase); fill: var(--colorPaletteRedForeground1); }

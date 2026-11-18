@@ -759,3 +759,97 @@ test.describe('step deliverables and to-do band', () => {
     expect(await scan(page)).toEqual([]);
   });
 });
+
+test.describe('step handoff and Copilot form drafts', () => {
+  test('a step is confirmed only when its ToDos are done; its items become the next step input and a later edit asks for reconfirmation', async ({ page }) => {
+    await go(page, '/home');
+    await fakeAi(page);
+    const stepper = page.getByTestId('proj-stepper');
+    const asis = stepper.locator('[data-step="asis"]');
+    await asis.click();
+    await expect(page.getByTestId('step-handoff-status')).toHaveAttribute('data-status', 'none');
+    await expect(page.getByTestId('step-handoff-confirm')).toBeDisabled();
+    await expect(page.getByTestId('step-handoff-blocker')).toHaveText('ToDo をすべて完了すると確定できます。');
+    await openStepDraft(page);
+    await generateDraft(page);
+    await page.getByTestId('dlv-draft-apply').click();
+    await page.getByTestId('dlv-sign-asis-field').check();
+    await expect(page.getByTestId('step-handoff-confirm')).toBeDisabled();
+    await page.getByTestId('dlv-sign-define-agree').check();
+    await expect(page.getByTestId('step-handoff-confirm')).toBeEnabled();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page)).toEqual([]);
+
+    await page.getByTestId('step-handoff-confirm').click();
+    await expect(page).toHaveURL(/#\/step\?step=tobe/);
+    await expect(asis).toHaveAttribute('data-handoff', 'current');
+    const inherited = page.getByTestId('step-handoff-inherited-items');
+    await expect(inherited.locator('tbody tr').first()).toBeVisible();
+    await expect(inherited.locator('[data-change="changed"]')).toHaveCount(0);
+    await expect(page.getByTestId('step-handoff-inherited')).toContainText('E2E が確定');
+    // The next step cannot be confirmed before its own ToDos are done.
+    await expect(page.getByTestId('step-handoff-confirm')).toBeDisabled();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page)).toEqual([]);
+    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await page.reload();
+    await expect(asis).toHaveAttribute('data-handoff', 'current');
+
+    // Editing a confirmed item afterwards marks it and asks for reconfirmation.
+    await page.goto('/#/deliverables?step=asis');
+    await page.getByTestId('dlv-field-problem').fill('受注から出荷までが長い(追記)');
+    await expect(asis).toHaveAttribute('data-handoff', 'stale');
+    await page.goto('/#/step?step=tobe');
+    await expect(page.getByTestId('step-handoff-upstream-changed')).toBeVisible();
+    await expect(page.getByTestId('step-handoff-inherited-items').locator('[data-change="changed"]')).toHaveCount(1);
+  });
+
+  test('use case: a Copilot draft is a proposal until approved; a changed input blocks the stale draft', async ({ page }) => {
+    await go(page, '/usecases?uc=new');
+    const draft = page.getByTestId('uc-draft');
+    await draft.getByTestId('uc-draft-create').click();
+    const preview = page.getByTestId('uc-draft-preview');
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText('モック');
+    await expect(page.locator('#uc-name')).toHaveValue('');
+    expect(await scan(page)).toEqual([]);
+    // Typing after the draft was made: the draft no longer matches the input and cannot be approved.
+    await page.locator('#uc-name').fill('在庫の見える化');
+    await expect(page.getByTestId('uc-draft-stale')).toBeVisible();
+    await expect(page.getByTestId('uc-draft-approve')).toBeDisabled();
+    await page.getByTestId('uc-draft-discard').click();
+    await expect(preview).toBeHidden();
+
+    await page.getByTestId('uc-draft-create').click();
+    await page.getByTestId('uc-draft-approve').click();
+    await expect(page.getByTestId('uc-draft-applied')).toBeVisible();
+    await expect(page.locator('#uc-name')).toHaveValue('在庫の見える化');
+    await expect(page.locator('#uc-step-title-0')).not.toHaveValue('');
+  });
+
+  test('contribution and deliverable section: approve a Copilot draft into the form and the document', async ({ page }) => {
+    await go(page, '/deliverables?step=solution');
+    const sol = page.getByTestId('sol-solution-sol-energy-twin');
+    await sol.evaluate((el) => { (el as HTMLDetailsElement).open = true; });
+    await page.getByTestId('sol-contrib-add-sol-energy-twin').click();
+    await page.getByTestId('sol-c-draft-sol-energy-twin-create').click();
+    await expect(page.getByTestId('sol-c-draft-sol-energy-twin-preview')).toBeVisible();
+    await page.getByTestId('sol-c-draft-sol-energy-twin-approve').click();
+    await expect(page.getByTestId('sol-c-lever')).not.toHaveValue('');
+    await expect(page.getByTestId('sol-c-basis')).toHaveValue('assumption');
+    await page.getByTestId('sol-c-save').click();
+    await expect(page.getByTestId('sol-sim-kpi-co2')).toBeVisible();
+
+    await page.getByTestId('dlv-tab-deliverable').click();
+    const doc = page.getByTestId('sol-doc-sol-energy-twin');
+    await doc.evaluate((el) => { (el as HTMLDetailsElement).open = true; });
+    const section = doc.locator('[data-kind="section"]').first();
+    const id = (await section.getAttribute('data-testid'))!.replace('sol-doc-draft-sol-energy-twin-', '');
+    await section.getByTestId(`sol-doc-draft-sol-energy-twin-${id}-create`).click();
+    const text = await section.getByTestId(`sol-doc-draft-sol-energy-twin-${id}-preview`).locator('pre').innerText();
+    await section.getByTestId(`sol-doc-draft-sol-energy-twin-${id}-approve`).click();
+    await expect(page.getByTestId(`sol-doc-sol-energy-twin-${id}`)).toHaveValue(text);
+    await expect(page.getByTestId(`sol-doc-reset-sol-energy-twin-${id}`)).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+  });
+});

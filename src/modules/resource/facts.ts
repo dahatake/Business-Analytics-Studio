@@ -85,10 +85,13 @@ export function buildFacts(s: Scenario, ctx: FactContext, f: FactFormat): Fact[]
   }
   const top = s.marginals[0];
   if (top) {
-    facts.push({
-      id: 'bottleneck', key: 'res.fact.bottleneck', provenance: ['derived'], tone: 'warning',
-      vars: { name: f.name(top.poolId), delta: f.integer(top.delta), unit: f.unit, value: f.number(top.objectivePerUnit) },
-    });
+    const served = top.servedPerUnit * top.delta;
+    facts.push(served > 1e-9
+      ? { id: 'bottleneck', key: 'res.fact.bottleneckServed', provenance: ['derived'], tone: 'warning', vars: { name: f.name(top.poolId), delta: f.integer(top.delta), unit: f.unit, served: f.integer(served) } }
+      : {
+        id: 'bottleneck', key: model.lens === 'network' ? 'res.fact.bottleneckCost' : 'res.fact.bottleneckHandover', provenance: ['derived'], tone: 'warning',
+        vars: { name: f.name(top.poolId), delta: f.integer(top.delta), unit: f.unit, value: f.number(top.objectivePerUnit) },
+      });
   } else {
     const slack = activePools.reduce((sum, p) => sum + Math.max(0, Math.round(p.capacity.value) - (a.load[p.id] ?? 0)), 0);
     facts.push({ id: 'bottleneck', key: 'res.fact.noBottleneck', provenance: ['derived'], vars: { slack: f.integer(slack), unit: f.unit } });

@@ -292,13 +292,31 @@ test.describe('project module', () => {
     await tile.getByTestId('proj-start-fiveForces').click();
     await expect(tile.getByTestId('proj-insight')).toHaveText('項目を追加すると結果が表示されます。');
     await page.getByTestId('proj-ai-draft').click();
+    await expect(page.getByTestId('proj-ai-review')).toContainText('モック');
+    await expect(tile.getByTestId('proj-overall')).toHaveCount(0);
+    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await page.reload();
+    await expect(page.getByTestId('proj-ai-review')).toBeVisible();
+    await expect(tile.getByTestId('proj-overall')).toHaveCount(0);
+    await page.getByTestId('proj-ai-approve').click();
     await expect(page.getByTestId('proj-ai-note')).toContainText('モック');
     await expect(tile.getByTestId('proj-overall')).toBeVisible();
+    await expect(page.getByTestId('proj-ai-review')).toHaveCount(0);
 
     // FR-153/154: KPI status text.
     await page.getByRole('tab', { name: 'KPI・OKR' }).click();
     await expect(page.getByTestId('proj-kpi-panel')).toBeVisible();
     await expect(page.getByTestId('proj-okr-panel')).toContainText('納期と品質で選ばれる工場になる');
+  });
+
+  test('analysis drafts can be discarded and become inapplicable when their inputs change', async ({ page }) => {
+    await go(page, '/analysis');
+    await page.getByTestId('proj-ai-draft').click();
+    await expect(page.getByTestId('proj-ai-approve')).toBeEnabled();
+    await page.getByRole('slider', { name: '項目 1 の評価' }).press('Home');
+    await expect(page.getByTestId('proj-ai-approve')).toBeDisabled();
+    await page.getByTestId('proj-ai-discard').click();
+    await expect(page.getByTestId('proj-ai-review')).toHaveCount(0);
   });
 
   test('analysis dashboard: several methods side by side, and selecting an item highlights related items in every tile (FR-135)', async ({ page }) => {

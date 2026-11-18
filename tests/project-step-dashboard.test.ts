@@ -11,7 +11,7 @@ import { applyDraft, emptyDeliverables, STEP_DEFS, type CheckContext } from '../
 import { buildDraft } from '../src/modules/project/deliverableDraft.ts';
 import { stepDashboard, tileTone, TOP_ISSUES } from '../src/modules/project/stepDashboard.ts';
 import { emptyStrategy, upsertContribution } from '../src/modules/project/strategy.ts';
-import { briefText, buildStepBrief, parseBrief, requestStepBrief, verifyNumbers } from '../src/modules/project/stepBrief.ts';
+import { approveGeneratedBrief, briefText, buildStepBrief, parseBrief, requestStepBrief, verifyNumbers } from '../src/modules/project/stepBrief.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -47,6 +47,20 @@ function draftedCtx(): CheckContext {
 }
 
 const contexts: [string, () => CheckContext][] = [['demo', () => demoCtx()], ['drafted', draftedCtx], ['empty project', emptyProjectCtx]];
+
+it('requires explicit summary approval and refuses stale, different-language or unverified drafts', async () => {
+  const c = demoCtx();
+  const b = buildStepBrief(stepDashboard('kpi', c), c, 'en', 'internal');
+  const generated = await requestStepBrief(b, c, 'en');
+  expect(generated.approval).toBeUndefined();
+  const approved = approveGeneratedBrief(generated, b, 'en', 'Reviewer', '2026-11-19');
+  expect(approved.approval).toEqual({ by: 'Reviewer', at: '2026-11-19' });
+  expect(generated.approval).toBeUndefined();
+  expect(() => approveGeneratedBrief(generated, { ...b, hash: 'changed' }, 'en', '', 'now')).toThrow();
+  expect(() => approveGeneratedBrief(generated, b, 'ja', '', 'now')).toThrow();
+  expect(() => approveGeneratedBrief({ ...generated, check: { ...generated.check, unverified: ['99999'] } }, b, 'en', '', 'now')).toThrow();
+  expect(c.deliverables.signOffs).toEqual({});
+});
 
 describe('step dashboard (FR-317)', () => {
   it.each(contexts)('every criterion tile agrees with its exit criterion (%s)', (_, make) => {

@@ -14,10 +14,12 @@ import { ScrollRegion } from './common.tsx';
 import { inputKey, type TodoResult } from './deliverables.ts';
 import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
+import { HandoffPanel } from './HandoffPanel.tsx';
 import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
 import { StrategyOverview } from './StrategyOverview.tsx';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
+import { ValueModelPanel } from './ValuePanel.tsx';
 import './project.css';
 
 const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_STEPS as readonly string[]).includes(s);
@@ -656,6 +658,7 @@ export function StepDashboardScreen() {
       <StrategyOverview ctx={ctx} step={step} />
       <StepBriefPanel d={d} ctx={ctx} audience={audience} />
       <Summary d={d} />
+      <HandoffPanel ctx={ctx} step={step} />
       <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">
         <p className="muted">{t('proj.dash.tilesHint')}</p>
         <ul className="step-dash-tiles">
@@ -663,6 +666,7 @@ export function StepDashboardScreen() {
         </ul>
       </Panel>
       <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} />
+      {(step === 'solution' || step === 'deliverable') && <ValueModelPanel ctx={ctx} nameOf={nameOf} />}
       <DecisionSupport step={step} report={report} visible={report ? visible(report.sourceId) : false} />
       <DocPanel d={d} />
       <InputsPanel d={d} />

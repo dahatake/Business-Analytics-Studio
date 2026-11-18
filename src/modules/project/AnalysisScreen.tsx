@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement } from 'react';
 import {
   Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Slider, Tab, TabList, ToggleButton,
   Toolbar, ToolbarRadioButton, ToolbarRadioGroup, Tooltip,
@@ -12,9 +12,10 @@ import { entitiesOf, getEntity, loaded } from '../../data/pack.ts';
 import { translate } from '../../i18n/core.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
+import { useSettings } from '../../state/settings.ts';
 import { replaceQuery, useRoute } from '../../state/router.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
-import { categoriesOf, categoryWeight, clampScore, computeAnalysis, newAnalysis, shownMethodsOf, validateItems, WEIGHT_MAX, WEIGHT_MIN, SCORE_MAX, SCORE_MIN } from './analysis.ts';
+import { analysisDraftBaseline, approveAnalysisDraft, categoriesOf, categoryWeight, clampScore, computeAnalysis, newAnalysis, shownMethodsOf, validateItems, WEIGHT_MAX, WEIGHT_MIN, SCORE_MAX, SCORE_MIN } from './analysis.ts';
 import { itemKey, relatedItems, type LinkSelection } from './analysisLinks.ts';
 import { categoryKey, describeInsight, fmtScore, methodDescKey, methodKey } from './analysisText.ts';
 import { AnalysisViewer, type LinkView, type Viewer } from './AnalysisViewer.tsx';
@@ -324,8 +325,14 @@ function AnalysisTile({ method, analysis, options, editing, link, relatedCount, 
 function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis: Analysis; analyses: Analysis[]; onOpen: (id: string) => void; link: LinkView; split: boolean }) {
   const { t, lang } = useI18n();
   const set = useAnalyses((s) => s.set);
+  const scope = useAnalyses((s) => s.scope);
+  const audience = useSettings((s) => s.audience);
   const [draftNote, setDraftNote] = useState<{ count: number; mock: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const running = useRef(false);
+  const pending = analysis.draft;
+  const stale = !!pending && (pending.baseline !== analysisDraftBaseline(analysis) || pending.lang !== lang || pending.audience !== audience);
   const issues = useMemo(() => validateItems(analysis.items), [analysis.items]);
   const cats = categoriesOf(analysis.method);
 
@@ -337,14 +344,41 @@ function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis:
     return { ...v, analyses: rest, activeId: rest.find((a) => a.method === analysis.method)?.id ?? rest[0]?.id ?? null };
   });
   const draft = async () => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
+    setError(null);
+    const baseline = analysisDraftBaseline(analysis);
+    const priorDraft = JSON.stringify(analysis.draft);
     try {
       const ents = [...entitiesOf('issue'), ...entitiesOf('solution')];
       const { response, items } = await requestAnalysisDraft(analysis.method, lang, ents);
-      update((a) => ({ ...a, items: [...a.items, ...items.map((d) => ({ id: newId('item'), category: d.category, text: d.text, score: clampScore(d.score), weight: 1, author: 'ai' as const, mock: response.mode === 'mock' }))] }));
-      setDraftNote({ count: items.length, mock: response.mode === 'mock' });
+      if (useAnalyses.getState().scope !== scope || useSettings.getState().lang !== lang || useSettings.getState().audience !== audience) return;
+      const current = useAnalyses.getState().value.analyses.find((a) => a.id === analysis.id);
+      if (!current || analysisDraftBaseline(current) !== baseline || JSON.stringify(current.draft) !== priorDraft) throw new Error(t('proj.an.draftChanged'));
+      if (!items.length) throw new Error(t('proj.an.draftEmpty'));
+      update((a) => ({ ...a, draft: {
+        items: items.map((d) => ({ id: newId('item'), category: d.category, text: d.text, score: clampScore(d.score), weight: 1, author: 'ai', mock: response.mode === 'mock' })),
+        baseline, lang, audience, at: new Date().toISOString(),
+      } }));
+      setDraftNote(null);
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value));
     } finally {
+      running.current = false;
       setBusy(false);
+    }
+  };
+  const approve = () => {
+    try {
+      const current = useAnalyses.getState().value.analyses.find((a) => a.id === analysis.id);
+      if (useAnalyses.getState().scope !== scope || !current || !pending || JSON.stringify(current.draft) !== JSON.stringify(pending)) throw new Error(t('proj.an.draftChanged'));
+      const approved = approveAnalysisDraft(current, lang, audience, new Date().toISOString());
+      update(() => approved);
+      setDraftNote({ count: pending.items.length, mock: pending.items.some((i) => i.mock) });
+      setError(null);
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value));
     }
   };
   const rowMark = (id: string) => {
@@ -457,6 +491,21 @@ function AnalysisEditor({ analysis, analyses, onOpen, link, split }: { analysis:
         <Button icon={<Sparkle20Regular />} onClick={() => void draft()} disabled={busy} data-testid="proj-ai-draft">{t('proj.an.aiDraft')}</Button>
         <Button icon={<Delete20Regular />} onClick={removeAnalysis}>{t('proj.an.deleteAnalysis')}</Button>
       </div>
+      {error && <p role="alert">{error}</p>}
+      {pending && pending.audience === audience && pending.lang === lang && (
+        <section data-testid="proj-ai-review" aria-label={t('proj.an.reviewDraft')}>
+          <h3 className="proj-h3">{t('proj.an.reviewDraft')}</h3>
+          <p>{t('proj.an.draftNote')}</p>
+          {stale && <p role="alert">{t('proj.an.draftChanged')}</p>}
+          <ul>{pending.items.map((item) => (
+            <li key={item.id}>
+              {item.mock && <MockBadge />} {t(categoryKey(item.category))}: {loc(item.text, lang)} ({item.score})
+            </li>
+          ))}</ul>
+          <Button appearance="primary" disabled={busy || stale} onClick={approve} data-testid="proj-ai-approve">{t('proj.an.approveDraft')}</Button>
+          <Button disabled={busy} onClick={() => update(({ draft: _draft, ...a }) => a)} data-testid="proj-ai-discard">{t('proj.an.discardDraft')}</Button>
+        </section>
+      )}
       {draftNote && (
         <MessageBar intent="info" className="proj-gap" data-testid="proj-ai-note">
           <MessageBarBody>

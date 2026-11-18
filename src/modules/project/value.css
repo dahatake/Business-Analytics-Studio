@@ -1,0 +1,69 @@
+/* FR-327 value model panel. Fluent tokens only, so light, dark and high-contrast themes follow. */
+.val-section { display: grid; gap: 8px; margin: 0 0 16px; min-width: 0; }
+.val-controls { padding: 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground2); }
+.val-portfolio { display: flex; flex-wrap: wrap; gap: 4px 16px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); padding: 4px 12px 8px; margin: 0; }
+.val-portfolio > legend { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); padding: 0 4px; }
+.val-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 24px; }
+.val-stats { margin: 4px 0 0; }
+.val-hatch { background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--colorNeutralBackground1) 3px 5px); }
+.step-chart-bar.val-link { top: 8px; bottom: 8px; background: var(--colorNeutralStrokeAccessible); }
+.val-hist { display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 1px solid var(--colorNeutralStroke1); padding-top: 4px; }
+.val-hist-bar { flex: 1 1 0; min-height: 1px; border-radius: 2px 2px 0 0; box-sizing: border-box; }
+.val-hist-bar.is-brand { background-color: var(--colorBrandBackground); }
+.val-hist-bar.is-bad { background-color: var(--colorPaletteRedBackground3); }
+.val-matrix td.val-cell { text-align: center; padding: 2px; }
+.val-cell.is-money { background: var(--colorPaletteGreenBackground1); }
+.val-cell.is-nonMoney { background: var(--colorBrandBackground2); }
+.val-cell.is-open { background: var(--colorPaletteYellowBackground1); }
+.val-cell .fui-Button { min-width: 0; width: 100%; }
+.val-cell.is-open .fui-Button { font-weight: var(--fontWeightSemibold); }
+.val-hint { padding: 8px 12px; border-left: 4px solid var(--colorBrandStroke1); background: var(--colorNeutralBackground2); border-radius: var(--borderRadiusMedium); }
+.val-hint p { margin: 0 0 6px; max-width: 90ch; }
+.val-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.val-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.val-form { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); }
+.val-method > summary { cursor: pointer; min-height: 24px; color: var(--colorBrandForegroundLink); }
+.val-method p { max-width: 100ch; }
+.val-lines-table th[scope='row'] { min-width: 16ch; }
+.val-lines-table td:nth-child(2) { min-width: 14ch; }
+.val-lines-table td:nth-child(3), .val-lines-table td:nth-child(4), .val-lines-table td:nth-child(7), .val-lines-table td:nth-child(8) { min-width: 10ch; }
+.val-lines-table td:last-child { white-space: nowrap; }
+.val-draft-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.val-draft-list > li { padding: 8px 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground1); }
+.val-draft-list > li[data-status='unverified'] { border: 2px dashed var(--colorPaletteRedBorder2); }
+.val-draft-head, .val-formula { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.val-draft p { margin: 4px 0; max-width: 110ch; }
+.val-input { display: inline-flex; gap: 4px; align-items: center; }
+.val-resolve { padding: 12px; border-left: 4px solid var(--colorBrandStroke1); background: var(--colorNeutralBackground2); border-radius: var(--borderRadiusMedium); }.val-explain-body { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); }
+.val-explain-headline { margin: 0; font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500); font-weight: var(--fontWeightSemibold); max-width: 90ch; }
+.val-explain-concept { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--colorNeutralStroke2); min-width: 0; }
+.val-explain-concept h4 { margin: 0; font-size: var(--fontSizeBase400); line-height: var(--lineHeightBase400); }
+.val-explain-concept p { margin: 0; max-width: 100ch; }
+.val-chain { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+.val-chain-box { display: grid; gap: 2px; min-width: 8em; padding: 6px 10px; border: 1px solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground2); }
+.val-chain-box.is-result { border: 2px solid var(--colorBrandStroke1); }
+.val-chain-op { align-self: center; font-size: var(--fontSizeBase500); }
+.val-tree ul { list-style: none; margin: 0; padding-left: 20px; border-left: 1px solid var(--colorNeutralStroke2); }
+.val-tree > ul { padding-left: 0; border-left: 0; }
+.val-tree li { margin: 4px 0; }
+.val-tree-node { display: grid; grid-template-columns: minmax(140px, 30%) minmax(80px, 1fr) max-content; gap: 2px 12px; align-items: center; }
+.val-tree-node.is-npv .val-tree-label, .val-tree-node.is-driver .val-tree-label { font-weight: var(--fontWeightSemibold); }
+.val-tree-bar { position: relative; height: 14px; border-radius: 2px; background: var(--colorNeutralBackground3); }
+.val-tree-rule { grid-column: 1 / -1; }
+.val-years { display: flex; align-items: flex-end; gap: 4px; height: 96px; }
+.val-year { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 2px; }
+.val-year-bar { width: 100%; min-height: 1px; border-radius: 2px 2px 0 0; background: var(--colorBrandBackground); }
+.val-tri-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.val-tri { width: 120px; height: 50px; flex: none; }
+.val-tri-shape { fill: var(--colorBrandBackground2); stroke: var(--colorBrandStroke1); stroke-width: 2; }
+.step-chart-band.val-band-alt { background: transparent; border: 2px dashed var(--colorNeutralStrokeAccessible); }
+.val-refs > summary { cursor: pointer; min-height: 24px; color: var(--colorBrandForegroundLink); }
+.val-refs ul { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 6px; }
+.val-refs li p { margin: 2px 0 0; }
+@media (forced-colors: active) {
+  .val-hist-bar { forced-color-adjust: none; background: CanvasText; }
+  .val-hist-bar.is-bad { background: Canvas; border: 1px solid CanvasText; }
+  .val-cell.is-open .fui-Button { text-decoration: underline; }
+  .val-year-bar { forced-color-adjust: none; background: CanvasText; }
+  .val-tri-shape { forced-color-adjust: none; fill: Canvas; stroke: CanvasText; }
+}

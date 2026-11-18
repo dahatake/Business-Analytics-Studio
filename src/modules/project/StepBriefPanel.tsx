@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
 import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { DEFAULT_LIVE_TIMEOUT_MS } from '../../ai/client.ts';
@@ -13,7 +13,8 @@ import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { AppCheckContext } from './deliverables.ts';
 import { stepBriefContext } from './overviewModel.ts';
 import { stepDashboard, type StepDashboard } from './stepDashboard.ts';
-import { buildStepBrief, factText, requestStepBrief, setStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
+import { approveGeneratedBrief, buildStepBrief, factText, requestStepBrief, setStepBrief, useStepBriefs, type BriefContent, type StepBrief } from './stepBrief.ts';
+import { useProjUi } from './stores.ts';
 
 /** SCQA and the pyramid below the answer; shared by the rule-based and the generated brief. */
 export function BriefBody({ content, brief, prefix }: { content: BriefContent; brief?: StepBrief; prefix: string }) {
@@ -82,10 +83,16 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
   const [progress, setProgress] = useState<{ stage: AiStage; startedAt?: number } | null>(null);
   const busy = progress !== null;
   const [cancelled, setCancelled] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const running = useRef(false);
 
   const generate = async () => {
+    if (running.current) return;
+    running.current = true;
     setProgress({ stage: 'generate', startedAt: Date.now() });
     setCancelled(false);
+    setError(null);
+    const previous = JSON.stringify(useStepBriefs.getState().value[key]);
     try {
       if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang) {
         setCancelled(true);
@@ -97,13 +104,29 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
         setCancelled(true);
         return;
       }
+      if (JSON.stringify(useStepBriefs.getState().value[key]) !== previous) throw new Error(t('proj.dash.brief.changed'));
       setStepBrief(key, result);
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value));
     } finally {
+      running.current = false;
       setProgress(null);
     }
   };
 
   const stale = !!generated && (generated.hash !== brief.hash || generated.lang !== lang);
+  const approve = () => {
+    try {
+      const current = useStepBriefs.getState().value[key];
+      if (currentScope() !== scope || useSettings.getState().audience !== audience || useSettings.getState().lang !== lang
+        || !current || JSON.stringify(current) !== JSON.stringify(generated)) throw new Error(t('proj.dash.brief.changed'));
+      const approved = approveGeneratedBrief(current, brief, lang, useProjUi.getState().editor.trim(), new Date().toISOString());
+      useStepBriefs.getState().set((value) => ({ ...value, [key]: approved }));
+      setError(null);
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value));
+    }
+  };
   return (
     <Panel title={t('proj.dash.brief.title')} testId="step-dash-brief" className="span-full">
       <div className="step-brief">
@@ -145,18 +168,25 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
           <p className="muted">{t(live ? 'proj.dash.brief.liveHint' : 'proj.dash.brief.mockHint')}</p>
           {progress && <AiProgress stage={progress.stage} startedAt={progress.startedAt} limitMs={live ? DEFAULT_LIVE_TIMEOUT_MS : undefined} testId="step-dash-brief-progress" />}
           {cancelled && <p className="muted" data-testid="step-dash-brief-cancelled">{t('proj.dash.brief.cancelled')}</p>}
+          {error && <p role="alert">{error}</p>}
           {generated && (
-            <div className="step-brief-ai" data-testid="step-dash-brief-ai" data-mode={generated.mode} data-stale={stale}>
+            <div className="step-brief-ai" data-testid="step-dash-brief-ai" data-mode={generated.mode} data-stale={stale} data-approved={!!generated.approval && !stale}>
               {generated.mode === 'mock'
                 ? <MockNotice reasons={generated.blockedReasons} />
                 : <LiveNotice costJpy={generated.costJpy ?? null} {...(generated.usage ? { usage: generated.usage } : {})} />}
               <div className="step-brief-meta">
+                <Badge appearance="outline" color={generated.approval && !stale ? 'success' : 'warning'} data-testid="step-dash-brief-approval">
+                  {t(generated.approval && !stale ? 'proj.dash.brief.approved' : 'proj.dash.brief.draft')}
+                </Badge>
                 <span className="muted" data-testid="step-dash-brief-at">{t('proj.dash.brief.at', { at: `${fmt.date(jstDate(generated.at))} ${fmt.time(new Date(generated.at))}` })}</span>
                 {stale && <Badge appearance="filled" color="warning" data-testid="step-dash-brief-stale">{t('proj.dash.brief.stale')}</Badge>}
+                {!generated.approval && <Button disabled={busy || stale || generated.check.unverified.length > 0} onClick={approve} data-testid="step-dash-brief-approve">{t('proj.dash.brief.approve')}</Button>}
                 <Button appearance="subtle" size="small" icon={<Dismiss20Regular />} onClick={() => setStepBrief(key, null)} data-testid="step-dash-brief-dismiss">
                   {t('proj.dash.brief.dismiss')}
                 </Button>
               </div>
+              <p className="muted">{t('proj.dash.brief.approvalNote')}</p>
+              {generated.approval && <p className="muted" data-testid="step-dash-brief-approved-at">{t('proj.dash.brief.approvedAt', { at: generated.approval.at, by: generated.approval.by || t('proj.dash.brief.reviewer') })}</p>}
               {generated.check.unverified.length > 0 ? (
                 <MessageBar intent="warning" data-testid="step-dash-brief-unverified">
                   <MessageBarBody>{t('proj.dash.brief.unverified', { list: generated.check.unverified.join(', ') })}</MessageBarBody>

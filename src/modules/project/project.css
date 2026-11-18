@@ -734,3 +734,11 @@
 @media (forced-colors: active) {
   .dec-ev, .dec-heat-cell { forced-color-adjust: none; border: 1px solid CanvasText; }
 }
+
+/* Copilot form drafts: a proposal shown beside the input until it is approved or discarded. */
+.dlv-form-draft { display: grid; gap: 8px; margin-block: 8px; }
+.dlv-form-draft-preview { border: 1px dashed var(--colorNeutralStroke1); border-radius: 6px; padding: 12px; background: var(--colorNeutralBackground2); }
+.dlv-form-draft-fields dt { font-weight: 600; margin-top: 4px; }
+.dlv-form-draft-fields dd { margin: 0 0 4px; }
+.dlv-form-draft-text { white-space: pre-wrap; font: inherit; margin: 0; }
+.dlv-section-edit { display: grid; gap: 4px; }

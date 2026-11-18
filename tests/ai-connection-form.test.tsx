@@ -79,18 +79,45 @@ describe('connection test action', () => {
     expect(useAiSettings.getState().relayConnection).toEqual(connection);
   });
 
-  it('with Entra ID, hides the API key, does not ask for it, and tests once signed in with a resource picked', async () => {
+  it('with Entra ID, hides manual connection fields and tests once signed in with a resource picked', async () => {
     useAiSettings.setState({
       authMethod: 'entraId', foundryKeySaved: false, entraTenantId: '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a',
       entra: { signedIn: true, account: 'u@example.com', tenantId: '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a', signIn: 'idle' },
     });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ instances: [], tenants: [] }), { status: 200 })));
     render(<FoundryFields />);
-    expect(screen.queryByTestId('ai-foundry-key')).toBeNull();
+    for (const id of ['ai-endpoint', 'ai-deployment', 'ai-api-version', 'ai-foundry-key']) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
     expect(screen.getByTestId('ai-entra-account').textContent).toContain('u@example.com');
     consent();
     fireEvent.click(button());
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+
+  it('restores manual fields and their values when switching back to API key authentication', () => {
+    render(<FoundryFields />);
+    expect(screen.getByTestId<HTMLInputElement>('ai-endpoint').value).toBe(connection.endpoint);
+    fireEvent.click(screen.getByTestId('ai-auth-entra'));
+    for (const id of ['ai-endpoint', 'ai-deployment', 'ai-api-version', 'ai-foundry-key']) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
+    fireEvent.click(screen.getByTestId('ai-auth-apikey'));
+    expect(screen.getByTestId<HTMLInputElement>('ai-endpoint').value).toBe(connection.endpoint);
+    expect(screen.getByTestId<HTMLInputElement>('ai-deployment').value).toBe(connection.deployment);
+    expect(screen.getByTestId<HTMLInputElement>('ai-api-version').value).toBe(connection.apiVersion);
+    expect(screen.getByTestId('ai-foundry-key')).toBeTruthy();
+  });
+
+  it('asks Entra users to select a resource instead of editing hidden fields', () => {
+    useAiSettings.setState({ authMethod: 'entraId', endpoint: '', deployment: '', entraTenantId: '' });
+    render(<ConnectionActions />);
+    expect(screen.getByTestId('ai-connection-validation').textContent).toContain('Pick a Foundry resource');
+    fireEvent.click(button());
+    const text = screen.getByTestId('ai-connection-blockers').textContent ?? '';
+    expect(text).toContain('Pick a Foundry resource');
+    expect(text).not.toContain('HTTPS resource URL');
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('lets a signed-in user select a Foundry resource and its chat deployment', async () => {

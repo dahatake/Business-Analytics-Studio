@@ -268,12 +268,16 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await page.getByTestId('ai-auth-entra').click();
     const entra = page.getByTestId('ai-entra');
     await expect(entra).toBeVisible();
-    await expect(page.getByTestId('ai-foundry-key')).toHaveCount(0);
+    for (const id of ['ai-endpoint', 'ai-deployment', 'ai-api-version', 'ai-foundry-key']) {
+      await expect(page.getByTestId(id)).toHaveCount(0);
+    }
     await expect(entra.getByTestId('ai-entra-signin')).toBeVisible();
     await expect(page.getByTestId('ai-entra-instance')).toHaveCount(0);
     await expect(page.getByTestId('ai-entra-account')).toContainText('Not signed in');
     await page.getByTestId('ai-auth-apikey').click();
-    await expect(page.getByTestId('ai-foundry-key')).toBeVisible();
+    for (const id of ['ai-endpoint', 'ai-deployment', 'ai-api-version', 'ai-foundry-key']) {
+      await expect(page.getByTestId(id)).toBeVisible();
+    }
   });
 
   test('selects a directory and signs in before showing its Foundry resources', async ({ page }) => {

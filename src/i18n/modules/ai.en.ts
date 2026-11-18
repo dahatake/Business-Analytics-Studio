@@ -182,6 +182,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.entra.instance': 'Microsoft Foundry resource',
   'ai.entra.instanceHint': 'Microsoft Foundry (AI Services) resources this account can read. Standalone Azure OpenAI resources are not listed.',
   'ai.entra.pickInstance': 'Pick a Foundry resource from the list.',
+  'ai.entra.pickConnection': 'Pick a Foundry resource and deployment from the lists.',
   'ai.entra.noInstances': 'This account cannot see any Foundry resource in the selected tenant. Check the tenant and your read access.',
   'ai.entra.noSubdomain': '{name} (no custom domain; cannot be used with Entra ID)',
   'ai.entra.keyDisabled': 'Key auth disabled',

@@ -181,6 +181,7 @@ export const aiJa = {
   'ai.entra.instance': 'Microsoft Foundry リソース',
   'ai.entra.instanceHint': 'このアカウントで参照できる Microsoft Foundry リソース（AI Services）です。単独の Azure OpenAI リソースは表示しません。',
   'ai.entra.pickInstance': '一覧から Foundry リソースを選んでください。',
+  'ai.entra.pickConnection': '一覧から Foundry リソースとデプロイを選んでください。',
   'ai.entra.noInstances': '選択中のテナントで参照できる Foundry リソースがありません。テナントや閲覧権限を確認してください。',
   'ai.entra.noSubdomain': '{name}（カスタム ドメインがないため Entra ID で使用不可）',
   'ai.entra.keyDisabled': 'キー認証無効',

@@ -78,11 +78,12 @@ export function ConnectionActions() {
   const problem = draft.ok ? null : draft.error;
   const precheck = connectionTestPreflight(s);
   const entra = s.authMethod === 'entraId';
+  const problemText = problem ? t(entra ? 'ai.entra.pickConnection' : `ai.conn.msg.${problem}`) : null;
   const blockers = [
-    problem ? t(`ai.conn.msg.${problem}`) : null,
+    problemText,
     !s.relayReachable ? t('ai.relay.unreachable') : null,
     entra && s.entra?.signedIn !== true ? t('ai.conn.msg.notSignedIn') : null,
-    entra && s.entra?.signedIn === true && !s.entraTenantId ? t('ai.entra.pickInstance') : null,
+    entra && s.entra?.signedIn === true && !s.entraTenantId && !problemText ? t('ai.entra.pickInstance') : null,
     !entra && !s.foundryKeySaved ? t('ai.conn.msg.keyMissing') : null,
     !precheck.budget.allowed ? t('ai.conn.msg.budget') : null,
     !consent ? t('ai.conn.msg.consentRequired') : null,
@@ -131,7 +132,7 @@ export function ConnectionActions() {
       </p>
       {s.connectionVerifiedAt && <p className="muted" data-testid="ai-connection-verified-at">{t('ai.conn.verifiedAt', { at: s.connectionVerifiedAt })}</p>}
       {differs && <p className="muted" data-testid="ai-relay-connection-differs">{t('ai.conn.differs', { endpoint: relay.endpoint, deployment: relay.deployment })}</p>}
-      {problem && <p role="alert" data-testid="ai-connection-validation">{t(`ai.conn.msg.${problem}`)}</p>}
+      {problemText && <p role="alert" data-testid="ai-connection-validation">{problemText}</p>}
       {draft.ok && <p className="muted" data-testid="ai-connection-destination">{t('ai.conn.destination', { url: foundryChatUrl(draft.value) })}</p>}
       <p className="muted" data-testid="ai-connection-test-info">{t('ai.conn.testInfo')}</p>
       <p className="muted" data-testid="ai-connection-test-cost">{t('ai.cost.unknown')}</p>
@@ -203,15 +204,19 @@ export function FoundryFields() {
   const v1 = endpoint.ok && isFoundryV1(endpoint.value);
   return (
     <>
-      <Field label={t('ai.settings.endpoint')} hint={t('ai.settings.endpointHint')}>
-        <Input value={s.endpoint} onChange={(_, d) => s.update({ endpoint: d.value })} data-testid="ai-endpoint" />
-      </Field>
-      <Field label={t('ai.settings.deployment')} hint={t('ai.settings.deploymentHint')}>
-        <Input value={s.deployment} onChange={(_, d) => s.update({ deployment: d.value })} data-testid="ai-deployment" />
-      </Field>
-      <Field label={t('ai.settings.apiVersion')} hint={v1 ? t('ai.settings.v1Hint') : undefined}>
-        <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={v1} data-testid="ai-api-version" />
-      </Field>
+      {s.authMethod === 'apiKey' && (
+        <>
+          <Field label={t('ai.settings.endpoint')} hint={t('ai.settings.endpointHint')}>
+            <Input value={s.endpoint} onChange={(_, d) => s.update({ endpoint: d.value })} data-testid="ai-endpoint" />
+          </Field>
+          <Field label={t('ai.settings.deployment')} hint={t('ai.settings.deploymentHint')}>
+            <Input value={s.deployment} onChange={(_, d) => s.update({ deployment: d.value })} data-testid="ai-deployment" />
+          </Field>
+          <Field label={t('ai.settings.apiVersion')} hint={v1 ? t('ai.settings.v1Hint') : undefined}>
+            <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={v1} data-testid="ai-api-version" />
+          </Field>
+        </>
+      )}
       <RadioGroup value={s.authMethod} onChange={(_, d) => s.update({ authMethod: d.value as AuthMethod })} aria-labelledby="ai-lbl-auth" data-testid="ai-auth-method">
         <span id="ai-lbl-auth" className="ai-label">{t('ai.settings.auth')}</span>
         <Radio value="apiKey" label={t('ai.auth.apiKey')} data-testid="ai-auth-apikey" />

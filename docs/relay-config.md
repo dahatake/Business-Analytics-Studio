@@ -134,6 +134,9 @@ FR-323. In AI Settings → Microsoft Foundry, choose **Microsoft Entra ID** inst
    including continuation pages. A directory and tenant refer to the same selection here. If the desired guest directory
    is absent, enter its tenant ID; access is still subject to the user's Azure permissions. The selected tenant may
    require its own sign-in (MFA or conditional access): use the selected tenant's sign-in button, then retry.
+   The relay selects that tenant's MSAL account profile, not just its authority URL. If the profile is not yet cached,
+   it refreshes against the selected tenant instead of reusing a home-tenant access token. Returned tokens must match
+   the requested tenant for both resource discovery and Foundry inference.
    `POST /relay/entra/instances { tenantId }` queries Azure Resource Graph with that tenant's token for Microsoft Foundry
    resources (`Microsoft.CognitiveServices/accounts` of kind `AIServices`), following continuation pages. Failures are
    shown rather than treated as an empty list. Standalone Azure OpenAI resources (kind `OpenAI`) are not included.

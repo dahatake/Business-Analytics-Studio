@@ -218,9 +218,16 @@ export class MsalEntraTokens implements EntraTokens {
       account = null;
     }
     if (!account) throw new EntraError('notSignedIn');
+    const targetTenant = (tenantId ?? saved.tenantId).toLowerCase();
+    const profile = account.tenantProfiles?.get(targetTenant);
+    if (profile) account = { ...account, ...profile };
     try {
-      const r = await pca.acquireTokenSilent({ account, scopes: [scope], authority: `https://${ENTRA_HOST}/${tenantId ?? saved.tenantId}` });
-      if (!r.accessToken) throw new EntraError('authFailed');
+      const r = await pca.acquireTokenSilent({
+        account, scopes: [scope], authority: `https://${ENTRA_HOST}/${targetTenant}`,
+        // MSAL keys cached tokens by account.tenantId before authority; an unseen tenant must use its refresh flow.
+        forceRefresh: account.tenantId.toLowerCase() !== targetTenant,
+      });
+      if (!r.accessToken || r.tenantId.toLowerCase() !== targetTenant) throw new EntraError('authFailed');
       return { token: r.accessToken, objectId: r.uniqueId, tenantId: r.tenantId };
     } catch (error) {
       if (error instanceof EntraError) throw error;

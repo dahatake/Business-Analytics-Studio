@@ -264,8 +264,8 @@ export class AiLiveError extends Error {
   /** Cost written to the ledger for a call that may have been billed although it produced no answer. */
   readonly recordedCostJpy: number | null;
 
-  constructor(reasons: GateReason[], message: string, budget?: BudgetDecision, recordedCostJpy: number | null = 0) {
-    super(message);
+  constructor(reasons: GateReason[], message: string, budget?: BudgetDecision, recordedCostJpy: number | null = 0, cause?: unknown) {
+    super(message, { cause });
     this.reasons = reasons;
     this.budget = budget;
     this.recordedCostJpy = recordedCostJpy;
@@ -285,6 +285,6 @@ export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ te
     return { text: r.text, costJpy: r.costJpy, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } catch (err) {
     const recorded = (err as { recordedCostJpy?: number | null }).recordedCostJpy;
-    throw new AiLiveError(['liveFailed'], signal?.aborted ? 'aborted' : (err as Error).message, undefined, recorded === undefined ? 0 : recorded);
+    throw new AiLiveError(['liveFailed'], signal?.aborted ? 'aborted' : (err as Error).message, undefined, recorded === undefined ? 0 : recorded, err);
   }
 }

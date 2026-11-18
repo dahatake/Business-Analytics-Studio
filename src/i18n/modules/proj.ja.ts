@@ -967,6 +967,8 @@ export const projJa = {
   'proj.gen.error.invalidPack': '検査に通る顧客パックを作れませんでした。何も保存していません。',
   'proj.gen.error.invalidAnalysis': '5 手法すべての分析結果を作成できませんでした。何も保存していません。',
   'proj.gen.error.callFailed': '生成AIへの送信が失敗しました（AI 設定・サインイン・予算を確認してください）。何も保存していません。',
+  'proj.gen.error.providerBusy': 'Microsoft Foundry が利用上限または混雑のため要求を拒否しました（HTTP 429）。時間を置いて再試行し、続く場合は Azure のモデルのクォータ・レート制限を確認してください。何も保存していません。',
+  'proj.gen.error.retryAfter': ' サービスが指定した待機時間: {seconds} 秒。',
   'proj.gen.error.collectFailed': '公開情報を取得できませんでした。',
   'proj.gen.error.saveFailed': '顧客パックを保存できませんでした。',
   'proj.gen.error.analysisSaveFailed': '顧客パックは保存しましたが、分析結果を保存できませんでした。Project の保存状態を確認してください。',

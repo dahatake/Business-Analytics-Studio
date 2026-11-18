@@ -45,7 +45,7 @@ type Phase =
   | { kind: 'form' }
   | { kind: 'running'; startedAt: number }
   | { kind: 'saved'; result: GenResult; projectId: string }
-  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed' | 'analysisSaveFailed'; detail: string; costJpy: number | null; tokens: TokenTotals };
+  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed' | 'analysisSaveFailed'; detail: string; costJpy: number | null; tokens: TokenTotals; providerBusy?: boolean; retryAfterMs?: number };
 
 function todayJst(): string {
   return jstDay(new Date());
@@ -336,7 +336,10 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       const tokens = runTokens();
       if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
       setSteps((s) => Object.fromEntries(STEPS.map((k) => [k, s[k] === 'running' ? 'failed' : s[k]])) as Record<StepId, StepStatus>);
-      setPhase({ kind: 'error', code: e?.code ?? 'callFailed', detail: e?.detail ?? (reasons || (err as Error).message), costJpy: e ? e.costJpy : null, tokens });
+      setPhase({
+        kind: 'error', code: e?.code ?? 'callFailed', detail: e?.detail ?? (reasons || (err as Error).message),
+        costJpy: e ? e.costJpy : null, tokens, providerBusy: e?.providerBusy, retryAfterMs: e?.retryAfterMs,
+      });
       return;
     } finally {
       abortRef.current = null;
@@ -600,7 +603,9 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                   {phase.kind === 'error' && (
                     <MessageBar intent="error" data-testid="gen-error">
                       <MessageBarBody>
-                        {t(`proj.gen.error.${phase.code}`)}
+                        {t(phase.providerBusy ? 'proj.gen.error.providerBusy' : `proj.gen.error.${phase.code}`)}
+                        {phase.providerBusy && phase.retryAfterMs !== undefined && phase.retryAfterMs > 0 &&
+                          t('proj.gen.error.retryAfter', { seconds: fmt.integer(Math.ceil(phase.retryAfterMs / 1000)) })}
                         <span className="gen-detail" lang="en">{phase.detail}</span>
                         {t('proj.gen.errorCost', { cost: yen(phase.costJpy), tokens: phase.tokens.totalTokens === null ? t('ai.tokens.unavailable') : fmt.integer(phase.tokens.totalTokens) })}
                       </MessageBarBody>

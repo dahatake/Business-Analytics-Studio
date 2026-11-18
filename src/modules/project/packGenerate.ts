@@ -18,6 +18,7 @@ import { categoriesOf } from './analysis.ts';
 import { AnalysisDataSchema, METHODS, newId, type AnalysisData, type AnalysisItem, type MethodId } from './model.ts';
 import { methodKey } from './analysisText.ts';
 import { translate } from '../../i18n/core.ts';
+import { RelayError } from '../ai/relayClient.ts';
 
 /**
  * FR-311 (D-12): build a customer pack in the app with the configured LLM.
@@ -279,12 +280,16 @@ export class PackGenError extends Error {
   readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'invalidAnalysis' | 'callFailed' | 'collectFailed';
   readonly detail: string;
   readonly costJpy: number | null;
+  readonly providerBusy: boolean;
+  readonly retryAfterMs?: number;
 
-  constructor(code: PackGenError['code'], detail: string, costJpy: number | null) {
+  constructor(code: PackGenError['code'], detail: string, costJpy: number | null, providerError?: RelayError) {
     super(`${code}: ${detail}`);
     this.code = code;
     this.detail = detail;
     this.costJpy = costJpy;
+    this.providerBusy = providerError?.code === 'providerBusy';
+    this.retryAfterMs = this.providerBusy ? providerError?.retryAfterMs : undefined;
   }
 }
 
@@ -1196,7 +1201,12 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     return { prompt, trimmed: Math.max(0, full - kept) };
   };
   let retriesLeft = MAX_CALL_RETRIES;
-  const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const pause = (ms: number) => new Promise<void>((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
   const call = async (stage: GenerationReport['calls'][number]['stage'], build: (material: MaterialEntry[]) => string): Promise<Pack> => {
     const { prompt, trimmed } = fit(build);
     for (let attempt = 0; ; attempt++) {
@@ -1212,12 +1222,17 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
         if (signal.aborted) throw cancelled();
         // A refusal by the app's own gate (budget, daily count, input size) would fail the same way again.
         const reasons = (err as { reasons?: unknown }).reasons;
+        const cause = err instanceof Error && err.cause instanceof RelayError ? err.cause : err instanceof RelayError ? err : undefined;
+        const busy = cause?.code === 'providerBusy';
+        const delay = busy ? Math.max(deps.retryDelayMs ?? (15_000 * (attempt + 1)), cause.retryAfterMs ?? 0) : (deps.retryDelayMs ?? 5_000);
+        // Do not retry sooner than the provider requests, or keep the dialog waiting indefinitely.
+        if (busy && delay > 60_000) throw new PackGenError('callFailed', (err as Error).message, costJpy, cause);
         if (retriesLeft > 0 && (!Array.isArray(reasons) || reasons.includes('liveFailed'))) {
           retriesLeft--;
-          await pause(deps.retryDelayMs ?? 5_000);
+          await pause(delay);
           continue;
         }
-        throw new PackGenError('callFailed', (err as Error).message, costJpy);
+        throw new PackGenError('callFailed', (err as Error).message, costJpy, cause);
       }
       costJpy = costJpy === null || r.costJpy === null ? null : costJpy + r.costJpy;
       calls.push({ stage, costJpy: r.costJpy, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ms: Date.now() - t0, ...(trimmed ? { trimmedChars: trimmed } : {}), ...(attempt ? { retried: true } : {}) });

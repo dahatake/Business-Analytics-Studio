@@ -449,7 +449,25 @@ function validateAiCall(o: Record<string, unknown>, use: AiUse, provider: Provid
  * A deployment that rejects the modern body (HTTP 400, not billed) is retried once with the classic body.
  */
 interface FoundryResult { text: string; inputTokens: number; outputTokens: number }
-type FoundryResponse = { status: 200; body: FoundryResult } | { status: number; body: { error: FoundryError | 'outboundNotAllowed'; providerStatus?: number } };
+type FoundryResponse = { status: 200; body: FoundryResult } | { status: number; body: { error: FoundryError | 'outboundNotAllowed'; providerStatus?: number; retryAfterMs?: number } };
+
+function providerRetryAfter(headers: Headers): number | undefined {
+  const values: number[] = [];
+  const maxDelay = 7 * 24 * 60 * 60_000;
+  for (const name of ['retry-after-ms', 'x-ms-retry-after-ms']) {
+    const raw = headers.get(name)?.trim();
+    if (raw && /^\d+(\.\d+)?$/.test(raw)) values.push(Math.min(Number(raw), maxDelay));
+  }
+  const raw = headers.get('retry-after')?.trim();
+  if (raw && /^\d+(\.\d+)?$/.test(raw)) values.push(Math.min(Number(raw) * 1000, maxDelay));
+  else if (raw) {
+    const date = Date.parse(raw);
+    if (Number.isFinite(date)) values.push(Math.max(0, date - Date.now()));
+  }
+  const valid = values.filter((value) => Number.isFinite(value) && value >= 0);
+  // Long waits are reported, not automatically retried; cap untrusted response headers.
+  return valid.length ? Math.ceil(Math.min(Math.max(...valid), maxDelay)) : undefined;
+}
 
 function networkError(error: unknown): FoundryError {
   const e = error as { code?: string; cause?: { code?: string } } | null;
@@ -500,7 +518,8 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
       await res.body?.cancel().catch(() => undefined);
       const error: FoundryError = res.status === 401 ? 'unauthorized' : res.status === 403 ? 'forbidden' :
         res.status === 404 ? 'deploymentNotFound' : res.status === 400 ? 'invalidApiRequest' : res.status === 429 ? 'providerBusy' : 'providerError';
-      return { status: 502, body: { error, providerStatus: res.status } };
+      const retryAfterMs = res.status === 429 ? providerRetryAfter(res.headers) : undefined;
+      return { status: 502, body: { error, providerStatus: res.status, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) } };
     }
     const raw: unknown = await res.json();
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { status: 502, body: { error: 'badProviderResponse' } };

@@ -968,6 +968,8 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.gen.error.invalidPack': 'Could not produce a pack that passes the check. Nothing was saved.',
   'proj.gen.error.invalidAnalysis': 'Could not produce results for all five analysis methods. Nothing was saved.',
   'proj.gen.error.callFailed': 'Sending to the model failed (check AI settings, sign-in and budget). Nothing was saved.',
+  'proj.gen.error.providerBusy': 'Microsoft Foundry rejected the request due to quota or capacity limits (HTTP 429). Try again later; if it persists, check the Azure model quota and rate limits. Nothing was saved.',
+  'proj.gen.error.retryAfter': ' Service-requested wait: {seconds} seconds.',
   'proj.gen.error.collectFailed': 'Public material could not be retrieved.',
   'proj.gen.error.saveFailed': 'The customer pack could not be saved.',
   'proj.gen.error.analysisSaveFailed': 'The customer pack was saved, but its analysis results could not be saved. Check the project storage status.',

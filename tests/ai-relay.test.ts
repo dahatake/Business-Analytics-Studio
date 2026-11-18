@@ -506,6 +506,40 @@ describe('relay secrets and connection', () => {
     expect(readFileSync(join(vault.dir, 'connection.json'), 'utf8')).toBe(before);
   });
 
+  it('passes only the sanitized longest Foundry retry delay on HTTP 429', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', c), { fetch: verifiedReply });
+    const fetch: typeof globalThis.fetch = async () => new Response(`secret ${FAKE_KEY}`, {
+      status: 429, headers: { 'retry-after': '45', 'retry-after-ms': '12000', 'x-ms-retry-after-ms': 'invalid' },
+    });
+    const result = await call(req('POST', '/relay/ai', {
+      use: 'packBuild', lang: 'en', prompt: 'Synthetic.', maxOutputTokens: 100, timeoutMs: 1000,
+    }), { fetch });
+    expect(result).toEqual({ status: 502, body: { error: 'providerBusy', providerStatus: 429, retryAfterMs: 45000 } });
+  });
+
+  it('accepts a retry date and ignores invalid retry headers', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-18T12:00:00Z'));
+      const result = await call(req('PUT', '/relay/connection', c), {
+        fetch: async () => new Response('', { status: 429, headers: { 'retry-after': 'Wed, 18 Nov 2026 12:01:00 GMT' } }),
+      });
+      expect(result.body).toEqual({ error: 'providerBusy', providerStatus: 429, retryAfterMs: 60000 });
+      const invalid = await call(req('PUT', '/relay/connection', c), {
+        fetch: async () => new Response('', { status: 429, headers: { 'retry-after': 'bad', 'retry-after-ms': '-5' } }),
+      });
+      expect(invalid.body).toEqual({ error: 'providerBusy', providerStatus: 429 });
+      const huge = await call(req('PUT', '/relay/connection', c), {
+        fetch: async () => new Response('', { status: 429, headers: { 'retry-after': '9'.repeat(400) } }),
+      });
+      expect(huge.body).toEqual({ error: 'providerBusy', providerStatus: 429, retryAfterMs: 604800000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['ENOTFOUND', 'dnsFailure'], ['EAI_AGAIN', 'dnsFailure'], ['ECONNREFUSED', 'networkError'],
     ['CERT_HAS_EXPIRED', 'tlsError'], ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'tlsError'],

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CopilotError, CopilotService, type CopilotSdk, type SdkSession } from '../server/copilot.ts';
 import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, parseSiteUrl, purposeLinks, SITE_MAX_PAGES, SITE_PURPOSE_PAGES, SiteError } from '../server/site.ts';
 import { CollectionReport } from '../src/data/collection.ts';
@@ -14,6 +14,8 @@ import { EngagementsExtension } from '../src/data/extensionSchemas.ts';
 import { estimateTokens } from '../src/ai/budget.ts';
 import { PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS } from '../src/ai/policy.ts';
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
+import { AiLiveError } from '../src/ai/client.ts';
+import { RelayError } from '../src/modules/ai/relayClient.ts';
 
 const NOW = new Date('2026-11-10T03:00:00Z');
 const lt = (s: string) => ({ ja: s, en: s });
@@ -616,6 +618,79 @@ describe('FR-311 pack generation (D-12)', () => {
     const blocked = deps([stageA], { complete: async () => { blockedCalls++; throw Object.assign(new Error('blocked: dailyLimit'), { reasons: ['dailyLimit'] }); } });
     await expect(generatePack(input(), blocked, () => {}, new AbortController().signal)).rejects.toMatchObject({ code: 'callFailed' });
     expect(blockedCalls).toBe(1);
+  });
+
+  it('waits for the provider retry delay before retrying a throttled stage', async () => {
+    vi.useFakeTimers();
+    try {
+      let n = 0;
+      const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }]);
+      const answer = d.complete;
+      d.complete = async (...args) => {
+        if (++n === 1) throw new AiLiveError(['liveFailed'], 'relay 502 providerBusy', undefined, 0, new RelayError(502, 'providerBusy', 20_000));
+        return answer(...args);
+      };
+      const pending = generatePack(input(), d, () => {}, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(n).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await pending;
+      expect(result.report.calls[0]).toMatchObject({ stage: 'foundation', retried: true });
+      expect(verifyPack(result.pack).ok).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a long provider wait rather than retrying early, and permits cancellation while waiting', async () => {
+    let n = 0;
+    const long = deps([stageA], { complete: async () => {
+      n++;
+      throw new AiLiveError(['liveFailed'], 'relay 502 providerBusy', undefined, 0, new RelayError(502, 'providerBusy', 120_000));
+    } });
+    await expect(generatePack(input(), long, () => {}, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'callFailed', providerBusy: true, retryAfterMs: 120_000 });
+    expect(n).toBe(1);
+
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const waiting = deps([stageA], { complete: async () => {
+        throw new RelayError(502, 'providerBusy', 30_000);
+      } });
+      const pending = generatePack(input(), waiting, () => {}, controller.signal);
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('backs off twice when a busy provider supplies no delay, then reports the failure', async () => {
+    vi.useFakeTimers();
+    try {
+      let n = 0;
+      const d = deps([stageA], { retryDelayMs: undefined, complete: async () => {
+        n++;
+        throw new RelayError(502, 'providerBusy');
+      } });
+      const pending = generatePack(input(), d, () => {}, new AbortController().signal);
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'callFailed', providerBusy: true });
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(n).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(n).toBe(2);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(n).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(n).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('D-14: a Work IQ failure is recorded and the run continues; without the opt-in Work IQ is never asked', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UsageRecord } from '../src/ai/budget.ts';
-import { aiComplete, readLedger, rebindLedgerScope, setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
+import { aiComplete, aiLive, readLedger, rebindLedgerScope, setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
 import { recordsOfScope, summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { tokenSection } from '../src/modules/project/exportFormat.ts';
 import { relayTransport } from '../src/modules/ai/relayClient.ts';
@@ -87,6 +87,21 @@ describe('ledger attribution', () => {
       const r = await aiComplete({ use: 'packBuild', lang: 'en', prompt: 'x', scope: 'pj-x' });
       expect(r).toMatchObject({ mode: 'live', usage: { inputTokens: null, outputTokens: null }, costJpy: null });
       expect(readLedger()).toEqual([expect.objectContaining({ scope: 'pj-x', inputTokens: null, outputTokens: null, costJpy: null })]);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it('preserves a sanitized provider throttle delay through the relay transport and aiLive', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      JSON.stringify({ error: 'providerBusy', providerStatus: 429, retryAfterMs: 25000 }), { status: 502 },
+    ));
+    try {
+      setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+      setLiveTransport(relayTransport);
+      await expect(aiLive({ use: 'packBuild', lang: 'en', prompt: 'x' })).rejects.toMatchObject({
+        reasons: ['liveFailed'], cause: { code: 'providerBusy', retryAfterMs: 25000 },
+      });
     } finally {
       fetch.mockRestore();
     }

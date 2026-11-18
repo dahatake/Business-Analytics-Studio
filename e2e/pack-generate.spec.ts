@@ -95,6 +95,40 @@ test('Japanese labels on the launch screen', async ({ page }) => {
   await expect(page.getByTestId('gen-missing')).toContainText('企業名');
 });
 
+test('a Foundry quota rejection explains the cause and does not retry before the requested wait', async ({ page }) => {
+  const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
+  await page.addInitScript((connection) => {
+    if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
+    sessionStorage.setItem('bas.e2e.ai-seeded', '1');
+    localStorage.setItem('bas.ai.settings', JSON.stringify({
+      version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true, monthlyBudgetJpy: 100000 },
+    }));
+  }, connection);
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-18T00:00:00Z', keyProtection: 'file',
+    copilot: null, entra: null, workiq: { method: 'cli', account: 'test@example.com', signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  let sends = 0;
+  await page.route('**/relay/ai', (route) => {
+    sends++;
+    return route.fulfill({ status: 502, json: { error: 'providerBusy', providerStatus: 429, retryAfterMs: 120000 } });
+  });
+  await seed(page, 'ja');
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await dialog.getByTestId('gen-purpose').fill('配送遅延を減らす');
+  await dialog.getByTestId('gen-news').uncheck();
+  await dialog.getByTestId('gen-workiq').uncheck();
+  await dialog.getByTestId('gen-check-approved').check();
+  await dialog.getByTestId('gen-check-cost').check();
+  await dialog.getByTestId('gen-start').click();
+  await expect(dialog.getByTestId('gen-error')).toContainText('Microsoft Foundry');
+  await expect(dialog.getByTestId('gen-error')).toContainText('HTTP 429');
+  await expect(dialog.getByTestId('gen-error')).toContainText('120 秒');
+  await expect(dialog.getByTestId('gen-error')).toContainText('何も保存していません');
+  expect(sends).toBe(1);
+});
+
 test('generator fits narrow screens and can be resized in both directions', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await seed(page, 'ja');

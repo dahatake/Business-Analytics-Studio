@@ -222,23 +222,30 @@ const TRANSPORT_GRACE_MS = 5_000;
 export class RelayError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly retryAfterMs?: number;
 
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, retryAfterMs?: number) {
     super(`relay ${status} ${code}`);
     this.status = status;
     this.code = code;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+async function errorDetails(res: Response): Promise<{ code: string; retryAfterMs?: number }> {
+  try {
+    const body = (await res.json()) as { error?: unknown; reasons?: unknown; retryAfterMs?: unknown };
+    const code = typeof body.error === 'string' ? body.error
+      : Array.isArray(body.reasons) && typeof body.reasons[0] === 'string' ? body.reasons[0] : 'unknown';
+    const retryAfterMs = body.retryAfterMs;
+    return { code, ...(code === 'providerBusy' && typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 && retryAfterMs <= 604_800_000 ? { retryAfterMs } : {}) };
+  } catch {
+    return { code: 'unknown' };
   }
 }
 
 async function errorCode(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: unknown; reasons?: unknown };
-    if (typeof body.error === 'string') return body.error;
-    if (Array.isArray(body.reasons) && typeof body.reasons[0] === 'string') return body.reasons[0];
-  } catch {
-    // not JSON
-  }
-  return 'unknown';
+  return (await errorDetails(res)).code;
 }
 
 /**
@@ -261,7 +268,10 @@ export const relayTransport: LiveTransport = async (call: LiveCall, signal?: Abo
       }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+    if (!res.ok) {
+      const { code, retryAfterMs } = await errorDetails(res);
+      throw new RelayError(res.status, code, retryAfterMs);
+    }
     const body = (await res.json()) as Partial<LiveResult>;
     const validTokens = (v: unknown): v is number | null => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
     if (typeof body.text !== 'string' || !validTokens(body.inputTokens) || !validTokens(body.outputTokens)) throw new RelayError(502, 'badRelayAnswer');

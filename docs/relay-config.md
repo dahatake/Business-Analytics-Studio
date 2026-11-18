@@ -18,7 +18,12 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | C-03 | `/relay/ai` validates the request-use identifier and provider-specific technical limits, then re-checks the broad AI-settings consent, configured connection, live switch, and budget gates. There is no per-use approval table. A connection test remains a separate fixed synthetic request through `PUT /relay/connection`; it never includes customer or project data. |
 | Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. |
 | Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Work IQ (D-14, Microsoft Foundry only) uses the fixed `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/{devicecode,token}` and `https://workiq.svc.cloud.microsoft/rest/conversations` endpoints. Redirects are not followed. |
-| Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status is returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
+| Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status and an optional numeric retry delay are returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
+
+For Foundry HTTP 429 the relay also returns a sanitized numeric retry delay from `Retry-After` or the millisecond retry
+headers, when present. Pack generation honors that delay, with at most two retries per run; waits above 60 seconds
+are reported instead of retried automatically. Without a provider delay, its busy retries wait 15 then 30 seconds.
+Quota or capacity errors can persist even after a short connection test succeeds.
 
 ### Foundry: test before saving (D-13)
 

@@ -20,7 +20,7 @@ import { MAX_PURPOSE_SEARCHES, WorkIqError, purposeTopics, type WorkIqQuestion }
 import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
 import { blankTestImage } from '../server/media.ts';
-import { validateMedia } from '../src/ai/mediaConnection.ts';
+import { foundryMediaEndpoint } from '../src/ai/mediaConnection.ts';
 
 const FAKE_KEY = 'sk-test-0123456789abcdefFAKEKEY';
 const PORT = 4188;
@@ -230,7 +230,7 @@ describe('secret vault (AES-256-GCM)', () => {
     expect(vault.keyProtection()).toBe('file');
     expect(vault.get('foundryKey')).toBe(FAKE_KEY);
     expect(new SecretVault(vault.dir, { protector: null }).get('foundryKey')).toBe(FAKE_KEY);
-    expect(vault.status()).toEqual({ foundryKey: true, speechKey: false, visionKey: false });
+    expect(vault.status()).toEqual({ foundryKey: true });
   });
 
   it('never writes the plaintext to disk and uses a fresh IV per write', () => {
@@ -250,17 +250,29 @@ describe('secret vault (AES-256-GCM)', () => {
   it('rejects tampered ciphertext and a secret moved to another name', () => {
     vault.set('foundryKey', FAKE_KEY);
     const file = JSON.parse(readFileSync(vault.filePath, 'utf8')) as { entries: Record<string, unknown> };
-    file.entries.speechKey = file.entries.foundryKey;
+    file.entries.foundryEntraKey = file.entries.foundryKey;
     writeFileSync(vault.filePath, JSON.stringify(file));
-    expect(() => vault.get('speechKey')).toThrow();
+    expect(() => vault.get('foundryEntraKey')).toThrow();
   });
 
   it('deletes secrets', () => {
-    vault.set('speechKey', FAKE_KEY);
-    expect(vault.delete('speechKey')).toBe(true);
-    expect(vault.status().speechKey).toBe(false);
-    expect(vault.get('speechKey')).toBeUndefined();
-    expect(vault.delete('speechKey')).toBe(false);
+    vault.set('foundryKey', FAKE_KEY);
+    expect(vault.delete('foundryKey')).toBe(true);
+    expect(vault.status().foundryKey).toBe(false);
+    expect(vault.get('foundryKey')).toBeUndefined();
+    expect(vault.delete('foundryKey')).toBe(false);
+  });
+
+  it('purges the retired Speech / Vision keys and keeps the others (FR-328)', () => {
+    vault.set('foundryKey', FAKE_KEY);
+    const file = JSON.parse(readFileSync(vault.filePath, 'utf8')) as { entries: Record<string, unknown> };
+    file.entries.speechKey = file.entries.foundryKey;
+    file.entries.visionKey = file.entries.foundryKey;
+    writeFileSync(vault.filePath, JSON.stringify(file));
+    expect(vault.purgeLegacy()).toBe(true);
+    expect(Object.keys((JSON.parse(readFileSync(vault.filePath, 'utf8')) as typeof file).entries)).toEqual(['foundryKey']);
+    expect(vault.get('foundryKey')).toBe(FAKE_KEY);
+    expect(vault.purgeLegacy()).toBe(false);
   });
 
   it('I-6: migrates an existing plain master key to the protector once, and falls back to the file when it fails', () => {
@@ -601,7 +613,7 @@ describe('relay secrets and connection', () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true, speechKey: false, visionKey: false }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { speech: null, vision: null } } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null } } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -1128,7 +1140,7 @@ describe('D-14 Work IQ through the relay (Microsoft Foundry only)', () => {
 
     const status = await call(req('GET', '/relay/status'), { workiq });
     expect((status.body as { workiq: unknown }).workiq).toEqual({ method: 'app', tenantId: TENANT, clientId: CLIENT, account: 'user@contoso.example', signedIn: true, verifiedAt: null });
-    expect((status.body as { secrets: Record<string, boolean> }).secrets).toEqual({ foundryKey: false, speechKey: false, visionKey: false });
+    expect((status.body as { secrets: Record<string, boolean> }).secrets).toEqual({ foundryKey: false });
     expect(readFileSync(vault.filePath, 'utf8')).not.toContain(REFRESH);
     // The browser can neither write nor delete the internal token through the secrets route.
     expect((await call(req('PUT', '/relay/secrets/workiqRefreshToken', { value: 'x' }))).status).toBe(404);
@@ -1824,7 +1836,7 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
     expect(body.tenants).toEqual([{ tenantId: TENANT, name: 'Contoso', signedIn: true }, { tenantId: OTHER, name: 'Fabrikam', signedIn: false }]);
     expect(graph).toHaveLength(1);
     expect(graph[0]!.query).toContain("microsoft.cognitiveservices/accounts");
-    expect(graph[0]!.query).toContain("kind in~ ('AIServices')");
+    expect(graph[0]!.query).toContain("kind =~ 'AIServices'");
   });
 
   it('lists all directory pages and reads resources using only the selected tenant token', async () => {
@@ -1923,12 +1935,13 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
   });
 });
 
-describe('FR-324 Azure AI Speech and Azure AI Vision connections (API key or Microsoft Entra ID)', () => {
+describe('FR-328 Azure AI Speech and Azure AI Vision through the Microsoft Foundry connection', () => {
   const TENANT = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
   const OID = '11111111-2222-3333-4444-555555555555';
   const SUB = 'd8352616-ed51-492b-929b-5e266d38aedd';
-  const RES = `/subscriptions/${SUB}/resourceGroups/rg-bas/providers/Microsoft.CognitiveServices/accounts/bas-speech`;
-  const SPEECH_KEY = 'speech-FAKE-KEY-0123456789';
+  const RES = `/subscriptions/${SUB}/resourceGroups/rg-bas/providers/Microsoft.CognitiveServices/accounts/bas-foundry`;
+  const FOUNDRY = 'https://bas-foundry.openai.azure.com/openai/v1';
+  const MEDIA_HOST = 'https://bas-foundry.cognitiveservices.azure.com';
   const testConfig: RelayConfig = { ...STRICT_RELAY_CONFIG, testOutbound: true };
   let clock = 9_000_000;
   let account: { username: string; tenantId: string } | null;
@@ -1952,102 +1965,102 @@ describe('FR-324 Azure AI Speech and Azure AI Vision connections (API key or Mic
     };
     return { sent, fetch };
   };
-  const status = async () => (await call(req('GET', '/relay/status'), ctx())).body as { media: Record<string, { connection: Record<string, unknown>; verifiedAt: string | null } | null> };
+  type Media = { endpoint: string | null; auth: string | null; unavailable: string | null; speech: string | null; vision: string | null };
+  const status = async () => ((await call(req('GET', '/relay/status'), ctx())).body as { media: Media }).media;
+  const connect = async (auth: 'apiKey' | 'entraId', endpoint = FOUNDRY) => {
+    const body = { endpoint, deployment: 'model-router', ...(auth === 'entraId' ? { auth, tenantId: TENANT } : {}) };
+    expect((await call(req('PUT', '/relay/connection', body), ctx({ fetch: verifiedReply }))).status).toBe(200);
+  };
+  const test = (service: string, extra: Partial<RelayContext> = {}, body: unknown = {}) => call(req('PUT', `/relay/media/${service}`, body), ctx(extra));
 
   beforeEach(() => { account = { username: 'user@contoso.example', tenantId: TENANT }; });
-  afterEach(() => { for (const a of answers) expect(JSON.stringify(a.body)).not.toMatch(/speech-FAKE-KEY|entra-token/); });
+  afterEach(() => { for (const a of answers) expect(JSON.stringify(a.body)).not.toMatch(/FAKE|entra-token/); });
 
-  it('accepts Entra ID only on a custom subdomain and checks region, tenant and resource before any call', () => {
-    expect(validateMedia('speech', { auth: 'entraId', endpoint: 'https://japaneast.api.cognitive.microsoft.com', tenantId: TENANT, resourceId: RES })).toEqual({ ok: false, error: 'customDomainRequired' });
-    expect(validateMedia('speech', { auth: 'entraId', endpoint: 'https://bas-speech.cognitiveservices.azure.com', tenantId: 'x', resourceId: RES })).toEqual({ ok: false, error: 'invalidTenant' });
-    expect(validateMedia('speech', { auth: 'entraId', endpoint: 'https://bas-speech.cognitiveservices.azure.com', tenantId: TENANT, resourceId: '/x' })).toEqual({ ok: false, error: 'invalidResource' });
-    expect(validateMedia('speech', { auth: 'apiKey', endpoint: 'https://japaneast.api.cognitive.microsoft.com', region: 'eastus' })).toEqual({ ok: false, error: 'regionMismatch' });
-    expect(validateMedia('speech', { auth: 'apiKey', region: 'JapanEast' })).toEqual({ ok: true, value: { auth: 'apiKey', endpoint: null, region: 'japaneast' } });
-    expect(validateMedia('speech', { auth: 'apiKey' })).toEqual({ ok: false, error: 'invalidRegion' });
-    expect(validateMedia('vision', { auth: 'apiKey', region: 'japaneast' })).toEqual({ ok: false, error: 'invalidEndpoint' });
-    for (const endpoint of ['http://bas.cognitiveservices.azure.com', 'https://bas.cognitiveservices.azure.com/x', 'https://evil.example', 'https://u:p@bas.cognitiveservices.azure.com']) {
-      expect(validateMedia('vision', { auth: 'apiKey', endpoint })).toEqual({ ok: false, error: 'invalidEndpoint' });
+  it('derives the Speech / Vision host from the Foundry resource and has nothing of its own to save', async () => {
+    expect(foundryMediaEndpoint('https://bas-foundry.openai.azure.com/openai/v1')).toBe(MEDIA_HOST);
+    expect(foundryMediaEndpoint('https://BAS-Foundry.services.ai.azure.com/api/projects/p')).toBe(MEDIA_HOST);
+    expect(foundryMediaEndpoint('https://bas-foundry.cognitiveservices.azure.com/openai/deployments/x')).toBe(MEDIA_HOST);
+    for (const other of ['http://bas-foundry.openai.azure.com', 'https://bas-apim.azure-api.net/openai', 'https://127.0.0.1:9/openai/v1', 'https://evil.example/openai.azure.com', 'https://a.b.openai.azure.com']) {
+      expect(foundryMediaEndpoint(other), other).toBeNull();
     }
-    expect(validateMedia('vision', { auth: 'apiKey', endpoint: 'https://bas.cognitiveservices.azure.com', tenantId: TENANT })).toEqual({ ok: false, error: 'invalidBody' });
+
+    expect(await status()).toEqual({ endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null });
+    expect(await test('speech')).toEqual({ status: 400, body: { error: 'noConnection' } });
+    expect((await call(req('PUT', '/relay/secrets/speechKey', { value: 'speech-FAKE-KEY-0123456789' }))).status).toBe(404);
+    vault.set('foundryKey', FAKE_KEY);
+    writeFileSync(join(vault.dir, 'connection.json'), JSON.stringify({ endpoint: 'https://bas-apim.azure-api.net/openai/v1', deployment: 'd', apiVersion: '2024-10-21' }));
+    expect(await status()).toMatchObject({ endpoint: null, unavailable: 'unsupportedHost' });
+    expect(await test('vision')).toEqual({ status: 400, body: { error: 'unsupportedHost' } });
   });
 
-  it('tests Speech with the saved key on the free voices list, saves only after success, and drops the check when the key changes', async () => {
-    expect(await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast' }), ctx())).toEqual({ status: 400, body: { error: 'keyMissing' } });
-    vault.set('speechKey', SPEECH_KEY);
+  it('tests Speech with the Foundry API key, stores only a sealed check, and drops it when the key or the Foundry resource changes', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    await connect('apiKey');
+    expect(await status()).toEqual({ endpoint: MEDIA_HOST, auth: 'apiKey', unavailable: null, speech: null, vision: null });
     const failing = recorder(() => new Response('{}', { status: 401 }));
-    expect(await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast' }), ctx({ fetch: failing.fetch })))
-      .toEqual({ status: 502, body: { error: 'unauthorized', providerStatus: 401 } });
-    expect((await status()).media.speech).toBeNull();
+    expect(await test('speech', { fetch: failing.fetch })).toEqual({ status: 502, body: { error: 'unauthorized', providerStatus: 401 } });
+    expect((await status()).speech).toBeNull();
 
     const ok = recorder(() => new Response('[]'));
-    const saved = await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast' }), ctx({ fetch: ok.fetch }));
-    expect(saved).toMatchObject({ status: 200, body: { connection: { auth: 'apiKey', region: 'japaneast', endpoint: null } } });
-    expect(ok.sent).toEqual([expect.objectContaining({ url: 'https://japaneast.tts.speech.microsoft.com/cognitiveservices/voices/list', method: 'GET', headers: { 'Ocp-Apim-Subscription-Key': SPEECH_KEY } })]);
-    expect(readFileSync(join(vault.dir, 'media.json'), 'utf8')).not.toContain(SPEECH_KEY);
-    expect((await status()).media.speech).toMatchObject({ verifiedAt: (saved.body as { verifiedAt: string }).verifiedAt });
+    const saved = await test('speech', { fetch: ok.fetch });
+    expect(saved).toMatchObject({ status: 200, body: { endpoint: MEDIA_HOST, auth: 'apiKey', verifiedAt: expect.any(String) } });
+    expect(ok.sent).toEqual([expect.objectContaining({ url: `${MEDIA_HOST}/tts/cognitiveservices/voices/list`, method: 'GET', headers: { 'Ocp-Apim-Subscription-Key': FAKE_KEY } })]);
+    expect(readFileSync(join(vault.dir, 'media.json'), 'utf8')).not.toContain(FAKE_KEY);
+    expect(await status()).toMatchObject({ speech: (saved.body as { verifiedAt: string }).verifiedAt, vision: null });
 
-    vault.set('speechKey', 'speech-FAKE-KEY-replaced');
-    expect((await status()).media.speech).toMatchObject({ verifiedAt: null });
-    expect(await call(req('DELETE', '/relay/media/speech'), ctx())).toEqual({ status: 200, body: { connection: null, verifiedAt: null } });
-    expect((await status()).media.speech).toBeNull();
+    vault.set('foundryKey', `${FAKE_KEY}-replaced`);
+    expect((await status()).speech).toBeNull();
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await status()).speech).toEqual(expect.any(String));
+    const path = join(vault.dir, 'connection.json');
+    const original = readFileSync(path, 'utf8');
+    writeFileSync(path, original.replace('bas-foundry', 'other-foundry'));
+    expect(await status()).toMatchObject({ endpoint: 'https://other-foundry.cognitiveservices.azure.com', speech: null });
+    writeFileSync(path, original);
+    expect(await call(req('DELETE', '/relay/media/speech'), ctx())).toEqual({ status: 200, body: { verifiedAt: null } });
+    expect((await status()).speech).toBeNull();
   });
 
-  it('tests Speech and Vision with a Microsoft Entra bearer token on the custom subdomain and binds the check to the account', async () => {
-    const conn = { auth: 'entraId', endpoint: 'https://bas-speech.cognitiveservices.azure.com', tenantId: TENANT, resourceId: RES };
+  it('tests Speech and Vision with the Foundry Microsoft Entra sign-in on the custom subdomain and binds the check to the account', async () => {
+    await connect('entraId');
     account = null;
-    expect(await call(req('PUT', '/relay/media/speech', conn), ctx())).toEqual({ status: 400, body: { error: 'notSignedIn' } });
+    expect(await test('speech')).toEqual({ status: 400, body: { error: 'notSignedIn' } });
     account = { username: 'user@contoso.example', tenantId: TENANT };
     const speech = recorder(() => new Response('[]'));
-    expect((await call(req('PUT', '/relay/media/speech', conn), ctx({ fetch: speech.fetch }))).status).toBe(200);
-    expect(speech.sent[0]).toMatchObject({ url: 'https://bas-speech.cognitiveservices.azure.com/tts/cognitiveservices/voices/list', headers: { Authorization: 'Bearer entra-token-data' } });
+    expect((await test('speech', { fetch: speech.fetch })).status).toBe(200);
+    expect(speech.sent[0]).toMatchObject({ url: `${MEDIA_HOST}/tts/cognitiveservices/voices/list`, headers: { Authorization: 'Bearer entra-token-data' } });
     expect(speech.sent[0]!.headers).not.toHaveProperty('Ocp-Apim-Subscription-Key');
 
     const vision = recorder(() => new Response(JSON.stringify({ modelVersion: '2023-10-01', metadata: { width: 64, height: 64 } })));
-    const visionConn = { ...conn, endpoint: 'https://bas-vision.cognitiveservices.azure.com', resourceId: RES.replace('bas-speech', 'bas-vision') };
-    expect((await call(req('PUT', '/relay/media/vision', visionConn), ctx({ fetch: vision.fetch }))).status).toBe(200);
+    expect((await test('vision', { fetch: vision.fetch })).status).toBe(200);
     expect(vision.sent[0]).toMatchObject({
-      url: 'https://bas-vision.cognitiveservices.azure.com/computervision/imageanalysis:analyze?api-version=2024-02-01&features=read',
+      url: `${MEDIA_HOST}/computervision/imageanalysis:analyze?api-version=2024-02-01&features=read`,
       method: 'POST', headers: { Authorization: 'Bearer entra-token-data', 'Content-Type': 'application/octet-stream' },
     });
     expect(Buffer.from(vision.sent[0]!.body as Uint8Array).equals(blankTestImage())).toBe(true);
-    const s = await status();
-    expect(s.media.speech).toMatchObject({ connection: { auth: 'entraId', tenantId: TENANT, resourceId: RES }, verifiedAt: expect.any(String) });
-    expect(s.media.vision?.verifiedAt).toEqual(expect.any(String));
+    expect(await status()).toMatchObject({ auth: 'entraId', speech: expect.any(String), vision: expect.any(String) });
 
     account = { username: 'someone-else@contoso.example', tenantId: TENANT };
-    expect((await status()).media.speech?.verifiedAt).toBeNull();
+    expect(await status()).toMatchObject({ speech: null, vision: null });
     account = { username: 'user@contoso.example', tenantId: TENANT };
     expect((await call(req('DELETE', '/relay/entra'), ctx())).status).toBe(200);
     account = { username: 'user@contoso.example', tenantId: TENANT };
-    expect((await status()).media.vision?.verifiedAt).toBeNull();
+    expect((await status()).vision).toBeNull();
   });
 
-  it('refuses a disallowed outbound host, a bad body and repeated tests within five seconds', async () => {
-    vault.set('speechKey', SPEECH_KEY);
-    const ok = recorder(() => new Response('[]'));
-    expect(await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast' }), ctx({ fetch: ok.fetch, config: { ...testConfig, outboundHosts: ['bas.openai.azure.com'] } })))
-      .toEqual({ status: 400, body: { error: 'hostNotAllowed' } });
-    expect(await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast', extra: 1 }), ctx())).toEqual({ status: 400, body: { error: 'invalidBody' } });
-    expect(await call(req('PUT', '/relay/media/audio', {}), ctx())).toEqual({ status: 404, body: { error: 'notFound' } });
-    const lastCall = new Map<string, number>();
-    const fixed = { now: () => clock, lastCall };
-    expect((await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast' }), ctx({ fetch: ok.fetch, ...fixed }))).status).toBe(200);
-    expect(await call(req('PUT', '/relay/media/speech', { auth: 'apiKey', region: 'japaneast' }), ctx({ fetch: ok.fetch, ...fixed }))).toEqual({ status: 429, body: { error: 'tooSoon' } });
-    expect(ok.sent).toHaveLength(1);
-  });
-
-  it('lists Speech resources in the selected directory and assigns the Speech User role, not the OpenAI role', async () => {
+  it('checks and grants the service role on the connected Foundry resource found by its subdomain (Entra ID only)', async () => {
     const graph: string[] = [];
-    const puts: { url: string; body: { properties: { roleDefinitionId: string } } }[] = [];
+    const roles: string[] = [];
     let assigned = false;
+    let rows = [{ id: RES, name: 'bas-foundry', kind: 'AIServices', location: 'japaneast', tenantId: TENANT, customSubDomain: 'bas-foundry' }];
     const fetch: typeof globalThis.fetch = async (url, init) => {
       const u = String(url);
       if (u.includes('ResourceGraph')) {
         graph.push(String(JSON.parse(String(init?.body)).query));
-        return new Response(JSON.stringify({ data: [{ id: RES, name: 'bas-speech', kind: 'SpeechServices', location: 'japaneast', tenantId: TENANT, customSubDomain: 'bas-speech' }] }));
+        return new Response(JSON.stringify({ data: rows }));
       }
       if (init?.method === 'PUT') {
-        puts.push({ url: u, body: JSON.parse(String(init.body)) });
+        roles.push((JSON.parse(String(init.body)) as { properties: { roleDefinitionId: string } }).properties.roleDefinitionId);
         assigned = true;
         return new Response('{}', { status: 201 });
       }
@@ -2056,15 +2069,37 @@ describe('FR-324 Azure AI Speech and Azure AI Vision connections (API key or Mic
       }
       return new Response('{}', { status: 404 });
     };
-    expect(await call(req('POST', '/relay/entra/instances', { service: 'speech' }), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'invalidTenant' } });
-    const listed = await call(req('POST', '/relay/entra/instances', { service: 'speech', tenantId: TENANT }), ctx({ fetch }));
-    expect(listed.body).toMatchObject({ instances: [{ name: 'bas-speech', endpoint: 'https://bas-speech.cognitiveservices.azure.com', location: 'japaneast' }] });
-    expect(graph[0]).toContain("kind in~ ('SpeechServices', 'AIServices', 'CognitiveServices')");
-    expect((await call(req('POST', '/relay/entra/inspect', { service: 'speech', resourceId: RES, tenantId: TENANT }), ctx({ fetch }))).body)
-      .toMatchObject({ access: { canCall: false, canAssign: true } });
-    const role = await call(req('POST', '/relay/entra/role', { service: 'speech', resourceId: RES, tenantId: TENANT }), ctx({ fetch }));
+    vault.set('foundryKey', FAKE_KEY);
+    await connect('apiKey');
+    expect(await call(req('POST', '/relay/media/speech/access', {}), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'notEntra' } });
+
+    await connect('entraId');
+    const checked = await call(req('POST', '/relay/media/speech/access', {}), ctx({ fetch }));
+    expect(checked).toEqual({ status: 200, body: { resource: { id: RES, name: 'bas-foundry', kind: 'AIServices' }, access: { canCall: false, canAssign: true } } });
+    expect(graph[0]).toContain("kind =~ 'AIServices'");
+    const role = await call(req('POST', '/relay/media/speech/role', {}), ctx({ fetch }));
     expect(role.body).toMatchObject({ access: { canCall: true } });
-    expect(puts[0]!.body.properties.roleDefinitionId).toBe(`/subscriptions/${SUB}/providers/Microsoft.Authorization/roleDefinitions/f2dc8367-1007-4938-bd23-fe263f013447`);
-    expect(await call(req('POST', '/relay/entra/inspect', { service: 'audio', resourceId: RES, tenantId: TENANT }), ctx({ fetch }))).toEqual({ status: 400, body: { error: 'invalidBody' } });
+    expect(roles).toEqual([`/subscriptions/${SUB}/providers/Microsoft.Authorization/roleDefinitions/f2dc8367-1007-4938-bd23-fe263f013447`]);
+    await call(req('POST', '/relay/media/vision/role', {}), ctx({ fetch }));
+    expect(roles[1]).toBe(`/subscriptions/${SUB}/providers/Microsoft.Authorization/roleDefinitions/a97b65f3-24c7-4388-baec-2e87135dc908`);
+
+    rows = [{ ...rows[0]!, customSubDomain: 'someone-else' }];
+    expect(await call(req('POST', '/relay/media/speech/access', {}), ctx({ fetch }))).toEqual({ status: 404, body: { error: 'resourceNotFound' } });
+    expect(await call(req('GET', '/relay/media/speech/access'), ctx({ fetch }))).toEqual({ status: 405, body: { error: 'methodNotAllowed' } });
+  });
+
+  it('refuses a disallowed outbound host, a non-empty body and repeated tests within five seconds', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    await connect('apiKey');
+    const ok = recorder(() => new Response('[]'));
+    expect(await test('speech', { fetch: ok.fetch, config: { ...testConfig, outboundHosts: ['bas-foundry.openai.azure.com'] } })).toEqual({ status: 400, body: { error: 'hostNotAllowed' } });
+    expect(await test('speech', {}, { endpoint: 'https://evil.example' })).toEqual({ status: 400, body: { error: 'invalidBody' } });
+    expect(await test('audio')).toEqual({ status: 404, body: { error: 'notFound' } });
+    const lastCall = new Map<string, number>();
+    const fixed = { now: () => clock, lastCall };
+    expect((await test('speech', { fetch: ok.fetch, ...fixed })).status).toBe(200);
+    expect(await test('speech', { fetch: ok.fetch, ...fixed })).toEqual({ status: 429, body: { error: 'tooSoon' } });
+    expect((await test('vision', { fetch: recorder(() => new Response(JSON.stringify({ modelVersion: 'x', metadata: {} }))).fetch, ...fixed })).status).toBe(200);
+    expect(ok.sent).toHaveLength(1);
   });
 });

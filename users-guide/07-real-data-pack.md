@@ -78,12 +78,13 @@ Foundry の料金は Azure の利用明細で確認し、Azure 側でも予算�
 
 #### 音声（Azure AI Speech）と手書き認識（Azure AI Vision）の接続
 
-AI 設定の **音声設定** と **音声合成・手書き認識の実接続** でも、認証方式を **API キー** と **Microsoft Entra ID** から選べます。
+Microsoft Foundry のリソースは、同じキーと同じサブドメインで Speech と Vision も提供します。そのため AI 設定の **音声設定** と **音声合成・手書き認識の実接続** には、入力する項目がありません。上の Microsoft Foundry の接続（API キーまたは Microsoft Entra ID）をそのまま使い、呼び出し先は `https://<リソース名>.cognitiveservices.azure.com` になります。
 
-- **API キー**: キーを保存し、エンドポイント（`https://<リソース名>.cognitiveservices.azure.com` または `https://<地域>.api.cognitive.microsoft.com`）を入力します。Speech は地域（例: `japaneast`）だけでも使えます。
-- **Microsoft Entra ID**: Foundry と同じサインインとディレクトリー選択で、使えるリソースを一覧から選びます。Entra ID は独自のサブドメインがあるリソースでだけ使えます。呼び出し権限がなければ **自分にロールを付与** で、Speech は「Cognitive Services Speech User」、Vision は「Cognitive Services User」をそのリソースだけに付けます。
+- Foundry の接続を保存していないとき、または API Management などの独自のホストを使っているときは、理由が表示され、使えません。
+- 単独の Azure OpenAI リソース（Foundry リソースでないもの）は Speech・Vision に応答しません。使えるかどうかは、次の接続テストで確かめます。
+- **Microsoft Entra ID** のときは、Foundry 用の「Cognitive Services OpenAI User」だけでは呼び出せません。**Foundry リソースの権限を確認** で接続中の Foundry リソースの権限を確かめ、足りなければ **自分にロールを付与** で、Speech は「Cognitive Services Speech User」、Vision は「Cognitive Services User」をそのリソースだけに付けます。
 
-送信先を確認し、テスト送信への同意にチェックを入れて **接続をテストして保存** を押します。Speech は無料の音声一覧、Vision は白い画像 1 枚の読み取り（1 回分の課金）で確認し、成功したときだけ保存します。キーを変えたり、サインアウトしたりすると「未確認」に戻ります。音声合成・手書き認識の機能はまだ無効のままです（接続の保存とテストだけができます）。詳しくは [リレー設定](../docs/relay-config.md#azure-ai-speech-and-azure-ai-vision) を見てください。
+送信先を確認し、テスト送信への同意にチェックを入れて **接続をテスト** を押します。Speech は無料の音声一覧、Vision は白い画像 1 枚の読み取り（1 回分の課金）で確認し、成功したときだけ「確認済み」になります。Vision の Image Analysis 4.0 は一部の地域でだけ提供され、2028 年 9 月 25 日に提供が終わります。Foundry のキー・エンドポイント・認証方式を変えたり、サインアウトしたりすると「未確認」に戻ります。以前の版で保存した Speech・Vision 専用のキーと設定は、自動で削除されます。音声合成・手書き認識の機能はまだ無効のままです（接続のテストだけができます）。詳しくは [リレー設定](../docs/relay-config.md#azure-ai-speech-and-azure-ai-vision) を見てください。
 ### Work IQ で社内情報を加える（Microsoft Foundry のときだけ）
 
 Microsoft Work IQ は、あなたが Microsoft 365 でアクセスできるメール・会議・Teams のチャット・OneDrive と SharePoint のファイルから、質問に関係する情報を探すサービスです。接続先が **Microsoft Foundry** のとき、顧客パックの材料に Work IQ で見つけた社内情報を加えられます。GitHub Copilot を選んでいるときは、Work IQ の設定も選択肢も表示されず、何も送りません（GitHub Copilot の MCP サーバーの設定にも BAS は関与しません）。

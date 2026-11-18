@@ -325,26 +325,18 @@ async function arm<T>(deps: ArmDeps, tenantId: string | undefined, path: string,
   return { status: res.status, body };
 }
 
-/** Azure service a resource is listed, inspected and granted a role for (one shared sign-in). */
+/** Service on the Foundry resource whose data-plane role is checked and granted (one shared sign-in, FR-328). */
 export type EntraService = 'foundry' | 'speech' | 'vision';
 
-export function isEntraService(v: unknown): v is EntraService {
-  return v === 'foundry' || v === 'speech' || v === 'vision';
-}
-
-/**
- * Speech and Vision are also served by multi-service resources (AIServices / CognitiveServices); Foundry stays limited
- * to AIServices. Entra ID tokens need the custom subdomain, and Speech and Vision are called on its
- * `cognitiveservices.azure.com` host.
- */
-const SERVICES: Record<EntraService, { kinds: readonly string[]; dataAction: string; roleId: string; endpoint: (sub: string) => string }> = {
-  foundry: { kinds: ['AIServices'], dataAction: CHAT_DATA_ACTION, roleId: OPENAI_USER_ROLE_ID, endpoint: (sub) => `https://${sub}.openai.azure.com/openai/v1` },
-  speech: { kinds: ['SpeechServices', 'AIServices', 'CognitiveServices'], dataAction: SPEECH_DATA_ACTION, roleId: SPEECH_USER_ROLE_ID, endpoint: (sub) => `https://${sub}.cognitiveservices.azure.com` },
-  vision: { kinds: ['ComputerVision', 'AIServices', 'CognitiveServices'], dataAction: VISION_DATA_ACTION, roleId: COGNITIVE_USER_ROLE_ID, endpoint: (sub) => `https://${sub}.cognitiveservices.azure.com` },
+/** Speech and Vision run on the same Foundry resource but need their own data-plane role. */
+const SERVICES: Record<EntraService, { dataAction: string; roleId: string }> = {
+  foundry: { dataAction: CHAT_DATA_ACTION, roleId: OPENAI_USER_ROLE_ID },
+  speech: { dataAction: SPEECH_DATA_ACTION, roleId: SPEECH_USER_ROLE_ID },
+  vision: { dataAction: VISION_DATA_ACTION, roleId: COGNITIVE_USER_ROLE_ID },
 };
 
-const instanceQuery = (service: EntraService) => [
-  `resources | where type =~ 'microsoft.cognitiveservices/accounts' and kind in~ (${SERVICES[service].kinds.map((k) => `'${k}'`).join(', ')})`,
+const INSTANCE_QUERY = [
+  "resources | where type =~ 'microsoft.cognitiveservices/accounts' and kind =~ 'AIServices'",
   "| join kind=leftouter (resourcecontainers | where type =~ 'microsoft.resources/subscriptions' | project subscriptionId, subscriptionName = name) on subscriptionId",
   '| project id, name, kind, location, resourceGroup, subscriptionId, subscriptionName, tenantId,',
   '  endpoint = tostring(properties.endpoint), customSubDomain = tostring(properties.customSubDomainName), disableLocalAuth = tobool(properties.disableLocalAuth)',
@@ -359,9 +351,9 @@ interface GraphRow {
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
 /** Entra ID tokens need the resource's custom subdomain; the Foundry v1 API is served on its Azure OpenAI host. */
-function instanceEndpoint(row: GraphRow, service: EntraService): string | null {
+function instanceEndpoint(row: GraphRow): string | null {
   const sub = str(row.customSubDomain).toLowerCase();
-  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(sub) ? SERVICES[service].endpoint(sub) : null;
+  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(sub) ? `https://${sub}.openai.azure.com/openai/v1` : null;
 }
 
 /** ARM's account tenant list can be paged and need not include every directory where a user is a guest. */
@@ -395,8 +387,8 @@ export async function listFoundryTenants(deps: ArmDeps): Promise<FoundryTenant[]
   return [...tenants.values()];
 }
 
-/** Resources of one service visible in one explicitly selected directory. */
-export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: string, service: EntraService = 'foundry'): Promise<FoundryInstance[]> {
+/** Foundry (AIServices) resources visible in one explicitly selected directory. */
+export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: string): Promise<FoundryInstance[]> {
   if (!deps.tokens.account()) throw new EntraError('notSignedIn');
   if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
   tenantId = tenantId.toLowerCase();
@@ -405,7 +397,7 @@ export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: str
   let skipToken: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
     const r = await arm<{ data?: GraphRow[]; $skipToken?: unknown; resultTruncated?: unknown }>(deps, tenantId, '/providers/Microsoft.ResourceGraph/resources?api-version=2024-04-01', {
-      method: 'POST', body: { query: instanceQuery(service), options: { resultFormat: 'objectArray', $top: 1000, ...(skipToken ? { $skipToken: skipToken } : {}) } },
+      method: 'POST', body: { query: INSTANCE_QUERY, options: { resultFormat: 'objectArray', $top: 1000, ...(skipToken ? { $skipToken: skipToken } : {}) } },
     });
     if (r.status !== 200) throw new EntraError(r.status === 401 || r.status === 403 ? 'armForbidden' : 'armError');
     if (!Array.isArray(r.body?.data)) throw new EntraError('armError');
@@ -420,17 +412,16 @@ export async function listFoundryInstancesForTenant(deps: ArmDeps, tenantId: str
     skipToken = next;
   }
   const seen = new Set<string>();
-  const kinds = new Set(SERVICES[service].kinds.map((k) => k.toLowerCase()));
   const instances: FoundryInstance[] = [];
   for (const row of rows) {
     const id = str(row.id);
     if (isTenantId(row.tenantId) && row.tenantId.toLowerCase() !== tenantId) continue;
-    if (!kinds.has(str(row.kind).toLowerCase()) || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
+    if (str(row.kind).toLowerCase() !== 'aiservices' || !isFoundryResourceId(id) || seen.has(id.toLowerCase())) continue;
     seen.add(id.toLowerCase());
     instances.push({
       id, name: str(row.name), kind: str(row.kind), location: str(row.location), resourceGroup: str(row.resourceGroup),
       subscriptionId: str(row.subscriptionId), subscriptionName: str(row.subscriptionName) || str(row.subscriptionId),
-      tenantId, endpoint: instanceEndpoint(row, service), keyAuthDisabled: row.disableLocalAuth === true,
+      tenantId, endpoint: instanceEndpoint(row), keyAuthDisabled: row.disableLocalAuth === true,
     });
   }
   return instances;

@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { replaceFileSync } from './files.ts';
 
 /** Secrets the user enters through the relay (C-01 exception, NFR-SEC-001/005/012). Anything else is rejected. */
-export const SECRET_NAMES = ['foundryKey', 'speechKey', 'visionKey'] as const;
+export const SECRET_NAMES = ['foundryKey'] as const;
+/** Speech / Vision keys of FR-324's first version; Speech and Vision now use the Foundry key (FR-328), so these are deleted. */
+export const LEGACY_SECRET_NAMES = ['speechKey', 'visionKey'] as const;
 export type UserSecretName = (typeof SECRET_NAMES)[number];
 /**
  * Secrets only the relay itself writes (D-14: the Work IQ refresh token, the key that seals a CLI verification; the
@@ -91,7 +93,7 @@ interface EncryptedEntry {
 interface VaultFile {
   version: 1;
   alg: 'aes-256-gcm';
-  entries: Partial<Record<SecretName, EncryptedEntry>>;
+  entries: Partial<Record<SecretName | (typeof LEGACY_SECRET_NAMES)[number], EncryptedEntry>>;
 }
 
 const KEY_FILE = 'master.key';
@@ -265,6 +267,17 @@ export class SecretVault {
     const file = this.read();
     if (!file.entries[name]) return false;
     delete file.entries[name];
+    if (Object.keys(file.entries).length === 0) rmSync(this.filePath, { force: true });
+    else this.write(file);
+    return true;
+  }
+
+  /** Removes secrets no feature reads any more (LEGACY_SECRET_NAMES); returns whether anything was removed. */
+  purgeLegacy(): boolean {
+    const file = this.read();
+    const stale = LEGACY_SECRET_NAMES.filter((n) => file.entries[n]);
+    if (stale.length === 0) return false;
+    for (const n of stale) delete file.entries[n];
     if (Object.keys(file.entries).length === 0) rmSync(this.filePath, { force: true });
     else this.write(file);
     return true;

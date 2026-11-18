@@ -174,31 +174,38 @@ For a new resource, prefer `disableLocalAuth: true` (keys off) with a custom sub
 
 ## Azure AI Speech and Azure AI Vision
 
-FR-324. AI Settings → **Speech settings** (Azure AI Speech) and **Real connections for speech and handwriting**
-(Azure AI Vision) each choose **API key** or **Microsoft Entra ID**, like the Foundry connection. The feature switches
-that would use them stay off until C-07 is resolved; saving and testing the connection already works.
+FR-328 (replaces FR-324's separate connections). AI Settings → **Speech settings** (Azure AI Speech) and **Real
+connections for speech and handwriting** (Azure AI Vision) use the saved Microsoft Foundry connection; they have no
+endpoint, region, key or resource of their own. A Foundry resource (kind `AIServices`) serves Azure OpenAI and the
+Foundry Tools, Speech and Vision included, with one key and one custom subdomain. The feature switches that would use
+them stay off until C-07 is resolved; testing already works.
 
-- **API key.** Save the key (`speechKey` / `visionKey`, vault only) and enter the endpoint: a custom subdomain
-  `https://<name>.cognitiveservices.azure.com` or a regional endpoint `https://<region>.api.cognitive.microsoft.com`.
-  Speech also accepts only a region (voices are listed on `https://<region>.tts.speech.microsoft.com`). Vision needs an
-  endpoint. Requests use `Ocp-Apim-Subscription-Key`.
-- **Microsoft Entra ID.** Uses the same sign-in and directory selection as Foundry. `POST /relay/entra/instances
-  { service: 'speech' | 'vision', tenantId }` (a tenant is required) lists resources of kind `SpeechServices` /
-  `ComputerVision` plus multi-service `AIServices` and `CognitiveServices`. Entra ID tokens work only on the custom
-  subdomain (regional endpoints accept keys only), so resources without one are disabled. Requests send
-  `Authorization: Bearer <token for https://cognitiveservices.azure.com/.default>` to that subdomain.
-  `POST /relay/entra/inspect` and `POST /relay/entra/role` take the same `service`; the role assigned on request is
-  *Cognitive Services Speech User* (`f2dc8367-1007-4938-bd23-fe263f013447`) for Speech and *Cognitive Services User*
-  (`a97b65f3-24c7-4388-baec-2e87135dc908`) for Vision, because Vision has no narrower built-in data-plane role (this
-  role can also list keys; prefer `disableLocalAuth: true` on the resource).
-- **Test and save.** `PUT /relay/media/<service> { auth, endpoint?, region?, tenantId?, resourceId? }` validates the
-  body, checks `BAS_RELAY_OUTBOUND_HOSTS` (the test host must be listed; for Entra ID also the Entra hosts), allows one
-  test per service every 5 s, and calls the service: Speech `GET …/cognitiveservices/voices/list` (free), Vision
+- **Destination.** Derived from the Foundry endpoint's custom subdomain: `https://<name>.openai.azure.com`,
+  `https://<name>.services.ai.azure.com` or `https://<name>.cognitiveservices.azure.com` all map to
+  `https://<name>.cognitiveservices.azure.com`. Any other host (API Management, a proxy) reports `unsupportedHost`; no
+  Foundry connection reports `noConnection`. An Azure OpenAI resource (kind `OpenAI`) shares the subdomain pattern but
+  answers only OpenAI APIs, so only the live test decides whether Speech / Vision work.
+- **Authentication.** The same as Foundry: **API key** sends `Ocp-Apim-Subscription-Key` with the vault's `foundryKey`;
+  **Microsoft Entra ID** sends `Authorization: Bearer <token for https://cognitiveservices.azure.com/.default>` of the
+  signed-in account and the Foundry tenant. The Foundry role *Cognitive Services OpenAI User* does not cover Speech or
+  Vision. `POST /relay/media/<service>/access` (Entra ID only, empty body) finds the connected resource in the Foundry
+  tenant by its subdomain and reports the service's data-plane access; `POST /relay/media/<service>/role` assigns, on
+  request only, *Cognitive Services Speech User* (`f2dc8367-1007-4938-bd23-fe263f013447`) for Speech or *Cognitive
+  Services User* (`a97b65f3-24c7-4388-baec-2e87135dc908`) for Vision, which has no narrower built-in data-plane role
+  (this role can also list keys; prefer `disableLocalAuth: true` on the resource).
+- **Test.** `PUT /relay/media/<service>` with an empty body checks `BAS_RELAY_OUTBOUND_HOSTS` (the derived host must be
+  listed; for Entra ID also the Entra hosts), allows one test per service every 5 s, and calls the service: Speech
+  `GET …/tts/cognitiveservices/voices/list` (free), Vision
   `POST …/computervision/imageanalysis:analyze?api-version=2024-02-01&features=read` with a blank 64×64 PNG (one billed
-  transaction). Only a successful answer is saved to `media.json` with a signature bound to the key, or for Entra ID to
-  the signed-in account (vault key `foundryEntraKey`). Changing the key, signing out or switching account shows the
-  connection as unverified; `DELETE /relay/media/<service>` removes it. `GET /relay/status` returns
-  `media: { speech, vision }` (`{ connection, verifiedAt }` or `null`) and never the key or a token.
+  transaction; Image Analysis 4.0 is offered in some regions only and retires on 2028-09-25). Only a successful answer
+  is saved to `media.json`, as a signature bound to the derived endpoint, the auth method and the Foundry key, or for
+  Entra ID the signed-in account (vault key `foundryEntraKey`). Changing the Foundry key, endpoint or auth method,
+  signing out or switching account shows the service as unverified; `DELETE /relay/media/<service>` removes the check.
+  `GET /relay/status` returns `media: { endpoint, auth, unavailable, speech, vision }` (`speech` / `vision` are the
+  verification time or `null`) and never a key or a token.
+- **Upgrade.** `GET /relay/status` deletes FR-324's vault secrets `speechKey` and `visionKey`; the settings store
+  (version 6) drops the old Speech endpoint, region and drafts.
+
 ## Environment variables
 
 | Variable | Default | Values | Effect |

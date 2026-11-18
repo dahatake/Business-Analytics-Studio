@@ -17,12 +17,12 @@ import {
 } from './workiq.ts';
 import { WorkIqCliService } from './workiqCli.ts';
 import {
-  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isEntraService, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, saveEntraState,
+  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, saveEntraState,
   type EntraErrorCode, type EntraTokens,
 } from './entra.ts';
 import {
-  MEDIA_FILE, MEDIA_SERVICES, isMediaService, mediaSignature, mediaTestUrl, parseSavedMedia, publicMedia, testMedia, validateMedia,
-  type MediaCredential, type MediaService, type SavedMedia,
+  MEDIA_FILE, MEDIA_SERVICES, foundryMediaEndpoint, foundrySubdomain, isMediaService, mediaSignature, mediaTestUrl, parseSavedMedia, testMedia,
+  type MediaCredential, type MediaService, type MediaSource, type MediaUnavailable, type SavedMediaCheck,
 } from './media.ts';
 import { reserveStory, storyQuote, StoryBudgetError } from './storyBudget.ts';
 import { STORY_SYSTEM_PROMPT, StoryOutput } from '../src/ai/storyOutput.ts';
@@ -250,9 +250,9 @@ function publicConnection(c: RelayConnection | null) {
   return c ? { endpoint: c.endpoint, deployment: c.deployment, apiVersion: c.apiVersion, auth: c.auth ?? 'apiKey', tenantId: c.tenantId ?? null } : null;
 }
 
-/* Speech and Vision connections (FR-324): media.json holds both, each sealed like the Foundry connection. */
+/* Speech and Vision through the Foundry connection (FR-324, FR-328): media.json holds only each service's sealed check. */
 
-type MediaFile = Partial<Record<MediaService, SavedMedia>>;
+type MediaFile = Partial<Record<MediaService, SavedMediaCheck>>;
 
 export function loadMedia(dir: string): MediaFile {
   const path = join(dir, MEDIA_FILE);
@@ -261,7 +261,7 @@ export function loadMedia(dir: string): MediaFile {
     const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     const out: MediaFile = {};
     for (const s of MEDIA_SERVICES) {
-      const c = parseSavedMedia(s, raw?.[s]);
+      const c = parseSavedMedia(raw?.[s]);
       if (c) out[s] = c;
     }
     return out;
@@ -270,19 +270,24 @@ export function loadMedia(dir: string): MediaFile {
   }
 }
 
-const MEDIA_KEY = { speech: 'speechKey', vision: 'visionKey' } as const;
-
-function mediaVerifiedAt(service: MediaService, c: SavedMedia | undefined, vault: SecretVault, entra: EntraTokens): string | null {
-  if (!c || typeof c.verifiedAt !== 'string' || !Number.isFinite(Date.parse(c.verifiedAt)) || typeof c.verification !== 'string') return null;
-  if (c.auth === 'entraId') {
-    const key = vault.get('foundryEntraKey');
-    const account = entra.account();
-    return key && account && tokenMatches(c.verification, mediaSignature(service, c, c.verifiedAt, key, account.username)) ? c.verifiedAt : null;
-  }
-  const key = vault.get(MEDIA_KEY[service]);
-  return key && tokenMatches(c.verification, mediaSignature(service, c, c.verifiedAt, key)) ? c.verifiedAt : null;
+/** Where Speech / Vision go with the saved Foundry connection, or why they cannot. */
+export function mediaSource(c: RelayConnection | null): { ok: true; value: MediaSource } | { ok: false; error: MediaUnavailable } {
+  if (!c) return { ok: false, error: 'noConnection' };
+  const endpoint = foundryMediaEndpoint(c.endpoint);
+  if (!endpoint) return { ok: false, error: 'unsupportedHost' };
+  return { ok: true, value: { foundryEndpoint: c.endpoint, auth: c.auth ?? 'apiKey', tenantId: c.tenantId ?? null, endpoint } };
 }
 
+function mediaVerifiedAt(service: MediaService, check: SavedMediaCheck | undefined, source: MediaSource, vault: SecretVault, entra: EntraTokens): string | null {
+  if (!check) return null;
+  if (source.auth === 'entraId') {
+    const key = vault.get('foundryEntraKey');
+    const account = entra.account();
+    return key && account && tokenMatches(check.verification, mediaSignature(service, source, check.verifiedAt, key, account.username)) ? check.verifiedAt : null;
+  }
+  const key = vault.get('foundryKey');
+  return key && tokenMatches(check.verification, mediaSignature(service, source, check.verifiedAt, key)) ? check.verifiedAt : null;
+}
 /** What the relay sends to Foundry: the saved API key, or a Microsoft Entra access token minted for this call. */
 type FoundryCredential = { kind: 'key'; key: string } | { kind: 'bearer'; token: string };
 
@@ -676,16 +681,20 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     writeJsonAtomic(vault.dir, WORKIQ_SETTINGS_FILE, s.method === 'cli' ? { method: 'cli' } : { tenantId: s.tenantId, clientId: s.clientId, account: s.account });
   };
 
+  /** Speech / Vision ride on the Foundry connection: its derived endpoint, and each service's still-valid check. */
   const mediaStatus = () => {
+    const src = mediaSource(connection());
+    if (!src.ok) return { endpoint: null, auth: null, unavailable: src.error, speech: null, vision: null };
     const saved = loadMedia(vault.dir);
-    return Object.fromEntries(MEDIA_SERVICES.map((s) => {
-      const c = saved[s];
-      return [s, c ? { connection: publicMedia(c), verifiedAt: mediaVerifiedAt(s, c, vault, entra) } : null];
-    }));
+    return {
+      endpoint: src.value.endpoint, auth: src.value.auth, unavailable: null,
+      ...Object.fromEntries(MEDIA_SERVICES.map((s) => [s, mediaVerifiedAt(s, saved[s], src.value, vault, entra)])),
+    };
   };
 
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
+    vault.purgeLegacy();
     return json(200, {
       relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault, entra), configured: configured(), keyProtection: vault.keyProtection(),
       copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(), media: mediaStatus(),
@@ -701,10 +710,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       return isFoundryResourceId(resourceId) && isTenantId(tenantId) ? { resourceId, tenantId: tenantId.toLowerCase() } : null;
     };
     const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
-    const service = body?.service ?? 'foundry';
-    if (!isEntraService(service)) return json(400, { error: 'invalidBody' });
-    const inspect = (t: { resourceId: string; tenantId: string }) =>
-      service === 'foundry' ? inspectFoundryInstance(deps, t.resourceId, t.tenantId) : inspectMediaResource(deps, t.resourceId, t.tenantId, service);
+    const inspect = (t: { resourceId: string; tenantId: string }) => inspectFoundryInstance(deps, t.resourceId, t.tenantId);
     try {
       if (path === '/relay/entra') {
         if (method === 'GET') return json(200, { entra: entraStatus() });
@@ -724,14 +730,13 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       if (path === '/relay/entra/instances') {
         const tenantId = body!.tenantId;
         if (tenantId !== undefined && !isTenantId(tenantId)) return json(400, { error: 'invalidTenant' });
-        return tenantId ? json(200, { instances: await listFoundryInstancesForTenant(deps, tenantId, service) })
-          : service === 'foundry' ? json(200, await listFoundryInstances(deps)) : json(400, { error: 'invalidTenant' });
+        return tenantId ? json(200, { instances: await listFoundryInstancesForTenant(deps, tenantId) }) : json(200, await listFoundryInstances(deps));
       }
       const t = target();
       if (!t) return json(400, { error: 'invalidResource' });
       if (path === '/relay/entra/inspect') return json(200, await inspect(t));
       if (path === '/relay/entra/role') {
-        await assignFoundryRole(deps, t.resourceId, t.tenantId, service);
+        await assignFoundryRole(deps, t.resourceId, t.tenantId);
         return json(200, await inspect(t));
       }
       return json(404, { error: 'notFound' });
@@ -930,33 +935,53 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     return json(405, { error: 'methodNotAllowed' });
   }
 
-  const media = /^\/relay\/media\/([a-z]+)$/.exec(path);
+  const media = /^\/relay\/media\/([a-z]+)(?:\/(access|role))?$/.exec(path);
   if (media) {
     const service = media[1];
     if (!isMediaService(service)) return json(404, { error: 'notFound' });
-    if (method === 'DELETE') {
+    if (method === 'DELETE' && !media[2]) {
       const others = loadMedia(vault.dir);
       delete others[service];
       writeJsonAtomic(vault.dir, MEDIA_FILE, others);
-      return json(200, { connection: null, verifiedAt: null });
+      return json(200, { verifiedAt: null });
     }
-    if (method !== 'PUT') return json(405, { error: 'methodNotAllowed' });
-    const r = validateMedia(service, parseBody(req.body));
-    if (!r.ok) return json(400, { error: r.error });
-    const conn = r.value;
-    if (!endpointHostAllowed(new URL(mediaTestUrl(service, conn)), config)) return json(400, { error: 'hostNotAllowed' });
+    if (method !== (media[2] ? 'POST' : 'PUT')) return json(405, { error: 'methodNotAllowed' });
+    const body = parseBody(req.body);
+    if (!body || Object.keys(body).length > 0) return json(400, { error: 'invalidBody' });
+    const src = mediaSource(connection());
+    if (!src.ok) return json(400, { error: src.error });
+    const source = src.value;
+
+    if (media[2]) {
+      // Microsoft Entra ID only: the role is checked and granted on the Foundry resource found by its subdomain.
+      if (source.auth !== 'entraId' || !source.tenantId) return json(400, { error: 'notEntra' });
+      if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+      const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
+      try {
+        const sub = foundrySubdomain(source.foundryEndpoint);
+        const resource = (await listFoundryInstancesForTenant(deps, source.tenantId)).find((i) => i.endpoint !== null && foundrySubdomain(i.endpoint) === sub);
+        if (!resource) return json(404, { error: 'resourceNotFound' });
+        if (media[2] === 'role') await assignFoundryRole(deps, resource.id, source.tenantId, service);
+        const { access } = await inspectMediaResource(deps, resource.id, source.tenantId, service);
+        return json(200, { resource: { id: resource.id, name: resource.name, kind: resource.kind }, access });
+      } catch (error) {
+        return entraFailure(error);
+      }
+    }
+
+    if (!endpointHostAllowed(new URL(mediaTestUrl(service, source.endpoint)), config)) return json(400, { error: 'hostNotAllowed' });
     let credential: MediaCredential;
-    const account = conn.auth === 'entraId' ? entra.account() : null;
-    if (conn.auth === 'entraId') {
+    const account = source.auth === 'entraId' ? entra.account() : null;
+    if (source.auth === 'entraId') {
       if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
       if (!account) return json(400, { error: 'notSignedIn' });
       try {
-        credential = { kind: 'bearer', token: (await entra.token(FOUNDRY_SCOPE, conn.tenantId, ctx.signal)).token };
+        credential = { kind: 'bearer', token: (await entra.token(FOUNDRY_SCOPE, source.tenantId!, ctx.signal)).token };
       } catch (error) {
         return entraFailure(error);
       }
     } else {
-      const key = vault.get(MEDIA_KEY[service]);
+      const key = vault.get('foundryKey');
       if (!key) return json(400, { error: 'keyMissing' });
       credential = { kind: 'key', key };
     }
@@ -967,28 +992,33 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     ctx.lastCall?.set(limitKey, Infinity);
     let result: Awaited<ReturnType<typeof testMedia>>;
     try {
-      result = await testMedia(service, conn, credential, ctx.fetch ?? fetch, ctx.signal);
+      result = await testMedia(service, source.endpoint, credential, ctx.fetch ?? fetch, ctx.signal);
     } finally {
       ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
     }
     if (!result.ok) return json(result.error === 'aborted' ? 499 : 502, { error: result.error, ...(result.providerStatus ? { providerStatus: result.providerStatus } : {}) });
+    // The Foundry connection may have been replaced while the request was in flight.
+    const after = mediaSource(connection());
+    if (!after.ok || after.value.foundryEndpoint !== source.foundryEndpoint || after.value.auth !== source.auth || after.value.tenantId !== source.tenantId) {
+      return json(409, { error: 'connectionChanged' });
+    }
     const at = new Date((ctx.now ?? Date.now)()).toISOString();
     let verification: string;
-    if (conn.auth === 'entraId') {
+    if (source.auth === 'entraId') {
       if (entra.account()?.username !== account!.username) return json(409, { error: 'accountChanged' });
       let sealKey = vault.get('foundryEntraKey');
       if (!sealKey) {
         sealKey = randomBytes(32).toString('hex');
         vault.set('foundryEntraKey', sealKey);
       }
-      verification = mediaSignature(service, conn, at, sealKey, account!.username);
+      verification = mediaSignature(service, source, at, sealKey, account!.username);
     } else {
       const key = (credential as { kind: 'key'; key: string }).key;
-      if (vault.get(MEDIA_KEY[service]) !== key) return json(409, { error: 'keyChanged' });
-      verification = mediaSignature(service, conn, at, key);
+      if (vault.get('foundryKey') !== key) return json(409, { error: 'keyChanged' });
+      verification = mediaSignature(service, source, at, key);
     }
-    writeJsonAtomic(vault.dir, MEDIA_FILE, { ...loadMedia(vault.dir), [service]: { ...conn, verifiedAt: at, verification } });
-    return json(200, { connection: publicMedia(conn), verifiedAt: at });
+    writeJsonAtomic(vault.dir, MEDIA_FILE, { ...loadMedia(vault.dir), [service]: { verifiedAt: at, verification } });
+    return json(200, { endpoint: source.endpoint, auth: source.auth, verifiedAt: at });
   }
 
   if (path === '/relay/connection') {

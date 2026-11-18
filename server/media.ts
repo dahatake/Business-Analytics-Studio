@@ -1,40 +1,34 @@
 import { createHmac } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
-import { MEDIA_TEST_TIMEOUT_MS, mediaTestUrl, validateMedia, type MediaConnection, type MediaService } from '../src/ai/mediaConnection.ts';
+import { MEDIA_TEST_TIMEOUT_MS, mediaTestUrl, type MediaService } from '../src/ai/mediaConnection.ts';
 
-export { MEDIA_SERVICES, MEDIA_TEST_TIMEOUT_MS, REGION, VISION_API_VERSION, isMediaService, mediaTestUrl, parseMediaEndpoint, validateMedia } from '../src/ai/mediaConnection.ts';
-export type { MediaConnection, MediaInputError, MediaService } from '../src/ai/mediaConnection.ts';
+export { MEDIA_SERVICES, MEDIA_TEST_TIMEOUT_MS, VISION_API_VERSION, foundryMediaEndpoint, foundrySubdomain, isMediaService, mediaTestUrl } from '../src/ai/mediaConnection.ts';
+export type { MediaService, MediaUnavailable } from '../src/ai/mediaConnection.ts';
 
 /**
- * Relay side of the Azure AI Speech / Azure AI Vision connections (FR-324): the non-secret part is kept in media.json,
- * keys stay in the vault, and the saved check is sealed with HMAC so editing the file, changing the key or switching
- * accounts drops it back to "not verified". Validation rules are shared with the settings screen (src/ai/mediaConnection.ts).
+ * Relay side of Speech / Vision through the Microsoft Foundry connection (FR-324, FR-328): no endpoint or key of their
+ * own. media.json keeps only each service's last successful check, sealed with HMAC over the Foundry connection it was
+ * made with, so changing the Foundry endpoint, key, tenant or Entra account drops it back to "not verified".
  */
 
 export const MEDIA_FILE = 'media.json';
 
-export type SavedMedia = MediaConnection & { verifiedAt?: string; verification?: string };
-/** The token or key is bound to this account, endpoint and resource, so another one never inherits the check. */
-export function mediaSignature(service: MediaService, c: MediaConnection, at: string, key: string, account?: string): string {
-  const fields: string[] = [service, c.auth, c.endpoint ?? '', c.region ?? '', at];
-  if (c.auth === 'entraId') fields.push(c.tenantId, c.resourceId, account ?? '');
+/** The Foundry connection fields a check depends on. */
+export interface MediaSource { foundryEndpoint: string; auth: 'apiKey' | 'entraId'; tenantId: string | null; endpoint: string }
+export interface SavedMediaCheck { verifiedAt: string; verification: string }
+
+export function mediaSignature(service: MediaService, s: MediaSource, at: string, key: string, account?: string): string {
+  const fields: string[] = ['foundry', service, s.foundryEndpoint, s.endpoint, s.auth, s.tenantId ?? '', at];
+  if (s.auth === 'entraId') fields.push(account ?? '');
   return createHmac('sha256', key).update(JSON.stringify(fields)).digest('hex');
 }
 
-export function publicMedia(c: SavedMedia | null) {
-  if (!c) return null;
-  return { auth: c.auth, endpoint: c.endpoint, region: c.region, tenantId: c.auth === 'entraId' ? c.tenantId : null, resourceId: c.auth === 'entraId' ? c.resourceId : null };
-}
-
-export function parseSavedMedia(service: MediaService, raw: unknown): SavedMedia | null {
+/** Earlier per-service connections (endpoint, region, own key) are not checks of the Foundry connection and are ignored. */
+export function parseSavedMedia(raw: unknown): SavedMediaCheck | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { verifiedAt, verification, ...rest } = raw as Record<string, unknown>;
-  const clean = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== null));
-  const r = validateMedia(service, clean);
-  if (!r.ok) return null;
-  return { ...r.value, ...(typeof verifiedAt === 'string' ? { verifiedAt } : {}), ...(typeof verification === 'string' ? { verification } : {}) };
+  const { verifiedAt, verification } = raw as Record<string, unknown>;
+  return typeof verifiedAt === 'string' && Number.isFinite(Date.parse(verifiedAt)) && typeof verification === 'string' ? { verifiedAt, verification } : null;
 }
-
 export type MediaTestError = 'unauthorized' | 'forbidden' | 'invalidApiRequest' | 'providerBusy' | 'providerError' | 'badProviderResponse' | 'timeout' | 'networkError' | 'aborted';
 
 let blankPng: Buffer | null = null;
@@ -75,13 +69,13 @@ export function blankTestImage(): Buffer {
 export type MediaCredential = { kind: 'key'; key: string } | { kind: 'bearer'; token: string };
 
 /** Runs the connection test. The answer body is only shape-checked, never returned (it can be large). */
-export async function testMedia(service: MediaService, c: MediaConnection, credential: MediaCredential, doFetch: typeof fetch, signal?: AbortSignal):
+export async function testMedia(service: MediaService, endpoint: string, credential: MediaCredential, doFetch: typeof fetch, signal?: AbortSignal):
   Promise<{ ok: true } | { ok: false; error: MediaTestError; providerStatus?: number }> {
   const timeout = AbortSignal.timeout(MEDIA_TEST_TIMEOUT_MS);
   const auth: Record<string, string> = credential.kind === 'key' ? { 'Ocp-Apim-Subscription-Key': credential.key } : { Authorization: `Bearer ${credential.token}` };
   let res: Response;
   try {
-    res = await doFetch(mediaTestUrl(service, c), {
+    res = await doFetch(mediaTestUrl(service, endpoint), {
       method: service === 'vision' ? 'POST' : 'GET',
       headers: service === 'vision' ? { ...auth, 'Content-Type': 'application/octet-stream' } : auth,
       body: service === 'vision' ? new Uint8Array(blankTestImage()) : undefined,
@@ -105,3 +99,4 @@ export async function testMedia(service: MediaService, c: MediaConnection, crede
   const valid = service === 'speech' ? Array.isArray(body) : !!body && typeof body === 'object' && 'modelVersion' in body;
   return valid ? { ok: true } : { ok: false, error: 'badProviderResponse' };
 }
+

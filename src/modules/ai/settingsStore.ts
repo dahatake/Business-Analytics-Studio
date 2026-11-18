@@ -7,10 +7,10 @@ import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSet
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
 import {
-  deleteCopilotSettings, deleteMediaConnection, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, saveCopilotModel, saveMediaConnection, saveRelayConnection, saveSecret,
-  saveWorkIqSettings, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaSaveInput, type MediaSaveResult, type MediaStatus, type RelayConnectionInfo, type SecretName, type WorkIqSettingsInput, type WorkIqStatus,
+  clearMediaCheck, deleteCopilotSettings, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, saveCopilotModel, saveRelayConnection, saveSecret,
+  saveWorkIqSettings, testMediaConnection, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaStatus, type MediaTestResult, type RelayConnectionInfo, type SecretName, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
-import { validateMedia, type MediaConnection, type MediaService } from '../../ai/mediaConnection.ts';
+import type { MediaService } from '../../ai/mediaConnection.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
@@ -26,17 +26,6 @@ export function parseBudget(raw: string): number | null {
 }
 
 type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'entraTenantId' | 'liveEnabled' | 'sendConsent' | 'monthlyBudgetJpy';
-
-/** FR-324: what the settings screen holds for Speech / Vision before the relay tests and saves it (never a key). */
-export interface MediaDraft {
-  auth: AuthMethod;
-  endpoint: string;
-  region: string;
-  /** Entra ID: the tenant and resource picked from the resource list. */
-  tenantId: string;
-  resourceId: string;
-}
-export const EMPTY_MEDIA_DRAFT: MediaDraft = { auth: 'apiKey', endpoint: '', region: '', tenantId: '', resourceId: '' };
 
 /**
  * Non-secret AI settings (FR-275/FR-282/FR-167). App-wide, not per project: the connection belongs to the PC.
@@ -55,15 +44,12 @@ export interface AiSettingsState {
   liveEnabled: boolean;
   /** D-26: one-time permission for data included in AI requests, captured in AI settings. */
   sendConsent: boolean;
-  mediaDraft: Record<MediaService, MediaDraft>;
   /** D-3: one monthly budget for the whole app (PARAM-117), default 100,000 JPY. */
   monthlyBudgetJpy: number;
   relayReachable: boolean;
   foundryKeySaved: boolean;
-  speechKeySaved: boolean;
-  visionKeySaved: boolean;
-  /** FR-324: Speech / Vision connections saved (and sealed) in the relay. */
-  media: Record<MediaService, MediaStatus | null>;
+  /** FR-324/FR-328: Speech / Vision through the relay's Foundry connection. */
+  media: MediaStatus;
   relayConnection: RelayConnectionInfo | null;
   connectionVerifiedAt: string | null;
   keyProtection: KeyProtection | null;
@@ -76,10 +62,9 @@ export interface AiSettingsState {
   /** Microsoft Entra ID sign-in for Foundry held by the relay (never a token). */
   entra: EntraStatus | null;
   update: (patch: Partial<Pick<AiSettingsState, Editable>>) => void;
-  updateMediaDraft: (service: MediaService, patch: Partial<MediaDraft>) => void;
-  /** Tests the draft against the service through the relay and saves it there only when the test passes. */
-  saveMedia: (service: MediaService) => Promise<MediaSaveResult>;
-  deleteMedia: (service: MediaService) => Promise<boolean>;
+  /** Tests Speech / Vision on the Foundry resource through the relay, which seals the result to the Foundry connection. */
+  testMedia: (service: MediaService) => Promise<MediaTestResult>;
+  clearMedia: (service: MediaService) => Promise<boolean>;
   refreshRelay: () => Promise<void>;
   saveWorkIq: (input: WorkIqSettingsInput) => Promise<{ ok: boolean; error?: string }>;
   deleteWorkIq: () => Promise<boolean>;
@@ -108,13 +93,10 @@ export const useAiSettings = create<AiSettingsState>()(
       entraTenantId: '',
       liveEnabled: false,
       sendConsent: false,
-      mediaDraft: { speech: EMPTY_MEDIA_DRAFT, vision: EMPTY_MEDIA_DRAFT },
       monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
       relayReachable: false,
       foundryKeySaved: false,
-      speechKeySaved: false,
-      visionKeySaved: false,
-      media: { speech: null, vision: null },
+      media: NO_MEDIA,
       relayConnection: null,
       connectionVerifiedAt: null,
       keyProtection: null,
@@ -127,23 +109,20 @@ export const useAiSettings = create<AiSettingsState>()(
         const revoked = patch.sendConsent === false;
         return { ...patch, ...(destinationChanged || revoked ? { sendConsent: false, liveEnabled: false } : {}) };
       }),
-      updateMediaDraft: (service, patch) => set((state) => ({ mediaDraft: { ...state.mediaDraft, [service]: { ...state.mediaDraft[service], ...patch } } })),
-      saveMedia: async (service) => {
-        const input = mediaSaveInput(service, get().mediaDraft[service]);
-        if (!input.ok) return { ok: false, error: input.error };
-        const r = await saveMediaConnection(service, input.value);
+      testMedia: async (service) => {
+        const r = await testMediaConnection(service);
         await get().refreshRelay();
         return r;
       },
-      deleteMedia: async (service) => {
-        const ok = await deleteMediaConnection(service);
+      clearMedia: async (service) => {
+        const ok = await clearMediaCheck(service);
         await get().refreshRelay();
         return ok;
       },
       refreshRelay: async () => {
         const s = await fetchRelayStatus();
         set({
-          relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, speechKeySaved: s.secrets.speechKey, visionKeySaved: s.secrets.visionKey, media: s.media,
+          relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, media: s.media,
           relayConnection: s.connection, connectionVerifiedAt: s.connectionVerifiedAt, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
           workiq: s.workiq, entra: s.entra,
         });
@@ -225,12 +204,11 @@ export const useAiSettings = create<AiSettingsState>()(
     }),
     {
       name: AI_SETTINGS_KEY,
-      version: 5,
+      version: 6,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, entraTenantId: s.entraTenantId, liveEnabled: s.liveEnabled,
         sendConsent: s.sendConsent,
-        mediaDraft: s.mediaDraft,
         monthlyBudgetJpy: s.monthlyBudgetJpy,
       }),
       // v1 had a separate review budget (PARAM-120); D-3 merged it into the single monthly budget.
@@ -240,13 +218,10 @@ export const useAiSettings = create<AiSettingsState>()(
         delete p.priceInputPerM;
         delete p.priceOutputPerM;
         delete p.copilotPricePerRequest;
-        // v5 (FR-324): Speech / Vision drafts with an authentication method; v4 kept only the Speech endpoint and region.
-        if (version < 5) {
-          const text = (v: unknown) => (typeof v === 'string' ? v : '');
-          p.mediaDraft = { speech: { ...EMPTY_MEDIA_DRAFT, endpoint: text(p.speechEndpoint), region: text(p.speechRegion) }, vision: EMPTY_MEDIA_DRAFT };
-          delete p.speechEndpoint;
-          delete p.speechRegion;
-        }
+        // v4 kept a Speech endpoint and region, v5 Speech / Vision drafts; since v6 both use the Foundry connection (FR-328).
+        delete p.speechEndpoint;
+        delete p.speechRegion;
+        delete p.mediaDraft;
         return p as unknown as AiSettingsState;
       },
     },
@@ -310,25 +285,10 @@ export function workIqReady(s: Pick<AiSettingsState, 'provider' | 'workiq'>): bo
 setRuntimeSettingsProvider(runtimeSettings);
 syncDeviceStore(AI_SETTINGS_KEY, () => useAiSettings.persist.rehydrate());
 /**
- * The body sent to the relay for a Speech / Vision draft, checked with the relay's own rules first so the screen can name
- * the problem before any request (FR-324). The key itself is never part of it.
+ * Speech / Vision are usable when the relay's sealed check still holds for the current Foundry connection (same endpoint,
+ * key or Entra account) and the Entra account is still signed in.
  */
-export function mediaSaveInput(service: MediaService, d: MediaDraft): { ok: true; value: MediaSaveInput; connection: MediaConnection } | { ok: false; error: Exclude<ReturnType<typeof validateMedia>, { ok: true }>['error'] } {
-  const endpoint = d.endpoint.trim();
-  const region = d.region.trim().toLowerCase();
-  const body = d.auth === 'entraId'
-    ? { auth: 'entraId' as const, endpoint, tenantId: d.tenantId.trim(), resourceId: d.resourceId.trim(), ...(region ? { region } : {}) }
-    : { auth: 'apiKey' as const, ...(endpoint ? { endpoint } : {}), ...(region ? { region } : {}) };
-  const r = validateMedia(service, body);
-  return r.ok ? { ok: true, value: body, connection: r.value } : { ok: false, error: r.error };
-}
-
-/**
- * A Speech / Vision connection is usable when the relay's sealed check still holds (same key, or the same Entra account
- * still signed in) and it uses the method chosen on screen.
- */
-export function isMediaConfigured(s: Pick<AiSettingsState, 'media' | 'mediaDraft' | 'entra'>, service: MediaService): boolean {
-  const m = s.media[service];
-  if (!m?.verifiedAt || m.connection.auth !== s.mediaDraft[service].auth) return false;
-  return m.connection.auth === 'entraId' ? s.entra?.signedIn === true : true;
+export function isMediaConfigured(s: Pick<AiSettingsState, 'media' | 'entra'>, service: MediaService): boolean {
+  if (!s.media.endpoint || !s.media.verifiedAt[service]) return false;
+  return s.media.auth === 'entraId' ? s.entra?.signedIn === true : true;
 }

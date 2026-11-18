@@ -18,7 +18,7 @@ test.describe('Strategic overview optimization', () => {
       let calls = 0;
       let kpiData: { kpis: { current: number }[]; okrs: unknown[] } | null = null;
       await page.route('**/relay/status', (route) => route.fulfill({ json: {
-        secrets: { foundryKey: true, speechKey: false },
+        secrets: { foundryKey: true },
         connection: { endpoint: 'https://example.openai.azure.com', deployment: 'test', apiVersion: '2025-04-01-preview' },
         connectionVerifiedAt: '2026-11-16T00:00:00Z', keyProtection: null, copilot: { model: 'gpt-5' }, workiq: null,
       } }));
@@ -236,11 +236,6 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(foundry.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
     await expect(foundry.getByTestId('ai-foundry-key-change')).toBeVisible();
 
-    const speech = page.getByTestId('ai-speech-key');
-    await speech.getByTestId('ai-speech-key-input').fill(`${FAKE_KEY}-speech`);
-    await speech.getByTestId('ai-speech-key-save').click();
-    await expect(speech.getByTestId('ai-speech-key-state')).toHaveText('Saved');
-
     await page.reload();
     await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
@@ -257,8 +252,6 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await page.getByRole('button', { name: 'Keep current key' }).click();
     await page.getByTestId('ai-foundry-key-delete').click();
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText('Not set');
-    await page.getByTestId('ai-speech-key-delete').click();
-    await expect(page.getByTestId('ai-speech-key-state')).toHaveText('Not set');
     expect(bodies.join('\n')).not.toContain(FAKE_KEY);
   });
 
@@ -287,7 +280,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     let statusChecks = 0;
     const requests: string[] = [];
     await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: false, speechKey: false }, connection: null, connectionVerifiedAt: null,
+      secrets: { foundryKey: false }, connection: null, connectionVerifiedAt: null,
       entra: { signedIn: true, account: 'user@example.com', tenantId: home, signIn: {
         status: guestSignedIn ? (++statusChecks < 3 ? 'pending' : 'signedIn') : 'idle',
       } },
@@ -331,63 +324,64 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(requests).toContain(guest);
   });
 
-  test('Speech and Vision choose API key or Microsoft Entra ID and save only after the relay test (FR-324)', async ({ page }) => {
+  test('Speech and Vision use the Foundry connection: nothing to enter, test on the Foundry resource, and check the role (FR-328)', async ({ page }) => {
     const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
-    const resourceId = `/subscriptions/d8352616-ed51-492b-929b-5e266d38aedd/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/bas-speech`;
-    let media: Record<string, unknown> = { speech: null, vision: null };
-    const listed: unknown[] = [];
-    const saved: unknown[] = [];
+    const resourceId = '/subscriptions/d8352616-ed51-492b-929b-5e266d38aedd/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/bas-foundry';
+    let connection: Record<string, unknown> | null = null;
+    let media: Record<string, unknown> = { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null };
+    const tested: unknown[] = [];
+    let canCall = false;
     await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: false, speechKey: false, visionKey: false }, connection: null, connectionVerifiedAt: null,
+      secrets: { foundryKey: false }, connection, connectionVerifiedAt: connection ? '2026-11-17T00:00:00.000Z' : null,
       entra: { signedIn: true, account: 'user@example.com', tenantId: home, signIn: { status: 'idle' } }, media,
     } }));
     await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId: home, name: 'Home', signedIn: true }] } }));
-    await page.route('**/relay/entra/instances', (route) => {
-      listed.push(route.request().postDataJSON());
-      return route.fulfill({ json: { instances: [{
-        id: resourceId, name: 'bas-speech', kind: 'SpeechServices', location: 'japaneast', resourceGroup: 'rg', subscriptionId: 'd8352616-ed51-492b-929b-5e266d38aedd',
-        subscriptionName: 'BAS', tenantId: home, endpoint: 'https://bas-speech.cognitiveservices.azure.com', keyAuthDisabled: true,
-      }] } });
-    });
-    await page.route('**/relay/entra/inspect', (route) => route.fulfill({ json: { deployments: [], access: { canCall: true, canAssign: false } } }));
+    await page.route('**/relay/entra/instances', (route) => route.fulfill({ json: { instances: [] } }));
     await page.route('**/relay/media/speech', (route) => {
-      const body = route.request().postDataJSON();
-      saved.push(body);
-      const result = { connection: { auth: 'entraId', endpoint: body.endpoint, region: body.region ?? null, tenantId: body.tenantId, resourceId: body.resourceId }, verifiedAt: '2026-11-17T00:00:00.000Z' };
-      media = { ...media, speech: result };
-      return route.fulfill({ json: result });
+      tested.push(route.request().postDataJSON());
+      media = { ...media, speech: '2026-11-17T00:00:00.000Z' };
+      return route.fulfill({ json: { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'entraId', verifiedAt: '2026-11-17T00:00:00.000Z' } });
+    });
+    await page.route('**/relay/media/vision', (route) => route.fulfill({ status: 502, json: { error: 'forbidden', providerStatus: 403 } }));
+    await page.route('**/relay/media/vision/*', (route) => {
+      if (route.request().url().endsWith('/role')) canCall = true;
+      return route.fulfill({ json: { resource: { id: resourceId, name: 'bas-foundry', kind: 'AIServices' }, access: { canCall, canAssign: true } } });
     });
     await openAiSettings(page, { lang: 'en' });
 
-    await page.getByTestId('ai-speech-auth-entra').click();
-    await expect(page.getByTestId('ai-speech-key')).toHaveCount(0);
-    await expect(page.getByTestId('ai-speech-region')).toHaveCount(0);
-    await expect(page.getByTestId('ai-speech-entra')).toBeVisible();
-    await page.getByTestId('ai-speech-entra-instance').selectOption({ index: 1 });
-    await expect(page.getByTestId('ai-speech-destination')).toContainText('https://bas-speech.cognitiveservices.azure.com/tts/cognitiveservices/voices/list');
-    expect(listed).toContainEqual({ tenantId: home, service: 'speech' });
-    await page.getByTestId('ai-speech-save').click();
+    // Without a Foundry connection there is nothing to configure here, and the test names why.
+    for (const id of ['ai-speech-auth-entra', 'ai-speech-key', 'ai-speech-region', 'ai-vision-endpoint', 'ai-vision-key']) await expect(page.getByTestId(id)).toHaveCount(0);
+    await expect(page.getByTestId('ai-speech-unavailable')).toContainText('Verify and save the Microsoft Foundry connection first');
+    await page.getByTestId('ai-speech-test').click();
     await expect(page.getByTestId('ai-speech-blockers')).toContainText('Agree to send the test request');
-    expect(saved).toHaveLength(0);
-    await page.getByTestId('ai-speech-consent').check();
-    await page.getByTestId('ai-speech-save').click();
-    await expect(page.getByTestId('ai-speech-verified')).toHaveText('Verified and saved');
-    expect(saved).toEqual([{ auth: 'entraId', endpoint: 'https://bas-speech.cognitiveservices.azure.com', tenantId: home, resourceId, region: 'japaneast' }]);
+    expect(tested).toHaveLength(0);
 
-    // Vision with a key: a regional or missing endpoint is named before anything is sent.
-    await expect(page.getByTestId('ai-vision-auth-apikey')).toBeChecked();
-    await page.getByTestId('ai-vision-endpoint').fill('https://evil.example');
-    await expect(page.getByTestId('ai-vision-validation')).toBeVisible();
-    await page.getByTestId('ai-vision-endpoint').fill('https://bas-vision.cognitiveservices.azure.com');
-    await expect(page.getByTestId('ai-vision-validation')).toHaveCount(0);
+    connection = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2024-10-21', auth: 'entraId', tenantId: home };
+    media = { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'entraId', unavailable: null, speech: null, vision: null };
+    await page.reload();
+    await page.getByTestId('nav-ai-settings').click();
+    await expect(page.getByTestId('ai-speech-endpoint')).toHaveText('https://bas-foundry.cognitiveservices.azure.com');
+    await expect(page.getByTestId('ai-speech-auth')).toHaveText('Microsoft Entra ID');
+    await expect(page.getByTestId('ai-speech-destination')).toContainText('https://bas-foundry.cognitiveservices.azure.com/tts/cognitiveservices/voices/list');
     await expect(page.getByTestId('ai-vision-destination')).toContainText('/computervision/imageanalysis:analyze');
-    await page.getByTestId('ai-vision-auth-entra').click();
-    await expect(page.getByTestId('ai-vision-entra')).toBeVisible();
-    await expect(page.getByTestId('ai-vision-endpoint')).toHaveCount(0);
+    await page.getByTestId('ai-speech-consent').check();
+    await page.getByTestId('ai-speech-test').click();
+    await expect(page.getByTestId('ai-speech-verified')).toHaveText('Verified and saved');
+    expect(tested).toEqual([{}]);
+
+    // A 403 points to the role; the role is checked and granted on the connected Foundry resource.
+    await page.getByTestId('ai-vision-consent').check();
+    await page.getByTestId('ai-vision-test').click();
+    await expect(page.getByTestId('ai-vision-msg')).toContainText('HTTP 403');
+    await expect(page.getByTestId('ai-vision-hint')).toContainText('Azure OpenAI resources do not offer Vision');
+    await page.getByTestId('ai-vision-access-check').click();
+    await expect(page.getByTestId('ai-vision-access-result')).toContainText('bas-foundry (AIServices)');
+    await expect(page.getByTestId('ai-vision-access-badge')).toHaveText('Cannot call the service');
+    await page.getByTestId('ai-vision-access-assign').click();
+    await expect(page.getByTestId('ai-vision-access-badge')).toHaveText('Can call the service');
     const violations = await scan(page, ['[data-testid="ai-speech-connection"]', '[data-testid="ai-vision-connection"]']);
     expect(violations).toEqual([]);
-  });
-  test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
+  });  test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });
     const r = await page.evaluate(async () => {
       const noHeader = await fetch('/relay/secrets/foundryKey', { method: 'DELETE' });
@@ -759,7 +753,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
   test('live HTML story uses one gated request, renders text safely, and survives reload', async ({ page }) => {
     let calls = 0;
     await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: true, speechKey: false },
+      secrets: { foundryKey: true },
       connection: { endpoint: 'https://example.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' },
       connectionVerifiedAt: '2026-11-17T00:00:00Z', keyProtection: null, copilot: null, workiq: null,
     } }));

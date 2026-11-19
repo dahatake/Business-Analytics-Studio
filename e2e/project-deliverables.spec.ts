@@ -67,7 +67,7 @@ async function openStepDraft(page: Page) {
 }
 
 test.describe('Copilot task resolution', () => {
-  async function prepare(page: Page, lang: Lang, mode: 'repair' | 'newKpi' | 'invalid' | 'failure' = 'repair') {
+  async function prepare(page: Page, lang: Lang, mode: 'repair' | 'newKpi' | 'invalid' | 'invalidJson' | 'missingRationale' | 'failure' = 'repair') {
     await go(page, '/deliverables?step=asis', lang);
     await fakeAi(page);
     // newKpi: no existing KPI shares a source with the issues, so the only grounded drafts are new KPIs.
@@ -86,6 +86,7 @@ test.describe('Copilot task resolution', () => {
       const kpiDraft = {
         name: { ja: '受注から出荷までの日数', en: 'Order-to-shipment days' }, description: { ja: '出典の課題を測る指標です。', en: 'Measures the sourced issue.' },
         unit: { ja: '日', en: 'days' }, period: { ja: '月次', en: 'Monthly' }, direction: 'decrease', scale: 'ratio',
+        baseline: 20, current: 18, target: 10, estimateNote: { ja: '20・18・10 は推定です。月次の実績で確認してください。', en: '20, 18 and 10 are estimates; confirm with monthly actuals.' },
       };
       const leadTime = creates.find((o) => o.kind === 'create' && o.issueId === 'issue-lead-time')!.id;
       const choices = [
@@ -94,8 +95,8 @@ test.describe('Copilot task resolution', () => {
         ...(mode === 'newKpi' ? [{ id: 'new-all', label: ja ? 'すべての課題にKPIを下書きする' : 'Draft a KPI for every issue', optionIds: creates.map((o) => o.id), drafts: Object.fromEntries(creates.map((o) => [o.id, kpiDraft])), rationale: ja ? '各課題の出典に基づきます。' : 'Based on each issue source.' }] : []),
       ];
       await route.fulfill({ json: {
-        text: JSON.stringify({
-          choices, recommendedId: choices[0]!.id,
+        text: mode === 'invalidJson' ? '{"choices":[' : JSON.stringify({
+          choices: mode === 'missingRationale' ? choices.map(({ rationale: _rationale, ...rest }) => rest) : choices, recommendedId: choices[0]!.id,
           reasoning: ja ? '既存の出典を確認し、KPIのドラフトを承認してください。他案より検証可能です。' : 'Check the existing sources and approve the KPI draft; this is more verifiable than the other choice.',
           missingInformation: mode === 'newKpi' ? [ja ? '基準値・現在値・目標値と責任者の確認が必要です。' : 'Baseline, current, target and owner must be confirmed.'] : [],
         }), inputTokens: 100, outputTokens: 100,
@@ -145,22 +146,34 @@ test.describe('Copilot task resolution', () => {
     });
   }
 
-  test('creates a new KPI only after the reviewer enters its values and owner, then saves it as linked data', async ({ page }) => {
+  test('prefills a new KPI with proposed values and an owner, labels their basis, and saves it as linked data on approval', async ({ page }) => {
     const { todo } = await prepare(page, 'ja', 'newKpi');
     await todo.getByTestId('dlv-resolve-define-kpi-link').click();
     await generate(page);
     await expect(page.getByTestId('dlv-resolve-radio-new-kpi')).toBeChecked();
     await expect(page.getByTestId('dlv-resolve-dialog')).toContainText('基準値・現在値・目標値と責任者の確認が必要です。');
-    await expect(page.getByTestId('dlv-resolve-preview')).toContainText('承認の前に入力が必要です: 基準値、現在値、目標値、責任者');
-    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
     const field = (name: string) => page.getByTestId(`dlv-resolve-human-kpi-draft-lead-time-${name}`);
+    // Every value the reviewer confirms is already filled: Copilot's numbers and an owner chosen from local data.
+    await expect(field('baseline')).toHaveValue('20');
+    await expect(field('current')).toHaveValue('18');
+    await expect(field('target')).toHaveValue('10');
+    await expect(field('ownerId')).not.toHaveValue('');
+    await expect(field('baseline-field')).toHaveAttribute('data-basis', 'estimate');
+    await expect(field('baseline-field')).toContainText('Copilot の推定値です');
+    await expect(field('note')).toContainText('20・18・10 は推定です。');
+    await expect(page.getByTestId('dlv-resolve-human-kpi-draft-lead-time')).toContainText('課題に関係する KPI の責任者から選択');
+    await expect(page.getByTestId('dlv-resolve-preview')).toContainText('承認するとこの変更を保存します');
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeEnabled();
+    await field('baseline').fill('');
+    await expect(page.getByTestId('dlv-resolve-preview')).toContainText('承認の前に入力が必要です: 基準値');
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
     await field('baseline').fill('20');
-    await field('current').fill('18');
     await field('target').fill('25'); // a "decrease" KPI whose target is worse than its baseline is not approvable
-    await field('ownerId').selectOption('person-sato-yui');
     await expect(page.getByTestId('dlv-resolve-preview-error')).toContainText('direction');
     await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
-    await field('target').fill('10');
+    await field('target').fill('12');
+    await expect(field('target-field')).toHaveAttribute('data-basis', 'human');
+    await field('ownerId').selectOption('person-sato-yui');
     await expect(page.getByTestId('dlv-resolve-preview')).toContainText('承認するとこの変更を保存します');
     await page.evaluate(() => window.scrollTo(0, 0));
     expect(await scan(page)).toEqual([]);
@@ -172,14 +185,14 @@ test.describe('Copilot task resolution', () => {
     if (typeof edits !== 'string') throw new Error('Expected saved pack edits');
     const upserts = (JSON.parse(edits) as { upserts: { id: string; kpiIds?: string[]; [key: string]: unknown }[] }).upserts;
     expect(upserts.find((e) => e.id === 'kpi-draft-lead-time')).toMatchObject({
-      kind: 'kpi', author: 'ai', baseline: 20, current: 18, target: 10, ownerId: 'person-sato-yui', direction: 'decrease', sourceIds: ['src-annual-report'],
+      kind: 'kpi', author: 'ai', baseline: 20, current: 18, target: 12, ownerId: 'person-sato-yui', direction: 'decrease', sourceIds: ['src-annual-report'],
     });
     expect(upserts.find((e) => e.id === 'issue-lead-time')?.kpiIds).toEqual(['kpi-draft-lead-time']);
     const saved = snapshot.records['bas.scope.demo.proj.deliverables']?.value;
     if (typeof saved !== 'string') throw new Error('Expected saved deliverables');
     const text = (JSON.parse(saved) as { recommendations: Record<string, { approved: { text: string } }> }).recommendations['internal:define-kpi-link']!.approved.text;
     expect(text).toContain('新しい KPI「受注から出荷までの日数」を作成し');
-    expect(text).toContain('人が入力した値:\n基準値: 20 / 現在値: 18 / 目標値: 10 / 責任者: ');
+    expect(text).toMatch(/人が承認した値（出どころ）:\n基準値: 20 \(Copilot の推定値[^)]*\) \/ 現在値: 18 \(Copilot の推定値[^)]*\) \/ 目標値: 12 \(あなたが入力\) \/ 責任者: .+ \((あなたが入力|課題に関係する KPI の責任者から選択)\)/);
   });
 
   test('lets the reviewer write a direction under Other and regenerate data drafts with it, never recording it as data', async ({ page }) => {
@@ -263,6 +276,24 @@ test.describe('Copilot task resolution', () => {
       await expect(page.getByTestId('dlv-resolve-choices')).toHaveCount(0);
       await expect(todo).toHaveAttribute('data-done', 'false');
     });
+  }
+
+  for (const lang of ['ja', 'en'] as const) {
+    for (const mode of ['invalidJson', 'missingRationale'] as const) {
+      test(`explains ${mode} without updating data (${lang})`, async ({ page }) => {
+        const { todo } = await prepare(page, lang, mode);
+        const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']?.value;
+        await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+        await generate(page);
+        const error = page.getByTestId('dlv-resolve-error');
+        await expect(error).toContainText(lang === 'ja' ? '今回のデータ変更はありません' : 'No data was changed');
+        await expect(error).toContainText(mode === 'invalidJson' ? 'JSON' : 'choices.0.rationale');
+        await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
+        await expect(page.getByTestId('dlv-resolve-choices')).toHaveCount(0);
+        await expect(todo).toHaveAttribute('data-done', 'false');
+        expect((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']?.value).toBe(before);
+      });
+    }
   }
 });
 

@@ -20,7 +20,7 @@ import { buildDraft, buildTaskDrafts, draftEntities, draftPrompt, draftRequest, 
 import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContribution, type StrategyData } from '../src/modules/project/strategy.ts';
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
-import { parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, unsupportedNumbers, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
+import { humanDescription, parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, suggestOwner, unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -160,6 +160,25 @@ describe('Copilot task repairs', () => {
     expect(() => previewResolution(input, { optionIds: [field.id], texts: { 'field:asis:invented': 'x' } }, options, 'now')).toThrow(/unknown field/);
   });
 
+  it('provides a valid JSON example with a rationale inside each choice', () => {
+    const input = missingLinks();
+    const prompt = resolutionRequest(input, repairOptions(input)).prompt;
+    const prefix = 'Return only JSON: ';
+    const line = prompt.split('\n').find((part) => part.startsWith(prefix));
+    expect(line).toBeDefined();
+    const example = JSON.parse(line!.slice(prefix.length).replace(/\.$/, '')) as {
+      choices: { optionIds: string[]; rationale?: string; drafts?: object }[];
+    };
+    expect(example.choices).toHaveLength(2);
+    expect(example.choices.every((item) => item.rationale)).toBe(true);
+    expect(example.choices[1]!.drafts).toBeDefined();
+    const options: RepairOption[] = [
+      { id: example.choices[0]!.optionIds[0]!, kind: 'link', entityId: 'issue', field: 'kpiIds', relatedId: 'kpi', evidenceIds: ['source'] },
+      { id: example.choices[1]!.optionIds[0]!, kind: 'create', entityKind: 'kpi', issueId: 'issue', newId: 'new-kpi', evidenceIds: ['source'] },
+    ];
+    expect(parseResolution(JSON.stringify(example), options).choices).toHaveLength(2);
+  });
+
   it('never proposes unsourced or hidden relationships, and drafts new entities only for sourced, visible issues', () => {
     const input = missingLinks();
     const raw = clone();
@@ -194,7 +213,40 @@ describe('Copilot task repairs', () => {
     expect(pending.result).toBeNull();
     expect(pending.changes).toEqual([]);
     expect(pending.missing).toHaveLength(ids.length * 4);
-    expect(() => previewResolution(input, { optionIds: ids, drafts: { ...drafts, [ids[0]!]: { ...kpiDraft, baseline: 777 } } }, options, 'now')).toThrow(/unsupported numbers.*777/);
+    // Proposed KPI numbers fill the form even when they are estimates; the label is decided locally, and AI text citing an unsupported number is still rejected.
+    const proposed: EntityDraft = { ...kpiDraft, baseline: 777, current: 68, target: 500, estimateNote: { ja: '777 は推定、68 は出典の値', en: '777 is an estimate, 68 is from the source' } };
+    expect(previewResolution(input, { optionIds: [ids[0]!], drafts: { [ids[0]!]: proposed } }, options, 'now').missing).toEqual([{ optionId: ids[0], field: 'ownerId' }]);
+    expect(valueBasis(input, options[0]!, proposed, undefined, 'baseline')).toBe('estimate');
+    // 68 日 appears only in another issue (issue-cash), so it is not evidence for this issue's KPI.
+    expect(options[0]!.issueId).not.toBe('issue-cash');
+    expect(valueBasis(input, options[0]!, proposed, undefined, 'current')).toBe('estimate');
+    expect(valueBasis(input, options[0]!, proposed, { baseline: 30 }, 'baseline')).toBe('human');
+    expect(valueBasis(input, options[0]!, kpiDraft, undefined, 'target')).toBeNull();
+    // On its own issue a number is evidence only for the field its clause names and only in the KPI's unit.
+    const cash = options.find((o) => o.issueId === 'issue-cash')!;
+    const stated: EntityDraft = { ...kpiDraft, baseline: 68, current: 61, target: 45 };
+    expect(valueBasis(input, cash, stated, undefined, 'baseline')).toBe('evidence');
+    expect(valueBasis(input, cash, stated, undefined, 'target')).toBe('evidence');
+    expect(valueBasis(input, cash, stated, undefined, 'current')).toBe('estimate'); // "平均 61 日" names no field
+    expect(valueBasis(input, cash, { ...stated, target: 68 }, undefined, 'target')).toBe('estimate');
+    expect(valueBasis(input, cash, { ...stated, unit: { ja: '%', en: '%' } }, undefined, 'baseline')).toBe('estimate');
+    expect(() => previewResolution(input, { optionIds: [ids[0]!], drafts: { [ids[0]!]: { ...proposed, estimateNote: { ja: '987654 件から推定', en: 'From 987654 cases' } } } }, options, 'now'))
+      .toThrow(/unsupported numbers.*987654/);
+    const backwards = parse(response([choice('a', [ids[0]!], { drafts: { [ids[0]!]: { ...kpiDraft, baseline: 10, current: 12, target: 20 } } }), choice('b', ids, { drafts })]));
+    expect(backwards.choices[0]!.drafts![ids[0]!]).toMatchObject({ baseline: 10, current: 12 });
+    expect(backwards.choices[0]!.drafts![ids[0]!]!.target).toBeUndefined(); // a "decrease" target above the baseline is left for the reviewer
+    const owner = suggestOwner(input, options[0]!)!;
+    expect(owner.basis).toBe('relatedKpi');
+    expect(input.ctx.pack.pack.entities.some((e) => e.kind === 'kpi' && e.ownerId === owner.id)).toBe(true);
+    const bare = clone();
+    bare.entities = bare.entities.filter((e) => !['kpi', 'solution', 'initiative'].includes(e.kind)).map((e) => e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
+    const bareInput = { ...input, ctx: demoCtx({ pack: loadPack(bare) }) };
+    const bareOption = creates(repairOptions(bareInput))[0]!;
+    const approver = bare.entities.find((e) => e.kind === 'person')!;
+    expect(suggestOwner(bareInput, bareOption, ` ${approver.name.en.toUpperCase()} `)).toEqual({ id: approver.id, basis: 'editor' });
+    expect(suggestOwner(bareInput, bareOption, 'Someone Else')).toBeUndefined();
+    expect(humanDescription(options[0]!, input, proposed, { current: 61, ownerId: owner.id }, owner))
+      .toMatch(/^基準値: 777 \(Copilot の推定値.*\) \/ 現在値: 61 \(あなたが入力\) \/ 目標値: 500 \(Copilot の推定値.*\) \/ 責任者: .+ \(課題に関係する KPI の責任者から選択\)$/);
     const human = Object.fromEntries(options.map((o) => [o.id, o.issueId === 'issue-cash'
       ? { baseline: 68, current: 61, target: 45, ownerId: 'person-sato-yui' }
       : { baseline: 20, current: 18, target: 10, ownerId: 'person-sato-yui' }]));

@@ -16,23 +16,34 @@ import { evaluateStep, normalizeDeliverables, resultKey, STEP_DEFS, todoKey } fr
 import { Refs, todoHref, useCheckContext } from './deliverablesUi.tsx';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
 import {
-  HUMAN_FIELDS, humanDescription, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo,
-  RESOLUTION_GUIDANCE_MAX, type HumanField, type HumanValues, type RepairOption, type ResolutionInput, type ResolutionProposal,
+  HUMAN_FIELDS, humanDescription, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
+  RESOLUTION_GUIDANCE_MAX, ResolutionResponseError, type HumanField, type HumanValues, type NumberField, type OwnerSuggestion, type RepairOption,
+  type ResolutionInput, type ResolutionProposal,
 } from './taskResolution.ts';
 
 type ReadyResolution = { input: ResolutionInput; options: RepairOption[]; proposal: ResolutionProposal; stamp: string };
 /** What the reviewer typed for a KPI draft, kept as text so partial input such as "1." survives re-rendering. */
 type HumanInput = Partial<Record<HumanField, string>>;
 const OTHER = '__other';
-const NUMBER_FIELDS = HUMAN_FIELDS.filter((f): f is Exclude<HumanField, 'ownerId'> => f !== 'ownerId');
+const NUMBER_FIELDS = HUMAN_FIELDS.filter((f): f is NumberField => f !== 'ownerId');
 
-/** An emptied field is NaN (still missing) rather than undefined, so it never silently falls back to the AI value. */
+/**
+ * An emptied field is NaN (still missing) rather than undefined, so it never silently falls back to the AI value; an owner the
+ * reviewer cleared stays '' instead of falling back to the preselected one.
+ */
 type HumanByOption = Record<string, HumanValues>;
-function humanValues(raw: Record<string, HumanInput>): HumanByOption {
-  return Object.fromEntries(Object.entries(raw).map(([id, values]) => [id, {
-    ...Object.fromEntries(NUMBER_FIELDS.flatMap((f) => values[f] === undefined ? [] : [[f, values[f]!.trim() ? Number(values[f]!.normalize('NFKC').trim()) : Number.NaN]])),
-    ...(values.ownerId ? { ownerId: values.ownerId } : {}),
-  }]));
+type RawByOption = Record<string, HumanInput>;
+type OwnerByOption = Record<string, OwnerSuggestion>;
+function humanValues(raw: RawByOption, owners: OwnerByOption): HumanByOption {
+  const ids = new Set([...Object.keys(raw), ...Object.keys(owners)]);
+  return Object.fromEntries([...ids].map((id) => {
+    const values = raw[id] ?? {};
+    const ownerId = values.ownerId ?? owners[id]?.id;
+    return [id, {
+      ...Object.fromEntries(NUMBER_FIELDS.flatMap((f) => values[f] === undefined ? [] : [[f, values[f]!.trim() ? Number(values[f]!.normalize('NFKC').trim()) : Number.NaN]])),
+      ...(ownerId !== undefined ? { ownerId } : {}),
+    }];
+  }));
 }
 
 export function TaskResolutionDialog({ todoId }: { todoId: string }) {
@@ -61,7 +72,12 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const draftable = useMemo(() => repairOptions({ step, ctx, lang, audience, todoId }).length > 0, [step, ctx, lang, audience, todoId]);
   // Owners are chosen locally and never sent to Copilot; an external audience only sees shareable people.
   const people = useMemo(() => ctx.pack.pack.entities.filter((e) => e.kind === 'person' && (audience === 'internal' || e.classification === 'shareable')), [ctx, audience]);
-  const human = humanValues(humanRaw);
+  const editor = useProjUi((s) => s.editor);
+  const owners = useMemo(() => Object.fromEntries((ready?.options ?? []).flatMap((option) => {
+    const owner = suggestOwner(ready!.input, option, editor);
+    return owner ? [[option.id, owner]] : [];
+  })), [ready, editor]);
+  const human = humanValues(humanRaw, owners);
   const busy = progress !== null || applying;
   const stale = !!ready && !applied && batchSourceStamp() !== ready.stamp;
   const other = choiceId === OTHER;
@@ -89,6 +105,8 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
 
   const errorText = (value: unknown) => value instanceof AiLiveError
     ? value.reasons.includes('liveFailed') ? t('dlv.batch.liveFailed', { detail: value.message }) : value.reasons.map((reason) => t(reasonKey(reason))).join(' ')
+    : value instanceof ResolutionResponseError
+      ? value.kind === 'json' ? t('dlv.resolve.invalidJson') : t('dlv.resolve.invalidSchema', { detail: value.detail })
     : value instanceof Error ? value.message : String(value);
   const assertStamp = (stamp: string, includePack = true) => {
     if (batchSourceStamp(includePack) !== stamp) throw new Error(t('dlv.resolve.changed'));
@@ -151,7 +169,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       const checked = evaluateStep(step, { ...ready.input.ctx, pack: loaded, deliverables: data }).find((r) => r.todo.id === todoId)!;
       const missing = ready.proposal.missingInformation.length ? [t('dlv.resolve.missing'), ...ready.proposal.missingInformation].join('\n') : '';
       const comparison = choice.id === recommended.id ? t('dlv.resolve.recordIsRecommended') : t('dlv.resolve.recordRecommended', { label: recommended.label });
-      const values = plan.selected.map((option) => humanDescription(option, ready.input, plan.drafts[option.id], human[option.id])).filter(Boolean);
+      const values = plan.selected.map((option) => humanDescription(option, ready.input, plan.drafts[option.id], human[option.id], owners[option.id])).filter(Boolean);
       const text = [
         t('dlv.resolve.recordChoice', { label: choice.label }),
         comparison,
@@ -233,25 +251,42 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                               <li key={option.id}>
                                 <p className="proj-prewrap">{repairDescription(option, ready.input, item.drafts?.[option.id])}</p>
                                 <Refs refs={option.evidenceIds.map((evidenceId) => ({ type: 'entity', id: evidenceId }))} />
-                                {item.id === choiceId && option.kind === 'create' && option.entityKind === 'kpi' && (
+                                {item.id === choiceId && option.kind === 'create' && option.entityKind === 'kpi' && (() => {
+                                  const draft = item.drafts?.[option.id];
+                                  const owner = owners[option.id];
+                                  const ownerId = human[option.id]?.ownerId ?? '';
+                                  return (
                                   <fieldset className="dlv-resolve-human" data-testid={`dlv-resolve-human-${option.newId}`}>
-                                    <legend>{t('dlv.resolve.human.title', { name: item.drafts?.[option.id]?.name[lang] ?? option.newId })}</legend>
+                                    <legend>{t('dlv.resolve.human.title', { name: draft?.name[lang] ?? option.newId })}</legend>
                                     <p>{t('dlv.resolve.human.note')}</p>
-                                    {NUMBER_FIELDS.map((field) => (
-                                      <Field key={field} label={t(`dlv.resolve.human.${field}`)} required>
-                                        <Input inputMode="decimal" disabled={busy} value={humanRaw[option.id]?.[field] ?? String(item.drafts?.[option.id]?.[field] ?? '')}
-                                          onChange={(_, d) => setHuman(option.id, field, d.value)} data-testid={`dlv-resolve-human-${option.newId}-${field}`} />
-                                      </Field>
-                                    ))}
-                                    <Field label={t('dlv.resolve.human.ownerId')} required>
-                                      <Select disabled={busy} value={humanRaw[option.id]?.ownerId ?? ''} onChange={(_, d) => setHuman(option.id, 'ownerId', d.value)}
+                                    {draft?.estimateNote && (
+                                      <p className="proj-prewrap" data-testid={`dlv-resolve-human-${option.newId}-note`}>
+                                        {t('dlv.resolve.human.estimateNote', { note: draft.estimateNote[lang] })}
+                                      </p>
+                                    )}
+                                    {NUMBER_FIELDS.map((field) => {
+                                      const basis = valueBasis(ready.input, option, draft, human[option.id], field);
+                                      const basisText = basis ? t(`dlv.resolve.human.basis.${basis}`) : undefined;
+                                      return (
+                                        <Field key={field} label={t(`dlv.resolve.human.${field}`)} required
+                                          validationState={basis === 'estimate' ? 'warning' : 'none'} validationMessage={basis === 'estimate' ? basisText : undefined}
+                                          hint={basis === 'estimate' ? undefined : basisText} data-basis={basis ?? ''} data-testid={`dlv-resolve-human-${option.newId}-${field}-field`}>
+                                          <Input inputMode="decimal" disabled={busy} value={humanRaw[option.id]?.[field] ?? String(draft?.[field] ?? '')}
+                                            onChange={(_, d) => setHuman(option.id, field, d.value)} data-testid={`dlv-resolve-human-${option.newId}-${field}`} />
+                                        </Field>
+                                      );
+                                    })}
+                                    <Field label={t('dlv.resolve.human.ownerId')} required
+                                      hint={ownerId ? t(`dlv.resolve.human.basis.${owner && ownerId === owner.id ? owner.basis : 'human'}`) : undefined}>
+                                      <Select disabled={busy} value={ownerId} onChange={(_, d) => setHuman(option.id, 'ownerId', d.value)}
                                         data-testid={`dlv-resolve-human-${option.newId}-ownerId`}>
                                         <option value="">{t('dlv.resolve.human.noOwner')}</option>
                                         {people.map((person) => <option key={person.id} value={person.id}>{loc(person.name, lang)}</option>)}
                                       </Select>
                                     </Field>
                                   </fieldset>
-                                )}
+                                  );
+                                })()}
                               </li>
                             ))}
                           </ol>

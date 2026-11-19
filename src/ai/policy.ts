@@ -66,7 +66,7 @@ export const PACK_BUILD_MAX_PROMPT_CHARS = 200_000;
 export const WORKIQ_SOURCE = {
   use: 'packBuild' as const,
   providers: ['foundry', 'copilotSdk'] as readonly Provider[],
-  /** A verified Work IQ retrieval is required before a customer pack is built only with these providers. */
+  /** A verified Work IQ retrieval is required before a Project pack is built only with these providers. */
   requiredFor: ['foundry'] as readonly Provider[],
   data: 'To Work IQ: company and project names, purpose, focus and as-of date in the questions the relay builds, and, for a deep read, the links of the OneDrive or SharePoint files Work IQ itself cited (and, when they do not answer, one follow-up turn in that ask conversation). Some searches name the Microsoft 365 source to search. The answer and citation titles are internal and go to the selected provider (Microsoft Foundry or GitHub Copilot) as packBuild material',
   enableCondition: 'Microsoft Foundry or GitHub Copilot selected and ready + the Work IQ CLI (or a tenant and app (client) ID signed in by device code, delegated WorkIQAgent.Ask) saved and verified in the relay + opt-in per run in the pack dialog. Required for Foundry, optional for GitHub Copilot',

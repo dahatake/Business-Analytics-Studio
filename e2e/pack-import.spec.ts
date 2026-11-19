@@ -23,7 +23,7 @@ const base = (id: string, kind: string, world: string, type: string, name: [stri
   id, kind, world, type, name: l(...name), description: l(`${name[0]}の説明`, `About ${name[1]}`), classification: 'internal', author: 'ai', sourceIds,
 });
 
-/** A customer pack as Microsoft 365 Copilot answers it with the BAS prompt: prose + PART 1/2 and PART 2/2. */
+/** A Project pack as Microsoft 365 Copilot answers it with the BAS prompt: prose + PART 1/2 and PART 2/2. */
 function copilotParts(kpiSourceIds = ['src-plan']) {
   const part1 = {
     part: '1/2',
@@ -115,7 +115,7 @@ function storedZip(files: Record<string, string | Buffer>): Buffer {
   return Buffer.concat([...locals, cd, eocd]);
 }
 
-test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
+test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
   for (const approved of [false, true]) {
     test(`zip logo is ${approved ? 'retained' : 'omitted'} after permission ${approved ? 'is given' : 'is not given'}`, async ({ page }) => {
       await open(page, '/data');
@@ -183,8 +183,8 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await page.getByText('公開Web調査プロンプトを表示', { exact: true }).click();
     await expect(page.getByTestId('pack-research-text')).toHaveValue(/公開Web/);
     await expect(page.getByTestId('pack-research-text')).toHaveValue(/Bing/);
-    await page.getByTestId('pack-prompt').getByText('顧客パック作成プロンプトを表示').click();
-    await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/顧客パック/);
+    await page.getByTestId('pack-prompt').getByText('Projectパック作成プロンプトを表示').click();
+    await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/Projectパック/);
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/sourceIds/);
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/pack\.json/);
     await expect(page.getByTestId('pack-prompt-text')).toHaveValue(/Web を検索しない/);
@@ -326,7 +326,7 @@ test.describe('data management: customer pack import (FR-302〜FR-304)', () => {
     await page.getByTestId('proj-target-menu').click();
     await page.getByTestId('proj-target-launch').click();
     await expect(page.getByTestId('launch-screen')).toBeVisible();
-    await expect(page.getByTestId('launch-company-Fabrikam Seiko')).toContainText('Customer pack imported');
+    await expect(page.getByTestId('launch-company-Fabrikam Seiko')).toContainText('Project pack imported');
     expect(await scan(page)).toEqual([]);
   });
 

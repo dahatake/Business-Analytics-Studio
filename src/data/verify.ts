@@ -10,7 +10,7 @@ import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } fro
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from '../modules/project/companyAlignment.ts';
 
 /**
- * FR-127 / FR-303 verify: acceptance check of a customer pack. Pure (no file access) so the CLI, build's self-correction
+ * FR-127 / FR-303 verify: acceptance check of a Project pack. Pure (no file access) so the CLI, build's self-correction
  * and the in-app import (FR-302) run the same rules.
  * Every problem carries a cause and the next action. FR-102 partial disabling itself lives in src/data/pack.ts.
  */

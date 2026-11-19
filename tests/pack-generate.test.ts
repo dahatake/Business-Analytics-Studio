@@ -95,7 +95,7 @@ function deps(answers: unknown[], extra: Partial<GenDeps> = {}): GenDeps & { pro
     retryDelayMs: 0,
     complete: async (prompt) => {
       prompts.push(prompt);
-      if (prompt.includes('# 検査済み顧客パック') || prompt.includes('# Verified customer pack')) {
+      if (prompt.includes('# 検査済みProjectパック') || prompt.includes('# Verified Project pack')) {
         return { text: JSON.stringify(analysisAnswer()), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
       }
       const a = answers[Math.min(i++, answers.length - 1)];

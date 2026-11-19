@@ -10,7 +10,7 @@ import { describeInsight } from './analysisText.ts';
 import { evaluateStep, fieldHintKey, fieldKey, paybackLimit, paybackYears, rankedIssues, resultKey, SCHEDULE_LAG_MAX, STEP_DEFS, todoKey, todoWhyKey, type CheckContext } from './deliverables.ts';
 
 /**
- * "Draft with Copilot": a draft of each step's deliverable, grounded only in the customer pack and the project data.
+ * "Draft with Copilot": a draft of each step's deliverable, grounded only in the Project pack and the project data.
  * The request uses the shared AI gate and never substitutes a mock on failure.
  */
 

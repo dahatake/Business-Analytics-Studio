@@ -178,7 +178,7 @@ export function shownMethodsOf(data: AnalysisData): MethodId[] {
   return METHODS.filter((m) => chosen.includes(m));
 }
 
-/* ---------- Demo analyses, derived from the customer pack ---------- */
+/* ---------- Demo analyses, derived from the Project pack ---------- */
 
 const DEMO_AT = '2026-11-09T09:00:00+09:00';
 

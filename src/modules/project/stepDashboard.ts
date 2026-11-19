@@ -15,7 +15,7 @@ import { realisedShare, triangularMean, validRange, type KpiSimulation } from '.
 import type { SolutionType } from './strategy.ts';
 
 /**
- * FR-317: the step dashboard. Everything is computed from the customer pack and the project's saved data, and every
+ * FR-317: the step dashboard. Everything is computed from the Project pack and the project's saved data, and every
  * tile that stands for an exit criterion shows the same verdict as that criterion (the stepper's check mark and the
  * to-do band read `evaluateStep` too), so the dashboard can never say "all done" while the step is still open.
  */

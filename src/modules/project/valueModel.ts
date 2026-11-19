@@ -8,7 +8,7 @@ import type { EngineLine, EngineLink, EngineModel, EngineRange } from './valueEn
 
 /**
  * FR-327: the project's value model — what each solution is worth, through which value driver, how certain, and how the
- * solutions depend on each other. Project-scoped data (never in the customer pack); numbers are entered by people with
+ * solutions depend on each other. Project-scoped data (never in the Project pack); numbers are entered by people with
  * their evidence, never generated (same rule as the KPI contributions, docs/strategy-linkage-study.md §3.4).
  */
 

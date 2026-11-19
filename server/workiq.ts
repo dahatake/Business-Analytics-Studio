@@ -6,7 +6,7 @@ import { WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/pol
 import { REQUIREMENTS, type ReadinessKey } from '../src/modules/project/analysisReadiness.ts';
 
 /**
- * D-14 (user, 2026-11-11): Microsoft Work IQ as a material source for the in-app customer pack (FR-311), only when the
+ * D-14 (user, 2026-11-11): Microsoft Work IQ as a material source for the in-app Project pack (FR-311), only when the
  * LLM provider is Microsoft Foundry. The relay calls the Work IQ REST API itself (no Foundry agent, no MCP server):
  *
  *   sign-in: OAuth 2.0 device code with the user's own public-client app registration (delegated WorkIQAgent.Ask;
@@ -404,14 +404,14 @@ export function workIqPrompt(q: WorkIqQuestion): string {
   if (q.lang === 'ja') {
     return [
       `顧客「${q.company}」について、私がアクセスできる Microsoft 365 の情報（メール・会議・Teams のチャット・OneDrive と SharePoint のファイル）から、事実だけを日本語でまとめてください。`,
-      `用途: BAS の Project「${q.project}」（目的: ${q.purpose}${q.focus ? `、重点: ${q.focus}` : ''}、基準日: ${q.asOf}）の顧客パック作成の材料。`,
+      `用途: BAS の Project「${q.project}」（目的: ${q.purpose}${q.focus ? `、重点: ${q.focus}` : ''}、基準日: ${q.asOf}）のProjectパック作成の材料。`,
       '項目: 1) 企業の概要・拠点・製品やサービス 2) 顧客・仕入先・パートナーとの関係 3) 関係者の役割（氏名と役職のみ。連絡先は書かない） 4) 課題とその原因 5) KPI と数値（単位と時期を付ける） 6) 進行中の商談・提案・成果物・請求。',
       '各項目に根拠の文書・会議・メールの名前と日付を付けてください。推測や一般論は書かず、見つからない項目は「見つからない」と書いてください。',
     ].join('\n');
   }
   return [
     `Summarise, in English, only facts about the customer "${q.company}" from the Microsoft 365 information I can access (mail, meetings, Teams chats, OneDrive and SharePoint files).`,
-    `Use: material for the customer pack of the BAS project "${q.project}" (purpose: ${q.purpose}${q.focus ? `; focus: ${q.focus}` : ''}; as of ${q.asOf}).`,
+    `Use: material for the Project pack of the BAS project "${q.project}" (purpose: ${q.purpose}${q.focus ? `; focus: ${q.focus}` : ''}; as of ${q.asOf}).`,
     'Items: 1) company overview, sites, products or services 2) relationships with customers, suppliers and partners 3) roles of the people involved (name and title only, no contact details) 4) issues and their causes 5) KPIs and figures (with unit and period) 6) open deals, proposals, deliverables and invoices.',
     'Give the name and date of the document, meeting or mail behind each item. Do not guess or generalise; write "not found" for items you cannot find.',
   ].join('\n');

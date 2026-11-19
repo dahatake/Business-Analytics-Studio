@@ -23,7 +23,7 @@ export const useDiscussion = createScopedStore<DiscussionData>('proj.discussion'
 export const useChangeHistory = createScopedStore<ChangeEntry[]>('proj.history', () => []);
 export const useKpis = createScopedStore<KpiData>('proj.kpi', (scope) => (scope === 'demo' ? demoKpis(loaded.pack) : { kpis: [], okrs: [] }));
 /**
- * A project whose own customer pack is active starts from that pack's KPIs/OKRs until the user saves edits.
+ * A project whose own Project pack is active starts from that pack's KPIs/OKRs until the user saves edits.
  * Resolved at render time because the imported pack is activated after the stores load (like catalogForScope).
  */
 export function kpisForScope(value: KpiData, scope: string): KpiData {

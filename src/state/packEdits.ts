@@ -8,7 +8,7 @@ import { appStorage as localStorage } from '../data/deviceStorage.ts';
 
 /**
  * Entities entered in the app (workspace, discussion).
- * - A project with an imported customer pack: written into that pack (it is the project's own data).
+ * - A project with an imported Project pack: written into that pack (it is the project's own data).
  * - Every other target shares the base pack, so edits are kept per scope as an overlay
  *   (`bas.scope.<scope>.pack.edits`) and applied on top of the base pack. Exported with the project file.
  */
@@ -138,7 +138,7 @@ export async function commitPackChange(change: PackChange): Promise<void> {
     const { projectId } = packOrigin;
     const meta = importedPackMeta(projectId);
     const raw = await loadImportedPack(projectId);
-    if (!meta || raw === null) throw new Error('Imported customer pack is missing from device storage');
+    if (!meta || raw === null) throw new Error('Imported Project pack is missing from device storage');
     const next = applyChange(raw, change) as RawPack;
     await saveImportedPack({ ...meta, entities: next.entities?.length ?? meta.entities }, next);
     activatePack(next, packOrigin);
@@ -160,7 +160,7 @@ export async function commitPackChanges(changes: PackChange[], expectedScope: st
   const origin = packOrigin;
   const raw = origin.kind === 'imported' ? await loadImportedPack(origin.projectId) : baseRaw;
   assertCurrent();
-  if (raw === null) throw new Error('Imported customer pack is missing from device storage');
+  if (raw === null) throw new Error('Imported Project pack is missing from device storage');
   const edits = changes.reduce(mergeEdit, origin.kind === 'imported' ? emptyEdits() : usePackEdits.getState().value);
   const next = applyPackEdits(raw, edits);
   const validated = loadPack(next);
@@ -168,7 +168,7 @@ export async function commitPackChanges(changes: PackChange[], expectedScope: st
   if (validated.issues.some((i) => !priorErrors.has(`${i.path}:${i.message}`))) throw new Error('Strategy updates introduce invalid data or dangling references');
   if (origin.kind === 'imported') {
     const meta = importedPackMeta(origin.projectId);
-    if (!meta) throw new Error('Imported customer pack metadata is missing');
+    if (!meta) throw new Error('Imported Project pack metadata is missing');
     await saveImportedPack({ ...meta, entities: validated.pack.entities.length }, next);
     // A target may have changed while storage was saving. Never activate it in another project.
     if (currentScope() !== expectedScope || loaded !== expectedPack) throw new Error('Pack saved to its original project; work target changed before strategy approval completed');

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 370" role="img" aria-labelledby="title desc">
   <title id="title">BASで扱うデータの経路</title>
-  <desc id="desc">承認された情報はProjectへの手入力か、JSON顧客パックに整形してローカルアプリへ読み込む。データカタログCSVは項目定義の照合だけに使う。すべての作業はPC上に保存し、会議後は人が確認してファイルへ出力する。</desc>
+  <desc id="desc">承認された情報はProjectへの手入力か、JSONProjectパックに整形してローカルアプリへ読み込む。データカタログCSVは項目定義の照合だけに使う。すべての作業はPC上に保存し、会議後は人が確認してファイルへ出力する。</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
       <path d="M0 0 L10 5 L0 10 Z" fill="#4263eb"/>
@@ -29,7 +29,7 @@
   <text x="379" y="86" class="sub">KPI・分析・議論</text>
   <text x="379" y="105" class="sub">ブラウザー内に保存</text>
   <rect x="264" y="143" width="230" height="94" class="local"/>
-  <text x="379" y="177" class="head">顧客パックを作成</text>
+  <text x="379" y="177" class="head">Projectパックを作成</text>
   <text x="379" y="201" class="sub">JSONへ整形・出典を記録</text>
   <text x="379" y="220" class="sub">verifyで構造・参照を確認</text>
   <rect x="264" y="258" width="230" height="82" class="limited"/>

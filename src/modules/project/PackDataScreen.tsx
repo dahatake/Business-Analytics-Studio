@@ -16,7 +16,8 @@ import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from '../..
 import {
   analyzeImport, buildFixPrompt, isReadableFile, MAX_PACK_FILE_BYTES, preparePackLogo, type FileReport, type ImportAnalysis, type InputDoc,
 } from '../../data/packImport.ts';
-import { deleteImportedPack, importedPackMeta, saveImportedPack } from '../../data/packStore.ts';
+import { deleteImportedPack, importedPackMeta, loadCompanyLayer, saveImportedPack } from '../../data/packStore.ts';
+import { diffCompanyLayers, splitPack, type CompanyLayer, type CompanyMergePolicy } from '../../data/packLayers.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { MAX_PROJECTS_PER_COMPANY, useActiveProject, useProjects } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
@@ -30,6 +31,8 @@ import { hrefFor, navigate } from '../../state/router.ts';
 import { readiness } from './analysisReadiness.ts';
 import { prefillFromPack, type GenerationReport } from './packGenerate.ts';
 import { PackGenerateDialog } from './PackGenerateDialog.tsx';
+import { SharedDataMerge } from './ProjectPackImportDialog.tsx';
+import { downloadProjectFile } from './ProjectMergeDialog.tsx';
 import { ReadinessView } from './ReadinessView.tsx';
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from './companyAlignment.ts';
 import './project.css';
@@ -49,7 +52,7 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /**
- * Data management (FR-302〜FR-304): the customer pack each project works on. Shows the active pack, offers the
+ * Data management (FR-302〜FR-304): the Project pack each project works on. Shows the active pack, offers the
  * Microsoft 365 Copilot prompt that turns customer files into a pack, and imports Copilot's answer into the
  * current project after the same checks as `bas verify` and a human check. Import is all or nothing.
  */
@@ -86,6 +89,7 @@ function CurrentPackPanel() {
   const target = useProjects((s) => s.target);
   const { project, company } = useActiveProject();
   const [confirm, setConfirm] = useState(false);
+  const [exportFailed, setExportFailed] = useState(false);
   const meta = packOrigin.kind === 'imported' ? importedPackMeta(packOrigin.projectId) : null;
   const counts = useMemo(() => {
     const c = new Map<EntityKind, number>();
@@ -117,6 +121,16 @@ function CurrentPackPanel() {
       actions={(
         <>
           <Button size="small" icon={<ArrowDownload20Regular />} onClick={onExport} disabled={audience === 'external' && hasCompanySnapshot} data-testid="pack-export">{t('proj.pack.export')}</Button>
+          {target.kind === 'project' && project && (
+            <Button
+              size="small"
+              icon={<ArrowDownload20Regular />}
+              onClick={() => { void downloadProjectFile(project.id).then((ok) => setExportFailed(!ok), () => setExportFailed(true)); }}
+              data-testid="pack-export-project-pack"
+            >
+              {t('proj.pack.exportProjectPack')}
+            </Button>
+          )}
           {packOrigin.kind === 'imported' && (
             <Button size="small" icon={<Delete20Regular />} onClick={() => setConfirm(true)} data-testid="pack-delete">{t('proj.pack.delete')}</Button>
           )}
@@ -144,6 +158,7 @@ function CurrentPackPanel() {
         )}
       </dl>
       {target.kind === 'demo' && <p className="muted">{t('proj.pack.demoNote')}</p>}
+      {exportFailed && <MessageBar intent="error"><MessageBarBody>{t('proj.anchor.exportFailed')}</MessageBarBody></MessageBar>}
       {hasCompanySnapshot && <MessageBar intent="warning"><MessageBarBody>{t('proj.anchor.exportWarning')}</MessageBarBody></MessageBar>}
       <CompanyAlignmentSnapshot />
       <CollectionCoverage raw={loaded.pack} />
@@ -611,6 +626,20 @@ function ConfirmAndImport({ analysis, picked }: { analysis: ImportAnalysis; pick
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const replacing = !toDemo && project ? importedPackMeta(project.id) !== null : false;
+  const companies = useProjects((s) => s.companies);
+  const sharedCompany = !toDemo && project ? companies.find((c) => c.id === project.companyId) : companies.find((c) => c.name === companyName.trim());
+  const incoming = useMemo(() => splitPack(analysis.pack!).company, [analysis.pack]);
+  const [existing, setExisting] = useState<{ companyId: string; layer: CompanyLayer | null } | null>(null);
+  const [policy, setPolicy] = useState<CompanyMergePolicy>('keep');
+  useEffect(() => {
+    const id = sharedCompany?.id;
+    if (!id) return;
+    let live = true;
+    void loadCompanyLayer(id).then((layer) => { if (live) setExisting({ companyId: id, layer }); }, () => undefined);
+    return () => { live = false; };
+  }, [sharedCompany?.id]);
+  const existingLayer = sharedCompany && existing?.companyId === sharedCompany.id ? existing.layer : null;
+  const diff = existingLayer ? diffCompanyLayers(existingLayer, incoming) : null;
   const ready = approved && classified && people && (!toDemo || (companyName.trim() && projectName.trim()));
 
   const resolveProject = (): string | null => {
@@ -669,7 +698,7 @@ function ConfirmAndImport({ analysis, picked }: { analysis: ImportAnalysis; pick
         entities: summary.entities,
         importedAt: new Date().toISOString(),
         files: analysis.files.filter((f) => f.status === 'used').map((f) => f.name),
-      }, pack);
+      }, pack, { company: policy });
     } catch (err) {
       setError(t('proj.pack.saveFailed', { message: (err as Error).message }));
       setSaving(false);
@@ -716,6 +745,8 @@ function ConfirmAndImport({ analysis, picked }: { analysis: ImportAnalysis; pick
           {replacing && <> {t('proj.pack.replacing')}</>}
         </p>
       )}
+      <h5 className="proj-h2">{t('proj.pack.sharedTitle')}</h5>
+      <SharedDataMerge diff={diff} companyId={sharedCompany?.id} companyName={sharedCompany?.name ?? ''} policy={policy} onPolicy={setPolicy} />
       {error && <MessageBar intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       <Button appearance="primary" icon={<Open20Regular />} disabled={!ready || saving} onClick={() => { void onImport(); }} data-testid="pack-import-apply">
         {t('proj.pack.apply')}

@@ -273,7 +273,7 @@ export class AiLiveError extends Error {
 }
 
 /**
- * Live only, never a mock: for features whose result is stored as real data (FR-311 customer pack generation), a mock
+ * Live only, never a mock: for features whose result is stored as real data (FR-311 Project pack generation), a mock
  * answer would be wrong data. Same gate, budget and ledger as aiComplete; a refusal or failure throws AiLiveError.
  */
 export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ text: string; costJpy: number | null; inputTokens: number | null; outputTokens: number | null }> {

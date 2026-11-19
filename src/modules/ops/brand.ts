@@ -32,7 +32,7 @@ export const LogoUsage = z.object({
 });
 export type LogoUsage = z.infer<typeof LogoUsage>;
 
-/** Brand profile: `extensions.brand` of a customer pack (files in public/brand/). */
+/** Brand profile: `extensions.brand` of a Project pack (files in public/brand/). */
 export const BrandProfile = z.object({
   primary: Hex,
   /** Optional explicit brand text colour for light backgrounds (set by self-correction when the primary is too light). */

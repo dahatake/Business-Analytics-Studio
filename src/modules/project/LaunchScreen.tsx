@@ -37,7 +37,7 @@ export function LaunchScreen() {
 
   const open = (target: WorkTarget, path = '/') => {
     choose();
-    // Set the route before the target: a target with another customer pack reloads the page (main.tsx) at this URL.
+    // Set the route before the target: a target with another Project pack reloads the page (main.tsx) at this URL.
     navigate(hrefFor(path));
     useProjects.getState().setTarget(target);
   };

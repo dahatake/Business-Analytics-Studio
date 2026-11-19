@@ -72,7 +72,7 @@ function newTargetProblem(companyName: string, projectName: string): 'duplicateP
 }
 
 /**
- * FR-311 (D-12): "Create the customer pack with Copilot". Required and optional inputs (missing required ones are listed
+ * FR-311 (D-12): "Create the Project pack with Copilot". Required and optional inputs (missing required ones are listed
  * from the start), readiness of the configured LLM with the AI settings one click away, the estimate and run-specific
  * opt-ins, then a progress bar over the stages; the verified pack is saved with everything that
  * went into it (inputs, retrieved sources, generation record, cost) and can be opened.
@@ -362,7 +362,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
         entities: result.summary.entities,
         importedAt: new Date().toISOString(),
         files: [`generated:${settings.provider}`, ...materials.map((m) => m.name)],
-      }, logoApproved && logoBytes ? preparePackLogo(result.pack, true, logoBytes) : withoutPackLogo(result.pack));
+      }, logoApproved && logoBytes ? preparePackLogo(result.pack, true, logoBytes) : withoutPackLogo(result.pack), { company: 'keep' });
     } catch (err) {
       const tokens = runTokens();
       rollback(created);

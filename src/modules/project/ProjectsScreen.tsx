@@ -16,12 +16,14 @@ import { CompanyAnchorPanel } from './CompanyAnchorPanel.tsx';
 import { CompanyAlignmentEvaluation } from './CompanyAlignmentEvaluation.tsx';
 import { ProjectAlignmentButton } from './ProjectAlignmentDialog.tsx';
 import { ProjectRelationsPanel } from './ProjectRelationsPanel.tsx';
-import { importProject } from './projectFile.ts';
+import { importProject, previewProjectPack, type ProjectPackPreview } from './projectFile.ts';
+import { ProjectPackImportDialog } from './ProjectPackImportDialog.tsx';
+import type { CompanyMergePolicy } from '../../data/packLayers.ts';
 import { downloadProjectFile } from './ProjectMergeDialog.tsx';
 import { useProjectManagement } from './useProjectManagement.tsx';
 import './project.css';
 
-/** FR-137〜FR-139: register companies, manage up to PARAM-031 projects each, export/import a project with its ids. */
+/** FR-137〜FR-139, FR-342: register companies, manage up to PARAM-031 projects each, export/import a Project pack with its ids. */
 export function ProjectsScreen() {
   const { t, fmt } = useI18n();
   const companies = useProjects((s) => s.companies);
@@ -37,8 +39,9 @@ export function ProjectsScreen() {
   const [editProject, setEditProject] = useState<Project | null>(null);
   const [message, setMessage] = useState<{ intent: 'success' | 'error'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<{ text: string; preview: ProjectPackPreview } | null>(null);
   // Re-read when the generate dialog closes, so a pack saved there shows at once.
-  const packs = useMemo(() => importedPacks(), [gen]);
+  const packs = useMemo(() => importedPacks(), [gen, projects]);
 
   const onAddCompany = () => {
     const r = addCompany(companyName);
@@ -48,19 +51,33 @@ export function ProjectsScreen() {
     } else setCompanyError(t(r.reason === 'emptyName' ? 'proj.err.required' : 'proj.err.duplicateCompany'));
   };
 
+  const failed = (error: unknown) => setMessage({ intent: 'error', text: t('proj.projects.importFailed', { reason: error instanceof Error ? error.message : String(error) }) });
   const onImport = async (file: File) => {
     try {
-      const outcome = importProject(await file.text());
+      const text = await file.text();
+      const r = await previewProjectPack(text);
+      if (r.ok) setPending({ text, preview: r.preview });
+      else setMessage({ intent: 'error', text: t(`proj.projects.importError.${r.error}`) });
+    } catch (error) {
+      failed(error);
+    }
+  };
+  const onApplyImport = async (policy: CompanyMergePolicy) => {
+    if (!pending) return;
+    try {
+      const outcome = await importProject(pending.text, { policy });
       if (outcome.ok) setMessage({ intent: 'success', text: t('proj.projects.imported', { name: outcome.name }) + (outcome.anchorSkipped ? ` ${t('proj.anchor.importSkipped')}` : '') });
       else setMessage({ intent: 'error', text: t(`proj.projects.importError.${outcome.error}`) });
     } catch (error) {
-      setMessage({ intent: 'error', text: t('proj.projects.importFailed', { reason: error instanceof Error ? error.message : String(error) }) });
+      failed(error);
+    } finally {
+      setPending(null);
     }
   };
 
-  const onExport = (p: Project) => {
+  const onExport = async (p: Project) => {
     try {
-      if (!downloadProjectFile(p.id)) setMessage({ intent: 'error', text: t('proj.anchor.exportFailed') });
+      if (!await downloadProjectFile(p.id)) setMessage({ intent: 'error', text: t('proj.anchor.exportFailed') });
     } catch (error) {
       setMessage({ intent: 'error', text: `${t('proj.anchor.exportFailed')} ${error instanceof Error ? error.message : String(error)}` });
     }
@@ -127,11 +144,12 @@ export function ProjectsScreen() {
             setTarget({ kind: 'project', projectId: p.id });
           }}
           onGenerate={(p) => void onGenerate(p)}
-          onExport={onExport}
+          onExport={(p) => void onExport(p)}
           date={fmt.date}
         />
       ))}
       {management.dialogs}
+      <ProjectPackImportDialog key={pending?.text ?? ''} preview={pending?.preview ?? null} onApply={(policy) => void onApplyImport(policy)} onCancel={() => setPending(null)} />
       <CompanyEditDialog company={editCompany} onClose={() => setEditCompany(null)} />
       <ProjectEditDialog project={editProject} onClose={() => setEditProject(null)} />
       {gen && (

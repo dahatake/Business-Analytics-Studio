@@ -223,7 +223,7 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
   'dlv.input.sources': 'Sources',
   'dlv.input.discussion': 'Discussion (themes and decisions)',
   'dlv.input.analyses': 'Analyses',
-  'dlv.input.kpis': 'KPIs (customer pack)',
+  'dlv.input.kpis': 'KPIs (Project pack)',
   'dlv.input.flows': 'Business flow (deals, deliveries, invoices)',
   'dlv.input.projectKpis': 'KPIs (project)',
   'dlv.input.okrs': 'OKRs',
@@ -396,7 +396,7 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
 
   'dlv.r.issuesWithoutSolution': '{n} issues have no solution',
   'dlv.r.allIssuesSolved': 'All {n} issues have a solution',
-  'dlv.r.noIssues': 'The customer pack has no issues',
+  'dlv.r.noIssues': 'The Project pack has no issues',
   'dlv.r.issuesWithoutSource': '{n} issues have no source',
   'dlv.r.allIssuesSourced': 'All {n} issues have a source',
   'dlv.r.issuesWithoutCause': '{n} issues have no cause',

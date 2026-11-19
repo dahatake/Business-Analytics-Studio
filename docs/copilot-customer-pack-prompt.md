@@ -1,14 +1,14 @@
-# 顧客パック作成プロンプト（Microsoft 365 Copilot 用） / Customer pack prompts for Microsoft 365 Copilot
+# Projectパック作成プロンプト（Microsoft 365 Copilot 用） / Project pack prompts for Microsoft 365 Copilot
 
-Microsoft 365 Copilot だけで、公開Webと社内資料（Microsoft 365）から Business Analytics Studio（BAS）の顧客パックを作らせる 2 つのプロンプトです。1 は社内データのないチャットで公開Webを調べ、2 は Web 検索をオフにしたチャットで社内資料と 1 の結果を合わせ、ダウンロードできる zip（`pack.json` と、出典・未取得を書いた `README.md`）を返します。パックが小さいときは本文にも `json` で示します。アプリの「データ管理」画面からコピーできます。この Markdown が唯一の原本です。
+Microsoft 365 Copilot だけで、公開Webと社内資料（Microsoft 365）から Business Analytics Studio（BAS）のProjectパックを作らせる 2 つのプロンプトです。1 は社内データのないチャットで公開Webを調べ、2 は Web 検索をオフにしたチャットで社内資料と 1 の結果を合わせ、ダウンロードできる zip（`pack.json` と、出典・未取得を書いた `README.md`）を返します。パックが小さいときは本文にも `json` で示します。アプリの「データ管理」画面からコピーできます。この Markdown が唯一の原本です。
 
-Two prompts build a BAS customer pack with Microsoft 365 Copilot alone: prompt 1 researches the public web in a chat without work data; prompt 2 runs with web search off, combines work content with the research, and returns a downloadable zip (`pack.json` plus a `README.md` of sources and gaps), also shown as `json` when small. Available in Data management. This Markdown is the single source.
+Two prompts build a BAS Project pack with Microsoft 365 Copilot alone: prompt 1 researches the public web in a chat without work data; prompt 2 runs with web search off, combines work content with the research, and returns a downloadable zip (`pack.json` plus a `README.md` of sources and gaps), also shown as `json` when small. Available in Data management. This Markdown is the single source.
 
 ## 使い方 / How to use
 
 1. **公開Web調査**: Copilot の **Web** モード（社内データを使わない）で新しいチャットを開き、1 を貼り付けて企業名・ドメイン・期間だけを書き換えて送ります。資料は添付・`/` 参照しません。回答をすべてコピーします（長ければ `.md` に保存）。 / **Public web research**: in a new chat in Copilot's **Web** mode (no work data), paste prompt 1, fill in only the company, domain and period, and send it with no attachments or `/` references. Copy the answer (or save it as `.md`).
 2. **Web 検索をオフ**: Copilot の **設定 > パーソナライズ > 詳細** で **Web 検索**（Web コンテンツ）をオフにします。設定は次に戻すまで続きます。 / **Turn web search off**: in **Settings > Personalization > Advanced**, turn off **Web search** (Web content). It stays off until you turn it back on.
-3. **顧客パック作成**: **職場（Work）** モードの新しいチャットで 2 を貼り付け、`{{ }}` を書き換え、1 の回答を貼り付けるか `.md` を添付して送ります。回答の引用欄に Web 検索クエリが出ていないことを確かめます。 / **Pack assembly**: in a new **Work** chat, paste prompt 2, replace `{{ }}`, paste or attach the research and send. Check that the citations show no web search queries.
+3. **Projectパック作成**: **職場（Work）** モードの新しいチャットで 2 を貼り付け、`{{ }}` を書き換え、1 の回答を貼り付けるか `.md` を添付して送ります。回答の引用欄に Web 検索クエリが出ていないことを確かめます。 / **Pack assembly**: in a new **Work** chat, paste prompt 2, replace `{{ }}`, paste or attach the research and send. Check that the citations show no web search queries.
 4. 回答の zip をダウンロードします（Copilot がファイルを作れない環境では本文の `json` ブロックが代わりになります）。BAS の「データ管理」で zip をそのまま選ぶ（または本文を貼り付ける）と「検査する」を押します。問題が出たら BAS の「修正用プロンプト」を同じチャットに送り、やり直します。 / Download the zip (or use the `json` blocks if Copilot cannot create files). Choose it as is (or paste the answer) in BAS Data management and press "Check". If problems are reported, send the fix prompt in the same chat and repeat.
 
 取り込む前に、データの所有者に利用を承認してもらってください。BAS は取り込んだデータを外部に送りません（ブラウザー内の、この端末の保存領域だけに置きます）。
@@ -17,7 +17,7 @@ Get the data owner's approval before importing. BAS never sends the imported dat
 
 ### 業務分析レポートをそのまま取り込む / Importing a business analysis report
 
-Microsoft 365 Copilot に作らせた業務分析レポート（「現状把握」「あるべき姿」「課題」「戦略オプション」「ロードマップ」「KPI」「リスク」などの見出しを持つ Markdown）は、プロンプト 2 を使わずに、.md のまま「データ管理」で選んで「検査する」を押せば取り込めます（FR-321）。BAS は見出しからレポートと判定し、生成 AI に送らずに端末内で課題・ギャップ・選択肢・KPI・リスク・確認事項と【事実】【仮説】【要確認】の根拠ラベルを読み取ります。文は改変せず全段落を保持し、値は作りません。取り込み前に読み取り結果（件数と、段ごとの構造化の割合）を確かめてください。レポートは社内（internal）の資料として扱われ、社外向けの表示には出ません。顧客パックの JSON と一緒に選ぶこともできます（レポートは 1 回に 1 件）。
+Microsoft 365 Copilot に作らせた業務分析レポート（「現状把握」「あるべき姿」「課題」「戦略オプション」「ロードマップ」「KPI」「リスク」などの見出しを持つ Markdown）は、プロンプト 2 を使わずに、.md のまま「データ管理」で選んで「検査する」を押せば取り込めます（FR-321）。BAS は見出しからレポートと判定し、生成 AI に送らずに端末内で課題・ギャップ・選択肢・KPI・リスク・確認事項と【事実】【仮説】【要確認】の根拠ラベルを読み取ります。文は改変せず全段落を保持し、値は作りません。取り込み前に読み取り結果（件数と、段ごとの構造化の割合）を確かめてください。レポートは社内（internal）の資料として扱われ、社外向けの表示には出ません。Projectパックの JSON と一緒に選ぶこともできます（レポートは 1 回に 1 件）。
 
 A business analysis report written by Microsoft 365 Copilot (Markdown with headings such as current state, target state, issues, strategic options, roadmap, KPIs and risks) can be chosen as a .md file in Data management and checked without prompt 2 (FR-321). BAS recognises it by its headings and reads issues, gaps, options, KPIs, risks, open questions and the fact / hypothesis / to-confirm labels on the device, without sending it to generative AI. Every paragraph is kept verbatim and no values are invented. Review the reading summary (counts and how much of each step was structured) before importing. The report is treated as internal and is hidden from external audiences. It can be chosen together with pack JSON (one report per import).
 ### 2 回に分ける理由 / Why two prompts
@@ -34,7 +34,7 @@ When Copilot uses the web it sends a few-word query to Bing, which can be inform
 ## 1. 公開Web調査 / Public web research
 
 <!-- research:ja:start -->
-公開Webだけで、次の企業の調査メモを作ってください。メモは、別のチャットで社内資料と合わせて Business Analytics Studio（BAS）の顧客パックにする素材です。BAS が出典を機械検査するので、件数より、出典の確かな事実だけを残すことを優先してください。確認の質問はせず、最後まで進めてください。
+公開Webだけで、次の企業の調査メモを作ってください。メモは、別のチャットで社内資料と合わせて Business Analytics Studio（BAS）のデータパックにする素材です。BAS が出典を機械検査するので、件数より、出典の確かな事実だけを残すことを優先してください。確認の質問はせず、最後まで進めてください。
 
 # 対象
 - 公開企業名: {{正式企業名}}
@@ -49,7 +49,7 @@ When Copilot uses the web it sends a few-word query to Bing, which can be inform
 - 同名企業、親会社と子会社、連結と単体、会計年度、実績と目標、構想と稼働中を区別し、矛盾する値は両方を出典付きで残してください。
 - 値は出典にあるものだけを書き、不明なものは未取得にしてください。原価・受注・請求・生産能力・CO2 のような非公開の値は、次に必要な社内資料を書きます。ブランドの主色・文字色・書体・トーン・ロゴの公式 URL、利用条件、最小幅・余白・背景条件を調べ、出典と不足を記録してください。許諾を確認できないロゴ・画像は複製しないでください。
 
-# 調べる区分（BAS の顧客パックの区分名）
+# 調べる区分（BAS のデータパックの区分名）
 company（正式名・業種・事業）, regions, site（本社・工場・物流拠点と公開座標）, product, customer・supplier（取引を明記した出典のみ）, person（公開された役職のみ）, issue・cause・solution・kpi・initiative（中期計画・統合報告書・導入事例にあるもの）, flows, brand（主色・文字色・書体・トーン）, dataCatalog, glossary, graph（関係）, architecture（公開されたシステム構成）, coreObject（中心となる製品・拠点の候補と比較値）
 
 # 出力
@@ -65,7 +65,7 @@ searched または blocked、理由、実際に使った検索語の一覧
 <!-- research:ja:end -->
 
 <!-- research:en:start -->
-Write a research note on the company below using the public web only. Another chat will combine it with work files into a Business Analytics Studio (BAS) customer pack, and BAS machine-checks sources, so well-sourced facts beat volume. Don't ask questions; carry on to the end.
+Write a research note on the company below using the public web only. Another chat will combine it with work files into a Business Analytics Studio (BAS) data pack, and BAS machine-checks sources, so well-sourced facts beat volume. Don't ask questions; carry on to the end.
 
 # Scope
 - Public company name: {{legal name}}
@@ -95,10 +95,10 @@ Table: section | field | value | unit/period/scope | source id
 Table: section | missing field | reason | document needed next
 <!-- research:en:end -->
 
-## 2. 顧客パック作成 / Customer pack assembly
+## 2. Projectパック作成 / Project pack assembly
 
 <!-- prompt:ja:start -->
-公開Web調査の結果と社内資料（Microsoft 365）から、Business Analytics Studio（BAS）に取り込む顧客パックを、この依頼で最後まで作ってください。パックは顧客向け業務分析デモの土台になり、BAS が出典と形を機械検査します。件数より、出典のない値を1つも入れないことを優先してください。確認の質問はせず、判断できることは判断して進め、置いた前提は README.md に書いてください。
+公開Web調査の結果と社内資料（Microsoft 365）から、Business Analytics Studio（BAS）に取り込むProjectパックを、この依頼で最後まで作ってください。パックは顧客向け業務分析デモの土台になり、BAS が出典と形を機械検査します。件数より、出典のない値を1つも入れないことを優先してください。確認の質問はせず、判断できることは判断して進め、置いた前提は README.md に書いてください。
 
 # 対象
 - 企業: {{正式企業名}}
@@ -163,7 +163,7 @@ id, kind, name, description, world, type, classification, author, sourceIds
 <!-- prompt:ja:end -->
 
 <!-- prompt:en:start -->
-Build a BAS customer pack from these sources. No questions or unsourced facts; record assumptions in README.md.
+Build a BAS Project pack from these sources. No questions or unsourced facts; record assumptions in README.md.
 
 # Scope
 - Company: {{legal name}}

@@ -56,10 +56,12 @@ test.describe('ops: brand (FR-059〜FR-064)', () => {
 
   test('a low-contrast primary shows a warning and the corrected colour is applied', async ({ page }) => {
     await open(page, '/brand', { lang: 'en' });
-    await expect(page.getByTestId('contrast-warning')).toHaveCount(0);
+    // Wait for the lazily loaded screen; a count-0 check before that passed only by racing the render.
+    await expect(page.getByTestId('brand-origin')).toHaveText('Default theme');
+    await expect(page.getByTestId('contrast-warning')).not.toContainText('#1A1F4D');
     await page.getByTestId('brand-primary-input').fill('#1A1F4D');
     await page.getByTestId('brand-apply').click();
-    await expect(page.getByTestId('contrast-warning')).toBeVisible();
+    await expect(page.getByTestId('contrast-warning')).toContainText('#1A1F4D');
     await expect(page.getByTestId('contrast-primaryOnDark')).toHaveAttribute('data-pass', 'false');
     const applied = (await page.getByTestId('applied-dark').getAttribute('data-color'))!;
     expect(applied).not.toBe('#1A1F4D');
@@ -110,7 +112,8 @@ test.describe('ops: integrations (FR-199〜FR-203)', () => {
     await page.getByTestId('int-select-foundry').click();
     const card = page.getByTestId('int-settings-foundry');
     await expect(card).toBeVisible();
-    await expect(page.getByTestId('send-foundry')).toContainText('Never sends');
+    await expect(page.getByTestId('send-foundry')).toContainText('Broad consent in AI settings is required');
+    await expect(page.getByTestId('send-foundry')).toContainText('This catalog does not send data');
     expect(await page.locator('main input[type="password"]').count()).toBe(0);
     const labels = await page.locator('main label').allInnerTexts();
     expect(labels.filter((l) => /\b(api key|token|password|secret value|key value)\b/i.test(l))).toEqual([]);
@@ -144,10 +147,10 @@ test('FR-101: a pack built by the CLI is shown without rebuilding the app', asyn
     const currentPack = page.getByTestId('pack-current');
     await expect(currentPack).toBeVisible();
     await expect(currentPack).toContainText('Contoso Robotics E2E');
-    await expect(page.getByTestId('pack-origin')).toHaveText('The customer pack placed with the app (data/pack.json)');
+    await expect(page.getByTestId('pack-origin')).toHaveText('The Project pack placed with the app (data/pack.json)');
     await page.reload();
     await expect(currentPack).toContainText('Contoso Robotics E2E');
-    await expect(page.getByTestId('pack-origin')).toHaveText('The customer pack placed with the app (data/pack.json)');
+    await expect(page.getByTestId('pack-origin')).toHaveText('The Project pack placed with the app (data/pack.json)');
     await page.goto(`${served.url}#/brand`);
     await expect(page.getByTestId('brand-origin')).toHaveText('Default theme');
     await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');

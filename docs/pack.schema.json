@@ -2340,6 +2340,6 @@
   ],
   "additionalProperties": false,
   "$id": "https://business-analytics-studio.local/pack.schema.json",
-  "title": "Business Analytics Studio customer pack",
+  "title": "Business Analytics Studio Project pack",
   "description": "Generated from src/data/schema.ts by `node scripts/bas.ts schema` (template 0.1.0). Do not edit by hand. Layout: public/data/pack.json (this file), public/brand/ (logo and brand files referenced by extensions.brand), assets/ (other media)."
 }

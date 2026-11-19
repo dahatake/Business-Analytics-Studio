@@ -7,7 +7,7 @@ import type { DecisionReport } from './extensionSchemas.ts';
 import { DEFAULT_PRIMARY, parseBrand } from '../modules/ops/brand.ts';
 
 /**
- * FR-302〜FR-304: turn files or a pasted Microsoft 365 Copilot answer into one customer pack.
+ * FR-302〜FR-304: turn files or a pasted Microsoft 365 Copilot answer into one Project pack.
  * extract (```json blocks) → merge parts → normalize the shape (never the facts) → verify with the CLI's own rules.
  * Pure: no storage, no network. The screen (PackDataScreen) and the tests drive it.
  */
@@ -505,15 +505,15 @@ export function analyzeImport(docs: InputDoc[], rejected: FileReport[] = [], now
 
 const FIX_INTRO = {
   ja: [
-    'Business Analytics Studio（BAS）で、あなたが出力した顧客パックを検査したところ、次の問題が見つかりました。',
+    'Business Analytics Studio（BAS）で、あなたが出力したProjectパックを検査したところ、次の問題が見つかりました。',
     '直し方のルール:',
     '- 問題のある項目だけを直し、それ以外の項目は変えないでください。',
     '- 承認済みの資料・公開Webの出典だけを使い、根拠のない値は作らないでください。必須の値や参照先が見つからない場合は、そのエンティティと、それに依存して成立しないエンティティも除外し、extensions.collection に不足と次の取得方法を記録してください。必須の参照を空にしてはいけません。',
-    '- 修正後の顧客パック全体を前回と同じ方法で出し直してください（pack.json を含む zip。ファイルを作れない場合は ```json のコードブロックで、40 エンティティを超えるときは PART k/N に分割）。',
+    '- 修正後のProjectパック全体を前回と同じ方法で出し直してください（pack.json を含む zip。ファイルを作れない場合は ```json のコードブロックで、40 エンティティを超えるときは PART k/N に分割）。',
     '- 最後に、何を直したかを 1 行ずつ箇条書きで示してください。',
   ],
   en: [
-    'Business Analytics Studio (BAS) checked the customer pack you produced and found the problems below.',
+    'Business Analytics Studio (BAS) checked the Project pack you produced and found the problems below.',
     'Rules for the fix:',
     '- Change only the items with a problem; leave every other item as it is.',
     '- Use only approved material and public web sources; never invent values. If a required value or reference cannot be sourced, omit that entity and dependent entities that can no longer be valid. Record the gaps and next actions in extensions.collection; never leave required references empty.',

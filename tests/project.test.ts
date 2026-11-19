@@ -21,7 +21,7 @@ import {
 import { parseDraft, parseSuggestions, suggestionRequest } from '../src/modules/project/mocks.ts';
 import { RECOMMEND_MAX_PROMPT_CHARS } from '../src/ai/policy.ts';
 import { AnalysisSchema, type AnalysisItem, type MethodId, type ProjectData } from '../src/modules/project/model.ts';
-import { exportProject, importProject } from '../src/modules/project/projectFile.ts';
+import { exportProjectPack, importProject } from '../src/modules/project/projectFile.ts';
 import { saveAnalysisForProject } from '../src/modules/project/stores.ts';
 import { scopedKey } from '../src/state/projects.ts';
 
@@ -534,26 +534,26 @@ describe('project file with ids (FR-139)', () => {
     expect(useProjects.getState().target).toEqual({ kind: 'demo' });
   });
 
-  it('exports and re-imports a project with the same ids and data', () => {
+  it('exports and re-imports a project with the same ids and data', async () => {
     const c = useProjects.getState().addCompany('Contoso');
     if (!c.ok) throw new Error();
     const p = useProjects.getState().addProject(c.id, 'Growth');
     if (!p.ok) throw new Error();
     localStorage.setItem(scopedKey(p.id, 'proj.discussion'), JSON.stringify({ themes: [{ id: 't' }], records: [] }));
-    const file = exportProject(p.id)!;
-    expect(file.data['proj.discussion']).toEqual({ themes: [{ id: 't' }], records: [] });
-    expect(importProject(JSON.stringify(file))).toEqual({ ok: false, error: 'exists' });
+    const file = (await exportProjectPack(p.id))!;
+    expect(file.project.data['proj.discussion']).toEqual({ themes: [{ id: 't' }], records: [] });
+    expect(await importProject(JSON.stringify(file))).toEqual({ ok: false, error: 'exists' });
     useProjects.getState().deleteProject(p.id);
     useProjects.getState().deleteCompany(c.id);
     expect(localStorage.getItem(scopedKey(p.id, 'proj.discussion'))).toBeNull();
-    const r = importProject(JSON.stringify(file));
+    const r = await importProject(JSON.stringify(file));
     expect(r).toEqual({ ok: true, name: 'Contoso-Growth', projectId: p.id });
     expect(useProjects.getState().companies[0]!.id).toBe(c.id);
     expect(JSON.parse(localStorage.getItem(scopedKey(p.id, 'proj.discussion'))!)).toEqual({ themes: [{ id: 't' }], records: [] });
-    expect(importProject('nope')).toEqual({ ok: false, error: 'invalid' });
+    expect(await importProject('nope')).toEqual({ ok: false, error: 'invalid' });
   });
 
-  it('carries the company information, project inputs and relations to projects that exist', () => {
+  it('carries the company information, project inputs and relations to projects that exist', async () => {
     const s = useProjects.getState();
     const c = s.addCompany('Contoso', { industry: 'Retail', notes: 'Sales org' });
     if (!c.ok) throw new Error();
@@ -562,18 +562,18 @@ describe('project file with ids (FR-139)', () => {
     if (!a.ok || !b.ok) throw new Error();
     const rel = s.addRelation(a.id, b.id, 'dependsOn', 'quote data feeds pipeline');
     if (!rel.ok) throw new Error();
-    const file = JSON.parse(JSON.stringify(exportProject(a.id)));
-    expect(file.relations).toHaveLength(1);
+    const file = JSON.parse(JSON.stringify(await exportProjectPack(a.id)));
+    expect(file.project.relations).toHaveLength(1);
 
     s.deleteProject(a.id);
     expect(useProjects.getState().relations).toEqual([]);
-    expect(importProject(JSON.stringify(file))).toMatchObject({ ok: true, projectId: a.id });
+    expect(await importProject(JSON.stringify(file))).toMatchObject({ ok: true, projectId: a.id });
     expect(useProjects.getState().projects.find((p) => p.id === a.id)!.brief).toEqual({ purpose: 'Improve\nforecast', asOf: '2025-01-31' });
     expect(useProjects.getState().relations).toEqual([expect.objectContaining({ id: rel.id, from: a.id, to: b.id, kind: 'dependsOn' })]);
 
     // In a fresh store the other project is missing, so the relation is not restored; the company information is.
     useProjects.setState({ companies: [], projects: [], relations: [] });
-    expect(importProject(JSON.stringify(file)).ok).toBe(true);
+    expect((await importProject(JSON.stringify(file))).ok).toBe(true);
     expect(useProjects.getState().relations).toEqual([]);
     expect(useProjects.getState().companies[0]).toMatchObject({ name: 'Contoso', industry: 'Retail', notes: 'Sales org' });
   });

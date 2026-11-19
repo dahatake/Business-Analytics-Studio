@@ -28,7 +28,7 @@ Quota or capacity errors can persist even after a short connection test succeeds
 ### Foundry: test before saving (D-13)
 
 `PUT /relay/connection` accepts `{ endpoint, deployment, apiVersion }` and uses the **already saved API key** to send a
-fixed synthetic "Reply with OK only" prompt. No caller-supplied prompt, customer pack or project data is sent.
+fixed synthetic "Reply with OK only" prompt. No caller-supplied prompt, Project pack or project data is sent.
 The UI requires explicit confirmation of the displayed destination and unknown-charge notice, not unit-price entry.
 It checks the daily quota, interval and known-cost monthly budget, and records token usage under `connectionTest`.
 Foundry monetary costs are `null` (unknown), never zero/free. This also applies to uncertain failures that may have
@@ -307,7 +307,7 @@ The browser retains a previous result only for the same target, marks refresh er
 changes, and stops polling when the live bar is paused. The cache is process-local, not written to disk.
 The browser CSP remains same-origin; RSS is fetched by the relay. Static-file-only hosting cannot provide this endpoint.
 
-## Customer pack generation (FR-311, D-12)
+## Project pack generation (FR-311, D-12)
 
 **Providers.** `POST /relay/ai` takes `provider: "foundry" | "copilotSdk"` (default `foundry`).
 For "packBuild" the Foundry call asks for JSON mode (`response_format: json_object`) with `max_completion_tokens`

@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { JAPANESE, setup, visibleTextExcludingOtherLang } from './helpers.ts';
 
 /*
- * FR-311 (D-12): "Create customer pack with Copilot" on the launch screen and in project management, with the AI
+ * FR-311 (D-12): "Create Project pack with Copilot" on the launch screen and in project management, with the AI
  * settings reachable from there. These tests only read the relay; the live generation test changes the relay's saved
  * connection, so it lives in e2e/ai.spec.ts, whose tests run in order in one worker (the relay is shared by the server).
  */
@@ -89,7 +89,7 @@ test('launch screen: AI settings and the generator are reachable; missing requir
 
 test('Japanese labels on the launch screen', async ({ page }) => {
   await seed(page, 'ja');
-  await expect(page.getByTestId('launch-generate')).toHaveText('顧客パックを Copilot で作成');
+  await expect(page.getByTestId('launch-generate')).toHaveText('Projectパックを Copilot で作成');
   await expect(page.getByTestId('launch-ai-settings')).toHaveText('AI 設定');
   await page.getByTestId('launch-generate').click();
   await expect(page.getByTestId('gen-missing')).toContainText('企業名');

@@ -256,7 +256,7 @@ test.describe('project module', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('proj-help')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'はじめての方へ' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '顧客パックとは' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Projectパックとは' })).toBeVisible();
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByTestId('proj-help')).toBeHidden();

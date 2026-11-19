@@ -61,7 +61,7 @@ export function themesOf(p: Project): string[] {
 }
 
 export interface NamedItem { ja: string; en: string; key: string }
-/** What a project's customer pack says the project is about: its KPIs/OKRs, issues and causes, solutions and data. */
+/** What a project's Project pack says the project is about: its KPIs/OKRs, issues and causes, solutions and data. */
 export interface PackEvidence { kpi: NamedItem[]; issue: NamedItem[]; solution: NamedItem[]; data: NamedItem[] }
 export const EMPTY_EVIDENCE: PackEvidence = { kpi: [], issue: [], solution: [], data: [] };
 
@@ -145,7 +145,7 @@ const points = (kind: ReasonKind, n: number) => Math.min(EVIDENCE_POINTS[kind].c
 
 /**
  * How strongly the evidence says two projects are one business issue told twice: a "same issue" relation people
- * registered, shared business themes, the same KPIs, issues, solutions or data in their customer packs, and
+ * registered, shared business themes, the same KPIs, issues, solutions or data in their Project packs, and
  * overlapping wording. Deterministic and local: nothing is sent anywhere.
  */
 export function assessPair(a: Project, b: Project, ctx: AssessContext): MergeAssessment {

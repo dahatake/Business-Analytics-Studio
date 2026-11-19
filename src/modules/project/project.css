@@ -452,7 +452,7 @@
   .launch-projects > li { grid-template-columns: 1fr; gap: 6px; }
 }
 
-/* ---------- Data management: customer pack import (PackDataScreen) ---------- */
+/* ---------- Data management: Project pack import (PackDataScreen) ---------- */
 .pack-meta > div { grid-template-columns: minmax(140px, max-content) 1fr; column-gap: 16px; }
 .pack-steps { margin: 4px 0 12px; padding-inline-start: 1.4em; display: grid; gap: 4px; }
 .pack-details { margin-top: 12px; }
@@ -469,7 +469,7 @@
 .pack-notes ul { margin: 0; padding-inline-start: 1.4em; }
 .pack-fix, .pack-confirm { display: grid; gap: 10px; }
 .pack-checks { display: grid; gap: 4px; }
-/* FR-311: create the customer pack with Copilot */
+/* FR-311: create the Project pack with Copilot */
 .launch-header > .launch-header-actions { margin-left: auto; }
 .gen-dialog { max-width: min(820px, calc(100vw - 32px)); }
 .gen-dialog.gen-resizable {

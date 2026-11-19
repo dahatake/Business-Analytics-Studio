@@ -104,7 +104,7 @@ export function parseCatalogFile(fileName: string, content: string, sizeBytes: n
   return { ok: true, catalog: { fileName, importedAt: now.toISOString(), items }, rowErrors };
 }
 
-/** A customer pack may carry its company catalog in extensions.dataCatalog; validated with our own schema. */
+/** A Project pack may carry its company catalog in extensions.dataCatalog; validated with our own schema. */
 function packCatalog(): ImportedCatalog | null {
   const raw = loaded.pack.extensions?.dataCatalog;
   const r = PackCatalog.safeParse(raw);

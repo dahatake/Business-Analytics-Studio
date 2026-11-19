@@ -1,11 +1,11 @@
 ---
 name: bas
-description: Business Analytics Studio generation pipeline. Use to research a customer, build a customer pack on the prebuilt template, verify it, launch it locally, package it for offline use, record improvement requests, and check the external-integration catalog. WHEN "prepare the demo for <customer>", "build customer pack", "verify pack", "launch BAS", "package BAS offline", "integration catalog check".
+description: Business Analytics Studio generation pipeline. Use to research a customer, build a Project pack on the prebuilt template, verify it, launch it locally, package it for offline use, record improvement requests, and check the external-integration catalog. WHEN "prepare the demo for <customer>", "build Project pack", "verify pack", "launch BAS", "package BAS offline", "integration catalog check".
 ---
 
 # Business Analytics Studio pipeline (FR-120)
 
-The template (構成要素 A) is already built. For each customer only the **customer pack** (構成要素 B) is generated, so preparation takes minutes instead of regenerating code (P-1, P-3). Every command runs locally with Node.js ≥ 22.18 from the repository root and appends step durations to `logs/timing.json` (FR-129, P-4).
+The template (構成要素 A) is already built. For each customer only the **Project pack** (構成要素 B) is generated, so preparation takes minutes instead of regenerating code (P-1, P-3). Every command runs locally with Node.js ≥ 22.18 from the repository root and appends step durations to `logs/timing.json` (FR-129, P-4).
 
 ## Commands
 
@@ -24,11 +24,11 @@ The template (構成要素 A) is already built. For each customer only the **cus
 
 Input variables (FR-130): flags, or `BAS_CUSTOMER`, `BAS_INDUSTRY` (`manufacturing`, `retail`, `finance`, `healthcare`, `logistics`, `energy`), `BAS_LANG`, `BAS_TEMPLATE`, `BAS_WORK_DIR`, `BAS_CACHE_DIR`, `BAS_LOG_DIR`.
 
-## Customer pack layout (FR-119)
+## Project pack layout (FR-119)
 
 | Path in the app folder | Content |
 |---|---|
-| `data/pack.json` (source: `public/data/pack.json`) | The customer pack. Validated by `docs/pack.schema.json`. Loaded at start-up without rebuilding (FR-101); invalid items are disabled, the rest loads (FR-102) |
+| `data/pack.json` (source: `public/data/pack.json`) | The Project pack. Validated by `docs/pack.schema.json`. Loaded at start-up without rebuilding (FR-101); invalid items are disabled, the rest loads (FR-102) |
 | `brand/` (source: `public/brand/`) | Logo and brand files referenced by `extensions.brand` (relative paths only) |
 | `assets/` | Other media referenced by the pack |
 

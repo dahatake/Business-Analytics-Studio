@@ -9,7 +9,7 @@ import { WORKIQ_SCOPED_ASPECTS, WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type
  * D-14 (user, 2026-11-11), second route: Microsoft's own Work IQ CLI (`@microsoft/workiq`) as a local MCP stdio server.
  * When the tenant cannot enable Work IQ for a custom app registration (no admin consent for the REST route), the CLI
  * still reaches `https://workiq.svc.cloud.microsoft/mcp` with Microsoft's published client and the user's Windows
- * (WAM) or browser sign-in. The relay only speaks MCP to it: `retrieve` (grounding, read-only) for the customer pack
+ * (WAM) or browser sign-in. The relay only speaks MCP to it: `retrieve` (grounding, read-only) for the Project pack
  * and the verification, and `accept_eula` when the user presses the button for it. BAS never sees a token.
  *
  * Contract: learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/mcp/retrieve (structuredContent →

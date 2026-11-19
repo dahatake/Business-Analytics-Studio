@@ -20,7 +20,7 @@ const short = (s: string, max = 14) => (s.length > max ? `${s.slice(0, max - 1)}
 type EvidenceMap = ReadonlyMap<string, PackEvidence>;
 type PackIndex = Record<string, ImportedPackMeta>;
 
-/** KPIs, issues, solutions and data of each project's stored customer pack, re-read when a pack is saved or replaced. */
+/** KPIs, issues, solutions and data of each project's stored Project pack, re-read when a pack is saved or replaced. */
 function usePackEvidence(projects: Project[], packs: PackIndex): EvidenceMap {
   const [evidence, setEvidence] = useState<EvidenceMap>(new Map());
   const withPack = projects.filter((p) => packs[p.id]);

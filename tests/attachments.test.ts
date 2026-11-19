@@ -3,7 +3,7 @@ import {
   copilotMediaCapability, FOUNDRY_MEDIA, fitMedia, MAX_ATTACHMENT_BYTES, sniffAttachment, validateMediaParts, type MediaCapability,
 } from '../src/ai/attachments.ts';
 import { CopilotError, CopilotService, type CopilotSdk, type SdkSession } from '../server/copilot.ts';
-import { exportProject, importProject } from '../src/modules/project/projectFile.ts';
+import { exportProjectPack, importProject } from '../src/modules/project/projectFile.ts';
 import { scopedKey, useProjects } from '../src/state/projects.ts';
 
 const store = new Map<string, unknown>();
@@ -198,13 +198,13 @@ describe('project file carries the attached bytes', () => {
     if (!p.ok) throw new Error();
     const discussion = { themes: [{ id: 't', relatedIds: ['src-x'] }], records: [], packEdits: { locator: `attachment:sha256:${r.item.hash}` } };
     localStorage.setItem(scopedKey(p.id, 'proj.discussion'), JSON.stringify(discussion));
-    const file = JSON.parse(JSON.stringify(exportProject(p.id)));
+    const file = JSON.parse(JSON.stringify(await exportProjectPack(p.id)));
     expect(Object.keys(file.attachments)).toEqual([r.item.hash]);
     expect(file.attachments[r.item.hash]).toMatchObject({ name: 'chart.png', mimeType: 'image/png', size: PNG.length });
 
     s.deleteProject(p.id);
     store.clear();
-    expect(importProject(JSON.stringify(file)).ok).toBe(true);
+    expect((await importProject(JSON.stringify(file))).ok).toBe(true);
     await vi.waitFor(() => expect(readAttachment(r.item.hash)?.data).toBe(b64(PNG)));
 
     s.deleteProject(p.id);
@@ -212,7 +212,7 @@ describe('project file carries the attached bytes', () => {
     const tampered = structuredClone(file);
     tampered.attachments[r.item.hash].data = b64(JPEG);
     tampered.attachments[r.item.hash].size = JPEG.length;
-    expect(importProject(JSON.stringify(tampered)).ok).toBe(true);
+    expect((await importProject(JSON.stringify(tampered))).ok).toBe(true);
     await new Promise((done) => setTimeout(done, 50));
     expect(store.size).toBe(0);
   });

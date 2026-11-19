@@ -6,7 +6,7 @@ import {
   alignmentEvaluationKey, alignmentPrompt, alignmentSnapshot, AlignmentEvaluationCasesSchema, assessAlignment, emptyAlignment, evaluateAlignmentCases,
   evaluateNegativeControls, orderedCompanyObjectives, parseAlignmentProposal, projectEvidenceSources, type Alignment, type AlignmentEvaluationCase,
 } from '../src/modules/project/companyAlignment.ts';
-import { exportProject, importProject } from '../src/modules/project/projectFile.ts';
+import { exportProjectPack, importProject } from '../src/modules/project/projectFile.ts';
 import { CustomerPack } from '../src/data/schema.ts';
 import { samplePack } from '../src/data/sample.ts';
 
@@ -203,7 +203,7 @@ describe('company anchor persistence and project portability', () => {
     useProjects.setState({ companies: [], projects: [], relations: [], mergeDismissals: [], target: { kind: 'demo' }, lastProjectId: null, demoStep: 'asis' });
   });
 
-  it('versions shared company data separately, exports it, restores it, and deletes it with the company', () => {
+  it('versions shared company data separately, exports it, restores it, and deletes it with the company', async () => {
     const state = useProjects.getState();
     const c = state.addCompany('Example Company');
     if (!c.ok) throw new Error();
@@ -214,17 +214,17 @@ describe('company anchor persistence and project portability', () => {
     state.setProjectAlignments(p.id, [direct()]);
     localStorage.setItem(alignmentEvaluationKey(c.id), JSON.stringify({ cases: [] }));
     expect(readCompanyAnchorDocument(c.id)?.versions.map((v) => v.anchor.asOf)).toEqual(['2026-10-01', '2026-10-02']);
-    const exported = exportProject(p.id);
-    expect(exported?.companyAnchor?.versions).toHaveLength(2);
+    const exported = await exportProjectPack(p.id);
+    expect(exported?.company.anchor?.versions).toHaveLength(2);
     state.deleteCompany(c.id);
     expect(latestCompanyAnchor(c.id)).toBeNull();
     expect(localStorage.getItem(alignmentEvaluationKey(c.id))).toBeNull();
-    expect(importProject(JSON.stringify(exported))).toMatchObject({ ok: true });
+    expect(await importProject(JSON.stringify(exported))).toMatchObject({ ok: true });
     expect(latestCompanyAnchor(c.id)?.version).toBe(2);
     expect(useProjects.getState().projects[0]?.alignments).toHaveLength(1);
   });
 
-  it('never overwrites another registered company anchor on import', () => {
+  it('never overwrites another registered company anchor on import', async () => {
     const state = useProjects.getState();
     const original = state.addCompany('Example Company');
     if (!original.ok) throw new Error();
@@ -232,12 +232,12 @@ describe('company anchor persistence and project portability', () => {
     if (!p.ok) throw new Error();
     state.setCompanyAnchor(original.id, anchor);
     state.setProjectAlignments(p.id, [{ ...direct(), status: 'confirmed', confirmedBy: 'Sponsor', confirmedAt: '2026-10-01' }]);
-    const file = exportProject(p.id);
+    const file = await exportProjectPack(p.id);
     state.deleteCompany(original.id);
     const other = state.addCompany('Example Company');
     if (!other.ok) throw new Error();
     state.setCompanyAnchor(other.id, { ...anchor, asOf: '2026-10-04' });
-    expect(importProject(JSON.stringify(file))).toMatchObject({ ok: true, anchorSkipped: true });
+    expect(await importProject(JSON.stringify(file))).toMatchObject({ ok: true, anchorSkipped: true });
     expect(latestCompanyAnchor(other.id)?.anchor.asOf).toBe('2026-10-04');
     expect(useProjects.getState().projects[0]?.alignments?.[0]).toMatchObject({ status: 'draft', confirmedBy: '' });
   });

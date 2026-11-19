@@ -8,6 +8,8 @@ import type { EntityKind, Region } from '../../data/schema.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
 import { commitPackChange, newEntityId, referencesTo, usePackVersion } from '../../state/packEdits.ts';
+import { SharedDataInUseError } from '../../data/packStore.ts';
+import { useProjects } from '../../state/projects.ts';
 import { isHidden } from '../cardSpecs.ts';
 import { ensureSource, hashOfSource, itemOfSource, type AttachmentItem } from '../../state/attachments.ts';
 import { AttachmentField } from './AttachmentField.tsx';
@@ -109,12 +111,21 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
       onSaved?.(entity.id);
       onClose();
     } catch (err) {
-      setFailure(t('entry.err.save', { message: err instanceof Error ? err.message : String(err) }));
+      setFailure(failureOf(err));
     } finally {
       setBusy(false);
     }
   };
 
+  /** FR-342: shared company data another project still cites is named, not reported as a raw error. */
+  const failureOf = (err: unknown) => {
+    if (!(err instanceof SharedDataInUseError)) return t('entry.err.save', { message: err instanceof Error ? err.message : String(err) });
+    const { projects } = useProjects.getState();
+    return t('entry.err.sharedInUse', {
+      projects: err.uses.map((u) => projects.find((p) => p.id === u.projectId)?.name ?? u.projectId).join(t('ai.listSep')),
+      ids: [...new Set(err.uses.flatMap((u) => u.ids))].join(t('ai.listSep')),
+    });
+  };
   const refs = id ? referencesTo(id) : [];
   const remove = async () => {
     if (!id) return;
@@ -124,7 +135,7 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
       await commitPackChange({ op: 'delete', id });
       onClose();
     } catch (err) {
-      setFailure(t('entry.err.save', { message: err instanceof Error ? err.message : String(err) }));
+      setFailure(failureOf(err));
     } finally {
       setBusy(false);
     }

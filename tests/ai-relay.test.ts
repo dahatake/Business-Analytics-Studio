@@ -492,7 +492,7 @@ describe('relay secrets and connection', () => {
     expect(fetches).toHaveLength(1);
     expect(fetches[0]!.url).toBe(`${v1.endpoint}/chat/completions`);
     expect(fetches[0]!.body).toMatchObject({ model: c.deployment, max_completion_tokens: 256 });
-    expect(JSON.stringify(fetches[0]!.body)).not.toContain('customer pack');
+    expect(JSON.stringify(fetches[0]!.body)).not.toContain('Project pack');
     expect((await call(req('GET', '/relay/status'), { vault: new SecretVault(vault.dir, { protector: null }) })).body).toMatchObject({ configured: true });
     expect((await call(req('POST', '/relay/ai', { use: 'packBuild', lang: 'en', prompt: 'Build from synthetic data.', maxOutputTokens: 100, timeoutMs: 1000 }), { fetch })).status).toBe(200);
     expect(fetches[1]!.url).toBe(`${v1.endpoint}/chat/completions`);
@@ -860,12 +860,12 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
   });
 });
 /* ---------------------------------------------------------------------------------------------------------------- */
-/* D-12: customer pack generation (FR-311) — providers, JSON mode, Copilot, official-site reader                     */
+/* D-12: Project pack generation (FR-311) — providers, JSON mode, Copilot, official-site reader                     */
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 describe('D-12 packBuild through the relay', () => {
   const testConfig: RelayConfig = { ...STRICT_RELAY_CONFIG, testOutbound: true };
-  const packBody = (extra: Record<string, unknown> = {}) => ({ use: 'packBuild', provider: 'foundry', lang: 'ja', prompt: '顧客パックを作ってください', context: '', maxOutputTokens: 16000, timeoutMs: 300000, ...extra });
+  const packBody = (extra: Record<string, unknown> = {}) => ({ use: 'packBuild', provider: 'foundry', lang: 'ja', prompt: 'Projectパックを作ってください', context: '', maxOutputTokens: 16000, timeoutMs: 300000, ...extra });
 
   const fakeCopilot = (answer = '{"entities":[]}') => {
     const calls: { model: string; system: string; prompt: string; timeoutMs: number }[] = [];

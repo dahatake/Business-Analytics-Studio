@@ -54,7 +54,7 @@ export const tdJa = {
   'td.core.deals': '商談の数',
   'td.core.kind.product': '製品',
   'td.core.kind.site': '工場',
-  'td.core.kind.custom': '顧客パックの候補',
+  'td.core.kind.custom': 'Projectパックの候補',
   'td.core.reason': '{name} を選びました。商談額の {share}% を占める最大の製品で、{site} で作っています。',
   'td.core.reasonSite': '{name} を選びました。製品の情報がないため、工場を中心にしています。',
   'td.table.title': '{name} の表（代替テキスト）',

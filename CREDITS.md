@@ -17,7 +17,7 @@
 | topojson-client | 3.1.0 | ISC | 地図データの変換 |
 | world-atlas | 2.0.2 | ISC | 国境の TopoJSON。元データは [Natural Earth](https://www.naturalearthdata.com/)（パブリックドメイン） |
 | zustand | 5.0.16 | MIT | 状態管理 |
-| zod | 4.6.7 | MIT | 顧客パックのスキーマ検証 |
+| zod | 4.6.7 | MIT | Projectパックのスキーマ検証 |
 
 ## 開発・検証の依存
 

@@ -246,7 +246,7 @@ export const WORKIQ_EULA_URL = 'https://github.com/microsoft/work-iq';
 const workIqProviderOf = (p: AiProvider): WorkIqProvider => (p === 'copilotSdk' ? 'copilotSdk' : 'foundry');
 
 /**
- * D-14: Microsoft Work IQ for the customer pack: required with Microsoft Foundry, optional with GitHub Copilot. Two routes, both run by the relay:
+ * D-14: Microsoft Work IQ for the Project pack: required with Microsoft Foundry, optional with GitHub Copilot. Two routes, both run by the relay:
  * Microsoft's Work IQ CLI on this PC (its own sign-in; no app registration or admin consent in BAS), or the user's own
  * public-client app registration (delegated WorkIQAgent.Ask) signed in by device code. This screen never sees a token.
  */

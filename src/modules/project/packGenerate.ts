@@ -21,7 +21,7 @@ import { translate } from '../../i18n/core.ts';
 import { RelayError } from '../ai/relayClient.ts';
 
 /**
- * FR-311 (D-12): build a customer pack in the app with the configured LLM.
+ * FR-311 (D-12): build a Project pack in the app with the configured LLM.
  *
  * collect public material (official site, news) → stage A (company, regions, sites, products, customers, suppliers,
  * people, brand, glossary, data catalogue) → stage B (issues … invoices, flows, graph, architecture, core object) →
@@ -597,8 +597,8 @@ export function stageAPrompt(input: PackGenInput, entries: MaterialEntry[]): str
   const ja = input.lang === 'ja';
   return [
     ja
-      ? '次の企業の Business Analytics Studio（BAS）顧客パックの「基盤」を、下の資料だけから作ってください。'
-      : 'Build the foundation of a Business Analytics Studio (BAS) customer pack for the company below, from the material below only.',
+      ? '次の企業の Business Analytics Studio（BAS）Projectパックの「基盤」を、下の資料だけから作ってください。'
+      : 'Build the foundation of a Business Analytics Studio (BAS) Project pack for the company below, from the material below only.',
     scope(input),
     ja ? '# 出力' : '# Output',
     `{"packId":"...","company":{"name":{"ja":"","en":""},"industry":{"ja":"","en":""}},"isSample":false,"regions":[...],"entities":[...],"extensions":{"brand":{...},"glossary":[...],"dataCatalog":{"items":[...]},"workflow":{"stages":[...]}},"gaps":[{"section":"site","missing":["..."],"nextAction":"..."}]}`,
@@ -623,8 +623,8 @@ export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foun
   const regions = Array.isArray(foundation.regions) ? (foundation.regions as Record<string, unknown>[]).map((r) => String(r.id)) : [];
   return [
     ja
-      ? '同じ顧客パックの「業務」部分を、下の資料だけから作ってください。基盤は作成済みで、下の id を参照できます。'
-      : 'Build the business part of the same customer pack from the material below only. The foundation exists; you may reference its ids below.',
+      ? '同じProjectパックの「業務」部分を、下の資料だけから作ってください。基盤は作成済みで、下の id を参照できます。'
+      : 'Build the business part of the same Project pack from the material below only. The foundation exists; you may reference its ids below.',
     scope(input, unit),
     ja ? '# 作成済みのエンティティ（参照用。出力に含めない）' : '# Existing entities (reference only; do not output them)',
     '| id | kind | name |', '|---|---|---|', ...known,
@@ -659,8 +659,8 @@ export function analysisPrompt(pack: Record<string, unknown>, lang: Lang, entrie
   const categories = Object.fromEntries(METHODS.map((method) => [method, categoriesOf(method)]));
   return [
     ja
-      ? '検査済みの顧客パックだけを根拠に、以下の5手法すべての分析結果を作成してください。パックにない事実や数値を作らず、不足は不足と明記してください。'
-      : 'Create analysis results for all five methods using only the verified customer pack below. Do not invent facts or numbers; state when evidence is missing.',
+      ? '検査済みのProjectパックだけを根拠に、以下の5手法すべての分析結果を作成してください。パックにない事実や数値を作らず、不足は不足と明記してください。'
+      : 'Create analysis results for all five methods using only the verified Project pack below. Do not invent facts or numbers; state when evidence is missing.',
     ja
       ? '各手法について、指定された全カテゴリに少なくとも1項目を作成します。項目はパック内の具体的な事実に基づき、推定は推定と明記してください。'
       : 'Create at least one item for every listed category in each method. Ground each item in specific pack facts and label any inference as an inference.',
@@ -671,7 +671,7 @@ export function analysisPrompt(pack: Record<string, unknown>, lang: Lang, entrie
     JSON.stringify(categories),
     ja ? '# 出力（JSON オブジェクトだけ）' : '# Output (one JSON object only)',
     '{"analyses":[{"method":"swot","items":[{"category":"strengths","text":{"ja":"...","en":"..."},"score":3}]}]}',
-    ja ? '# 検査済み顧客パック' : '# Verified customer pack',
+    ja ? '# 検査済みProjectパック' : '# Verified Project pack',
     JSON.stringify(context),
     materialBlock(entries, lang),
   ].join('\n\n');
@@ -754,8 +754,8 @@ export function fixPrompt(input: PackGenInput, entries: MaterialEntry[], pack: R
   const lines = errors.map((p, i) => `${i + 1}. [${p.code}] ${p.path}${p.entityId ? ` (${p.entityId})` : ''}: ${p.cause} → ${p.action}`);
   return [
     ja
-      ? 'BAS が顧客パックを検査し、次の問題が見つかりました。問題のある項目だけを、資料に基づいて直してください。直せない項目は削除してください（必須の参照を空にしない）。'
-      : 'BAS checked the customer pack and found the problems below. Fix only those items, using the material. Remove any item you cannot fix (never leave a required reference empty).',
+      ? 'BAS がProjectパックを検査し、次の問題が見つかりました。問題のある項目だけを、資料に基づいて直してください。直せない項目は削除してください（必須の参照を空にしない）。'
+      : 'BAS checked the Project pack and found the problems below. Fix only those items, using the material. Remove any item you cannot fix (never leave a required reference empty).',
     ja ? '# 問題' : '# Problems', ...lines,
     ja ? '# 問題のあるエンティティ' : '# Failing entities', JSON.stringify(failing),
     ...(sectionJson.length ? [ja ? '# 問題のある節' : '# Failing sections', ...sectionJson] : []),

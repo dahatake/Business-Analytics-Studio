@@ -89,7 +89,7 @@ describe('commitPackChange saves where the project data lives', () => {
     expect(usePackVersion.getState().version).toBe(v + 1);
   });
 
-  it('imported pack: written into the project\'s own customer pack', async () => {
+  it('imported pack: written into the project\'s own Project pack', async () => {
     const meta = { projectId: 'pj-e', packId: 'p', company: samplePack.company, isSample: false, entities: samplePack.entities.length, importedAt: '2026-01-01T00:00:00Z', files: [] };
     await saveImportedPack(meta, samplePack);
     activatePack(samplePack, { kind: 'imported', projectId: 'pj-e' });

@@ -6,7 +6,7 @@ import type { Analysis, AnalysisItem } from './model.ts';
 
 /**
  * Cross-highlighting between analyses (BI-style linked views).
- * Items carry no entity ids, so the link is derived from what their text names in the customer pack:
+ * Items carry no entity ids, so the link is derived from what their text names in the Project pack:
  * - same: both items name the same entity, or have the same text;
  * - near: an item names an entity one relation away (e.g. an issue and the KPI it is measured by).
  */

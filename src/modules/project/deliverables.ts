@@ -16,7 +16,7 @@ import { emptyStrategy, strategyThread, type CompanyObjective, type StrategyData
 
 /**
  * Deliverables of the five improvement steps (FR-136 / PARAM-030): what each step must have finished (exit criteria)
- * and what the project adds on top of the customer pack and the existing project data (the deliverable's fields).
+ * and what the project adds on top of the Project pack and the existing project data (the deliverable's fields).
  * Every exit criterion is either judged here deterministically from the data ('auto') or signed off by a person ('manual').
  */
 

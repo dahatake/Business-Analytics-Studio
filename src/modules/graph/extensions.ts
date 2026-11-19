@@ -34,7 +34,7 @@ const TwinDecl = z.object({ digital: z.string(), real: z.string(), kind: TwinKin
 const FlowDecl = z.object({ source: z.string(), target: z.string(), kind: FlowKind, label: LText.optional() });
 
 /**
- * `extensions.graph` of a customer pack (FR-241). Every section is optional so older packs stay valid; a section
+ * `extensions.graph` of a Project pack (FR-241). Every section is optional so older packs stay valid; a section
  * that fails validation is dropped on its own (the rest still loads, like FR-102).
  */
 export const GraphExtensionSchema = z.object({

@@ -34,7 +34,7 @@ describe('FR-236 semantic mapping', () => {
     expect(semanticOf('billedAs')).toBe('lineage');
     expect(semanticOf('worksAt')).toBe('membership');
   });
-  it('customer pack can override the semantic type', () => {
+  it('Project pack can override the semantic type', () => {
     const { ext } = parseGraphExtension({ semantics: { worksAt: { semantic: 'placement', label: { ja: '所属拠点', en: 'Based at' } } } });
     expect(semanticOf('worksAt', ext)).toBe('placement');
   });

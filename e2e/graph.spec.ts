@@ -182,7 +182,10 @@ test.describe('Graph module (FR-235–FR-248)', () => {
     await expect(stage(page)).toHaveAttribute('data-zoom', '1.0000');
     await page.keyboard.press('+');
     await expect(stage(page)).toHaveAttribute('data-zoom', '1.2500');
-    // Toolbar pan buttons are a non-drag alternative
+    // Toolbar pan buttons are a non-drag alternative. Esc first closes the focused node's detail card (WCAG 1.4.13),
+    // which can otherwise lie over the toolbar depending on where that node is drawn.
+    await page.keyboard.press('Escape');
+    await expect(card(page)).toHaveCount(0);
     await page.getByRole('button', { name: 'Pan up' }).click();
     await expect(stage(page)).toHaveAttribute('data-pan-y', '40');
   });

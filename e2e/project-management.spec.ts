@@ -382,12 +382,12 @@ test('company deletion purges device packs and boards only for its projects', as
   };
   const before = await keys();
   await page.reload();
-  await expect(page.getByTestId('launch-project-pj-beta')).toContainText('顧客パック取込済み');
+  await expect(page.getByTestId('launch-project-pj-beta')).toContainText('Projectパック取込済み');
   await page.getByTestId('launch-project-pj-beta').getByRole('button', { name: /名前を変更/ }).click();
   await page.getByTestId('proj-rename-dialog').getByRole('textbox').fill('Renamed pack project');
   await page.getByTestId('proj-rename-dialog').getByRole('button', { name: '保存', exact: true }).click();
   expect(await keys()).toEqual(before);
-  await expect(page.getByTestId('launch-project-pj-beta')).toContainText('顧客パック取込済み');
+  await expect(page.getByTestId('launch-project-pj-beta')).toContainText('Projectパック取込済み');
   await page.getByRole('button', { name: 'Contoso を削除', exact: true }).click();
   await expect(page.getByTestId('proj-delete-confirm')).toContainText('Project 2 件');
   await page.getByTestId('proj-delete-confirm').getByRole('button', { name: '削除', exact: true }).click();
@@ -395,7 +395,7 @@ test('company deletion purges device packs and boards only for its projects', as
   expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('bas.packs.index')!)))).toEqual(['pj-other']);
   await page.reload();
   await expect(page.getByTestId('launch-company-Contoso')).toHaveCount(0);
-  await expect(page.getByTestId('launch-project-pj-other')).toContainText('顧客パック取込済み');
+  await expect(page.getByTestId('launch-project-pj-other')).toContainText('Projectパック取込済み');
   expect(await keys()).toEqual({ 'bas-packs': ['pj-other'], 'bas-ink': ['pj-other::board'] });
 });
 
@@ -462,15 +462,16 @@ test('company analysis, alignment, independent evaluation and generation preview
     await dialog.getByRole('button', { name: '閉じる' }).click();
 
     const download = page.waitForEvent('download');
-    await company.getByRole('button', { name: 'Alpha を JSON で書き出す' }).click();
+    await company.getByRole('button', { name: 'Alpha の Projectパックを書き出す' }).click();
     const exportedPath = await (await download).path();
     expect(JSON.parse(readFileSync(exportedPath, 'utf8'))).toMatchObject({
-      companyAnchor: { versions: [{ anchor: { statedObjectives: [{ id: 'O1' }] } }] },
+      format: 'bas-project-pack',
+      company: { anchor: { versions: [{ anchor: { statedObjectives: [{ id: 'O1' }] } }] } },
       project: { alignments: [{ kind: 'direct', status: 'confirmed' }] },
     });
     await page.getByTestId('audience-toggle').click();
     await expect(company.getByTestId('company-anchor-co-a')).toHaveCount(0);
-    await company.getByRole('button', { name: 'Alpha を JSON で書き出す' }).click();
+    await company.getByRole('button', { name: 'Alpha の Projectパックを書き出す' }).click();
     await expect(page.getByRole('status').filter({ hasText: '社外表示では企業分析を含むバックアップを出力できません。' })).toBeVisible();
     await page.getByTestId('audience-toggle').click();
 
@@ -485,6 +486,34 @@ test('company analysis, alignment, independent evaluation and generation preview
     await gen.getByTestId('gen-public-topic').fill('other public topic');
     await expect(gen.getByTestId('gen-public-topic-consent')).not.toBeChecked();
     expect(aiCalls).toBe(0);
+});
+
+test('a Project pack carries the company and the project and is imported after a preview (FR-342)', async ({ page }) => {
+  await seed(page, false);
+  const company = page.getByTestId('proj-company-Contoso');
+  const download = page.waitForEvent('download');
+  await company.getByRole('button', { name: 'Alpha の Projectパックを書き出す' }).click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).toMatch(/-project-pack-\d{8}\.json$/);
+  const file = JSON.parse(readFileSync((await saved.path())!, 'utf8'));
+  expect(file).toMatchObject({
+    format: 'bas-project-pack', company: { id: 'co-a', name: 'Contoso' },
+    project: { id: 'pj-alpha', companyId: 'co-a', name: 'Alpha', data: { 'management-test': { note: 'pj-alpha' } } },
+  });
+
+  file.project = { ...file.project, id: 'pj-copy', name: 'Alpha copy' };
+  await page.getByTestId('proj-project-import').setInputFiles({ name: 'copy.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
+  const dialog = page.getByTestId('proj-pack-import-dialog');
+  await expect(dialog.getByTestId('proj-pack-import-company')).toHaveText('Contoso');
+  await expect(dialog.getByTestId('proj-pack-import-match')).toHaveAttribute('data-match', 'id');
+  expect((await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).include('[data-testid="proj-pack-import-dialog"]').analyze()).violations).toEqual([]);
+  await dialog.getByTestId('proj-pack-import-apply').click();
+  await expect(page.getByRole('status').filter({ hasText: 'Contoso-Alpha copy を読み込みました。' })).toBeVisible();
+  await expect(company).toContainText('Alpha copy');
+  expect((await stored(page)).registry.companies.filter((c: { name: string }) => c.name === 'Contoso')).toHaveLength(1);
+
+  await page.getByTestId('proj-project-import').setInputFiles({ name: 'copy.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
+  await expect(page.getByRole('status').filter({ hasText: '同じ ID' })).toBeVisible();
 });
 
 test('company history can be reviewed and restored without changing the generation version until saved', async ({ page }) => {

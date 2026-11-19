@@ -7,7 +7,7 @@ import { useI18n, type MessageKey } from '../i18n/index.ts';
 import { errorKey, FolderPicker } from '../ui/FolderPicker.tsx';
 import { Panel } from '../ui/Panel.tsx';
 
-/** FR-339: choose the folder that holds the device database (customer packs, projects, settings). */
+/** FR-339: choose the folder that holds the device database (Project packs, projects, settings). */
 export function DataLocationPanel() {
   const { t } = useI18n();
   const [location, setLocation] = useState<DeviceLocation | null>(null);

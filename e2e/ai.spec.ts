@@ -1241,7 +1241,8 @@ async function seedLaunch(page: Page, lang: Lang) {
   await expect(page.getByTestId('launch-screen')).toBeVisible();
 }
 
-/* FR-311 (D-12): customer pack generation on the launch screen against a local stub provider (same server flag as above). */test.describe('live generation through the relay (D-12)', () => {
+/* FR-311 (D-12): Project pack generation on the launch screen against a local stub provider (same server flag as above). */
+test.describe('live generation through the relay (D-12)', () => {
   test.skip(process.env.BAS_RELAY_TEST_OUTBOUND !== '1', 'needs BAS_RELAY_TEST_OUTBOUND=1 for the preview server');
 
   let stub: Server;
@@ -1293,7 +1294,7 @@ async function seedLaunch(page: Page, lang: Lang) {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages: { content: string }[] };
         const user = body.messages[1]!.content;
         received.push({ body, user });
-        const answer = user.includes('# Verified customer pack') ? analysisAnswer
+        const answer = user.includes('# Verified Project pack') ? analysisAnswer
           : user.startsWith('Build the foundation') ? stageA
             : user.startsWith('Build the business part') ? stageB : { remove: ['initiative-x'] };
         res.setHeader('Content-Type', 'application/json');

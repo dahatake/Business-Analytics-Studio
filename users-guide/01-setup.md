@@ -33,7 +33,7 @@
    powershell -ExecutionPolicy Bypass -File .\setup.ps1
    ```
 
-   このオプションは起動したPowerShellプロセスに限られ、PC全体の実行ポリシーを変更しません。スクリプトはNode.jsのバージョンを確認し、`npm ci`でロックファイルに固定された依存を復元し、アプリをビルドして顧客パックスキーマを確認します。スクリプトの処理はこのフォルダー内に限られます。
+   このオプションは起動したPowerShellプロセスに限られ、PC全体の実行ポリシーを変更しません。スクリプトはNode.jsのバージョンを確認し、`npm ci`でロックファイルに固定された依存を復元し、アプリをビルドしてProjectパックスキーマを確認します。スクリプトの処理はこのフォルダー内に限られます。
 
 5. `Setup finished.` を確認します。失敗した場合は表示される `Next action` に従います。ロック済み依存を入れ直す必要があるときだけ、次を実行します。
 
@@ -45,7 +45,7 @@
 
 ### Work IQ を使う場合の準備（任意）
 
-顧客パックの作成で Microsoft 365 の社内情報（Microsoft Work IQ）を使う予定があれば、セットアップのときに Work IQ CLI も確認しておくと、後の設定がスムーズです。Work IQ は生成AIの接続先が Microsoft Foundry のときだけ使います。使わない場合、この手順は不要です。
+Projectパックの作成で Microsoft 365 の社内情報（Microsoft Work IQ）を使う予定があれば、セットアップのときに Work IQ CLI も確認しておくと、後の設定がスムーズです。Work IQ は生成AIの接続先が Microsoft Foundry のときだけ使います。使わない場合、この手順は不要です。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -WorkIq

@@ -13,7 +13,7 @@ import './styles.css';
 window.history.scrollRestoration = 'manual';
 exposeFeedDiagnostics();
 
-/** FR-101: a customer pack placed at public/data/pack.json replaces the built-in sample without rebuilding. */
+/** FR-101: a Project pack placed at public/data/pack.json replaces the built-in sample without rebuilding. */
 async function loadBasePack() {
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}data/pack.json`, { cache: 'no-store' });
@@ -21,9 +21,9 @@ async function loadBasePack() {
     const raw = await res.json();
     const result = activatePack(raw, { kind: 'file' });
     setBasePackRaw(raw);
-    if (result.issues.length) console.warn('Customer pack: disabled items', result.issues);
+    if (result.issues.length) console.warn('Project pack: disabled items', result.issues);
   } catch (err) {
-    console.warn('Customer pack not loaded; using the built-in sample.', err);
+    console.warn('Project pack not loaded; using the built-in sample.', err);
   }
 }
 
@@ -35,9 +35,9 @@ async function loadProjectPack(target: WorkTarget) {
     return;
   }
   const raw = await loadImportedPack(target.projectId);
-  if (raw === null) throw new Error('Imported customer pack is missing from device storage');
+  if (raw === null) throw new Error('Imported Project pack is missing from device storage');
   const result = activatePack(raw, { kind: 'imported', projectId: target.projectId });
-  if (result.issues.length) console.warn('Imported customer pack: disabled items', result.issues);
+  if (result.issues.length) console.warn('Imported Project pack: disabled items', result.issues);
 }
 
 const neededKey = (target: WorkTarget) =>

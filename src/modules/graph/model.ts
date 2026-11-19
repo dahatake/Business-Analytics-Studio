@@ -164,7 +164,7 @@ export interface TwinRelation {
   digital: string;
   real: string;
   kind: TwinKind;
-  /** Where it came from: an existing edge, a derived rule, or the customer pack. */
+  /** Where it came from: an existing edge, a derived rule, or the Project pack. */
   origin: 'edge' | 'derived' | 'pack';
 }
 
@@ -185,7 +185,7 @@ const TWIN_EDGE_TYPES: RelationType[] = ['billedAs', 'measuredBy', 'implements',
  * FR-214: derive twin relations between real-world and digital entities:
  * - from existing edges (invoice records deliverable, KPI measures issue, solution represents operation, source records);
  * - KPI measures the site of its owner;
- * - plus explicit twins from the customer pack.
+ * - plus explicit twins from the Project pack.
  */
 export function deriveTwins(data: LoadedPack, ext?: NormalizedGraphExtension): TwinRelation[] {
   const out: TwinRelation[] = [];

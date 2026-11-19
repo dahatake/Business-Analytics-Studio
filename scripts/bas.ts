@@ -413,7 +413,7 @@ Start (no installation, no network; the app runs on http://127.0.0.1:4180/):
   macOS:    double-click start.command
   Linux:    sh start.sh
 
-Requires Node.js 22.18 or later. The customer pack is app/data/pack.json; replace it to show another customer (no rebuild).
+Requires Node.js 22.18 or later. The Project pack is app/data/pack.json; replace it to show another customer (no rebuild).
 Project data, imported packs and boards are saved in .bas-local/device.sqlite, shared across ports and browsers in this package.
 To keep them in another folder, use Settings > Data folder; .bas-local then keeps a pointer to it (storage-location.json).
 For legacy browser-only data, open the updated app once at its original URL and browser profile to migrate it.

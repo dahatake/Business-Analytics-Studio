@@ -14,21 +14,21 @@
 | 4 | [分析・KPI・OKR](04-analysis-kpi.md) | 分析を作り、KPIと目標を記録する |
 | 5 | [議論・決定・次のアクション](05-discussion.md) | 会議の論点と合意事項を記録する |
 | 6 | [データカタログの取り込みと突合](06-data-catalog.md) | CSV/JSONのデータ項目一覧を照合する |
-| 7 | [実データと顧客パック](07-real-data-pack.md) | 概要・地図・業務フロー・最適化に実データを反映する。Copilot で顧客パックを作り、Work IQ で社内情報を加える |
+| 7 | [実データとProjectパック](07-real-data-pack.md) | 概要・地図・業務フロー・最適化に実データを反映する。Copilot でProjectパックを作り、Work IQ で社内情報を加える |
 | 8 | [会議での確認・出力・保管](08-meetings-and-backup.md) | 数値を読み、出力を確認し、バックアップする |
 
 ## 目的別の読み方
 
 - **初回利用:** [セットアップ](01-setup.md) → [画面の見方](02-orientation.md) → [Project](03-projects.md) → [分析・KPI](04-analysis-kpi.md) → [議論](05-discussion.md)。
-- **実データを使う:** [画面の見方](02-orientation.md) → [データ利用の違い](06-data-catalog.md) → [顧客パック](07-real-data-pack.md) → [会議・保管](08-meetings-and-backup.md)。
+- **実データを使う:** [画面の見方](02-orientation.md) → [データ利用の違い](06-data-catalog.md) → [Projectパック](07-real-data-pack.md) → [会議・保管](08-meetings-and-backup.md)。
 - **会議資料を作る:** [分析・KPI](04-analysis-kpi.md) → [議論](05-discussion.md) → [会議・保管](08-meetings-and-backup.md)。
-- **Work IQ（Microsoft 365 の社内情報）で顧客パックを作る:** [セットアップの「Work IQ を使う場合の準備」](01-setup.md#work-iq-を使う場合の準備任意) → [Foundry の接続](07-real-data-pack.md#foundry-の接続を設定する) → [Work IQ で社内情報を加える](07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)。
+- **Work IQ（Microsoft 365 の社内情報）でProjectパックを作る:** [セットアップの「Work IQ を使う場合の準備」](01-setup.md#work-iq-を使う場合の準備任意) → [Foundry の接続](07-real-data-pack.md#foundry-の接続を設定する) → [Work IQ で社内情報を加える](07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)。
 
 ## 画面図とスクリーンショット
 
 ![BASの利用開始から会議での活用まで](assets/getting-started.svg)
 
-![Project入力、顧客パック、カタログ突合のデータ経路](assets/data-paths.svg)
+![Project入力、Projectパック、カタログ突合のデータ経路](assets/data-paths.svg)
 
 実際の画面キャプチャは[スクリーンショット一覧](screenshots/README.md)に保存しています。撮影対象は画面ごとに対応する章にも掲載しています。キャプチャは 2026-11-09 に、Windows上の日本語UI、デスクトップ表示（1600×1100 CSS px）、組み込みサンプルデータで撮影しました。ライブフィードや時計は閲覧時と一致しない場合があります。
 

@@ -5,6 +5,7 @@ import { appStorage as localStorage, syncDeviceStore } from '../data/deviceStora
 import type { CompanyAnchor } from '../data/companyAnchor.ts';
 import { companyAnchorKey, deleteCompanyAnchor, saveCompanyAnchor } from './companyAnchors.ts';
 import { AlignmentSchema, alignmentEvaluationKey, type Alignment } from '../modules/project/companyAlignment.ts';
+import { deleteCompanyLayer, setPackCompanyResolver } from '../data/packStore.ts';
 
 /** PARAM-031: projects per company. */
 export const MAX_PROJECTS_PER_COMPANY = 50;
@@ -293,6 +294,7 @@ export const useProjects = create<ProjectsState>()(
       deleteCompany: (id) => {
         get().projects.filter((p) => p.companyId === id).forEach((p) => get().deleteProject(p.id));
         deleteCompanyAnchor(id);
+        void deleteCompanyLayer(id).catch(() => undefined);
         localStorage.removeItem(alignmentEvaluationKey(id));
         set((s) => ({
           companies: s.companies.filter((c) => c.id !== id),
@@ -435,6 +437,8 @@ export const useProjects = create<ProjectsState>()(
   ),
 );
 syncDeviceStore(PROJECTS_STORAGE_KEY, () => useProjects.persist.rehydrate());
+// FR-342: packs of one company share its company layer.
+setPackCompanyResolver((projectId) => useProjects.getState().projects.find((p) => p.id === projectId)?.companyId);
 
 /** 'demo' or the active project id. Every scoped store keys its data by this (G-007: no cross-project mixing). */
 export function scopeOf(target: WorkTarget): string {

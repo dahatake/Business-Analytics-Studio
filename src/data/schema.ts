@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const LText = z.object({ ja: z.string().min(1), en: z.string().min(1) });
 export type LText = z.infer<typeof LText>;
 
-/** §3.7 world / type identifiers as written in a customer pack. */
+/** §3.7 world / type identifiers as written in a Project pack. */
 export const World = z.enum(['real', 'digital']);
 export const EntityType = z.enum([
   'site', 'equipment', 'person', 'organization', 'operation', 'thing', 'event',

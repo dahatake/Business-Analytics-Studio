@@ -10,7 +10,7 @@ import { EVIDENCE_BASES, simulate, type KpiSimulation } from './simulate.ts';
  * Strategy linkage (FR-312〜FR-316): company objective → OKR objective → key result / KPI → solution → use case /
  * initiative → deliverable. The chain follows the strategy map (Kaplan & Norton, HBR 2000) and the benefits dependency
  * network (Ward, Daniel & Peppard, MISQE 2008): every solution is a change that must reach a measured benefit, and
- * every benefit must serve an objective. Project-scoped data that the customer pack does not hold lives here.
+ * every benefit must serve an objective. Project-scoped data that the Project pack does not hold lives here.
  */
 
 /**

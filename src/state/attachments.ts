@@ -8,7 +8,7 @@ import { commitPackChange, newEntityId } from './packEdits.ts';
 
 /**
  * Attached files. The bytes are stored once per content (SHA-256) in the device binary store, so the same file attached
- * twice — or in another project — is reused. In the customer pack an attachment is a `source` entity whose locator is
+ * twice — or in another project — is reused. In the Project pack an attachment is a `source` entity whose locator is
  * `attachment:sha256:<hash>`; entities cite it in `sourceIds` and discussion themes list it in `relatedIds`.
  */
 export const ATTACHMENT_PREFIX = 'bas.binary.att.';

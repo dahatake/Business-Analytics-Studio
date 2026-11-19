@@ -39,7 +39,7 @@
   <text x="270" y="250" class="head">Projectに入力・保存</text>
   <text x="270" y="273" class="sub">KPI・分析・議論</text>
   <rect x="565" y="220" width="280" height="72" class="box"/>
-  <text x="705" y="250" class="head">顧客パックを検証・起動</text>
+  <text x="705" y="250" class="head">Projectパックを検証・起動</text>
   <text x="705" y="273" class="sub">JSONの内容・出典を確認</text>
   <path d="M270 292 V322 H480 V340" class="line"/>
   <path d="M705 292 V322 H480 V340" class="line"/>

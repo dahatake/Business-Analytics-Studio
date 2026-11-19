@@ -2,7 +2,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 /**
- * Public-web material for customer pack generation (FR-311, D-12): a few pages of the company's official site, fetched by
+ * Public-web material for Project pack generation (FR-311, D-12): a few pages of the company's official site, fetched by
  * the relay so the model reads real text with real URLs instead of recalling them. Only public inputs reach the network
  * (the URL the user typed and links found on that site); nothing from the app is sent.
  *

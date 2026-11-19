@@ -11,16 +11,16 @@ import { planRelationMerge, useProjects, type Project, type ProjectRelation } fr
 import { useSettings } from '../../state/settings.ts';
 import { downloadText } from './common.tsx';
 import { yyyymmdd } from './exportFormat.ts';
-import { exportProject } from './projectFile.ts';
+import { exportProjectPack } from './projectFile.ts';
 import { mergeBriefs, type MergeAssessment, type MergeReason } from './projectMerge.ts';
 
-/** Saves the project file (FR-139), named after the company, the project and today's date. */
-export function downloadProjectFile(projectId: string): boolean {
-  const file = exportProject(projectId);
+/** Saves the Project pack (FR-342: the company with its shared data and the project), named after both and today's date. */
+export async function downloadProjectFile(projectId: string): Promise<boolean> {
+  const file = await exportProjectPack(projectId);
   if (!file) return false;
-  if (useSettings.getState().audience === 'external' && (file.companyAnchor || file.project.alignments?.length
+  if (useSettings.getState().audience === 'external' && (file.company.anchor || file.project.alignments?.length
     || file.project.mergedFrom?.some((entry) => entry.alignments?.length))) return false;
-  downloadText(`${file.company.name}-${file.project.name}-project-${yyyymmdd(new Date())}.json`.replace(/[\\/:*?"<>|\s]+/g, '_'), JSON.stringify(file, null, 2), 'application/json');
+  downloadText(`${file.company.name}-${file.project.name}-project-pack-${yyyymmdd(new Date())}.json`.replace(/[\\/:*?"<>|\s]+/g, '_'), JSON.stringify(file, null, 2), 'application/json');
   return true;
 }
 
@@ -34,7 +34,7 @@ export function useReasonText(): (r: MergeReason) => string {
   };
 }
 
-/** The project that stays by default: the one with a customer pack, otherwise the older one. */
+/** The project that stays by default: the one with a Project pack, otherwise the older one. */
 export function defaultKeep(a: Project, b: Project, packs: Record<string, ImportedPackMeta>): Project {
   if (!!packs[a.id] !== !!packs[b.id]) return packs[a.id] ? a : b;
   return a.createdAt <= b.createdAt ? a : b;
@@ -174,7 +174,7 @@ export function ProjectMergeDialog({ assessment, projects, relations, packs, onC
               </ul>
               <div>
                 <Button icon={<ArrowDownload20Regular />} onClick={() => {
-                  try { setBackupError(!downloadProjectFile(absorb.id)); } catch { setBackupError(true); }
+                  void downloadProjectFile(absorb.id).then((ok) => setBackupError(!ok), () => setBackupError(true));
                 }} data-testid="proj-merge-backup">
                   {t('proj.merge.backup', { name: absorb.name })}
                 </Button>

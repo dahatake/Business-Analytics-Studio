@@ -2,9 +2,9 @@
 
 経営企画・業務改善チームと経営層が、KPI、課題、施策、データの関係を整理し、意思決定のための議論や説明に使うローカル Web アプリです。初めての方向けの全手順は **[ユーザーガイド](users-guide/README.md)** をご覧ください。
 
-> **実データを使う前に:** 初期画面と `npm run bas -- build "<顧客名>"` が用意するパックは架空のサンプルです。顧客名を指定しても実データの取得・変換はされません。実データで使う方法、入力・取込機能の範囲、確認事項は[実データと顧客パック](users-guide/07-real-data-pack.md)を参照してください。
+> **実データを使う前に:** 初期画面と `npm run bas -- build "<顧客名>"` が用意するパックは架空のサンプルです。顧客名を指定しても実データの取得・変換はされません。実データで使う方法、入力・取込機能の範囲、確認事項は[実データとProjectパック](users-guide/07-real-data-pack.md)を参照してください。
 
-このアプリは PC 上で動作します。サンプルのほか、Project ごとの KPI・分析・議論の入力、または検証済みの顧客パックを使えます。どちらのデータ経路を使うか、初めに[実データ利用の承認と選択](users-guide/07-real-data-pack.md#実データ利用の承認と選択)を確認してください。
+このアプリは PC 上で動作します。サンプルのほか、Project ごとの KPI・分析・議論の入力、または検証済みのProjectパックを使えます。どちらのデータ経路を使うか、初めに[実データ利用の承認と選択](users-guide/07-real-data-pack.md#実データ利用の承認と選択)を確認してください。
 
 要求は [docs/requirements-definition.md](docs/requirements-definition.md) と追加 UI 要求 F-3.1〜F-3.5、対応と見送りは [docs/traceability.md](docs/traceability.md) にあります。
 
@@ -20,7 +20,7 @@
 | 4 | [分析・KPI・OKR](users-guide/04-analysis-kpi.md) | 分析手法、入力項目、結果・目標の読み方 |
 | 5 | [議論・決定・次のアクション](users-guide/05-discussion.md) | 論点ツリー、記録、編集、変更履歴 |
 | 6 | [データカタログの取り込みと突合](users-guide/06-data-catalog.md) | CSV/JSONの項目定義をローカルで突合 |
-| 7 | [実データと顧客パック](users-guide/07-real-data-pack.md) | データ準備、JSONパック、検証、起動、Copilot での作成、Work IQ（社内情報） |
+| 7 | [実データとProjectパック](users-guide/07-real-data-pack.md) | データ準備、JSONパック、検証、起動、Copilot での作成、Work IQ（社内情報） |
 | 8 | [会議での確認・出力・保管](users-guide/08-meetings-and-backup.md) | 結果の読み方、共有前確認、エクスポート |
 
 ## 起動
@@ -42,7 +42,7 @@ run.cmd
 
 ### Work IQ（Microsoft 365 の社内情報）を使う準備（任意）
 
-「顧客パックを Copilot で作成」で、接続先が **Microsoft Foundry** のとき、Microsoft Work IQ で見つけた社内情報（あなたがアクセスできるメール・会議・Teams・OneDrive／SharePoint のファイル）を材料に加えられます。BAS は既定で Microsoft の **Work IQ CLI**（`@microsoft/workiq`）を中継から起動して使うため、BAS 用のアプリの登録や管理者の同意は不要です（Microsoft 365 Copilot のライセンスまたは Copilot Credits は必要です）。GitHub Copilot を選んでいるときは使いません。
+「Projectパックを Copilot で作成」で、接続先が **Microsoft Foundry** のとき、Microsoft Work IQ で見つけた社内情報（あなたがアクセスできるメール・会議・Teams・OneDrive／SharePoint のファイル）を材料に加えられます。BAS は既定で Microsoft の **Work IQ CLI**（`@microsoft/workiq`）を中継から起動して使うため、BAS 用のアプリの登録や管理者の同意は不要です（Microsoft 365 Copilot のライセンスまたは Copilot Credits は必要です）。GitHub Copilot を選んでいるときは使いません。
 
 ```powershell
 npm run workiq:check     # Work IQ CLI の起動・サインイン・retrieve ツールを確認（検索も EULA への同意もしない）
@@ -53,13 +53,13 @@ npm run workiq:check     # Work IQ CLI の起動・サインイン・retrieve �
 
 1. **この PC の Work IQ CLI** を選び、**Work IQ CLI を使う** を押す。
 2. EULA（[github.com/microsoft/work-iq](https://github.com/microsoft/work-iq)）を読み、ご自身で同意する場合だけ **Work IQ の EULA に同意** を押す（BAS は代わりに同意しません）。
-3. **Work IQ の情報取得を検証** を押し、出典付きで取得できたこと（検証日時の表示）を確認する。検証が済むまで Foundry での顧客パック作成は始められません。
+3. **Work IQ の情報取得を検証** を押し、出典付きで取得できたこと（検証日時の表示）を確認する。検証が済むまで Foundry でのProjectパック作成は始められません。
 
 詳しい手順・画面の表示・困ったときの対処は [第7章 Work IQ で社内情報を加える](users-guide/07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)、管理者向けの仕様（REST API で自分のアプリの登録を使う方法を含む）は [docs/relay-config.md](docs/relay-config.md#work-iq-retrieval-verification-microsoft-foundry-only) にあります。
 
 ### ポートに依存しない保存と旧データの移行
 
-- 企業・Project、分析・KPI・議論・レイアウト・設定、顧客パック、手書きボードは、既定でアプリの `.bas-local/device.sqlite` に保存します。dev／preview／`start.ps1`・`start.sh` が同じ保存先を利用し、アプリ・サーバー再起動後も保持します。オフライン配布物は、その配布フォルダーの `.bas-local` を利用します。別のBASフォルダーや別PCへの自動同期はありません。
+- 企業・Project、分析・KPI・議論・レイアウト・設定、Projectパック、手書きボードは、既定でアプリの `.bas-local/device.sqlite` に保存します。dev／preview／`start.ps1`・`start.sh` が同じ保存先を利用し、アプリ・サーバー再起動後も保持します。オフライン配布物は、その配布フォルダーの `.bas-local` を利用します。別のBASフォルダーや別PCへの自動同期はありません。
 - **保存先のフォルダーは［設定］→「データの保存先」のフォルダーのピッカーで変更できます。** BAS のデータがないフォルダーへは全データをコピーして切り替え、データがあるフォルダーはそのデータを開きます。上書き・旧フォルダーの削除はしません。ネットワーク上のフォルダーは選べず、OneDrive などの同期フォルダーは警告します。APIキーは `.bas-local` に残ります。手順は[ユーザーガイド第3章](users-guide/03-projects.md#保存先のフォルダーを変える)。
 - **旧版のデータがあるブラウザー・プロファイル・URLで、新版を一度開いてください。** たとえば旧版が `http://127.0.0.1:4173` なら、旧BASを Ctrl+C で停止してから新版を `run.cmd --port 4173 --strictPort` で開きます。ブラウザーの保護により、別ポートの旧localStorage／IndexedDBを直接読むことはできません。一度移行すれば、その後のポート変更でこの手順は不要です。
 - 移行前のコピーを端末DBの `legacy_backups` に保存し、元のIndexedDBも削除しません。既存の端末データと異なる旧データがあれば、自動で上書き・結合せず停止します。復旧用コピーをダウンロードしたうえで、旧データをバックアップに残して端末データを使う選択ができます。復旧用JSONは自動インポート用のProjectファイルではありません。
@@ -132,13 +132,13 @@ E2E は、初回だけ `npx playwright install chromium` が必要な場合が�
 
 中継の保護（待ち受けるアドレス・Host・Origin・外向きの接続先）は環境変数で変えられます。既定は `127.0.0.1` の完全一致だけです。Azure などへ展開するときの設定と注意は [docs/relay-config.md](docs/relay-config.md) にあります。ビルドした画面には Content Security Policy（`unsafe-eval` なし、外部の接続先なし）を付けています。
 
-顧客パックの作成（Foundry のとき）で使う Work IQ は、LLM のトークンとは別に Copilot Credits などで課金される可能性があり、金額はアプリの月予算に含まれません。準備は上の「Work IQ（Microsoft 365 の社内情報）を使う準備」を参照してください。
+Projectパックの作成（Foundry のとき）で使う Work IQ は、LLM のトークンとは別に Copilot Credits などで課金される可能性があり、金額はアプリの月予算に含まれません。準備は上の「Work IQ（Microsoft 365 の社内情報）を使う準備」を参照してください。
 
 ## 生成パイプライン（CLI）
 
 ```powershell
 npm run bas -- research <顧客名>     # 調査キャッシュ（外部の調査は BLOCKED。サンプルを使ったことを記録）
-npm run bas -- build <顧客名>        # work/<顧客名>/ に雛形と顧客パックを用意（不正な項目だけを自己修正）
+npm run bas -- build <顧客名>        # work/<顧客名>/ に雛形とProjectパックを用意（不正な項目だけを自己修正）
 npm run bas -- verify <pack.json>   # 受け入れ判定。原因と対処を表示し、不合格なら終了コード 1
 npm run bas -- launch <顧客名>       # 127.0.0.1 で起動
 npm run bas -- package <顧客名>      # オフラインで動く配布物
@@ -146,7 +146,7 @@ npm run integrations:check          # 外部連携カタログの検査
 npm run workiq:check                # Work IQ CLI の確認（D-14。検索も EULA への同意もしない）
 ```
 
-所要時間は `logs/timing.json` に記録します。起動・セットアップ用に `start.ps1`／`start.sh`／`start.command`、`setup.ps1`／`setup.sh` があります。顧客パックの形式は [docs/pack.schema.json](docs/pack.schema.json) です。
+所要時間は `logs/timing.json` に記録します。起動・セットアップ用に `start.ps1`／`start.sh`／`start.command`、`setup.ps1`／`setup.sh` があります。Projectパックの形式は [docs/pack.schema.json](docs/pack.schema.json) です。
 
 ## 操作
 
@@ -181,7 +181,7 @@ e2e/          Playwright
 
 ## 補足
 
-- 画面上部には Project の KPI/OKR 試算と顧客パック記載の便益を分けて表示し、詳細カードと全成果一覧を開けます。試算がない項目は予測値を作らず、データからの提案や不足を明示します。表示遅延の負荷測定は設定画面から実行できます（条件は `src/config/params.ts`）。
+- 画面上部には Project の KPI/OKR 試算とProjectパック記載の便益を分けて表示し、詳細カードと全成果一覧を開けます。試算がない項目は予測値を作らず、データからの提案や不足を明示します。表示遅延の負荷測定は設定画面から実行できます（条件は `src/config/params.ts`）。
 - axe の検査では、Fluent UI のフォーカス管理（Tabster）が `<body>` 直下に置く `data-tabster-dummy` 要素だけを除外しています（axe の既知の誤検知）。
 - 決定の記録と判断資料は [docs/decision-guide.md](docs/decision-guide.md)、人や実機による測定の手順は [docs/measurement-plan.md](docs/measurement-plan.md)、機能モジュールの規約は [docs/module-guide.md](docs/module-guide.md)、要求との対応と BLOCKED の一覧は [docs/traceability.md](docs/traceability.md) にあります。
 - 利用テスト（F-3.4.2）は [計画](docs/usability-test.md) のみで、まだ実施していません。

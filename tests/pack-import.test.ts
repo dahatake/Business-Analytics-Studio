@@ -10,7 +10,7 @@ import { GraphExtensionSchema, graphExtensionFor } from '../src/modules/graph/ex
 import { BrandProfile } from '../src/modules/ops/brand.ts';
 import { CatalogItem } from '../src/modules/usecases/catalogSchema.ts';
 import { catalogForScope } from '../src/modules/usecases/catalog.ts';
-import { scopedKey } from '../src/state/projects.ts';
+import { scopedKey, useProjects } from '../src/state/projects.ts';
 import { buildArchitecture } from '../src/modules/threed/architecture.ts';
 import { coreObjectChoice } from '../src/modules/threed/coreObject.ts';
 import { parseGlossary } from '../src/modules/project/discussion.ts';
@@ -20,8 +20,11 @@ import {
   analyzeImport, buildFixPrompt, extractJson, FIX_PROMPT_MAX_PROBLEMS, isReadableFile, normalizePack, preparePackLogo,
 } from '../src/data/packImport.ts';
 import {
-  deleteImportedPack, importedPackMeta, loadImportedPack, PACK_INDEX_KEY, saveImportedPack, setMemoryPackStore, type ImportedPackMeta,
+  deleteImportedPack, importedPackMeta, loadCompanyLayer, loadImportedPack, loadProjectLayer, PACK_INDEX_KEY, saveImportedPack, setMemoryPackStore,
+  SharedDataInUseError, type ImportedPackMeta,
 } from '../src/data/packStore.ts';
+import { composePack, diffCompanyLayers, mergeCompanyLayers, splitPack } from '../src/data/packLayers.ts';
+import { exportProjectPack, importProject, previewProjectPack } from '../src/modules/project/projectFile.ts';
 import { promptSection } from '../src/modules/project/packPrompt.ts';
 
 /** The built-in sample leaves sourceIds of some numbers empty (bas build adds them); give them the report as source. */
@@ -377,6 +380,137 @@ describe('packStore: per-project storage, all or nothing (FR-302)', () => {
       Storage.prototype.setItem = original;
     }
     expect(await loadImportedPack('pj-1')).toEqual({ packId: 'old' });
+  });
+});
+
+describe('Project pack: company data shared by the projects of one company (FR-342)', () => {
+  type Raw = Record<string, unknown> & { entities: (Record<string, unknown> & { id: string; kind: string })[] };
+  const sample = JSON.parse(JSON.stringify(samplePack)) as Raw;
+  const byId = (pack: unknown) => [...(pack as Raw).entities].sort((a, b) => a.id.localeCompare(b.id));
+  const meta = (projectId: string): ImportedPackMeta => ({
+    projectId, packId: 'p', company: samplePack.company, isSample: false, entities: 1, importedAt: '2026-11-09T00:00:00Z', files: ['a.json'],
+  });
+  const customer = sample.entities.find((e) => e.kind === 'customer' && sample.entities.some((d) => d.kind === 'deal' && d.customerId === e.id))!;
+  const twoProjects = () => {
+    const s = useProjects.getState();
+    const c = s.addCompany('Contoso');
+    if (!c.ok) throw new Error();
+    const a = s.addProject(c.id, 'A');
+    const b = s.addProject(c.id, 'B');
+    if (!a.ok || !b.ok) throw new Error();
+    return { companyId: c.id, a: a.id, b: b.id };
+  };
+  beforeEach(() => {
+    localStorage.clear();
+    setMemoryPackStore();
+    useProjects.setState({ companies: [], projects: [], relations: [] });
+  });
+
+  it('splits the master data from the project data and composes them back without loss', () => {
+    const { company, project } = splitPack(sample);
+    const kinds = (es: { kind?: unknown }[]) => [...new Set(es.map((e) => String(e.kind)))].sort();
+    expect(kinds(company.entities).every((k) => ['site', 'person', 'customer', 'product', 'supplier', 'source'].includes(k))).toBe(true);
+    expect(kinds(project.entities as Raw['entities'])).toContain('deal');
+    expect(kinds(project.entities as Raw['entities'])).not.toContain('customer');
+    // Sources the company data cites travel with it, so the shared layer is self-contained.
+    const sharedIds = new Set(company.entities.map((e) => e.id));
+    for (const e of company.entities) for (const s of (e.sourceIds as string[] | undefined) ?? []) expect(sharedIds.has(s)).toBe(true);
+    const back = composePack(company, project);
+    expect(byId(back)).toEqual(byId(sample));
+    expect({ ...back, entities: [] }).toEqual({ ...sample, entities: [] });
+  });
+
+  it('stores the company data once and shows it in every project of the company', async () => {
+    const { companyId, a, b } = twoProjects();
+    await saveImportedPack(meta(a), sample);
+    const extra = { ...customer, id: 'customer-only-in-b', name: { ja: 'B社', en: 'B Corp' } };
+    await saveImportedPack(meta(b), { ...sample, entities: [...sample.entities, extra] }, { company: 'keep' });
+    const shared = await loadCompanyLayer(companyId);
+    expect(shared?.entities.filter((e) => e.id === customer.id)).toHaveLength(1);
+    expect(shared?.entities.some((e) => e.id === extra.id)).toBe(true);
+    expect(((await loadProjectLayer(a)) as Raw).entities.some((e) => e.kind === 'customer')).toBe(false);
+    expect(((await loadImportedPack(a)) as Raw).entities.some((e) => e.id === extra.id)).toBe(true);
+  });
+
+  it('refuses to delete shared data another project still cites, and allows it when none does', async () => {
+    const { companyId, a, b } = twoProjects();
+    await saveImportedPack(meta(a), sample);
+    await saveImportedPack(meta(b), { ...sample, entities: [...sample.entities, { ...customer, id: 'customer-spare' }] }, { company: 'keep' });
+    const composed = (await loadImportedPack(a)) as Raw;
+    const without = (id: string) => ({ ...composed, entities: composed.entities.filter((e) => e.id !== id) });
+    const error = await saveImportedPack(meta(a), without(customer.id)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SharedDataInUseError);
+    expect((error as SharedDataInUseError).uses).toEqual([{ projectId: b, ids: [customer.id] }]);
+    expect((await loadCompanyLayer(companyId))?.entities.some((e) => e.id === customer.id)).toBe(true);
+    await saveImportedPack(meta(a), without('customer-spare'));
+    expect((await loadCompanyLayer(companyId))?.entities.some((e) => e.id === 'customer-spare')).toBe(false);
+  });
+
+  it('merges incoming company data as a union; the user decides same-id conflicts', () => {
+    const existing = splitPack(sample).company;
+    const renamed = { ...customer, name: { ja: '改名', en: 'Renamed' } };
+    const twin = { ...customer, id: 'customer-twin' };
+    const incoming = { ...existing, entities: [renamed, twin] };
+    expect(diffCompanyLayers(existing, incoming)).toMatchObject({
+      differing: [{ id: customer.id, kind: 'customer' }], possibleDuplicates: [{ id: 'customer-twin', existingId: customer.id }],
+    });
+    const keep = mergeCompanyLayers(existing, incoming, 'keep');
+    const take = mergeCompanyLayers(existing, incoming, 'incoming');
+    expect(keep.entities.find((e) => e.id === customer.id)?.name).toEqual(customer.name);
+    expect(take.entities.find((e) => e.id === customer.id)?.name).toEqual(renamed.name);
+    for (const merged of [keep, take]) {
+      expect(merged.entities).toHaveLength(existing.entities.length + 1);
+    }
+  });
+
+  it('exports a Project pack (company over project) and imports it back to the same pack', async () => {
+    const { companyId, a, b } = twoProjects();
+    await saveImportedPack(meta(a), sample);
+    await saveImportedPack(meta(b), sample, { company: 'keep' });
+    localStorage.setItem(scopedKey(a, 'proj.discussion'), JSON.stringify({ themes: [], records: [] }));
+    const before = await loadImportedPack(a);
+    const file = JSON.parse(JSON.stringify(await exportProjectPack(a)));
+    expect(file).toMatchObject({ format: 'bas-project-pack', company: { id: companyId, shared: { format: 'bas-company-layer' } }, project: { id: a, companyId } });
+    expect(file.project.pack.layer.entities.some((e: { kind: string }) => e.kind === 'customer')).toBe(false);
+
+    // Into a fresh PC: the company is created from the file with its shared data.
+    localStorage.clear();
+    setMemoryPackStore();
+    useProjects.setState({ companies: [], projects: [], relations: [] });
+    const preview = await previewProjectPack(JSON.stringify(file));
+    expect(preview).toMatchObject({ ok: true, preview: { companyMatch: 'new', sharedDiff: null, legacy: false } });
+    expect(await importProject(JSON.stringify(file))).toMatchObject({ ok: true, projectId: a });
+    expect(await loadImportedPack(a)).toEqual(before);
+    expect(JSON.parse(localStorage.getItem(scopedKey(a, 'proj.discussion'))!)).toEqual({ themes: [], records: [] });
+
+    // Next to the company's other project: matched by id, nothing to resolve, shared data stays single.
+    useProjects.getState().deleteProject(a);
+    await deleteImportedPack(a);
+    const again = await previewProjectPack(JSON.stringify(file));
+    expect(again).toMatchObject({ ok: true, preview: { companyMatch: 'id', sharedDiff: { differing: [], added: [] } } });
+  });
+
+  it('still imports a project file of the older format (bas-project v1, no pack)', async () => {
+    const v1 = {
+      format: 'bas-project', version: 1,
+      company: { id: 'co-old', name: 'Old Co', createdAt: '2026-01-01T00:00:00Z' },
+      project: { id: 'pj-old', companyId: 'co-old', name: 'Legacy', createdAt: '2026-01-01T00:00:00Z', step: 'understand' },
+      data: { 'proj.discussion': { themes: [], records: [] } },
+    };
+    const preview = await previewProjectPack(JSON.stringify(v1));
+    expect(preview).toMatchObject({ ok: true, preview: { legacy: true } });
+    expect(await importProject(JSON.stringify(v1))).toEqual({ ok: true, name: 'Old Co-Legacy', projectId: 'pj-old' });
+    expect(importedPackMeta('pj-old')).toBeNull();
+  });
+
+  it('rejects a Project pack whose pack data is broken, writing nothing', async () => {
+    const { a } = twoProjects();
+    await saveImportedPack(meta(a), sample);
+    const file = JSON.parse(JSON.stringify(await exportProjectPack(a)));
+    useProjects.setState({ companies: [], projects: [], relations: [] });
+    file.project.pack.layer.entities = 'broken';
+    expect(await importProject(JSON.stringify(file))).toEqual({ ok: false, error: 'invalid' });
+    expect(useProjects.getState().projects).toEqual([]);
   });
 });
 

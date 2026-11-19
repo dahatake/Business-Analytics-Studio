@@ -1,4 +1,4 @@
-import { stampKpiDefinition } from '../../data/kpiDefinition.ts';
+import { stampKpiDefinition, stampOrgUnits } from '../../data/kpiDefinition.ts';
 import { z } from 'zod';
 import { CompanyAnchorVersionSchema, type CompanyAnchorVersion } from '../../data/companyAnchor.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence, type CollectionSection } from '../../data/collection.ts';
@@ -76,6 +76,11 @@ export interface PackGenInput {
   /** Shared company analysis and project assessments captured at the start of this run. */
   companyAnchor?: CompanyAnchorVersion;
   alignments?: Alignment[];
+  /**
+   * FR-341: the business unit (事業部) the project concerns, when the user knows it. Empty = the foundation stage
+   * estimates it from the purpose and the Work IQ material, and only an estimate with sources is used.
+   */
+  orgUnit?: string;
 }
 
 /** Follow-up rounds per stage: the default, and the most the user may choose (each round may add one model call). */
@@ -107,14 +112,20 @@ export interface WorkIqQuery {
   topics?: readonly string[];
   /** Also search every readiness ladder wording now, merged per readiness item (Work IQ CLI route; others ignore it). */
   expand?: boolean;
+  /** FR-341: the business unit of a kpiUnit search. */
+  unit?: string;
 }
 export interface WorkIqLike { question: string; answer: string; citations: { title: string; url: string }[]; sensitivity: string | null; fetchedAt: string }
 /** `searches`: the ladder wordings a merged section already searched (the follow-up rounds do not ask them again). */
 /** `deepRead`: the section's top Microsoft 365 files that Work IQ read in full (Work IQ CLI `expand`). */
 export type WorkIqSectionLike = (WorkIqLike & { key: string; searches?: readonly string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };
 
-/** Every Work IQ section the generator asks for first: the internal facts a business discussion needs. */
-export const WORKIQ_GEN_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
+/**
+ * Every Work IQ section the generator asks for first: the internal facts a business discussion needs. kpiCompany
+ * (FR-341) searches the company-wide KPI/OKR by company name alone, so a project inside one business unit still sees
+ * the company's targets; the unit's own search (kpiUnit) is added when the unit is known.
+ */
+export const WORKIQ_GEN_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany'] as const;
 /** Tries of the planned fan-out when the whole call fails with a transient error. */
 export const WORKIQ_FANOUT_TRIES = 2;
 /** Fan-out failures a later search may not repeat; any other code (sign-in, permission, EULA, refusal) is final. */
@@ -415,6 +426,8 @@ const WORKIQ_SECTION_LABEL: Record<string, [ja: string, en: string]> = {
   people: ['関係者', 'people'],
   engagements: ['顧客・案件・取り組み', 'customers, engagements and programmes'],
   issues: ['課題・リスク・決定事項', 'issues, risks and decisions'],
+  kpiCompany: ['全社の KPI・OKR・目標', 'company-wide KPIs, OKRs and targets'],
+  kpiUnit: ['対象の事業部の KPI・OKR・目標', 'KPIs, OKRs and targets of the business unit'],
   // Merged per readiness item (expand): the keys the aspects above do not share.
   customers: ['顧客・顧客セグメント', 'customers and customer segments'],
   workflow: ['業務の流れ（入力→処理→出力→引き継ぎ）', 'work process (input → work → output → handoff)'],
@@ -482,14 +495,45 @@ export function packSpec(lang: Lang): string {
 const KINDS_A = ['site', 'product', 'customer', 'supplier', 'person'] as const;
 const KINDS_B = ['issue', 'cause', 'solution', 'kpi', 'initiative', 'deal', 'deliverable', 'invoice'] as const;
 
-function scope(input: PackGenInput): string {
+/**
+ * FR-341: the business unit a run uses — typed by the user, or estimated by the foundation stage from the purpose and
+ * the material. An estimate counts only with a level, a name other than the company's and at least one source id of
+ * this run's material; otherwise the unit stays unknown (no unit is invented).
+ */
+export interface OrgUnitChoice {
+  level: 'legalEntity' | 'business' | 'department';
+  name: string;
+  basis: 'userInput' | 'inferred';
+  reason?: string;
+  sourceIds?: string[];
+}
+
+export function orgEstimateFrom(raw: unknown, companyName: string, knownSourceIds: ReadonlySet<string>): OrgUnitChoice | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const level = o.level === 'business' || o.level === 'department' || o.level === 'legalEntity' ? o.level : null;
+  const name = typeof o.name === 'string' ? o.name.replace(/\s+/g, ' ').trim() : '';
+  const sourceIds = Array.isArray(o.sourceIds) ? [...new Set(o.sourceIds.filter((s): s is string => typeof s === 'string' && knownSourceIds.has(s)))] : [];
+  if (!level || !name || name.length > 80 || name.toLowerCase() === companyName.trim().toLowerCase() || !sourceIds.length) return null;
+  const reason = typeof o.reason === 'string' && o.reason.trim() ? clip(o.reason.trim(), 300) : undefined;
+  return { level, name, basis: 'inferred', ...(reason ? { reason } : {}), sourceIds };
+}
+
+function userOrgUnit(input: PackGenInput): OrgUnitChoice | null {
+  const name = (input.orgUnit ?? '').replace(/\s+/g, ' ').trim();
+  return name ? { level: 'business', name: clip(name, 80), basis: 'userInput' } : null;
+}
+
+function scope(input: PackGenInput, unit: OrgUnitChoice | null = userOrgUnit(input)): string {
   const ja = input.lang === 'ja';
   const row = (label: string, v: string) => (v.trim() ? `- ${label}: ${v.trim()}` : null);
+  const unitNote = unit?.basis === 'inferred' ? (ja ? '（推定。根拠: ' : ' (estimated; basis: ') + (unit.sourceIds ?? []).join(', ') + (ja ? '）' : ')') : '';
   return [
     ja ? '# 対象' : '# Scope',
     row(ja ? '企業' : 'Company', input.companyName),
     row(ja ? 'Project' : 'Project', input.projectName),
     row(ja ? '目的' : 'Purpose', input.purpose),
+    row(ja ? '対象の事業部' : 'Business unit', unit ? `${unit.name}${unitNote}` : ''),
     row(ja ? '基準日' : 'As of', input.asOf),
     row(ja ? '業種' : 'Industry', input.industry),
     row(ja ? '公式サイト' : 'Official site', input.officialUrl),
@@ -523,6 +567,7 @@ function rules(lang: Lang): string {
       '- Work IQ の回答（source-workiq-*）は Microsoft 365 の社内情報の要約で、区分ごとに分かれている。各区分を対応する場所に使う: 組織→person/site、KPI・OKR→extensions.okr（数値の基準値・現在値・目標値がそろう時だけ kpi エンティティ）、業務の流れ→extensions.workflow、データ資産→extensions.dataCatalog、拠点→site、顧客→customer、案件・取り組み→下記の engagements の規則、課題→issue/cause。回答に書かれていない値は作らず、「見つからない」とされた項目は作らない。人物は氏名と役職だけにする。「Project の目的に関する社内情報」の区分は目的の論点ごとの検索結果で、目的の課題・原因・施策・取り組み・KPI の第一の根拠として使う。',
       '- extensions.workflow.stages: このチーム（組織）の仕事を、受け取るもの（inputs）→行う作業（activities）→出すもの（outputs）→次の段（next）／引き継ぐ他チーム（handoffTo）の順に書く。使うレポート・システムは data。各段に sourceIds。',
       '- extensions.okr: kpis（name・definition・target・current・unit・period・owner は文字列で原文どおり。現在値が資料にない時は current を書かない）と objectives（objective・keyResults）。各要素に sourceIds。顧客がすでに KPI/OKR を定義しているかを必ず確かめ、definitionStatus（defined=定義が見つかり記録した / partial=KPI だけなど一部 / undefined=資料に「定義していない」と明記 / notRetrieved=確かめられなかった）と checkedSources（確かめた資料・会議の名前）を書く。見つからないことは undefined の根拠にならない（notRetrieved にする）。中期経営計画などの経営目標に対応する OKR は objective にその目標の文言を含める。',
+      '- extensions.okr の対象組織: 全社の KPI/OKR（source-workiq-kpi-company など会社全体の資料）と対象の事業部の KPI/OKR（source-workiq-kpi-unit など）は両方記録し、事業部だけに絞らない（BPR の範囲と効果を小さく見積もらないため）。各 KPI・objective に orgUnitId を書く: "org-company"=全社、"org-unit"=対象の事業部。資料に他の組織（別の事業部・事業会社・部門）の KPI があれば extensions.okr.orgUnits に {id:"org-…",level:"group|legalEntity|business|department",name,basis:"stated",sourceIds} を足してその id を使う。どの組織の KPI か資料から分からなければ orgUnitId は書かない。org-company と org-unit の定義はアプリが書く。',
       '- 実施した案件・取り組みは extensions.engagements.items に保存する。各項目に id・name・sourceIds（1 件以上）、および period・customer・status の少なくとも 1 つを資料どおりに書く。任意: type（workshop/briefing/poc/programme/deliverable/deal/other）、customerId（既存の customer の id）、owner（氏名と役職のみ）、count・outcome。name は文字列または ja/en、他の事実は原文の文字列。金額・進捗・日付を補わない。deal は金額・製品・顧客・日付・担当が、initiative は進捗・期間・担当と費用・効果のある solution が資料にそろう時だけ。同じ実施情報をエンティティと engagements の両方に書かない。',
       '- extensions.dataCatalog.items: 組織が管理・利用するデータ（Power BI レポート、ダッシュボード、CRM、リスト、Excel 等）を name・description・domain・columns（分かる列）・url（引用の URL）で書く。',
       `- 1 回の回答は ${MAX_STAGE_ENTITIES} エンティティまで。`,
@@ -540,6 +585,7 @@ function rules(lang: Lang): string {
       '- The Work IQ answers (source-workiq-*) summarise internal Microsoft 365 information, one per section. Use each where it belongs: organisation → person/site, KPI/OKR → extensions.okr (kpi entities only when baseline, current and target numbers are all stated), process → extensions.workflow, data assets → extensions.dataCatalog, locations → site, customers → customer, work records → engagements rules below, issues → issue/cause. Never create values they do not state or items they report as not found. People: name and title only. The "internal information on the project purpose" section searched each point of the purpose: use it first for the purpose\'s issues, causes, solutions, work records and KPIs.',
       '- extensions.workflow.stages: the team\'s work as what it receives (inputs) → what it does (activities) → what it hands over (outputs) → next stage ids (next) / other teams taking over (handoffTo); reports and systems used go in data. sourceIds on each stage.',
       '- extensions.okr: kpis (name, definition, target, current, unit, period, owner as strings, worded as in the material; omit current when the material has no current value) and objectives (objective, keyResults). sourceIds on each. Always check whether the customer already defines KPIs/OKRs and write definitionStatus (defined = found and recorded / partial = e.g. KPIs only / undefined = the material states there is none / notRetrieved = could not be checked) and checkedSources (names of the documents or meetings checked). Not finding a definition is not evidence there is none (use notRetrieved). For OKRs serving a company objective (e.g. the medium-term plan), quote that objective in the objective text.',
+      '- Organisation of extensions.okr: record both the company-wide KPIs/OKRs (source-workiq-kpi-company and other company-level material) and those of the business unit (source-workiq-kpi-unit and the like); never narrow them to the unit alone, which would understate the scope and benefit of BPR. Give each KPI and objective an orgUnitId: "org-company" = the whole company, "org-unit" = the business unit. When the material states KPIs of another organisation (another division, operating company or department), add {id:"org-…",level:"group|legalEntity|business|department",name,basis:"stated",sourceIds} to extensions.okr.orgUnits and use that id. Omit orgUnitId when the material does not say whose KPI it is. The app writes org-company and org-unit itself.',
       '- Work records go in extensions.engagements.items. Each item needs id, name, sourceIds (at least one), and at least one of period, customer or status stated in the material. Optional: type (workshop/briefing/poc/programme/deliverable/deal/other), customerId (an existing customer id), owner (name and title only), count, outcome. name is a string or ja/en; other facts are verbatim strings. Never fill in amounts, progress or dates. Use deal only when value, products, customer, date and owner are known; initiative only when progress, dates, owner and a solution with cost and benefit are known. Do not duplicate the same work in entities and engagements.',
       '- extensions.dataCatalog.items: data the organisation owns or uses (Power BI reports, dashboards, CRM, lists, workbooks…) with name, description, domain, columns (when known) and url (the cited URL).',
       `- At most ${MAX_STAGE_ENTITIES} entities per answer.`,
@@ -561,13 +607,16 @@ export function stageAPrompt(input: PackGenInput, entries: MaterialEntry[]): str
     ja
       ? '- gaps: 資料で埋まらなかった区分（collection の区分名、または workflow・dataCatalog）と、不足している具体的な事実（社内で質問できる形で）。'
       : '- gaps: sections (collection names, or workflow / dataCatalog) the material could not fill, with the specific missing facts (phrased so they can be asked internally).',
+    ...(userOrgUnit(input) ? [] : [ja
+      ? '- orgEstimate: 対象の事業部が入力されていません。目的・課題と資料（組織・役割の区分など）から、この Project が属する事業部を推定し {"level":"business|department|legalEntity","name":"事業部名（資料の表記どおり）","reason":"目的のどの語と資料のどの記述から判断したか","sourceIds":["資料の id"]} で書く（legalEntity は事業会社）。資料に根拠がなければ orgEstimate は書かない（推測で組織名を作らない）。'
+      : '- orgEstimate: no business unit was given. From the purpose, the problem and the material (e.g. the organisation section), estimate the business unit this project belongs to as {"level":"business|department|legalEntity","name":"unit name as the material writes it","reason":"which words of the purpose and which statement of the material","sourceIds":["material ids"]} (legalEntity = an operating company). Omit orgEstimate when the material does not support one; never invent an organisation name.']),
     packSpec(input.lang),
     rules(input.lang),
     materialBlock(entries, input.lang),
   ].join('\n\n');
 }
 
-export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foundation: Record<string, unknown>): string {
+export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foundation: Record<string, unknown>, unit: OrgUnitChoice | null = userOrgUnit(input)): string {
   const ja = input.lang === 'ja';
   const ents = Array.isArray(foundation.entities) ? (foundation.entities as Record<string, unknown>[]) : [];
   const known = ents.map((e) => `| ${String(e.id)} | ${String(e.kind)} | ${typeof e.name === 'object' && e.name ? String((e.name as Record<string, unknown>)[input.lang] ?? '') : ''} |`);
@@ -576,12 +625,12 @@ export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foun
     ja
       ? '同じ顧客パックの「業務」部分を、下の資料だけから作ってください。基盤は作成済みで、下の id を参照できます。'
       : 'Build the business part of the same customer pack from the material below only. The foundation exists; you may reference its ids below.',
-    scope(input),
+    scope(input, unit),
     ja ? '# 作成済みのエンティティ（参照用。出力に含めない）' : '# Existing entities (reference only; do not output them)',
     '| id | kind | name |', '|---|---|---|', ...known,
     `regions: ${regions.join(', ') || '—'}`,
     ja ? '# 出力' : '# Output',
-    `{"entities":[...],"flows":[...],"optimization":{...},"extensions":{"okr":{"kpis":[...],"objectives":[...],"definitionStatus":"...","checkedSources":[...]},"engagements":{"items":[...]},"graph":{...},"architecture":{...},"coreObject":{...}},"gaps":[{"section":"kpi","missing":["..."],"nextAction":"..."}]}`,
+    `{"entities":[...],"flows":[...],"optimization":{...},"extensions":{"okr":{"kpis":[{"id":"...","name":"...","orgUnitId":"org-company"}],"objectives":[{"id":"...","objective":"...","orgUnitId":"org-unit","keyResults":[...]}],"definitionStatus":"...","checkedSources":[...]},"engagements":{"items":[...]},"graph":{...},"architecture":{...},"coreObject":{...}},"gaps":[{"section":"kpi","missing":["..."],"nextAction":"..."}]}`,
     ja
       ? `- entities の kind は ${KINDS_B.join(', ')} だけ。目的「${input.purpose.trim()}」に関係する課題・原因・施策・KPI・取り組みを優先する。deal・deliverable・invoice は社内資料に根拠があるときだけ。`
       : `- entities may only have kind ${KINDS_B.join(', ')}. Prefer issues, causes, solutions, KPIs and initiatives relevant to the purpose "${input.purpose.trim()}". deal, deliverable and invoice only with work material behind them.`,
@@ -1291,6 +1340,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const asked = new Set<string>();
   /** The planned fan-out failed in a way a later search will fail too (sign-in, permission, EULA, CLI, relay refusal). */
   let workIqBlocked = false;
+  const givenUnit = userOrgUnit(input);
   if (input.useWorkIq && deps.fetchWorkIq) {
     emit('collect', 'running', 0.8);
     // Planned fan-out (docs/workiq-agentic-retrieval-study.md): the section searches, every readiness ladder wording and
@@ -1299,7 +1349,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     // once more after a pause; the relay starts a fresh CLI process for it.
     for (let attempt = 0; attempt < WORKIQ_FANOUT_TRIES; attempt++) {
       try {
-        workiq = await deps.fetchWorkIq({ ...workIqBase, aspects: WORKIQ_GEN_ASPECTS, expand: true }, signal);
+        workiq = await deps.fetchWorkIq({ ...workIqBase, aspects: givenUnit ? [...WORKIQ_GEN_ASPECTS, 'kpiUnit'] : WORKIQ_GEN_ASPECTS, ...(givenUnit ? { unit: givenUnit.name } : {}), expand: true }, signal);
         noteSectionErrors(workiq);
         for (const s of workIqAnswers(workiq)) for (const w of s.searches ?? []) asked.add(clip(w.replace(/\s+/g, ' ').trim(), 150));
         break;
@@ -1340,6 +1390,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       p.extensions = ext;
     }
     if (!keepTop) for (const k of ['packId', 'company', 'isSample'] as const) delete p[k];
+    delete p.orgEstimate;
     return p;
   };
   const ltOk = (v: unknown) => !!v && typeof v === 'object' && typeof (v as Record<string, unknown>).ja === 'string' && typeof (v as Record<string, unknown>).en === 'string';
@@ -1453,11 +1504,30 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const deepA = await deepen('a', first, buildA);
   const a = deepA.pack;
   const gapsA = deepA.gaps;
+  /*
+   * FR-341: the business unit. Typed by the user, or the foundation's estimate when it cites this run's material; the
+   * estimated unit's own KPI/OKR are then searched in Work IQ (by company and unit name, not the project). Without
+   * either the unit stays unknown and only the company-wide search has run.
+   */
+  const estimate = givenUnit ? null : orgEstimateFrom(a.orgEstimate, input.companyName, new Set(entries.map((e) => e.item.sourceId)));
+  delete a.orgEstimate;
+  const unit = givenUnit ?? estimate;
+  if (estimate && input.useWorkIq && deps.fetchWorkIq && !workIqBlocked) {
+    try {
+      const found = await deps.fetchWorkIq({ ...workIqBase, aspects: ['kpiUnit'], unit: estimate.name }, signal);
+      noteSectionErrors(found);
+      const known = new Set(entries.map((e) => e.item.sourceId));
+      entries.push(...workIqAnswers(found).map((s) => workIqEntry(input, s)).filter((e) => !known.has(e.item.sourceId)));
+    } catch (err) {
+      if (signal.aborted) throw cancelled();
+      retrievalErrors.push({ what: 'workiq', error: `kpiUnit: ${(err as { code?: string }).code ?? (err as Error).message}` });
+    }
+  }
   emit('foundation', 'done');
 
   /* 3. Stage B (+ Work IQ follow-up rounds likewise) */
   emit('business', 'running');
-  const buildB = (material: MaterialEntry[]) => stageBPrompt(input, material, a);
+  const buildB = (material: MaterialEntry[]) => stageBPrompt(input, material, a, unit);
   const firstB = await call('business', buildB);
   const deepB = await deepen('b', firstB, buildB, a);
   const b = deepB.pack;
@@ -1503,7 +1573,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   /* 6. Collection report, number check, generation record */
   emit('finalize', 'running');
   const ext = { ...((finalPack.extensions as Record<string, unknown>) ?? {}) };
-  ext.okr = stampKpiDefinition(ext.okr, (Array.isArray(finalPack.entities) ? finalPack.entities : []).filter((e: unknown) => isObj(e) && e.kind === 'kpi').length, entries.filter((e) => e.item.kind !== 'news' && e.item.kind !== 'web').map((e) => e.item.title));
+  ext.okr = stampOrgUnits(stampKpiDefinition(ext.okr, (Array.isArray(finalPack.entities) ? finalPack.entities : []).filter((e: unknown) => isObj(e) && e.kind === 'kpi').length, entries.filter((e) => e.item.kind !== 'news' && e.item.kind !== 'web').map((e) => e.item.title)), input.companyName, unit);
   ext.collection = buildCollection(finalPack, input.asOf.trim(), pages.length + news.length > 0, gaps, input.lang, entries.some((e) => e.item.kind === 'workiq'));
   if (input.companyAnchor) {
     ext.companyAnchor = structuredClone(input.companyAnchor);
@@ -1548,8 +1618,8 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
 export function runPlan(input: PackGenInput): { minCalls: number; maxCalls: number; promptChars: number } {
   const site = input.officialUrl.trim() ? 5 * 6_500 : 0;
   const news = input.useNews ? 10 * 200 : 0;
-  // The merged readiness items and the purpose section (Work IQ CLI) plus the follow-up answers a run may keep; fitPrompt caps every call.
-  const workiq = input.useWorkIq ? (WORKIQ_GEN_ASPECTS.length + 1) * (WORKIQ_ITEM_MAX_CHARS + 600) + MAX_FOLLOWUP_CHARS : 0;
+  // The merged readiness items, the purpose section and the business unit's KPI section (Work IQ CLI) plus the follow-up answers a run may keep; fitPrompt caps every call.
+  const workiq = input.useWorkIq ? (WORKIQ_GEN_ASPECTS.length + 2) * (WORKIQ_ITEM_MAX_CHARS + 600) + MAX_FOLLOWUP_CHARS : 0;
   const base = stageAPrompt(input, []).length;
   const anchor = input.companyAnchor
     ? materialSources({ ...input, materials: [], researchNote: '' }, [], [], '', new Date(), null)
@@ -1575,7 +1645,7 @@ export function prefillFromPack(pack: unknown): Partial<PackGenInput> | null {
       .map((m) => ({ name: m.name, text: m.text }))
     : [];
   return {
-    ...str('purpose'), ...str('industry'), ...str('officialUrl'), ...str('focus'), ...str('researchNote'), ...str('publicWebTopic'),
+    ...str('purpose'), ...str('industry'), ...str('officialUrl'), ...str('focus'), ...str('researchNote'), ...str('publicWebTopic'), ...str('orgUnit'),
     ...bool('useNews'), ...bool('useWorkIq'),
     ...(typeof r.workIqRounds === 'number' ? { workIqRounds: r.workIqRounds } : {}),
     materials,

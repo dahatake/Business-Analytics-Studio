@@ -1536,6 +1536,25 @@ process.stdin.on('data', (d) => {
     expect(sections.filter((s) => s.key !== 'kpi').every((s) => s.citations.length === 0)).toBe(true);
   });
 
+  it('FR-341: company-wide and business-unit KPI/OKR are searched by organisation and answered as their own sections', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+    // A unit search needs the unit's name; the name is checked like the other free text.
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['kpiUnit'], expand: true }), { workiqCli: cli('byquery') })).body).toEqual({ error: 'invalidQuestion' });
+
+    const r = await call(req('POST', '/relay/workiq/ask', { ...question, aspects: ['kpi', 'kpiCompany', 'kpiUnit'], unit: 'Logistics Division', expand: true }), { workiqCli: cli('byquery') });
+    expect(r.status).toBe(200);
+    const sections = (r.body as { sections: { key: string }[] }).sections;
+    expect(sections.map((s) => s.key)).toEqual(expect.arrayContaining(['kpi', 'kpiCompany', 'kpiUnit']));
+    const queries = calls().filter((c) => c.name === 'retrieve').map((c) => String(c.arguments.query));
+    // Searched by the organisation, not by the project: the project name narrows the search to one team's files.
+    expect(queries).toContain('What are the company-wide KPIs/OKRs of Contoso?');
+    expect(queries).toContain('Contoso company-wide KPI OKR targets mid-term plan');
+    expect(queries).toContain('What are the KPIs/OKRs of Contoso Logistics Division?');
+    expect(queries).toContain('Contoso Logistics Division division KPI OKR targets scorecard');
+  });
+
   it('words each section as the short question a person asks Copilot, plus English keywords, and synthesizes the figure sections', () => {
     // 2026-11-19 (study §13): the long compound request kept only microsoft/innovation/hub/fy27 as search terms; this question kept kpi and okr.
     const hub: WorkIqQuestion = { company: 'Microsoft', project: 'Microsoft Innovation Hub FY27', purpose: 'Hub の価値を高める', focus: '', asOf: '2026-11-19', lang: 'ja', timeZone: 'Asia/Tokyo', aspects: ['kpi', 'org', 'process'], topics: [], expand: true };
@@ -1545,6 +1564,9 @@ process.stdin.on('data', (d) => {
     const other = { ...hub, company: 'Contoso', project: 'Delivery', lang: 'en' as const };
     expect(workIqAspectQuery(other, 'kpi')).toBe('What are the KPIs/OKRs of Contoso Delivery?');
     expect(workIqTopicQuery(other, 'NSAT target')).toBe('Contoso Delivery NSAT target');
+    // FR-341: a unit that already names the company is not prefixed twice.
+    expect(workIqAspectQuery({ ...hub, unit: 'Microsoft 日本法人 営業本部' }, 'kpiUnit')).toBe('Microsoft 日本法人 営業本部のKPI/OKRは何ですか?');
+    expect(workIqAspectQuery(hub, 'kpiCompany')).toBe('Microsoftの全社のKPI/OKRは何ですか?');
     const plan = workIqPlan(hub, { sources: true, answers: true });
     expect(plan.filter((p) => p.kind === 'answer').map((p) => [p.key, p.items])).toEqual([['kpi-answer', ['kpi']], ['process-answer', ['workflow']]]);
     expect(plan.filter((p) => p.key.endsWith('-en')).map((p) => p.key)).toEqual(['kpi-en', 'org-en', 'process-en']);

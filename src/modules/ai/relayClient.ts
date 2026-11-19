@@ -677,10 +677,12 @@ export interface WorkIqQuestionInput {
   asOf: string;
   lang: 'ja' | 'en';
   timeZone: string;
+  /** FR-341: the business unit of a kpiUnit search. */
+  unit?: string;
 }
 
 /** Sections the relay can search one by one (server/workiq.ts WORKIQ_ASPECTS). */
-export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
+export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
 
 export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };

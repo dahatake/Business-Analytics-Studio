@@ -100,6 +100,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const [industry, setIndustry] = useState('');
   const [officialUrl, setOfficialUrl] = useState('');
   const [focus, setFocus] = useState('');
+  const [orgUnit, setOrgUnit] = useState('');
   const [useNews, setUseNews] = useState(true);
   const [publicWebTopic, setPublicWebTopic] = useState('');
   const [publicTopicOk, setPublicTopicOk] = useState(false);
@@ -140,6 +141,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     if (prefill || existing?.brief) {
       setPurpose(from.purpose ?? '');
       setFocus(from.focus ?? '');
+      setOrgUnit(from.orgUnit ?? '');
       setResearchNote(from.researchNote ?? '');
       setMaterials(prefill?.materials ?? []);
       setUseNews(from.useNews ?? true);
@@ -188,7 +190,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const topicInvalid = !!topic && !NewsRequest.safeParse({ company: companyName, lang, topic, topicConfirmed: true }).success;
   const anchorEnabled = audience === 'internal' && includeAnchor;
   const input: PackGenInput = {
-    companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, materials, researchNote, useNews, useWorkIq: workIqOn,
+    companyName, projectName, purpose, asOf, lang, industry, officialUrl, focus, ...(orgUnit.trim() ? { orgUnit: orgUnit.trim() } : {}), materials, researchNote, useNews, useWorkIq: workIqOn,
     ...(workIqOn ? { workIqRounds } : {}),
     ...(topic ? { publicWebTopic: topic, webTopicConfirmed: publicTopicOk } : {}),
     ...(anchorEnabled && anchorLoad.value ? { companyAnchor: anchorLoad.value, alignments: existing?.alignments ?? [] } : {}),
@@ -205,7 +207,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   useEffect(() => {
     setApproved(false);
     setCostOk(false);
-  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, materials, researchNote, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, ai.provider]);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, orgUnit, materials, researchNote, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, ai.provider]);
   useEffect(() => { setPublicTopicOk(false); }, [companyName, lang, useNews]);
   const missing = missingRequired(input);
   const targetProblem = target.kind === 'new' && companyName.trim() && projectName.trim() ? newTargetProblem(companyName, projectName) : null;
@@ -232,7 +234,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     };
     // Recomputed when what is sent or the price settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotModel, ai.copilotStatus, open]);
+  }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, orgUnit, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotModel, ai.copilotStatus, open]);
   const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
   const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget
@@ -285,7 +287,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     if (!project) return;
     s.updateCompanyProfile(project.companyId, { officialUrl, industry });
     s.updateProjectBrief(projectId, {
-      purpose, focus, asOf, researchNote, useNews, publicWebTopic, useWorkIq, workIqRounds, materialNames: materials.map((m) => m.name),
+      purpose, focus, orgUnit, asOf, researchNote, useNews, publicWebTopic, useWorkIq, workIqRounds, materialNames: materials.map((m) => m.name),
     });
   };
 
@@ -468,6 +470,9 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                       </Field>
                       <Field label={t('proj.gen.field.focus')} className="gen-wide">
                         <Input value={focus} onChange={(_, d) => setFocus(d.value)} data-testid="gen-focus" />
+                      </Field>
+                      <Field label={t('proj.gen.field.orgUnit')} hint={t('proj.gen.orgUnitHint')} className="gen-wide">
+                        <Input value={orgUnit} maxLength={80} onChange={(_, d) => setOrgUnit(d.value)} data-testid="gen-org-unit" />
                       </Field>
                     </div>
                   </section>

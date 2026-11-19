@@ -302,7 +302,8 @@ describe('FR-311 pack generation (D-12)', () => {
     });
     const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true }), d, () => {}, new AbortController().signal);
 
-    expect(queries[0]!.aspects).toHaveLength(8);
+    expect(queries[0]!.aspects).toHaveLength(9);
+    expect(queries[0]!.aspects).toContain('kpiCompany');
     // Round 1 of stage A: the model's gap first, then the first wording for each item still missing (up to 8 searches).
     expect(queries[1]!.topics![0]).toBe('kpi: NSAT の目標値');
     expect(queries[1]!.topics!.length).toBeGreaterThan(4);
@@ -319,6 +320,57 @@ describe('FR-311 pack generation (D-12)', () => {
     // The office named by city is placed on London, not where the model put it.
     expect((r.pack.entities as Record<string, unknown>[]).find((e) => e.id === 'site-hub-london')).toMatchObject({ role: 'office', lat: 51.51, lon: -0.13 });
     expect(verifyPack(r.pack).ok).toBe(true);
+  });
+
+  describe('FR-341 company and business-unit KPI/OKR', () => {
+    const unitAns = (unit: string) => [{ key: 'kpiUnit', question: `Q-${unit}`, answer: `${unit} の KPI: 出荷リードタイム 3 日`, sensitivity: 'General', fetchedAt: '2026-11-10T02:59:45.000Z', citations: [{ title: 'unit plan', url: 'https://t.example/unit' }] }];
+    const okrOf = (r: { pack: Record<string, unknown> }) => (r.pack.extensions as { okr: { orgUnits: Record<string, unknown>[]; kpis: Record<string, unknown>[] } }).okr;
+
+    it('AC-944: a typed unit is searched with the company-wide KPI/OKR in the first fan-out, and both organisations are written', async () => {
+      const queries: WorkIqQuery[] = [];
+      const d = deps([stageA, stageB], { fetchWorkIq: async (q) => { queries.push(q); return unitAns(q.unit ?? '-'); } });
+      const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true, orgUnit: '物流事業部' }), d, () => {}, new AbortController().signal);
+      expect(queries[0]).toMatchObject({ aspects: [...WORKIQ_GEN_ASPECTS, 'kpiUnit'], unit: '物流事業部', expand: true });
+      expect(queries[0]!.aspects).toContain('kpiCompany');
+      expect(queries.filter((q) => q.unit)).toHaveLength(1); // no second search for a typed unit
+      expect(d.prompts[0]).toContain('- 対象の事業部: 物流事業部\n');
+      expect(d.prompts[0]).not.toContain('orgEstimate:');
+      expect(okrOf(r).orgUnits).toEqual([
+        { id: 'org-company', level: 'legalEntity', name: 'Contoso 製作所', basis: 'userInput' },
+        { id: 'org-unit', level: 'business', name: '物流事業部', basis: 'userInput' },
+      ]);
+    });
+
+    it('AC-945: without a unit, the estimate that cites this run\'s material triggers the unit\'s own Work IQ search and is marked inferred', async () => {
+      const queries: WorkIqQuery[] = [];
+      const a = { ...stageA, orgEstimate: { level: 'business', name: '物流事業部', reason: '目的の「納期」と kpi.csv', sourceIds: ['source-doc-1'] } };
+      const d = deps([a, stageB], { fetchWorkIq: async (q) => { queries.push(q); return q.aspects?.includes('kpiUnit') && q.unit ? unitAns(q.unit) : []; } });
+      const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true }), d, () => {}, new AbortController().signal);
+      expect(queries[0]!.aspects).not.toContain('kpiUnit');
+      expect(queries[0]!.unit).toBeUndefined();
+      expect(d.prompts[0]).toContain('orgEstimate:');
+      expect(queries).toContainEqual(expect.objectContaining({ aspects: ['kpiUnit'], unit: '物流事業部' }));
+      // The unit's answer reaches stage B as material, and the scope row says the unit was estimated.
+      expect(d.prompts[1]).toContain('物流事業部 の KPI: 出荷リードタイム 3 日');
+      expect(d.prompts[1]).toContain('| source-workiq-kpi-unit |');
+      expect(d.prompts[1]).toContain('- 対象の事業部: 物流事業部（推定。根拠: source-doc-1）');
+      expect(okrOf(r).orgUnits).toContainEqual(expect.objectContaining({ id: 'org-unit', name: '物流事業部', basis: 'inferred', sourceIds: ['source-doc-1'] }));
+      expect(r.pack).not.toHaveProperty('orgEstimate');
+    });
+
+    it('AC-946: an estimate without known sources, or named as the company itself, is not used and no unit search runs', async () => {
+      for (const orgEstimate of [
+        { level: 'business', name: '物流事業部', sourceIds: ['source-invented'] },
+        { level: 'business', name: 'Contoso 製作所', sourceIds: ['source-doc-1'] },
+        { level: 'board', name: '取締役会', sourceIds: ['source-doc-1'] },
+      ]) {
+        const queries: WorkIqQuery[] = [];
+        const d = deps([{ ...stageA, orgEstimate }, stageB], { fetchWorkIq: async (q) => { queries.push(q); return []; } });
+        const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true }), d, () => {}, new AbortController().signal);
+        expect(queries.some((q) => q.unit)).toBe(false);
+        expect(okrOf(r).orgUnits.map((u) => u.id)).toEqual(['org-company']);
+      }
+    });
   });
 
   it('D-14: repeats Work IQ with the next wording until the analysis has what it needs, keeps no regressing re-run, and stops at the chosen rounds', async () => {

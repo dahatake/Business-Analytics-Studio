@@ -28,7 +28,7 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { foundryChatUrl, isFoundryV1, type FoundryConnection } from '../src/ai/foundry.ts';
 import { REQUIREMENTS, type ReadinessKey } from '../src/modules/project/analysisReadiness.ts';
-import { ASPECT_ITEMS, WORKIQ_ASPECTS, workIqAspectQuery, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
+import { ASPECT_ITEMS, WORKIQ_ASPECTS, WORKIQ_SCOPED_ASPECTS, workIqAspectQuery, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
 import { WorkIqCliService, workIqCliCommand, type WorkIqCliCommand } from '../server/workiqCli.ts';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -224,6 +224,8 @@ function analyse(msg: Json): { ok: boolean; error: string | null; stoppedReason:
 /* ---------- Plans ---------- */
 
 const ASPECT_KEYS = ASPECT_ITEMS;
+/** The 8 section searches the bench was designed around; the organisation-scoped KPI searches (FR-341) need a unit. */
+const BASE_ASPECTS = WORKIQ_ASPECTS.filter((a) => !WORKIQ_SCOPED_ASPECTS.includes(a));
 
 interface Planned { id: string; exp: string; keys: readonly ReadinessKey[]; query: string; group?: string }
 
@@ -328,7 +330,7 @@ async function run(projectId: string, concurrency: number, maxCalls: number, wit
 
   // Plan: the 8 section searches + every ladder wording (what the follow-up rounds would ask, one round at a time).
   const plan: Planned[] = [
-    ...WORKIQ_ASPECTS.map((a) => ({ id: `aspect:${a}`, exp: 'fanout', keys: ASPECT_KEYS[a], query: workIqAspectQuery(q, a) })),
+    ...BASE_ASPECTS.map((a) => ({ id: `aspect:${a}`, exp: 'fanout', keys: ASPECT_KEYS[a], query: workIqAspectQuery(q, a) })),
     ...REQUIREMENTS.flatMap((r) => r.ladder[lang].map((w, n) => ({ id: `ladder:${r.key}:${n}`, exp: 'fanout', keys: [r.key], query: workIqTopicQuery(q, w) }))),
   ];
   // Compound gap topics the model actually produced in that run (the longest three with ≥3 asks) vs. their single asks.
@@ -339,7 +341,7 @@ async function run(projectId: string, concurrency: number, maxCalls: number, wit
     plan.push({ id: `compound:${n}`, exp: 'compound', keys: [], query: workIqTopicQuery(q, t), group: `c${n}` });
     decompose(t).forEach((ask, k) => plan.push({ id: `single:${n}:${k}`, exp: 'decomposed', keys: [], query: workIqTopicQuery(q, ask), group: `c${n}` }));
   });
-  const baselineCalls = WORKIQ_ASPECTS.length + 4;
+  const baselineCalls = BASE_ASPECTS.length + 4;
   if (plan.length + baselineCalls > maxCalls) throw new Error(`plan needs ${plan.length + baselineCalls} billed calls > --max-calls ${maxCalls}`);
   console.log(`billed retrieve calls planned: ${plan.length} (session) + ${baselineCalls} (baseline) = ${plan.length + baselineCalls}`);
 
@@ -367,7 +369,7 @@ async function run(projectId: string, concurrency: number, maxCalls: number, wit
   // B. Current implementation, as the app runs it: a fresh CLI per batch, two at a time.
   const service = new WorkIqCliService({ timeoutMs: REQUEST_TIMEOUT_MS });
   const baseline: Json[] = [];
-  for (const [name, extra] of [['sections', { aspects: [...WORKIQ_ASPECTS] }], ['followup', { topics: REQUIREMENTS.slice(0, 4).map((r) => r.ladder[lang][0]!) }]] as [string, Partial<WorkIqQuestion>][]) {
+  for (const [name, extra] of [['sections', { aspects: [...BASE_ASPECTS] }], ['followup', { topics: REQUIREMENTS.slice(0, 4).map((r) => r.ladder[lang][0]!) }]] as [string, Partial<WorkIqQuestion>][]) {
     const t = process.hrtime.bigint();
     try {
       const out = await service.askSections({ ...q, ...extra });
@@ -506,7 +508,7 @@ function report(file?: string) {
 
   // Redundancy
   const byId = new Map(calls.map((c) => [c.id, c]));
-  const aspectHits = WORKIQ_ASPECTS.map((a) => byId.get(`aspect:${a}`)?.hits ?? []);
+  const aspectHits = BASE_ASPECTS.map((a) => byId.get(`aspect:${a}`)?.hits ?? []);
   const flatAspect = aspectHits.flat();
   line('\n## Redundancy');
   line(`- 8 section searches: ${flatAspect.length} hits, ${new Set(flatAspect.map((h) => h.h)).size} unique (${flatAspect.length ? Math.round(100 * (1 - new Set(flatAspect.map((h) => h.h)).size / flatAspect.length)) : 0}% duplicates)`);
@@ -519,7 +521,7 @@ function report(file?: string) {
   const cost = (h: Hit) => HEADER_CHARS + h.chars + 2;
   const baselineSel = new Map<ReadinessKey, Hit[]>(keys.map((k) => [k, []]));
   let baselineChars = 0;
-  WORKIQ_ASPECTS.forEach((a, n) => {
+  BASE_ASPECTS.forEach((a, n) => {
     const t = truncated(aspectHits[n]!);
     baselineChars += Math.min(SECTION_BUDGET, t.reduce((s, h) => s + cost(h), 0));
     for (const k of ASPECT_KEYS[a]) baselineSel.get(k)!.push(...t);
@@ -542,7 +544,7 @@ function report(file?: string) {
     }
     return { sel, chars };
   };
-  const mergeOnly = select((k) => WORKIQ_ASPECTS.filter((a) => ASPECT_KEYS[a].includes(k)).map((a) => byId.get(`aspect:${a}`)?.hits ?? []));
+  const mergeOnly = select((k) => BASE_ASPECTS.filter((a) => ASPECT_KEYS[a].includes(k)).map((a) => byId.get(`aspect:${a}`)?.hits ?? []));
   const planned = select((k) => fan.filter((c) => c.keys.includes(k)).map((c) => c.hits));
   const plannedWide = select((k) => fan.filter((c) => c.keys.includes(k)).map((c) => c.hits), 9_000);
   line('\n## Relevance at the same character budget (Foundry blind grades; 2 = directly answers, 1 = partly)');
@@ -561,7 +563,7 @@ function report(file?: string) {
   line('\n## Ladder wordings: new relevant evidence beyond the section searches');
   for (const r of REQUIREMENTS) {
     const g = run.grades[r.key] ?? {};
-    const base = new Set(WORKIQ_ASPECTS.filter((a) => ASPECT_KEYS[a].includes(r.key)).flatMap((a) => (byId.get(`aspect:${a}`)?.hits ?? []).map((h) => h.h)));
+    const base = new Set(BASE_ASPECTS.filter((a) => ASPECT_KEYS[a].includes(r.key)).flatMap((a) => (byId.get(`aspect:${a}`)?.hits ?? []).map((h) => h.h)));
     const cells = [0, 1, 2].map((n) => {
       const c = byId.get(`ladder:${r.key}:${n}`);
       if (!c) return '-';

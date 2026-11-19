@@ -26,7 +26,7 @@ const okr = {
   ],
 };
 
-async function seed(page: Page) {
+async function seed(page: Page, okrExt: Record<string, unknown> = okr) {
   await setup(page);
   await page.addInitScript(() => {
     if (sessionStorage.getItem('bas.e2e.kpiAdopt')) return;
@@ -45,7 +45,7 @@ async function seed(page: Page) {
   });
   await page.goto('/#/analysis?tab=kpi');
   await expect(page.locator('main#main')).toBeVisible();
-  const pack = { ...samplePack, extensions: { ...samplePack.extensions, okr } };
+  const pack = { ...samplePack, extensions: { ...samplePack.extensions, okr: okrExt } };
   await seedDeviceData(page, {
     'bas.packs.index': JSON.stringify({ 'pj-alpha': {
       projectId: 'pj-alpha', packId: pack.packId, company: pack.company, isSample: false,
@@ -162,4 +162,49 @@ test('Copilot drafts only open candidates, with its reasons and unverified numbe
   await expect(page.getByTestId('proj-okr-panel')).toContainText('パートナーと顧客接点を広げる');
   await expect(page.getByTestId('proj-kpi-panel').locator('table')).toContainText('Frontier Transformation Wins');
   expect(await scan(page)).toEqual([]);
+});
+
+test('FR-341: internal KPIs/OKRs show their organisation, a unit-only project is warned, and the organisation is editable (AC-948)', async ({ page }) => {
+  await seed(page, {
+    ...okr,
+    orgUnits: [
+      { id: 'org-company', level: 'legalEntity', name: 'Contoso', basis: 'userInput' },
+      { id: 'org-unit', level: 'business', name: '物流事業部', basis: 'inferred', sourceIds: ['source-doc-1'] },
+    ],
+    kpis: okr.kpis.map((k) => (k.id === 'k-reach' ? { ...k, orgUnitId: 'org-company' } : k)),
+    objectives: okr.objectives.map((o) => ({ ...o, orgUnitId: 'org-unit' })),
+  });
+  await expect(page.getByTestId('proj-pack-kpi-org-k-reach')).toHaveText('全社・事業会社: Contoso');
+  await expect(page.getByTestId('proj-pack-okr-org-o-growth')).toContainText('事業部・事業本部: 物流事業部');
+  await expect(page.getByTestId('proj-pack-okr-org-o-growth')).toContainText('推定');
+  await expect(page.getByTestId('proj-pack-kpi-org-k-wins')).toHaveText('未設定');
+  await expect(page.getByTestId('proj-kpi-unit-only')).toHaveCount(0);
+
+  // A KPI of the business unit only: the company-level measure is missing, so the BPR scope would be understated.
+  const form = page.locator('form.proj-kpi-form');
+  await page.getByTestId('proj-kpi-name').fill('構内搬送コスト率');
+  await form.getByLabel('単位', { exact: true }).fill('日');
+  await form.getByLabel('基準値', { exact: true }).fill('5');
+  await form.getByLabel('現在値', { exact: true }).fill('4');
+  await form.getByLabel('目標値', { exact: true }).fill('3');
+  await form.getByLabel('期限', { exact: true }).fill('2027-03-31');
+  await expect(page.getByTestId('proj-kpi-org-name')).toBeDisabled();
+  await page.getByTestId('proj-kpi-org-level').selectOption('business');
+  await page.getByTestId('proj-kpi-org-name').fill('物流事業部');
+  await form.getByRole('button', { name: '追加' }).click();
+  const row = page.getByTestId('proj-kpi-panel').locator('tr', { hasText: '構内搬送コスト率' });
+  await expect(row).toContainText('事業部・事業本部: 物流事業部');
+  await expect(page.getByTestId('proj-kpi-unit-only')).toContainText('全社');
+  expect(await scan(page)).toEqual([]);
+
+  // Re-scoping it to the company clears the warning; the choice is kept across a reload.
+  await row.getByRole('button', { name: '構内搬送コスト率 を編集' }).click();
+  await expect(page.getByTestId('proj-kpi-org-level')).toHaveValue('business');
+  await page.getByTestId('proj-kpi-org-level').selectOption('legalEntity');
+  await page.getByTestId('proj-kpi-org-name').fill('Contoso');
+  await form.getByRole('button', { name: '保存' }).click();
+  await expect(row).toContainText('全社・事業会社: Contoso');
+  await expect(page.getByTestId('proj-kpi-unit-only')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('proj-kpi-panel').locator('tr', { hasText: '構内搬送コスト率' })).toContainText('全社・事業会社: Contoso');
 });

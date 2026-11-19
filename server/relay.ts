@@ -402,7 +402,7 @@ const WORKIQ_STATUS: Record<WorkIqErrorCode, number> = {
   workiqEulaRequired: 412, workiqCliMissing: 503,
 };
 
-const WORKIQ_ASK_FIELDS = new Set(['provider', 'company', 'project', 'purpose', 'focus', 'asOf', 'lang', 'timeZone', 'aspects', 'topics', 'expand']);
+const WORKIQ_ASK_FIELDS = new Set(['provider', 'company', 'project', 'purpose', 'focus', 'asOf', 'lang', 'timeZone', 'aspects', 'topics', 'expand', 'unit']);
 
 /** D-14: the providers whose customer pack may use Work IQ material (Microsoft Foundry, and GitHub Copilot since 2026-11-19). */
 const workIqProvider = (value: unknown): value is Provider => (value === 'foundry' || value === 'copilotSdk') && workIqAllowedFor(value);

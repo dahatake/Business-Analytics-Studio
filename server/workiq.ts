@@ -130,8 +130,14 @@ export function settingsSignature(s: WorkIqSettings): string {
  * hits that all answered "what is this about"; one targeted search per section brings KPI definitions, process
  * hand-offs, data assets and locations that a combined question never reaches.
  */
-export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'] as const;
+export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
+/**
+ * FR-341: KPI/OKR searches scoped to one organisation — the company as a whole (company name only, never the project)
+ * and the business unit (`unit`). They stay sections of their own even with `expand`, so the pack can tell which
+ * organisation a KPI belongs to; merged into the kpi section they would lose it.
+ */
+export const WORKIQ_SCOPED_ASPECTS: readonly WorkIqAspect[] = ['kpiCompany', 'kpiUnit'];
 /**
  * Follow-up searches built from the generator's own "what is missing" list (one round per stage). D-15: 4 → 8, every
  * round of the measured runs used all 4.
@@ -153,6 +159,8 @@ export interface WorkIqQuestion {
   aspects: WorkIqAspect[];
   /** Follow-up searches for missing items (short phrases, no instructions). */
   topics: string[];
+  /** FR-341: the business unit the kpiUnit search is about ('' = none; kpiUnit then is refused). */
+  unit?: string;
   /**
    * Plan every readiness ladder wording up front and merge the searches per readiness item (Work IQ CLI route only;
    * docs/workiq-agentic-retrieval-study.md). The relay builds those searches itself from analysisReadiness.
@@ -178,13 +186,14 @@ export function workIqSearches(q: WorkIqQuestion): { key: string; query: string 
 /** The readiness items each section search feeds (the pack prompt's "use each where it belongs" rule). */
 export const ASPECT_ITEMS: Record<WorkIqAspect, readonly ReadinessKey[]> = {
   org: ['org'], people: ['org'], locations: ['locations'], process: ['workflow'], data: ['dataCatalog'],
-  kpi: ['kpi'], engagements: ['customers', 'engagements'], issues: ['issues'],
+  kpi: ['kpi'], engagements: ['customers', 'engagements'], issues: ['issues'], kpiCompany: ['kpi'], kpiUnit: ['kpi'],
 };
 
 export interface PlannedSearch {
   key: string;
   query: string;
-  kind: 'aspect' | 'ladder' | 'purpose' | 'topic' | 'answer';
+  /** scoped = a WORKIQ_SCOPED_ASPECTS search, answered as its own section like a topic. */
+  kind: 'aspect' | 'scoped' | 'ladder' | 'purpose' | 'topic' | 'answer';
   items: readonly ReadinessKey[];
   /** The ladder wording behind a `ladder` search, as packGenerate's follow-up rounds would ask it. */
   wording?: string;
@@ -251,9 +260,10 @@ export function purposeTopics(q: Pick<WorkIqQuestion, 'company' | 'project' | 'p
 export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?: boolean; answers?: boolean } = {}): PlannedSearch[] {
   const ladder = q.expand && opts.ladder !== false;
   const purpose = q.expand ? purposeTopics(q) : [];
+  const kind = (a: WorkIqAspect): PlannedSearch['kind'] => (WORKIQ_SCOPED_ASPECTS.includes(a) ? 'scoped' : 'aspect');
   return [
-    ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })),
-    ...(ladder ? q.aspects.map((a): PlannedSearch => ({ key: `${a}-en`, query: workIqAspectKeywords(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })) : []),
+    ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: kind(a), items: ASPECT_ITEMS[a] })),
+    ...(ladder ? q.aspects.map((a): PlannedSearch => ({ key: `${a}-en`, query: workIqAspectKeywords(q, a), kind: kind(a), items: ASPECT_ITEMS[a] })) : []),
     ...(q.expand && opts.answers ? q.aspects.filter((a) => WORKIQ_ANSWER_ASPECTS.includes(a)).map((a): PlannedSearch => ({ key: `${a}-answer`, query: workIqAspectQuery(q, a), kind: 'answer', items: ASPECT_ITEMS[a] })) : []),
     ...(ladder ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
     ...purpose.map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })),
@@ -281,6 +291,7 @@ export function workIqSubject(q: Pick<WorkIqQuestion, 'company' | 'project'>): s
  */
 export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): string {
   const s = workIqSubject(q);
+  const unit = workIqUnitSubject(q);
   const text: Record<WorkIqAspect, string> = q.lang === 'ja'
     ? {
       org: `${s}の組織体制と役割は何ですか?`,
@@ -291,6 +302,8 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
       people: `${s}の主要な関係者と役割は誰ですか?`,
       engagements: `${s}の顧客事例と案件は何ですか?`,
       issues: `${s}の課題は何ですか?`,
+      kpiCompany: `${q.company}の全社のKPI/OKRは何ですか?`,
+      kpiUnit: `${unit}のKPI/OKRは何ですか?`,
     }
     : {
       org: `What is the organisation structure of ${s} and its roles?`,
@@ -301,8 +314,20 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
       people: `Who are the key people of ${s} and their roles?`,
       engagements: `What are the customer engagements and opportunities of ${s}?`,
       issues: `What are the issues of ${s}?`,
+      kpiCompany: `What are the company-wide KPIs/OKRs of ${q.company}?`,
+      kpiUnit: `What are the KPIs/OKRs of ${unit}?`,
     };
   return text[aspect];
+}
+
+/**
+ * FR-341: the business unit as search words — company and unit, without the project, so the search reaches the unit's
+ * own scorecard rather than the project's. A unit that already names the company is used as it is.
+ */
+export function workIqUnitSubject(q: Pick<WorkIqQuestion, 'company' | 'project' | 'unit'>): string {
+  const unit = (q.unit ?? '').trim();
+  if (!unit) return workIqSubject(q);
+  return unit.toLowerCase().includes(q.company.toLowerCase()) ? unit : `${q.company} ${unit}`;
 }
 
 /**
@@ -310,8 +335,10 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
  * into English search terms; given English keywords it keeps every one (2026-11-19: "… organization team structure
  * roles", "… engagement process request intake delivery handoff"), which the Japanese question alone may not.
  */
-export function workIqAspectKeywords(q: Pick<WorkIqQuestion, 'company' | 'project'>, aspect: WorkIqAspect): string {
-  const words: Record<WorkIqAspect, string> = {
+export function workIqAspectKeywords(q: Pick<WorkIqQuestion, 'company' | 'project' | 'unit'>, aspect: WorkIqAspect): string {
+  if (aspect === 'kpiCompany') return `${q.company} company-wide KPI OKR targets mid-term plan`;
+  if (aspect === 'kpiUnit') return `${workIqUnitSubject(q)} division KPI OKR targets scorecard`;
+  const words: Record<Exclude<WorkIqAspect, 'kpiCompany' | 'kpiUnit'>, string> = {
     org: 'organization team structure roles',
     kpi: 'KPI OKR targets scorecard',
     process: 'engagement process request intake delivery handoff',
@@ -351,15 +378,18 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
   const project = text('project', true);
   const purpose = text('purpose', true);
   const focus = text('focus', false);
+  const unit = text('unit', false);
   const asOf = typeof o.asOf === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.asOf) && !Number.isNaN(Date.parse(o.asOf)) ? o.asOf : null;
   const lang = o.lang === 'ja' || o.lang === 'en' ? o.lang : null;
   const timeZone = typeof o.timeZone === 'string' && o.timeZone.length <= 64 && TIME_ZONE.test(o.timeZone) ? o.timeZone : null;
-  if (company === null || project === null || purpose === null || focus === null || !asOf || !lang || !timeZone) return null;
+  if (company === null || project === null || purpose === null || focus === null || unit === null || !asOf || !lang || !timeZone) return null;
   let aspects: WorkIqAspect[] = [];
   if (o.aspects !== undefined) {
     if (!Array.isArray(o.aspects) || o.aspects.length > WORKIQ_ASPECTS.length || !o.aspects.every((a) => (WORKIQ_ASPECTS as readonly unknown[]).includes(a))) return null;
     aspects = [...new Set(o.aspects as WorkIqAspect[])];
   }
+  // A unit search without a unit would silently search the project again under the unit's name.
+  if (aspects.includes('kpiUnit') && !unit) return null;
   let topics: string[] = [];
   if (o.topics !== undefined) {
     if (!Array.isArray(o.topics) || o.topics.length > MAX_WORKIQ_TOPICS || !o.topics.every((t) => typeof t === 'string')) return null;
@@ -367,7 +397,7 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
     if (topics.some((t) => t.length > MAX_TOPIC_CHARS)) return null;
   }
   if (o.expand !== undefined && typeof o.expand !== 'boolean') return null;
-  return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics, expand: o.expand === true };
+  return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics, expand: o.expand === true, ...(unit ? { unit } : {}) };
 }
 
 export function workIqPrompt(q: WorkIqQuestion): string {

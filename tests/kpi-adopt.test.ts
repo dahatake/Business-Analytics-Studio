@@ -117,6 +117,26 @@ describe('adopting internal OKRs as drafts', () => {
     }
   });
 
+  it('FR-341: an adopted KPI/OKR keeps the organisation of its candidate, with the estimate mark', () => {
+    const withOrg = {
+      ...ext,
+      orgUnits: [{ id: 'org-unit', level: 'business' as const, name: '物流事業部', basis: 'inferred' as const, sourceIds: ['s1'] }],
+      kpis: ext.kpis.map((k) => (k.id === 'k-wins' ? { ...k, orgUnitId: 'org-unit' } : k)),
+    };
+    const { drafts } = addOkrDrafts(['okr.kpi:k-wins'], withOrg, empty(), emptyDrafts(), 'ja');
+    const org = { level: 'business', name: '物流事業部', inferred: true };
+    expect(drafts.kpis[0]!.org).toEqual(org);
+    expect(drafts.okrs[0]!.org).toEqual(org);
+    const ok = saveOkrDraft(drafts.okrs[0]!.id, empty(), { ...drafts, kpis: drafts.kpis.map((k) => ({ ...k, baseline: '0', current: '2' })) });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.data.kpis[0]!.org).toEqual(org);
+      expect(ok.data.okrs[0]!.org).toEqual(org);
+    }
+    // A candidate without an organisation stays without one.
+    expect(addKpiDrafts(['okr.kpi:k-reach'], withOrg, empty(), emptyDrafts(), 'ja').drafts.kpis[0]).not.toHaveProperty('org');
+  });
+
   it('measures an unlinked key result that restates an internal KPI by that KPI (PARAM-174)', () => {
     // Real packs restate KPIs as key results without kpiId, and list some KPIs twice.
     const real = {

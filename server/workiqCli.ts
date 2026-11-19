@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WORKIQ_ITEM_MAX_CHARS, WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
 import { REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
-import { WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer, type WorkIqSource } from './workiq.ts';
+import { WORKIQ_SCOPED_ASPECTS, WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer, type WorkIqSource } from './workiq.ts';
 
 /**
  * D-14 (user, 2026-11-11), second route: Microsoft's own Work IQ CLI (`@microsoft/workiq`) as a local MCP stdio server.
@@ -1063,11 +1063,16 @@ export class WorkIqCliService {
       };
       if (!question.expand) return plan.map((_, i) => single(i));
       const items: ItemSearches[] = REQUIREMENTS.map((req) => {
-        const idx = plan.flatMap((p, i) => (p.kind !== 'answer' && p.items.includes(req.key) ? [i] : []));
+        const idx = plan.flatMap((p, i) => (p.kind !== 'answer' && p.kind !== 'scoped' && p.items.includes(req.key) ? [i] : []));
         return { key: req.key, queries: idx.map((i) => plan[i]!.query), wordings: idx.flatMap((i) => (plan[i]!.wording ? [plan[i]!.wording!] : [])), results: idx.map((i) => raw[i]!) };
       });
       const purposeIdx = plan.flatMap((p, i) => (p.kind === 'purpose' ? [i] : []));
       if (purposeIdx.length) items.push({ key: 'purpose', queries: purposeIdx.map((i) => plan[i]!.query), wordings: [], results: purposeIdx.map((i) => raw[i]!) });
+      // FR-341: the organisation-scoped KPI searches (question and keywords) are one section per organisation.
+      for (const a of question.aspects.filter((x) => WORKIQ_SCOPED_ASPECTS.includes(x))) {
+        const idx = plan.flatMap((p, i) => (p.kind === 'scoped' && (p.key === a || p.key === `${a}-en`) ? [i] : []));
+        items.push({ key: a, queries: idx.map((i) => plan[i]!.query), wordings: [], results: idx.map((i) => raw[i]!) });
+      }
       const merged = mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS);
       const reads = deepReadPlan(merged);
       if (reads.length) {

@@ -1,6 +1,6 @@
 import type { CustomerPack, EntityOf } from '../../data/schema.ts';
 import { OkrExtension } from '../../data/extensionSchemas.ts';
-import type { KpiData, KpiDef, Okr } from './model.ts';
+import type { KpiData, KpiDef, KpiOrg, Okr, OrgLevel } from './model.ts';
 
 /** PARAM-044: achievement (%) at or above which a KPI reads 「達成」. */
 export const ACHIEVED_MIN_PCT = 100;
@@ -60,14 +60,44 @@ export function packKpis(pack: CustomerPack, today = new Date()): KpiData {
     .map((k) => ({ id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline, origin: 'customerDefined' as const, sourceIds: k.sourceIds }));
   const ids = new Set(kpis.map((k) => k.id));
   const ext = OkrExtension.safeParse(pack.extensions?.okr);
+  const units = ext.success ? ext.data.orgUnits : undefined;
+  // FR-341: a KPI entity takes the organisation of the extensions.okr KPI with its id, else of the objectives it measures when they agree.
+  for (const k of kpis) {
+    const own = ext.success ? ext.data.kpis.find((x) => x.id === k.id)?.orgUnitId : undefined;
+    const viaObjectives = ext.success ? [...new Set(ext.data.objectives.filter((o) => o.orgUnitId && o.keyResults.some((kr) => kr.kpiId === k.id)).map((o) => o.orgUnitId))] : [];
+    const org = orgOf(units, own ?? (viaObjectives.length === 1 ? viaObjectives[0] : undefined));
+    if (org) k.org = org;
+  }
   const okrs: Okr[] = (ext.success ? ext.data.objectives : []).flatMap((o) => {
     const keyResults = o.keyResults
       .map((kr, i) => ({ id: `${o.id}-kr-${i + 1}`, text: kr.text, kpiId: kr.kpiId ?? '' }))
       .filter((kr) => ids.has(kr.kpiId));
     const companyObjectiveIds = companyObjectiveIdsOf(o);
-    return keyResults.length ? [{ id: o.id, objective: o.objective, keyResults, origin: 'customerDefined' as const, ...(companyObjectiveIds.length ? { companyObjectiveIds } : {}) }] : [];
+    const org = orgOf(units, o.orgUnitId);
+    return keyResults.length ? [{ id: o.id, objective: o.objective, keyResults, origin: 'customerDefined' as const, ...(companyObjectiveIds.length ? { companyObjectiveIds } : {}), ...(org ? { org } : {}) }] : [];
   });
   return { kpis, okrs };
+}
+
+type OrgUnitLike = { id: string; level: OrgLevel; name: string; basis: string };
+
+/** FR-341: the organisation an extensions.okr item names by orgUnitId, as the Project stores it. */
+export function orgOf(units: readonly OrgUnitLike[] | undefined, id: string | undefined): KpiOrg | undefined {
+  const u = id ? units?.find((x) => x.id === id) : undefined;
+  return u ? { level: u.level, name: u.name, ...(u.basis === 'inferred' ? { inferred: true } : {}) } : undefined;
+}
+
+/** Company-level organisations: what a business unit's KPI rolls up to. */
+const COMPANY_LEVELS: ReadonlySet<OrgLevel> = new Set(['group', 'legalEntity']);
+
+/**
+ * FR-341: a project whose KPIs/OKRs all belong to a business unit or department has no company-level measure, so a BPR
+ * that crosses units would be judged by one unit's numbers and its scope and benefit understated. True only when at
+ * least one item names a unit-level organisation and none names the company or group (unset items are not counted).
+ */
+export function lacksCompanyKpi(data: KpiData): boolean {
+  const levels = [...data.kpis, ...data.okrs].flatMap((x) => (x.org ? [x.org.level] : []));
+  return levels.some((l) => !COMPANY_LEVELS.has(l)) && !levels.some((l) => COMPANY_LEVELS.has(l));
 }
 
 /** Demo KPIs come from the pack's KPIs; the OKRs link them. New projects start empty. */

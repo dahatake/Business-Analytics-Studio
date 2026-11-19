@@ -1,8 +1,8 @@
 import type { OkrExtension } from '../../data/extensionSchemas.ts';
 import type { Lang } from '../../i18n/core.ts';
 import { loc, type Localizable } from '../../state/text.ts';
-import { companyObjectiveIdsOf, validateKpi, type KpiField } from './kpiOkr.ts';
-import { newId, type KpiData, type KpiDef, type Okr } from './model.ts';
+import { companyObjectiveIdsOf, orgOf, validateKpi, type KpiField } from './kpiOkr.ts';
+import { newId, type KpiData, type KpiDef, type KpiOrg, type Okr } from './model.ts';
 
 /**
  * FR-325: adopting the internal KPIs/OKRs that Work IQ found (extensions.okr) as this project's KPIs/OKRs.
@@ -10,7 +10,7 @@ import { newId, type KpiData, type KpiDef, type Okr } from './model.ts';
  * and the user completes and saves it. Numbers never come from AI; Copilot only chooses candidates and words objectives.
  */
 
-type Ext = Pick<OkrExtension, 'kpis' | 'objectives'>;
+type Ext = Pick<OkrExtension, 'kpis' | 'objectives'> & Partial<Pick<OkrExtension, 'orgUnits'>>;
 type ExtKpi = Ext['kpis'][number];
 type ExtObjective = Ext['objectives'][number];
 
@@ -28,6 +28,8 @@ export interface KpiDraft {
   target: string;
   deadline: string;
   sourceIds: string[];
+  /** FR-341: the organisation the candidate belongs to (extensions.okr orgUnitId). */
+  org?: KpiOrg;
   /** The candidate's own wording, shown beside the fields so the user can check every number. */
   original: { target?: string; current?: string; period?: string; definition?: string };
   notes: DraftNote[];
@@ -44,6 +46,7 @@ export interface OkrDraft {
   keyResults: { id: string; text: string; kpiId: string }[];
   sourceIds: string[];
   companyObjectiveIds: string[];
+  org?: KpiOrg;
   by: 'user' | 'copilot';
   reason?: string;
   unverified?: string[];
@@ -119,6 +122,7 @@ interface KpiSource {
   period?: string;
   definition?: string;
   sourceIds: string[];
+  org?: KpiOrg;
 }
 
 function kpiDraft(src: KpiSource, by: KpiDraft['by'], reason?: string, unverified?: string[]): KpiDraft {
@@ -141,6 +145,7 @@ function kpiDraft(src: KpiSource, by: KpiDraft['by'], reason?: string, unverifie
     target: target.value,
     deadline,
     sourceIds: src.sourceIds,
+    ...(src.org ? { org: src.org } : {}),
     original: {
       ...(src.target ? { target: [src.target, src.unit].filter(Boolean).join(' ') } : {}),
       ...(src.current ? { current: src.current } : {}),
@@ -158,10 +163,11 @@ function kpiDraft(src: KpiSource, by: KpiDraft['by'], reason?: string, unverifie
 
 const txt = (v: Localizable | undefined, lang: Lang) => (v === undefined ? '' : loc(v, lang));
 
-function kpiSourceOfExt(k: ExtKpi, lang: Lang): KpiSource {
+function kpiSourceOfExt(k: ExtKpi, lang: Lang, ext: Ext): KpiSource {
+  const org = orgOf(ext.orgUnits, k.orgUnitId);
   return {
     candidateId: kpiCandidateId(k.id), name: txt(k.name, lang), target: k.target, unit: k.unit, current: k.current, period: k.period,
-    definition: txt(k.definition, lang) || undefined, sourceIds: k.sourceIds ?? [],
+    definition: txt(k.definition, lang) || undefined, sourceIds: k.sourceIds ?? [], ...(org ? { org } : {}),
   };
 }
 
@@ -205,11 +211,11 @@ function matchKpi(krText: string, ext: Ext, data: KpiData, drafts: KpiDrafts | u
 function krKpi(o: ExtObjective, i: number, ext: Ext, data: KpiData, lang: Lang, drafts?: KpiDrafts): KrKpi {
   const kr = o.keyResults[i]!;
   const linked = kr.kpiId ? ext.kpis.find((k) => k.id === kr.kpiId) : matchKpi(`${allText(kr.text)} ${kr.target ?? ''}`, ext, data, drafts);
-  if (linked) return { kind: 'candidate', source: kpiSourceOfExt(linked, lang) };
+  if (linked) return { kind: 'candidate', source: kpiSourceOfExt(linked, lang, ext) };
   if (kr.kpiId && data.kpis.some((k) => k.id === kr.kpiId)) return { kind: 'existing', kpiId: kr.kpiId };
   return {
     kind: 'candidate',
-    source: { candidateId: krCandidateId(o.id, i), name: txt(kr.text, lang), target: kr.target ?? txt(kr.text, lang), period: kr.period, sourceIds: o.sourceIds ?? [] },
+    source: { candidateId: krCandidateId(o.id, i), name: txt(kr.text, lang), target: kr.target ?? txt(kr.text, lang), period: kr.period, sourceIds: o.sourceIds ?? [], ...orgField(orgOf(ext.orgUnits, o.orgUnitId)) },
   };
 }
 
@@ -254,6 +260,7 @@ export interface AddOptions {
 }
 
 const cloneDrafts = (d: KpiDrafts): KpiDrafts => ({ kpis: [...d.kpis], okrs: [...d.okrs] });
+const orgField = (org: KpiOrg | undefined) => (org ? { org } : {});
 
 /**
  * [KPIに追加する]: each selected KPI becomes a KPI draft; a selected objective contributes the KPIs of its key results.
@@ -266,7 +273,7 @@ export function addKpiDrafts(candidateIds: readonly string[], ext: Ext, data: Kp
   const sources: KpiSource[] = [];
   for (const cid of candidateIds) {
     const k = ext.kpis.find((x) => kpiCandidateId(x.id) === cid);
-    if (k) sources.push(kpiSourceOfExt(k, lang));
+    if (k) sources.push(kpiSourceOfExt(k, lang, ext));
     const o = ext.objectives.find((x) => objectiveCandidateId(x.id) === cid);
     if (o) o.keyResults.forEach((_, i) => { const r = krKpi(o, i, ext, data, lang, next); if (r.kind === 'candidate') sources.push(r.source); else skipped++; });
   }
@@ -304,18 +311,18 @@ export function addOkrDrafts(candidateIds: readonly string[], ext: Ext, data: Kp
       next.okrs.push({
         id: newId('okr'), candidateId: cid, objective: txt(o.objective, lang),
         keyResults: keyResults.length ? keyResults : [{ id: newId('kr'), text: '', kpiId: '' }],
-        sourceIds: o.sourceIds ?? [], companyObjectiveIds: companyObjectiveIdsOf(o), ...meta,
+        sourceIds: o.sourceIds ?? [], companyObjectiveIds: companyObjectiveIdsOf(o), ...orgField(orgOf(ext.orgUnits, o.orgUnitId)), ...meta,
       });
       added++;
       continue;
     }
     const k = ext.kpis.find((x) => kpiCandidateId(x.id) === cid);
     if (k) {
-      const src = kpiSourceOfExt(k, lang);
+      const src = kpiSourceOfExt(k, lang, ext);
       next.okrs.push({
         id: newId('okr'), candidateId: cid, objective: src.definition ?? src.name,
         keyResults: [{ id: newId('kr'), text: krText(src.name, [k.target, k.unit].filter(Boolean).join(' ') || undefined), kpiId: resolveKpi({ kind: 'candidate', source: src }, data, next, by) }],
-        sourceIds: k.sourceIds ?? [], companyObjectiveIds: [], ...meta,
+        sourceIds: k.sourceIds ?? [], companyObjectiveIds: [], ...orgField(src.org), ...meta,
       });
       added++;
     }
@@ -328,7 +335,7 @@ export function addOkrDrafts(candidateIds: readonly string[], ext: Ext, data: Kp
 export function draftToKpi(d: KpiDraft): KpiDef {
   return {
     id: d.id, name: d.name.trim(), unit: d.unit.trim(), baseline: Number(d.baseline), current: Number(d.current), target: Number(d.target), deadline: d.deadline,
-    origin: 'customerDefined', ...(d.sourceIds.length ? { sourceIds: d.sourceIds } : {}), adoptedFrom: d.candidateId,
+    origin: 'customerDefined', ...(d.sourceIds.length ? { sourceIds: d.sourceIds } : {}), adoptedFrom: d.candidateId, ...orgField(d.org),
   };
 }
 
@@ -373,6 +380,7 @@ export function saveOkrDraft(id: string, data: KpiData, drafts: KpiDrafts): Save
     origin: 'customerDefined', adoptedFrom: o.candidateId,
     ...(o.companyObjectiveIds.length ? { companyObjectiveIds: o.companyObjectiveIds } : {}),
     ...(o.sourceIds.length ? { sourceIds: o.sourceIds } : {}),
+    ...orgField(o.org),
   };
   return {
     ok: true,
@@ -564,12 +572,14 @@ export function applyCopilotPick(pick: CopilotPick, input: DraftPromptInput): Ad
     const next = cloneDrafts(drafts);
     const keyResults = o.kpiCandidateIds.map((cid) => {
       const k = ext.kpis.find((x) => kpiCandidateId(x.id) === cid)!;
-      const src = kpiSourceOfExt(k, lang);
+      const src = kpiSourceOfExt(k, lang, ext);
       return { id: newId('kr'), text: krText(src.name, [k.target, k.unit].filter(Boolean).join(' ') || undefined), kpiId: resolveKpi({ kind: 'candidate', source: src }, data, next, 'copilot') };
     });
     const sourceIds = [...new Set(o.kpiCandidateIds.flatMap((cid) => ext.kpis.find((x) => kpiCandidateId(x.id) === cid)?.sourceIds ?? []))];
+    const orgIds = [...new Set(o.kpiCandidateIds.map((cid) => ext.kpis.find((x) => kpiCandidateId(x.id) === cid)?.orgUnitId))];
     next.okrs.push({
       id: newId('okr'), candidateId, objective: o.objective, keyResults, sourceIds, companyObjectiveIds: [], by: 'copilot',
+      ...orgField(orgIds.length === 1 ? orgOf(ext.orgUnits, orgIds[0]) : undefined),
       ...(o.reason ? { reason: o.reason } : {}), ...(o.unverified.length ? { unverified: o.unverified } : {}),
     });
     drafts = next;

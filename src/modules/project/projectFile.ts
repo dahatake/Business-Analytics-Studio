@@ -12,6 +12,7 @@ import {
 const Brief = z.object({
   purpose: z.string().optional(),
   focus: z.string().optional(),
+  orgUnit: z.string().optional(),
   asOf: z.string().optional(),
   researchNote: z.string().optional(),
   useNews: z.boolean().optional(),

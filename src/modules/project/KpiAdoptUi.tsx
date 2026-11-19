@@ -19,8 +19,8 @@ import {
   objectiveCandidateId, okrAdoptState, openCandidates, parseKpiDraftResponse, saveAllDrafts, saveKpiDraft, saveOkrDraft,
   type AddResult, type KpiDraft, type KpiDrafts, type OkrDraft, type SaveError, type SaveResult,
 } from './kpiAdopt.ts';
-import type { KpiField } from './kpiOkr.ts';
-import { newId, type KpiData } from './model.ts';
+import { orgOf, type KpiField } from './kpiOkr.ts';
+import { newId, type KpiData, type KpiOrg } from './model.ts';
 import { kpisForScope, useKpiDrafts, useKpis } from './stores.ts';
 
 /** Save errors are shared: saving an OKR draft can reveal missing fields on the KPI drafts it links to. */
@@ -197,6 +197,19 @@ export function OkrDraftList(props: DraftListProps) {
 
 type Notice = { intent: 'success' | 'warning' | 'error'; text: string; settings?: boolean };
 
+/** FR-341: the organisation a KPI/OKR belongs to; an estimated one is marked until the user confirms it. */
+export function OrgBadge({ org, testId }: { org?: KpiOrg; testId: string }) {
+  const { t } = useI18n();
+  if (!org) return <span className="muted" data-testid={testId}>{t('proj.org.unset')}</span>;
+  const label = `${t(`proj.org.level.${org.level}`)}${org.name ? `: ${org.name}` : ''}`;
+  return (
+    <span data-testid={testId} data-level={org.level}>
+      <Badge appearance="outline" color="brand">{label}</Badge>
+      {org.inferred && <Badge appearance="tint" color="warning" title={t('proj.org.inferredHint')}>{t('proj.org.inferred')}</Badge>}
+    </span>
+  );
+}
+
 /**
  * Internal KPIs/OKRs found by Work IQ (extensions.okr), shown as found. FR-325: selected items become KPI/OKR drafts,
  * and [Copilotでドラフト作成] lets the configured AI choose the candidates that fit the project purpose.
@@ -316,6 +329,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
               <tr>
                 <th scope="col">{t('proj.adopt.selectCol')}</th>
                 <th scope="col">{t('proj.kpi.name')}</th>
+                <th scope="col">{t('proj.org.label')}</th>
                 <th scope="col">{t('proj.packOkr.definition')}</th>
                 <th scope="col">{t('proj.kpi.target')}</th>
                 <th scope="col">{t('proj.kpi.current')}</th>
@@ -331,6 +345,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
                   <tr key={k.id}>
                     <td><Checkbox checked={selected.includes(cid)} onChange={(_, v) => toggle(cid, v.checked === true)} aria-label={t('proj.adopt.select', { name: text(k.name) })} data-testid={`proj-adopt-select-${k.id}`} /></td>
                     <th scope="row">{text(k.name)} {stateBadges(cid)}</th>
+                    <td><OrgBadge org={orgOf(ext.orgUnits, k.orgUnitId)} testId={`proj-pack-kpi-org-${k.id}`} /></td>
                     <td>{text(k.definition)}</td>
                     <td>{[k.target, k.unit].filter(Boolean).join(' ')}</td>
                     <td>{k.current ?? t('proj.packOkr.unmeasured')}</td>
@@ -355,6 +370,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
                   <div className="proj-okr-head">
                     <strong>{text(o.objective)}</strong>
                     {o.owner !== undefined && <span className="muted">{text(o.owner)}</span>}
+                    <OrgBadge org={orgOf(ext.orgUnits, o.orgUnitId)} testId={`proj-pack-okr-org-${o.id}`} />
                     {stateBadges(cid)}
                   </div>
                 </div>

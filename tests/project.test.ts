@@ -10,7 +10,7 @@ import { highlightedScore, layoutPlot } from '../src/modules/project/analysisPlo
 import { nextDot } from '../src/modules/project/analysisPlotRender.ts';
 import { describeInsight } from '../src/modules/project/analysisText.ts';
 import { translate } from '../src/i18n/core.ts';
-import { achievementPct, demoKpis, kpiStatusText, okrPct, packKpis, statusForPct, validateKpi } from '../src/modules/project/kpiOkr.ts';
+import { achievementPct, demoKpis, kpiStatusText, lacksCompanyKpi, okrPct, packKpis, statusForPct, validateKpi } from '../src/modules/project/kpiOkr.ts';
 import {
   addRecord, addTheme, adoptSuggestion, applyLens, deleteTheme, DEMO_GLOSSARY, demoDiscussion, DiscussionEditor, parseGlossary,
   themeCounts, treeOrder, validateRecord, validateTheme,
@@ -307,6 +307,29 @@ describe('KPI status thresholds (PARAM-044 / PARAM-045)', () => {
     expect(d.kpis.map((k) => k.id)).toEqual(samplePack.entities.filter((e) => e.kind === 'kpi').map((e) => e.id));
     expect(d.kpis.every((k) => k.deadline === '2027-05-10')).toBe(true);
     expect(d.okrs).toEqual([{ id: 'okr-linked', objective: '顧客満足を高める',     keyResults: [{ id: 'okr-linked-kr-1', text: 'NSAT を上げる', kpiId }], origin: 'customerDefined' }]);
+  });
+
+  it('FR-341: carries the organisation of extensions.okr to KPIs and OKRs, and flags unit-only KPIs (AC-947)', () => {
+    const kpiId = samplePack.entities.find((e) => e.kind === 'kpi')!.id;
+    const orgUnits = [
+      { id: 'org-company', level: 'legalEntity', name: 'Contoso', basis: 'userInput' },
+      { id: 'org-unit', level: 'business', name: '物流事業部', basis: 'inferred', sourceIds: ['s1'] },
+    ];
+    const raw = { ...samplePack, extensions: { ...samplePack.extensions, okr: { orgUnits, kpis: [], objectives: [
+      { id: 'okr-unit', objective: '出荷を速める', orgUnitId: 'org-unit', keyResults: [{ text: 'NSAT を上げる', kpiId }] },
+      { id: 'okr-co', objective: '全社の顧客満足', orgUnitId: 'org-company', keyResults: [{ text: '全社 NSAT', kpiId }] },
+    ] } } };
+    const d = packKpis(raw, new Date('2026-05-10T00:00:00Z'));
+    expect(d.okrs.map((o) => [o.id, o.org])).toEqual([
+      ['okr-unit', { level: 'business', name: '物流事業部', inferred: true }],
+      ['okr-co', { level: 'legalEntity', name: 'Contoso' }],
+    ]);
+    // Two objectives of different organisations measure it: the KPI's own organisation is left for the user.
+    expect(d.kpis.find((k) => k.id === kpiId)!.org).toBeUndefined();
+    expect(lacksCompanyKpi(d)).toBe(false);
+    expect(lacksCompanyKpi({ ...d, okrs: d.okrs.filter((o) => o.id === 'okr-unit') })).toBe(true);
+    // Items without an organisation are not evidence either way.
+    expect(lacksCompanyKpi({ kpis: d.kpis, okrs: [] })).toBe(false);
   });
 });
 

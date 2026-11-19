@@ -43,6 +43,8 @@ export interface Company extends CompanyProfile {
 export interface ProjectBrief {
   purpose?: string;
   focus?: string;
+  /** FR-341: the business unit the project is about; empty lets generation estimate it from the material. */
+  orgUnit?: string;
   asOf?: string;
   researchNote?: string;
   useNews?: boolean;

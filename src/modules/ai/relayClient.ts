@@ -2,6 +2,7 @@ import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
 import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
 import { MEDIA_TEST_TIMEOUT_MS, SPEECH_INPUT_ERRORS, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
+import { DECISION_INPUT_ERRORS, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, type DecisionRequest, type DecisionResult } from '../../ai/decision.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
 export type SecretName = 'foundryKey';
@@ -34,6 +35,18 @@ export interface RelayStatus {
   media: MediaStatus;
   /** FR-329: whether Speech uses the Foundry connection or a separate Speech resource. */
   speechConnection: SpeechConnectionStatus;
+  /** D-44: Microsoft Foundry Decision model on its own resource; `verifiedAt` is null once the key changes. */
+  decision: DecisionStatus | null;
+}
+
+export interface DecisionStatus { endpoint: string; deployment: string; verifiedAt: string | null }
+
+function asDecision(v: unknown): DecisionStatus | null {
+  if (!v || typeof v !== 'object') return null;
+  const d = v as Record<string, unknown>;
+  const endpoint = str(d.endpoint);
+  const deployment = str(d.deployment);
+  return endpoint && deployment ? { endpoint, deployment, verifiedAt: str(d.verifiedAt) } : null;
 }
 
 /**
@@ -78,7 +91,7 @@ export interface WorkIqStatus {
 }
 
 const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null,
-  media: NO_MEDIA, speechConnection: NO_SPEECH_CONNECTION };
+  media: NO_MEDIA, speechConnection: NO_SPEECH_CONNECTION, decision: null };
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 
@@ -173,7 +186,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
   try {
     const res = await relayFetch('/relay/status');
     if (!res.ok) return UNREACHABLE;
-    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown; media?: unknown; speechConnection?: unknown };
+    const body = (await res.json()) as { secrets?: Partial<Record<SecretName, boolean>>; connection?: unknown; connectionVerifiedAt?: unknown; keyProtection?: unknown; copilot?: { model?: unknown } | null; workiq?: unknown; entra?: unknown; media?: unknown; speechConnection?: unknown; decision?: unknown };
     return {
       reachable: true,
       secrets: { foundryKey: body.secrets?.foundryKey === true },
@@ -185,6 +198,7 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
       entra: asEntra(body.entra),
       media: asMedia(body.media),
       speechConnection: asSpeechConnection(body.speechConnection),
+      decision: asDecision(body.decision),
     };
   } catch {
     return UNREACHABLE;
@@ -605,6 +619,47 @@ export function setSpeechRoute(route: SpeechRoute): Promise<SpeechSeparateResult
 /** Deletes the separate connection and its key; Speech goes back to the Foundry connection. */
 export function deleteSeparateSpeech(): Promise<SpeechSeparateResult> {
   return speechCall('/relay/speech/separate', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
+}
+
+/* ---------- D-44: Microsoft Foundry Decision model ---------- */
+
+export const DECISION_SAVE_ERRORS = [...DECISION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon'] as const;
+export type DecisionSaveError = (typeof DECISION_SAVE_ERRORS)[number] | 'failed';
+export type DecisionSaveResult = { ok: true; decision: DecisionStatus | null; usage?: { inputTokens: number; outputTokens: number } } | { ok: false; error: DecisionSaveError; providerStatus?: number };
+export interface DecisionInput { endpoint: string; deployment: string; key?: string }
+
+async function decisionCall(url: string, init: RequestInit): Promise<DecisionSaveResult> {
+  try {
+    const res = await relayFetch(url, init);
+    const body = (await res.json()) as { decision?: unknown; usage?: { inputTokens?: unknown; outputTokens?: unknown }; error?: string; providerStatus?: number };
+    if (res.ok) {
+      const u = body.usage;
+      const usage = u && typeof u.inputTokens === 'number' && typeof u.outputTokens === 'number' ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens } : undefined;
+      return { ok: true, decision: asDecision(body.decision), ...(usage ? { usage } : {}) };
+    }
+    return { ok: false, error: DECISION_SAVE_ERRORS.find((k) => k === body.error) ?? 'failed', ...(typeof body.providerStatus === 'number' ? { providerStatus: body.providerStatus } : {}) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };
+  }
+}
+
+/** Runs a synthetic Decision question in the relay; only a passing test saves the connection (and its key, in the vault). */
+export function saveDecisionConnection(input: DecisionInput): Promise<DecisionSaveResult> {
+  return decisionCall('/relay/decision', { ...jsonInit('PUT', input), signal: AbortSignal.timeout(DECISION_TEST_TIMEOUT_MS + 5_000) });
+}
+
+export function deleteDecisionConnection(): Promise<DecisionSaveResult> {
+  return decisionCall('/relay/decision', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
+}
+
+/** One Decision request through the relay. Throws RelayError with the relay's code on any failure. */
+export async function decisionScreen(req: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
+  const timeout = AbortSignal.timeout(DECISION_TIMEOUT_MS + 5_000);
+  const res = await relayFetch('/relay/decision/screen', { ...jsonInit('POST', req), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const body = (await res.json()) as Partial<DecisionResult>;
+  if (!body.answers || typeof body.inputTokens !== 'number' || typeof body.outputTokens !== 'number') throw new RelayError(502, 'badProviderResponse');
+  return { answers: body.answers, inputTokens: body.inputTokens, outputTokens: body.outputTokens };
 }
 /* ---------- Microsoft Work IQ (D-14: Microsoft Foundry, or GitHub Copilot by choice) ---------- */
 

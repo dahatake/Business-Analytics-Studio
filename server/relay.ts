@@ -31,6 +31,10 @@ import {
   CONNECTION_TEST_MAX_TOKENS, CONNECTION_TEST_PROMPT, CONNECTION_TEST_TIMEOUT_MS, DEFAULT_FOUNDRY_API_VERSION,
   foundryChatUrl, isFoundryV1, parseFoundryConnection, type ConnectionInputError, type FoundryConnection, type FoundryError,
 } from '../src/ai/foundry.ts';
+import {
+  DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, decisionUrl, parseDecisionAnswers, validateDecisionConnection, validateDecisionRequest,
+  type DecisionConnection, type DecisionResult,
+} from '../src/ai/decision.ts';
 
 /** Largest request body the relay reads: a pack-generation prompt with attached material (MAX_AI_CHARS_BY_USE), UTF-8 and JSON-escaped, plus base64 media files. */
 export const MAX_BODY_BYTES = 1024 * 1024 + Math.ceil(MAX_REQUEST_MEDIA_BYTES / 3) * 4 + 64 * 1024;
@@ -314,6 +318,74 @@ function separateVerifiedAt(s: SavedSpeech, foundry: RelayConnection | null, vau
   const key = vault.get('speechSeparateKey');
   return key && tokenMatches(s.verification, separateSpeechSignature(s.connection, null, s.verifiedAt, key)) ? s.verifiedAt : null;
 }
+/* D-44: Microsoft Foundry Decision model on its own resource and API key (decision.json + vault `decisionKey`). */
+
+const DECISION_FILE = 'decision.json';
+type SavedDecision = DecisionConnection & { verifiedAt: string; verification: string };
+
+export function loadDecision(dir: string, config: RelayConfig = STRICT_RELAY_CONFIG): SavedDecision | null {
+  const path = join(dir, DECISION_FILE);
+  if (!existsSync(path)) return null;
+  try {
+    const saved = JSON.parse(readFileSync(path, 'utf8')) as Partial<SavedDecision>;
+    const r = validateDecisionConnection({ endpoint: saved.endpoint, deployment: saved.deployment }, config.testOutbound);
+    if (!r.ok || typeof saved.verifiedAt !== 'string' || typeof saved.verification !== 'string') return null;
+    return { ...r.value, verifiedAt: saved.verifiedAt, verification: saved.verification };
+  } catch {
+    return null;
+  }
+}
+
+const decisionSignature = (c: DecisionConnection, at: string, key: string) =>
+  createHmac('sha256', key).update(JSON.stringify(['decision', c.endpoint, c.deployment, at])).digest('hex');
+
+function decisionVerifiedAt(s: SavedDecision | null, vault: SecretVault): string | null {
+  if (!s || !Number.isFinite(Date.parse(s.verifiedAt))) return null;
+  const key = vault.get('decisionKey');
+  return key && tokenMatches(s.verification, decisionSignature(s, s.verifiedAt, key)) ? s.verifiedAt : null;
+}
+
+type DecisionOutcome = { ok: true; value: DecisionResult } | { ok: false; status: number; body: Record<string, unknown> };
+
+/** One Decision call; provider bodies are never echoed, and only a complete, valid set of answers is returned. */
+async function callDecision(
+  conn: DecisionConnection, key: string, req: { state: unknown; questions: Record<string, unknown> }, timeoutMs: number,
+  config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal,
+): Promise<DecisionOutcome> {
+  if (signal?.aborted) return { ok: false, status: 499, body: { error: 'aborted' } };
+  const url = decisionUrl(conn);
+  if (!outboundAllowed(url, conn.endpoint, config)) return { ok: false, status: 403, body: { error: 'outboundNotAllowed' } };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    const res = await doFetch(url, {
+      method: 'POST',
+      headers: { 'api-key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: conn.deployment, state: req.state, questions: req.questions }),
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      const error: FoundryError = res.status === 401 ? 'unauthorized' : res.status === 403 ? 'forbidden' :
+        res.status === 404 ? 'deploymentNotFound' : res.status === 400 || res.status === 422 ? 'invalidApiRequest' : res.status === 429 ? 'providerBusy' : 'providerError';
+      const retryAfterMs = res.status === 429 ? providerRetryAfter(res.headers) : undefined;
+      return { ok: false, status: 502, body: { error, providerStatus: res.status, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) } };
+    }
+    const parsed = parseDecisionAnswers(await res.json(), Object.keys(req.questions));
+    return parsed ? { ok: true, value: parsed } : { ok: false, status: 502, body: { error: 'badProviderResponse' } };
+  } catch (error) {
+    if (signal?.aborted) return { ok: false, status: 499, body: { error: 'aborted' } };
+    return controller.signal.aborted ? { ok: false, status: 504, body: { error: 'timeout' } } :
+      { ok: false, status: 502, body: { error: error instanceof SyntaxError ? 'badProviderResponse' : networkError(error) } };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
 /** What the relay sends to Foundry: the saved API key, or a Microsoft Entra access token minted for this call. */
 type FoundryCredential = { kind: 'key'; key: string } | { kind: 'bearer'; token: string };
 
@@ -758,12 +830,18 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     };
   };
 
+  /** FR-325 / D-44: the Decision connection is reported only with a still-valid seal (key unchanged). */
+  const decisionStatus = () => {
+    const d = loadDecision(vault.dir, config);
+    return d ? { endpoint: d.endpoint, deployment: d.deployment, verifiedAt: decisionVerifiedAt(d, vault) } : null;
+  };
+
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
     vault.purgeLegacy();
     return json(200, {
       relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault, entra), configured: configured(), keyProtection: vault.keyProtection(),
-      copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(), media: mediaStatus(), speechConnection: speechStatus(),
+      copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(), media: mediaStatus(), speechConnection: speechStatus(), decision: decisionStatus(),
     });
   }
 
@@ -1172,6 +1250,58 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const saved: SavedSpeech = { route: 'separate', connection: target, tenantId, verifiedAt: at, verification };
     writeJsonAtomic(vault.dir, SPEECH_FILE, saved);
     return json(200, speechStatus());
+  }
+
+  if (path === '/relay/decision') {
+    if (method === 'DELETE') {
+      rmSync(join(vault.dir, DECISION_FILE), { force: true });
+      vault.delete('decisionKey');
+      return json(200, { decision: decisionStatus() });
+    }
+    if (method !== 'PUT') return json(405, { error: 'methodNotAllowed' });
+    const v = validateDecisionConnection(parseBody(req.body), config.testOutbound);
+    if (!v.ok) return json(400, { error: v.error });
+    if (new URL(v.value.endpoint).protocol !== 'http:' && !endpointHostAllowed(new URL(v.value.endpoint), config)) return json(400, { error: 'hostNotAllowed' });
+    const key = v.key ?? vault.get('decisionKey');
+    if (!key) return json(400, { error: 'keyMissing' });
+    const limitKey = 'decisionTest';
+    const now = (ctx.now ?? Date.now)();
+    const last = ctx.lastCall?.get(limitKey);
+    if (last !== undefined && now - last < 5_000) return json(429, { error: 'tooSoon' });
+    ctx.lastCall?.set(limitKey, Infinity);
+    let result: DecisionOutcome;
+    try {
+      result = await callDecision(v.value, key, DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
+    } finally {
+      ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
+    }
+    // A failed test keeps the previous connection and key as they were.
+    if (!result.ok) return json(result.status, result.body);
+    if (v.key === null && vault.get('decisionKey') !== key) return json(409, { error: 'keyChanged' });
+    vault.set('decisionKey', key);
+    const at = new Date((ctx.now ?? Date.now)()).toISOString();
+    writeJsonAtomic(vault.dir, DECISION_FILE, { ...v.value, verifiedAt: at, verification: decisionSignature(v.value, at, key) });
+    return json(200, { decision: decisionStatus(), usage: { inputTokens: result.value.inputTokens, outputTokens: result.value.outputTokens } });
+  }
+
+  if (path === '/relay/decision/screen') {
+    if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+    const r = validateDecisionRequest(parseBody(req.body));
+    if (!r) return json(400, { error: 'invalidBody' });
+    const saved = loadDecision(vault.dir, config);
+    const key = vault.get('decisionKey');
+    if (!saved || !key || !decisionVerifiedAt(saved, vault)) return json(403, { allowed: false, reasons: ['notConfigured'] });
+    const limitKey = `decision:${r.use}`;
+    const now = (ctx.now ?? Date.now)();
+    const last = ctx.lastCall?.get(limitKey);
+    if (last !== undefined && now - last < AI_LIMITS.minIntervalMs) return json(429, { error: 'tooSoon' });
+    ctx.lastCall?.set(limitKey, Infinity);
+    try {
+      const result = await callDecision(saved, key, r, DECISION_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
+      return result.ok ? json(200, result.value) : json(result.status, result.body);
+    } finally {
+      ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
+    }
   }
 
   if (path === '/relay/connection') {

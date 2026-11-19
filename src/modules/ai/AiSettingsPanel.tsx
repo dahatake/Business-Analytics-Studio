@@ -10,6 +10,7 @@ import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
+import { DecisionSettings } from './DecisionSettings.tsx';
 import { MediaConnectionForm } from './MediaConnectionForm.tsx';
 import { SpeechRouteChoice } from './SpeechRouteChoice.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
@@ -206,6 +207,10 @@ export function AiSettingsContent() {
           </div>
         </Panel>
       </div>
+
+      <Panel title={t('ai.decision.title')} testId="ai-decision-panel">
+        <DecisionSettings />
+      </Panel>
     </>
   );
 }

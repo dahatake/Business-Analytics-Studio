@@ -650,6 +650,97 @@ export function parseKpiDraftResponse(text: string, input: DraftPromptInput): Co
   return { kpis, okrs, rejected };
 }
 
+/* ---------- D-44: Microsoft Foundry Decision pre-screen of the candidates ---------- */
+
+/** PARAM-189: a candidate stays when the Decision model's probability that it measures the purpose is at least this. */
+export const SCREEN_MIN_RELEVANT = 0.5;
+/** PARAM-190: a candidate is dropped when the probability that it duplicates an existing KPI/OKR is at least this. */
+export const SCREEN_MAX_DUPLICATE = 0.5;
+/** Two noul questions per candidate within the relay's 64-question cap; later candidates go to chat unscreened. */
+export const SCREEN_MAX_CANDIDATES = 32;
+
+export interface ScreenPlan {
+  request: { use: 'kpiOkrScreen'; state: Record<string, unknown>; questions: Record<string, { type: 'noul'; instructions: string; criteria: { true: string; false: string } }> };
+  /** Question key (c1, c2, …) → candidate id. */
+  keys: Map<string, string>;
+}
+
+/** Builds one Decision request: per open candidate, "measures the purpose?" (r) and "duplicates an existing KPI/OKR?" (d). */
+export function kpiScreenRequest({ purpose, ext, data, drafts, lang }: DraftPromptInput): ScreenPlan | null {
+  const open = openCandidates(ext, data, drafts);
+  const items = [
+    ...open.kpis.map((k) => ({
+      id: kpiCandidateId(k.id), kind: 'kpi', name: clip(txt(k.name, lang), 120),
+      ...(k.definition ? { definition: clip(txt(k.definition, lang), 200) } : {}),
+      ...(k.target ? { target: clip([k.target, k.unit].filter(Boolean).join(' '), 80) } : {}),
+    })),
+    ...open.objectives.map((o) => ({
+      id: objectiveCandidateId(o.id), kind: 'okr', name: clip(txt(o.objective, lang), 200),
+      keyResults: o.keyResults.slice(0, 5).map((kr) => clip(txt(kr.text, lang), 120)),
+    })),
+  ].slice(0, SCREEN_MAX_CANDIDATES);
+  if (!purpose.trim() || items.length === 0) return null;
+  const keys = new Map<string, string>();
+  const candidates = items.map(({ id, ...rest }, i) => {
+    keys.set(`c${i + 1}`, id);
+    return { key: `c${i + 1}`, ...rest };
+  });
+  const questions: ScreenPlan['request']['questions'] = {};
+  for (const key of keys.keys()) {
+    questions[`r_${key}`] = {
+      type: 'noul',
+      instructions: `Does candidate ${key} directly measure progress toward the project purpose?`,
+      criteria: { true: 'Tracking it would show whether the project purpose is being achieved.', false: 'It is unrelated or only loosely related to the project purpose.' },
+    };
+    questions[`d_${key}`] = {
+      type: 'noul',
+      instructions: `Does candidate ${key} measure the same thing as one of the project's existing KPIs or OKRs?`,
+      criteria: { true: 'An existing KPI or OKR already measures the same quantity or outcome.', false: 'No existing KPI or OKR measures it, or there are none.' },
+    };
+  }
+  const state = {
+    projectPurpose: clip(purpose.trim(), 1000),
+    existingKpis: data.kpis.map((k) => `${loc(k.name, lang)}${Number.isFinite(k.target) ? ` (${[k.target, loc(k.unit, lang)].filter((x) => x !== '').join(' ')})` : ''}`).slice(0, 30),
+    existingOkrs: data.okrs.map((o) => loc(o.objective, lang)).slice(0, 20),
+    candidates,
+  };
+  return { request: { use: 'kpiOkrScreen', state, questions }, keys };
+}
+
+export interface ScreenOutcome {
+  /** Same shape as the input, with the screened-out open candidates removed and the kept ones ordered by relevance. */
+  ext: Ext;
+  kept: number;
+  excluded: { candidateId: string; why: 'unrelated' | 'duplicate'; relevant: number; duplicate: number }[];
+}
+
+/** Applies the Decision answers; every screened candidate needs both answers, otherwise the plan is not applied. */
+export function applyKpiScreen(ext: Ext, plan: ScreenPlan, answers: Record<string, number>): ScreenOutcome | null {
+  const score = new Map<string, { relevant: number; duplicate: number }>();
+  for (const [key, id] of plan.keys) {
+    const relevant = answers[`r_${key}`];
+    const duplicate = answers[`d_${key}`];
+    if (typeof relevant !== 'number' || typeof duplicate !== 'number') return null;
+    score.set(id, { relevant, duplicate });
+  }
+  const excluded: ScreenOutcome['excluded'] = [];
+  const keep = (id: string) => {
+    const s = score.get(id);
+    if (!s) return true;
+    if (s.duplicate >= SCREEN_MAX_DUPLICATE) { excluded.push({ candidateId: id, why: 'duplicate', ...s }); return false; }
+    if (s.relevant < SCREEN_MIN_RELEVANT) { excluded.push({ candidateId: id, why: 'unrelated', ...s }); return false; }
+    return true;
+  };
+  const rank = (id: string) => score.get(id)?.relevant ?? -1;
+  const order = <T>(list: T[], idOf: (x: T) => string) => [
+    ...list.filter((x) => score.has(idOf(x))).sort((a, b) => rank(idOf(b)) - rank(idOf(a))),
+    ...list.filter((x) => !score.has(idOf(x))),
+  ];
+  const kpis = order(ext.kpis.filter((k) => keep(kpiCandidateId(k.id))), (k) => kpiCandidateId(k.id));
+  const objectives = order(ext.objectives.filter((o) => keep(objectiveCandidateId(o.id))), (o) => objectiveCandidateId(o.id));
+  return { ext: { ...ext, kpis, objectives }, kept: [...score.keys()].length - excluded.length, excluded };
+}
+
 /** Turns Copilot's picks into drafts with the same deterministic mapping as the manual buttons. */
 export function applyCopilotPick(pick: CopilotPick, input: DraftPromptInput): AddResult {
   const { ext, data, lang } = input;

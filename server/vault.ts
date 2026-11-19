@@ -15,7 +15,7 @@ export type UserSecretName = (typeof SECRET_NAMES)[number];
  * Vision — signing out deletes it, which drops every Entra check; the key of a separate Speech resource, FR-329, saved
  * only after its connection test succeeds); never accepted over HTTP.
  */
-export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey', 'speechSeparateKey'] as const;
+export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey', 'speechSeparateKey', 'decisionKey'] as const;
 export type SecretName = UserSecretName | (typeof INTERNAL_SECRET_NAMES)[number];
 export const MAX_SECRET_LENGTH = 4096;
 /** Refresh tokens issued by Microsoft Entra can be longer than an API key. */

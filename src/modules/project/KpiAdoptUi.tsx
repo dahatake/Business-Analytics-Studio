@@ -12,11 +12,13 @@ import { loc, type Localizable } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { reasonKey, yenFine } from '../ai/AiCommon.tsx';
 import { openAiSettings } from '../ai/uiStore.ts';
+import { DecisionUnavailable, decisionLive } from '../ai/decisionClient.ts';
+import { isDecisionReady, useAiSettings } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import { ScrollRegion } from './common.tsx';
 import {
-  addKpiDrafts, addOkrDrafts, applyCopilotPick, applyMissingKpiDraftResponse, discardKpiDraft, discardOkrDraft, kpiAdoptState, kpiCandidateId, kpiDraftPrompt,
-  missingKpiDraftPrompt, missingKpiDrafts,
+  addKpiDrafts, addOkrDrafts, applyCopilotPick, applyKpiScreen, applyMissingKpiDraftResponse, discardKpiDraft, discardOkrDraft, kpiAdoptState, kpiCandidateId, kpiDraftPrompt,
+  kpiScreenRequest, missingKpiDraftPrompt, missingKpiDrafts,
   objectiveCandidateId, okrAdoptState, openCandidates, parseKpiDraftResponse, saveAllDrafts, saveKpiDraft, saveOkrDraft,
   type AddResult, type KpiDraft, type KpiDrafts, type OkrDraft, type SaveError, type SaveResult,
 } from './kpiAdopt.ts';
@@ -26,6 +28,13 @@ import { kpisForScope, useKpiDrafts, useKpis } from './stores.ts';
 
 /** Save errors are shared: saving an OKR draft can reveal missing fields on the KPI drafts it links to. */
 const useDraftErrors = create<{ errors: SaveError[] }>()(() => ({ errors: [] }));
+
+type CandidateExt = Parameters<typeof openCandidates>[0];
+function candidateName(ext: CandidateExt, candidateId: string, lang: 'ja' | 'en'): string {
+  const k = ext.kpis.find((x) => kpiCandidateId(x.id) === candidateId);
+  const o = ext.objectives.find((x) => objectiveCandidateId(x.id) === candidateId);
+  return k ? loc(k.name, lang) : o ? loc(o.objective, lang) : candidateId;
+}
 const setDraftErrors = (errors: SaveError[]) => useDraftErrors.setState({ errors });
 const clearDraftErrors = (ids: readonly string[]) => useDraftErrors.setState((s) => ({ errors: s.errors.filter((e) => !ids.includes(e.draftId)) }));
 
@@ -226,6 +235,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
+  const decisionReady = useAiSettings(isDecisionReady);
   const abort = useRef<AbortController | null>(null);
   const alive = useRef(true);
   useEffect(() => {
@@ -252,13 +262,14 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
   const estimate = openCount ? preflight(request) : null;
   const missingEstimate = hasMissing ? preflight(missingRequest) : null;
 
-  const report = (before: KpiDrafts, r: AddResult, copilot: boolean, rejected = 0) => {
+  const report = (before: KpiDrafts, r: AddResult, copilot: boolean, rejected = 0, screenNote = '') => {
     const kpiN = r.drafts.kpis.length - before.kpis.length;
     const okrN = r.drafts.okrs.length - before.okrs.length;
     const parts = [
       kpiN + okrN > 0 ? t('proj.adopt.added', { kpis: kpiN, okrs: okrN }) : t(copilot ? 'proj.adopt.copilotNone' : 'proj.adopt.none'),
       r.skipped ? t('proj.adopt.skipped', { n: r.skipped }) : '',
       rejected ? t('proj.adopt.rejected', { n: rejected }) : '',
+      screenNote,
     ].filter(Boolean);
     setNotice({ intent: kpiN + okrN > 0 ? 'success' : 'warning', text: parts.join(' ') });
     if (kpiN + okrN > 0) scrollToDrafts(okrN > 0 && kpiN === 0 ? 'proj-okr-drafts' : 'proj-kpi-drafts');
@@ -280,10 +291,34 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
     try {
       const pf = preflight(activeRequest);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
-      const result = await aiLive(activeRequest, controller.signal);
+      // D-44: the Decision model screens out unrelated and duplicate candidates before chat chooses and words them.
+      let screenedExt = input.ext;
+      let screenNote = '';
+      let chatRequest = activeRequest;
+      const plan = !proposeMissing && isDecisionReady(useAiSettings.getState()) ? kpiScreenRequest(input) : null;
+      if (plan) {
+        try {
+          const answer = await decisionLive(plan.request, controller.signal);
+          const outcome = applyKpiScreen(input.ext, plan, answer.answers);
+          if (!outcome) throw new DecisionUnavailable('failed');
+          screenedExt = outcome.ext;
+          const names = outcome.excluded.slice(0, 5).map((x) => t('proj.adopt.screenItem', { name: candidateName(input.ext, x.candidateId, lang), why: t(`proj.adopt.screen.${x.why}`) })).join(t('ai.listSep'));
+          screenNote = t('proj.adopt.screened', { kept: outcome.kept, excluded: outcome.excluded.length }) + (names ? ` ${t('proj.adopt.screenExcluded', { names })}` : '');
+          chatRequest = { ...activeRequest, prompt: kpiDraftPrompt({ ...input, ext: screenedExt }) };
+        } catch (e) {
+          if (controller.signal.aborted) throw e;
+          screenNote = t('proj.adopt.screenSkipped');
+        }
+      }
+      const screenedOpen = openCandidates(screenedExt, data, drafts);
+      if (!proposeMissing && screenedOpen.kpis.length + screenedOpen.objectives.length === 0) {
+        setNotice({ intent: 'warning', text: `${t('proj.adopt.copilotNone')} ${screenNote}`.trim() });
+        return;
+      }
+      const result = await aiLive(chatRequest, controller.signal);
       if (!alive.current || controller.signal.aborted || useKpis.getState().scope !== scope || loaded.pack !== pack) return;
       // Apply to the latest state: the user may have adopted or saved items while Copilot was answering.
-      const latest = { ...input, data: kpisForScope(useKpis.getState().value, scope), drafts: useKpiDrafts.getState().value };
+      const latest = { ...input, ext: proposeMissing ? input.ext : screenedExt, data: kpisForScope(useKpis.getState().value, scope), drafts: useKpiDrafts.getState().value };
       let r: AddResult;
       let rejected = 0;
       try {
@@ -295,7 +330,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
         }
       } catch { throw new Error(t('proj.adopt.badAnswer')); }
       useKpiDrafts.getState().set(r.drafts);
-      report(latest.drafts, r, true, rejected);
+      report(latest.drafts, r, true, rejected, screenNote);
     } catch (e) {
       if (!alive.current || controller.signal.aborted || useKpis.getState().scope !== scope) return;
       const blocked = e instanceof AiLiveError && e.reasons.some((r) => r !== 'liveFailed');
@@ -339,6 +374,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
         <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy || openCount === 0} onClick={() => void generate()} data-testid="proj-adopt-copilot">{t('proj.adopt.copilot')}</Button>
       </div>
       <p className="muted" data-testid="proj-adopt-copilot-hint">{openCount ? t('proj.adopt.copilotHint', { n: openCount, cost }) : t('proj.adopt.allAdopted')}</p>
+      {openCount > 0 && decisionReady && <p className="muted" data-testid="proj-adopt-screen-hint">{t('proj.adopt.screenHint')}</p>}
       </>}
       {busy && <Button onClick={() => abort.current?.abort()}>{t('proj.cancel')}</Button>}
       {notice && (

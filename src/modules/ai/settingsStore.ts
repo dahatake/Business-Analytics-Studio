@@ -7,12 +7,14 @@ import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSet
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
 import {
-  clearMediaCheck, deleteCopilotSettings, deleteRelayConnection, deleteSecret, deleteSeparateSpeech, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, NO_SPEECH_CONNECTION,
-  saveCopilotModel, saveRelayConnection, saveSecret, saveSeparateSpeech, setSpeechRoute,
+  clearMediaCheck, deleteCopilotSettings, deleteDecisionConnection, deleteRelayConnection, deleteSecret, deleteSeparateSpeech, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, NO_SPEECH_CONNECTION,
+  saveCopilotModel, saveDecisionConnection, saveRelayConnection, saveSecret, saveSeparateSpeech, setSpeechRoute,
+  type DecisionInput, type DecisionSaveResult, type DecisionStatus,
   saveWorkIqSettings, testMediaConnection, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaStatus, type MediaTestResult, type RelayConnectionInfo, type SecretName,
   type SeparateSpeechInput, type SpeechConnectionStatus, type SpeechSeparateResult, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
 import type { MediaService, SpeechRoute } from '../../ai/mediaConnection.ts';
+import { DECISION_TEST_USE, decisionCostJpy } from '../../ai/decision.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
@@ -54,6 +56,10 @@ export interface AiSettingsState {
   media: MediaStatus;
   /** FR-329: the Speech route (Foundry connection or a separate Speech resource) held by the relay. */
   speechConnection: SpeechConnectionStatus;
+  /** D-44: Microsoft Foundry Decision connection held by the relay (never the key). */
+  decision: DecisionStatus | null;
+  saveDecision: (input: DecisionInput) => Promise<DecisionSaveResult>;
+  deleteDecision: () => Promise<DecisionSaveResult>;
   relayConnection: RelayConnectionInfo | null;
   connectionVerifiedAt: string | null;
   keyProtection: KeyProtection | null;
@@ -105,6 +111,23 @@ export const useAiSettings = create<AiSettingsState>()(
       foundryKeySaved: false,
       media: NO_MEDIA,
       speechConnection: NO_SPEECH_CONNECTION,
+      decision: null,
+      saveDecision: async (input) => {
+        const r = await saveDecisionConnection(input);
+        if (r.ok && r.usage) {
+          appendLedger({
+            at: new Date().toISOString(), use: DECISION_TEST_USE, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens,
+            costJpy: decisionCostJpy(r.usage.inputTokens, r.usage.outputTokens), provider: 'foundry',
+          });
+        }
+        await get().refreshRelay();
+        return r;
+      },
+      deleteDecision: async () => {
+        const r = await deleteDecisionConnection();
+        await get().refreshRelay();
+        return r;
+      },
       relayConnection: null,
       connectionVerifiedAt: null,
       keyProtection: null,
@@ -147,7 +170,7 @@ export const useAiSettings = create<AiSettingsState>()(
         set({
           relayReachable: s.reachable, foundryKeySaved: s.secrets.foundryKey, media: s.media, speechConnection: s.speechConnection,
           relayConnection: s.connection, connectionVerifiedAt: s.connectionVerifiedAt, keyProtection: s.keyProtection, copilotModel: s.copilot?.model ?? null,
-          workiq: s.workiq, entra: s.entra,
+          workiq: s.workiq, entra: s.entra, decision: s.decision,
         });
       },
       saveWorkIq: async (input) => {
@@ -322,4 +345,9 @@ export function isSpeechReady(s: Pick<AiSettingsState, 'media' | 'entra' | 'spee
   const sep = s.speechConnection.separate;
   if (!sep?.verifiedAt) return false;
   return sep.auth === 'entraId' ? s.entra?.signedIn === true : true;
+}
+
+/** D-44: the Decision pre-screen runs only with a still-valid relay check and the same send consent and live switch as chat. */
+export function isDecisionReady(s: Pick<AiSettingsState, 'decision' | 'liveEnabled' | 'sendConsent' | 'relayReachable'>): boolean {
+  return s.relayReachable && s.liveEnabled && s.sendConsent && !!s.decision?.verifiedAt;
 }

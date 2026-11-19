@@ -15,7 +15,8 @@ import { openAiSettings } from '../ai/uiStore.ts';
 import '../ai/liveTransport.ts';
 import { ScrollRegion } from './common.tsx';
 import {
-  addKpiDrafts, addOkrDrafts, applyCopilotPick, discardKpiDraft, discardOkrDraft, kpiAdoptState, kpiCandidateId, kpiDraftPrompt,
+  addKpiDrafts, addOkrDrafts, applyCopilotPick, applyMissingKpiDraftResponse, discardKpiDraft, discardOkrDraft, kpiAdoptState, kpiCandidateId, kpiDraftPrompt,
+  missingKpiDraftPrompt, missingKpiDrafts,
   objectiveCandidateId, okrAdoptState, openCandidates, parseKpiDraftResponse, saveAllDrafts, saveKpiDraft, saveOkrDraft,
   type AddResult, type KpiDraft, type KpiDrafts, type OkrDraft, type SaveError, type SaveResult,
 } from './kpiAdopt.ts';
@@ -101,6 +102,7 @@ function KpiDraftCard({ d, props }: { d: KpiDraft; props: DraftListProps }) {
   return (
     <section className="proj-draft" aria-label={t('proj.draft.nameFor', { name })} data-testid={`proj-kpi-draft-${d.candidateId}`}>
       <div className="proj-okr-head"><DraftBadges by={d.by} /><strong>{name}</strong></div>
+      {d.origin === 'proposed' && <Badge appearance="outline" color="warning">{t('sol.origin.proposed')}</Badge>}
       {original && <p className="muted">{t('proj.draft.original', { text: original })}</p>}
       {d.original.definition && <p className="muted">{t('proj.draft.orig.definition', { v: d.original.definition })}</p>}
       <CopilotNotes reason={d.reason} unverified={d.unverified} />
@@ -153,6 +155,7 @@ function OkrDraftCard({ o, props }: { o: OkrDraft; props: DraftListProps }) {
   return (
     <section className="proj-draft" aria-label={t('proj.draft.nameFor', { name })} data-testid={`proj-okr-draft-${o.candidateId}`}>
       <div className="proj-okr-head"><DraftBadges by={o.by} /><strong>{name}</strong></div>
+      {o.origin === 'proposed' && <Badge appearance="outline" color="warning">{t('sol.origin.proposed')}</Badge>}
       <CopilotNotes reason={o.reason} unverified={o.unverified} />
       <Field label={t('proj.okr.objective')} {...(errors.some((e) => e.kind === 'objective') ? { validationState: 'error' as const, validationMessage: t('proj.draft.err.objective') } : {})}>
         <Input value={o.objective} onChange={(_, v) => patch({ objective: v.value })} />
@@ -233,16 +236,21 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
 
   if (packOrigin.kind !== 'imported' || packOrigin.projectId !== scope) return null;
   const parsed = OkrExtension.safeParse(loaded.pack.extensions?.okr);
-  if (!parsed.success || (parsed.data.kpis.length === 0 && parsed.data.objectives.length === 0)) return null;
-  const ext = parsed.data;
+  const ext = parsed.success ? parsed.data : { kpis: [], objectives: [] };
   const { kpis, objectives } = ext;
   const text = (v: Localizable | undefined) => (v === undefined ? '' : loc(v, lang));
   const toggle = (id: string, on: boolean) => setSelected((s) => (on ? [...new Set([...s, id])] : s.filter((x) => x !== id)));
   const open = openCandidates(ext, data, drafts);
   const openCount = open.kpis.length + open.objectives.length;
   const input = { purpose, ext, data, drafts, lang };
+  const missing = missingKpiDrafts(input);
+  const hasMissing = missing.kpis || missing.okrs;
+  const hasCandidates = kpis.length + objectives.length > 0;
+  if (!hasCandidates && !hasMissing && !notice) return null;
   const request = { use: 'kpiOkrDraft' as const, lang, prompt: kpiDraftPrompt(input), scope, maxOutputTokens: PER_USE_LIMITS.kpiOkrDraft?.maxOutputTokens };
+  const missingRequest = { ...request, prompt: missingKpiDraftPrompt(input, loaded.pack) };
   const estimate = openCount ? preflight(request) : null;
+  const missingEstimate = hasMissing ? preflight(missingRequest) : null;
 
   const report = (before: KpiDrafts, r: AddResult, copilot: boolean, rejected = 0) => {
     const kpiN = r.drafts.kpis.length - before.kpis.length;
@@ -261,24 +269,35 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
     setSelected([]);
     report(drafts, r, false);
   };
-  const generate = async () => {
+  const generate = async (proposeMissing = false) => {
+    if (abort.current) return;
+    const controller = new AbortController();
+    abort.current = controller;
+    const pack = loaded.pack;
+    const activeRequest = proposeMissing ? missingRequest : request;
     setBusy(true);
     setNotice(null);
     try {
-      const pf = preflight(request);
+      const pf = preflight(activeRequest);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
-      abort.current = new AbortController();
-      const result = await aiLive(request, abort.current.signal);
-      if (!alive.current || useKpis.getState().scope !== scope) return;
+      const result = await aiLive(activeRequest, controller.signal);
+      if (!alive.current || controller.signal.aborted || useKpis.getState().scope !== scope || loaded.pack !== pack) return;
       // Apply to the latest state: the user may have adopted or saved items while Copilot was answering.
       const latest = { ...input, data: kpisForScope(useKpis.getState().value, scope), drafts: useKpiDrafts.getState().value };
-      let pick;
-      try { pick = parseKpiDraftResponse(result.text, latest); } catch { throw new Error(t('proj.adopt.badAnswer')); }
-      const r = applyCopilotPick(pick, latest);
+      let r: AddResult;
+      let rejected = 0;
+      try {
+        if (proposeMissing) r = applyMissingKpiDraftResponse(result.text, latest, pack);
+        else {
+          const pick = parseKpiDraftResponse(result.text, latest);
+          r = applyCopilotPick(pick, latest);
+          rejected = pick.rejected.length;
+        }
+      } catch { throw new Error(t('proj.adopt.badAnswer')); }
       useKpiDrafts.getState().set(r.drafts);
-      report(latest.drafts, r, true, pick.rejected.length);
+      report(latest.drafts, r, true, rejected);
     } catch (e) {
-      if (!alive.current) return;
+      if (!alive.current || controller.signal.aborted || useKpis.getState().scope !== scope) return;
       const blocked = e instanceof AiLiveError && e.reasons.some((r) => r !== 'liveFailed');
       if (e instanceof AiLiveError && (e.cause as { code?: unknown } | undefined)?.code === 'contentFiltered') {
         setNotice({ intent: 'error', text: `${t('proj.adopt.aiError')} ${t('proj.adopt.contentFiltered')}` });
@@ -302,17 +321,26 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
     );
   };
   const cost = estimate?.estimatedCostJpy === null || estimate === null ? t('proj.adopt.costUnknown') : yenFine(lang === 'ja' ? 'ja-JP' : 'en-US', estimate.estimatedCostJpy);
+  const missingCost = missingEstimate?.estimatedCostJpy == null ? t('proj.adopt.costUnknown') : yenFine(lang === 'ja' ? 'ja-JP' : 'en-US', missingEstimate.estimatedCostJpy);
 
   return (
-    <Panel title={t('proj.packOkr.title')} rationale="proj.packOkr.why" className="span-full" testId="proj-pack-okr">
+    <Panel title={t(hasCandidates ? 'proj.packOkr.title' : 'proj.adopt.missingTitle')} rationale={hasCandidates ? 'proj.packOkr.why' : 'proj.adopt.missingWhy'} className="span-full" testId="proj-pack-okr">
+      {hasMissing && (
+        <div data-testid="proj-missing-drafts">
+          <p>{t('proj.adopt.missingHint', { types: missing.kpis && missing.okrs ? 'KPI / OKR' : missing.kpis ? 'KPI' : 'OKR', cost: missingCost })}</p>
+          <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate(true)} data-testid="proj-missing-copilot">{t('proj.adopt.missingGenerate')}</Button>
+        </div>
+      )}
+      {hasCandidates && <>
       <div className="proj-adopt-bar" role="toolbar" aria-label={t('proj.adopt.toolbar')}>
         <span aria-live="polite">{t('proj.adopt.selected', { n: selected.length })}</span>
         <Button icon={<Add20Regular />} disabled={!selected.length} onClick={() => add('kpi')} data-testid="proj-adopt-kpi">{t('proj.adopt.toKpi')}</Button>
         <Button icon={<Add20Regular />} disabled={!selected.length} onClick={() => add('okr')} data-testid="proj-adopt-okr">{t('proj.adopt.toOkr')}</Button>
         <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy || openCount === 0} onClick={() => void generate()} data-testid="proj-adopt-copilot">{t('proj.adopt.copilot')}</Button>
-        {busy && <Button onClick={() => abort.current?.abort()}>{t('proj.cancel')}</Button>}
       </div>
       <p className="muted" data-testid="proj-adopt-copilot-hint">{openCount ? t('proj.adopt.copilotHint', { n: openCount, cost }) : t('proj.adopt.allAdopted')}</p>
+      </>}
+      {busy && <Button onClick={() => abort.current?.abort()}>{t('proj.cancel')}</Button>}
       {notice && (
         <MessageBar intent={notice.intent} data-testid="proj-adopt-notice">
           <MessageBarBody>

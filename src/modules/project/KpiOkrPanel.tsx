@@ -83,6 +83,8 @@ export function KpiOkrPanel() {
     const def: KpiDef = {
       id: editing ?? newId('kpi'),
       name: form.name.trim(), unit: form.unit.trim(), baseline: Number(form.baseline), current: Number(form.current), target: Number(form.target), deadline: form.deadline,
+      ...(prev?.origin ? { origin: prev.origin } : {}),
+      ...(prev?.sourceIds ? { sourceIds: prev.sourceIds } : {}),
       ...(org ? { org } : {}),
     };
     set((v) => ({ ...v, kpis: editing ? v.kpis.map((k) => (k.id === editing ? (k.adoptedFrom ? { ...def, adoptedFrom: k.adoptedFrom } : def) : k)) : [...v.kpis, def] }));

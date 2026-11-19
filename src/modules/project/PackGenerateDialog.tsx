@@ -705,6 +705,7 @@ function SavedSummary({ result }: { result: GenResult }) {
       {report.retrievalErrors.some((e) => e.what === 'workiq') && <p className="muted" data-testid="gen-sum-workiq-failed">{t('proj.gen.sum.workIqFailed', { error: report.retrievalErrors.filter((e) => e.what === 'workiq').map((e) => e.error).join(' / ') })}</p>}
       {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}
       <p className="muted">{t('proj.gen.sum.next')}</p>
+      <p className="muted" data-testid="gen-kpi-drafts-hint">{t('proj.gen.sum.kpiDrafts')}</p>
     </div>
   );
 }

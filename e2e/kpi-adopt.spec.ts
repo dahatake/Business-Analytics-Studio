@@ -26,7 +26,7 @@ const okr = {
   ],
 };
 
-async function seed(page: Page, okrExt: Record<string, unknown> = okr) {
+async function seed(page: Page, okrExt: Record<string, unknown> = okr, withoutKpis = false) {
   await setup(page);
   await page.addInitScript(() => {
     if (sessionStorage.getItem('bas.e2e.kpiAdopt')) return;
@@ -45,7 +45,7 @@ async function seed(page: Page, okrExt: Record<string, unknown> = okr) {
   });
   await page.goto('/#/analysis?tab=kpi');
   await expect(page.locator('main#main')).toBeVisible();
-  const pack = { ...samplePack, extensions: { ...samplePack.extensions, okr: okrExt } };
+  const pack = { ...samplePack, entities: samplePack.entities.filter((e) => !withoutKpis || e.kind !== 'kpi'), extensions: { ...samplePack.extensions, okr: okrExt } };
   await seedDeviceData(page, {
     'bas.packs.index': JSON.stringify({ 'pj-alpha': {
       projectId: 'pj-alpha', packId: pack.packId, company: pack.company, isSample: false,
@@ -56,6 +56,95 @@ async function seed(page: Page, okrExt: Record<string, unknown> = okr) {
   await page.reload();
   await expect(page.getByTestId('proj-pack-okr')).toBeVisible();
 }
+
+async function enableDraftAi(page: Page) {
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z',
+  } }));
+  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+  await page.reload();
+}
+
+test('a pack without KPI/OKR candidates offers missing-only drafts that survive reload and save as proposals', async ({ page }) => {
+  await seed(page, {}, true);
+  let requests = 0;
+  await page.route('**/relay/ai', async (route) => {
+    requests++;
+    const body = route.request().postDataJSON();
+    expect(body.use).toBe('kpiOkrDraft');
+    expect(body.prompt).toContain('Mode: proposeMissing');
+    expect(body.prompt).toContain('パートナー経由で顧客接点を広げる');
+    expect(body.prompt).toContain('issue-lead-time');
+    await route.fulfill({ json: { text: JSON.stringify({
+      kpis: [{ id: 'delivery', name: '出荷所要日数', unit: '日', reason: '出荷までの課題を測定', evidenceIds: ['issue-lead-time'] }],
+      okrs: [{ objective: '出荷までの流れを改善する', reason: '課題の解消を目指す', evidenceIds: ['issue-lead-time'], kpiIds: ['delivery'] }],
+    }), inputTokens: 100, outputTokens: 100 } });
+  });
+  await enableDraftAi(page);
+  expect(requests).toBe(0);
+  await expect(page.getByTestId('proj-missing-drafts')).toContainText('KPI / OKR');
+  await page.getByTestId('proj-missing-copilot').click();
+  const draft = page.getByTestId('proj-kpi-draft-proposal.kpi:delivery');
+  await expect(draft).toContainText('定義案');
+  for (const field of ['基準値', '現在値', '目標値', '期限']) await expect(draft.getByLabel(field, { exact: true })).toHaveValue('');
+  await expect(page.getByTestId('proj-missing-copilot')).toHaveCount(0);
+  await expect(page.getByTestId('proj-okr-drafts')).toContainText('出荷までの流れを改善する');
+  await page.reload();
+  await expect(draft).toBeVisible();
+  expect(requests).toBe(1);
+  await expect(page.getByTestId('proj-missing-copilot')).toHaveCount(0);
+  await draft.getByLabel('基準値', { exact: true }).fill('5');
+  await draft.getByLabel('現在値', { exact: true }).fill('5');
+  await draft.getByLabel('目標値', { exact: true }).fill('3');
+  await draft.getByLabel('期限', { exact: true }).fill('2027-03-31');
+  await page.getByTestId('proj-drafts-save-all').click();
+  await expect(draft).toHaveCount(0);
+  await expect(page.getByTestId('proj-okr-drafts')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('proj-kpi-panel').locator('table')).toContainText('出荷所要日数');
+  await expect(page.getByTestId('proj-okr-panel')).toContainText('出荷までの流れを改善する');
+  await expect(page.getByTestId('proj-okr-panel')).toContainText('定義案');
+  const row = page.getByTestId('proj-kpi-panel').locator('tr', { hasText: '出荷所要日数' });
+  await row.getByRole('button', { name: '出荷所要日数 を編集' }).click();
+  await page.locator('form.proj-kpi-form').getByLabel('現在値', { exact: true }).fill('4');
+  await page.locator('form.proj-kpi-form').getByRole('button', { name: '保存' }).click();
+  await page.reload();
+  await expect(row).toContainText('定義案');
+  expect(await scan(page)).toEqual([]);
+});
+
+test('missing OKRs link to existing pack KPIs without replacing them', async ({ page }) => {
+  await seed(page, {});
+  await page.route('**/relay/ai', async (route) => {
+    expect(route.request().postDataJSON().prompt).toContain('"missing":{"kpis":false,"okrs":true}');
+    await route.fulfill({ json: { text: JSON.stringify({
+      kpis: [],
+      okrs: [{ objective: '出荷を改善する', reason: '納期の課題', evidenceIds: ['issue-lead-time'], kpiIds: ['kpi-lead-time'] }],
+    }), inputTokens: 100, outputTokens: 100 } });
+  });
+  await enableDraftAi(page);
+  const table = page.getByTestId('proj-kpi-panel').locator('table');
+  const before = await table.innerText();
+  await page.getByTestId('proj-missing-copilot').click();
+  await expect(page.getByTestId('proj-okr-drafts')).toBeVisible();
+  await expect(page.getByTestId('proj-kpi-drafts')).toHaveCount(0);
+  expect(await table.innerText()).toBe(before);
+  await page.getByTestId('proj-okr-drafts').getByRole('button', { name: 'ドラフト「出荷を改善する」を保存' }).click();
+  await expect(page.getByTestId('proj-okr-panel')).toContainText('出荷を改善する');
+  expect(await table.innerText()).toBe(before);
+});
+
+test('missing draft failures are explicit and leave the project unchanged', async ({ page }) => {
+  await seed(page, {}, true);
+  await page.route('**/relay/ai', (route) => route.fulfill({ json: { text: '{}', inputTokens: 100, outputTokens: 100 } }));
+  await enableDraftAi(page);
+  await page.getByTestId('proj-missing-copilot').click();
+  await expect(page.getByTestId('proj-adopt-notice')).toContainText('回答が想定した形式ではありません');
+  await expect(page.getByTestId('proj-kpi-drafts')).toHaveCount(0);
+  await expect(page.getByTestId('proj-okr-drafts')).toHaveCount(0);
+  await expect(page.getByTestId('proj-missing-copilot')).toBeEnabled();
+});
 
 test('selected internal KPIs and OKRs become editable drafts that save into the project', async ({ page }) => {
   await seed(page);

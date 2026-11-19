@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   addKpiDrafts, addOkrDrafts, applyCopilotPick, discardKpiDraft, emptyDrafts, kpiAdoptState, kpiDraftPrompt, okrAdoptState,
   parseKpiDraftResponse, parseTarget, saveAllDrafts, saveKpiDraft, saveOkrDraft, MAX_AI_KPIS, type DraftPromptInput,
+  applyMissingKpiDraftResponse, missingKpiDraftPrompt, missingKpiDrafts,
 } from '../src/modules/project/kpiAdopt.ts';
 import type { KpiData } from '../src/modules/project/model.ts';
+import { samplePack } from '../src/data/sample.ts';
 
 // Shapes taken from a real Work IQ pack (extensions.okr): text targets, units with qualifiers, unmeasured currents.
 const ext = {
@@ -187,6 +189,79 @@ describe('Copilot drafts (kpiOkrDraft)', () => {
     // Existing KPIs carry their targets so a twin with another name is recognizable (both models picked one 6/6 without).
     const data: KpiData = { kpis: [{ id: 'x', name: 'Engagements Led', unit: 'engagements', baseline: 0, current: 0, target: 50, deadline: '2027-06-30' }], okrs: [] };
     expect(kpiDraftPrompt(input({ data }))).toContain('Project にすでにある KPI（目標）: Engagements Led (50 engagements)');
+  });
+
+  describe('drafting missing definitions after pack creation', () => {
+    const pack = { ...samplePack, entities: samplePack.entities.filter((e) => e.kind !== 'kpi') };
+    const missingInput = (over: Partial<DraftPromptInput> = {}) => input({ ext: { kpis: [], objectives: [] }, ...over });
+    const answer = () => ({
+      kpis: [{ id: 'lead', name: '受注から出荷までの日数', unit: '日', reason: '出荷までの課題を測定する', evidenceIds: ['issue-lead-time'], target: 99, current: 50, deadline: '2099-01-01' }],
+      okrs: [{ objective: '出荷までの流れを改善する', reason: '納期の課題に対応する', evidenceIds: ['issue-lead-time'], kpiIds: ['lead'] }],
+    });
+
+    it('uses the purpose and raw pack issues, not people, and leaves invented measurements blank', () => {
+      const prompt = missingKpiDraftPrompt(missingInput(), pack);
+      expect(prompt).toContain('Mode: proposeMissing');
+      expect(prompt).toContain('顧客接点の拡大');
+      expect(prompt).toContain('issue-lead-time');
+      expect(prompt).not.toContain('person-sato-yui');
+      const result = applyMissingKpiDraftResponse(JSON.stringify(answer()), missingInput(), pack);
+      expect(result.drafts.kpis[0]).toMatchObject({
+        name: '受注から出荷までの日数', unit: '日', baseline: '', current: '', target: '', deadline: '', origin: 'proposed',
+        sourceIds: ['src-annual-report'], notes: ['noTarget', 'noCurrent', 'noDeadline'],
+      });
+      expect(result.drafts.okrs[0]!.keyResults[0]!.kpiId).toBe(result.drafts.kpis[0]!.id);
+      expect(result.drafts.kpis[0]!.original.definition).toContain('受注から出荷までが長い');
+      expect(saveAllDrafts(empty(), result.drafts).saved).toBe(0);
+      const filled = { ...result.drafts, kpis: result.drafts.kpis.map((k) => ({ ...k, baseline: '5', current: '5', target: '3', deadline: '2027-03-31' })) };
+      const saved = saveAllDrafts(empty(), filled);
+      expect(saved.saved).toBe(2);
+      expect(saved.data.kpis[0]!.origin).toBe('proposed');
+      expect(saved.data.okrs[0]!.origin).toBe('proposed');
+      expect(applyMissingKpiDraftResponse(JSON.stringify(answer()), missingInput({ data: saved.data }), pack).added).toBe(0);
+      expect(applyMissingKpiDraftResponse(JSON.stringify(answer()), missingInput({ drafts: result.drafts }), pack).added).toBe(0);
+    });
+
+    it('fills only the missing side and reuses an existing KPI without changing it', () => {
+      const existing = { id: 'saved', name: 'Delivery days', unit: 'days', baseline: 5, current: 4, target: 3, deadline: '2027-03-31' };
+      const data = { kpis: [existing], okrs: [] };
+      expect(missingKpiDrafts(missingInput({ data }))).toEqual({ kpis: false, okrs: true });
+      const raw = answer();
+      raw.okrs[0]!.kpiIds = ['saved'];
+      const r = applyMissingKpiDraftResponse(JSON.stringify(raw), missingInput({ data }), pack);
+      expect(r.drafts.kpis).toEqual([]);
+      expect(r.drafts.okrs[0]!.keyResults[0]).toMatchObject({ kpiId: 'saved', text: 'Delivery days' });
+      expect(data.kpis).toEqual([existing]);
+      const onlyOkr = { kpis: [], okrs: [{ id: 'o', objective: 'Keep', keyResults: [] }] };
+      expect(missingKpiDrafts(missingInput({ data: onlyOkr }))).toEqual({ kpis: true, okrs: false });
+      const kpiOnly = applyMissingKpiDraftResponse(JSON.stringify(answer()), missingInput({ data: onlyOkr }), pack);
+      expect(kpiOnly.drafts.kpis).toHaveLength(1);
+      expect(kpiOnly.drafts.okrs).toEqual([]);
+    });
+
+    it('uses existing internal text KPI candidates when only the OKR is missing', () => {
+      const i = missingInput({ ext: { kpis: ext.kpis, objectives: [] } });
+      const raw = { kpis: [], okrs: [{ ...answer().okrs[0]!, kpiIds: ['okr.kpi:k-wins'] }] };
+      expect(missingKpiDraftPrompt(i, pack)).toContain('okr.kpi:k-wins');
+      const r = applyMissingKpiDraftResponse(JSON.stringify(raw), i, pack);
+      expect(r.drafts.kpis[0]).toMatchObject({ candidateId: 'okr.kpi:k-wins', target: '5' });
+      expect(r.drafts.kpis[0]!.origin).toBeUndefined();
+      expect(r.drafts.okrs[0]!.keyResults[0]!.kpiId).toBe(r.drafts.kpis[0]!.id);
+    });
+
+    it('rejects malformed or fabricated references atomically, and exposes unsupported numbers', () => {
+      for (const raw of ['{}', 'not json', JSON.stringify({ ...answer(), kpis: [{ ...answer().kpis[0], evidenceIds: ['fake'] }] }),
+        JSON.stringify({ ...answer(), okrs: [{ ...answer().okrs[0], kpiIds: ['fake'] }] })]) {
+        expect(() => applyMissingKpiDraftResponse(raw, missingInput(), pack)).toThrow();
+      }
+      const raw = answer();
+      raw.kpis.push({ ...raw.kpis[0]! });
+      expect(() => applyMissingKpiDraftResponse(JSON.stringify(raw), missingInput(), pack)).toThrow('Duplicate');
+      const numeric = answer();
+      numeric.kpis[0]!.reason = '300% の改善';
+      expect(applyMissingKpiDraftResponse(JSON.stringify(numeric), missingInput(), pack).drafts.kpis[0]!.unverified).toContain('300');
+      expect(missingInput().drafts).toEqual(emptyDrafts());
+    });
   });
 
   it('drops unknown or duplicate ids, caps counts, and flags invented numbers', () => {

@@ -3,7 +3,7 @@ import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
-import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, WorkflowExtension } from './extensionSchemas.ts';
+import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, RequirementEvidenceExtension, WorkflowExtension } from './extensionSchemas.ts';
 import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } from './companyAnchor.ts';
@@ -199,7 +199,7 @@ export function verifyPack(raw: unknown): VerifyResult {
   const extensionSchemas = {
     glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
-    workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension,
+    workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension, requirementEvidence: RequirementEvidenceExtension,
     decisionReport: DecisionReportExtension,
     companyAnchor: CompanyAnchorVersionSchema,
     companyAlignment: CompanyAlignmentSnapshotSchema,
@@ -279,6 +279,17 @@ export function verifyPack(raw: unknown): VerifyResult {
       cause: `The decision report keeps the original analysis text (${decision.data.claims.length} labelled claims, ${hypotheses} hypotheses or items to confirm).`,
       action: 'Review the report before sharing this pack; confirm hypotheses with the customer before treating them as facts.',
     });
+  }
+  const evidenceExt = RequirementEvidenceExtension.safeParse(pack.extensions?.requirementEvidence);
+  if (evidenceExt.success) {
+    const ids = new Set<string>();
+    evidenceExt.data.items.forEach((item, i) => {
+      const path = `extensions.requirementEvidence.items[${i}]`;
+      if (ids.has(item.id)) add({ severity: 'error', code: 'DUPLICATE_ID', path: `${path}.id`, cause: `Evidence id "${item.id}" is not unique.`, action: 'Use a unique evidence id.' });
+      ids.add(item.id);
+      sourceRefs(item.sourceIds, `${path}.sourceIds`);
+    });
+    if (evidenceExt.data.items.length) add({ severity: 'warning', code: 'INTERNAL', path: 'extensions.requirementEvidence', cause: 'Rules, user voices and evaluation data are internal.', action: 'Hidden for an external audience. Review sources before sharing the pack.' });
   }
   const engagements = EngagementsExtension.safeParse(pack.extensions?.engagements);
   if (engagements.success) {

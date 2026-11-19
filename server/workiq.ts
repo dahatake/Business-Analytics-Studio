@@ -130,14 +130,21 @@ export function settingsSignature(s: WorkIqSettings): string {
  * hits that all answered "what is this about"; one targeted search per section brings KPI definitions, process
  * hand-offs, data assets and locations that a combined question never reaches.
  */
-export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit'] as const;
+export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
+/**
+ * Searches for a requirements definition (IPA requirements handbook 8.1, 12, 13): the rules a solution must obey, the
+ * current systems and how they are run, and the voices of users. They are not part of pack generation; the
+ * requirements panel asks for them on demand and keeps each answer as evidence a person approves.
+ */
+export const WORKIQ_REQUIREMENT_ASPECTS: readonly WorkIqAspect[] = ['rules', 'systems', 'voice'];
 /**
  * FR-341: KPI/OKR searches scoped to one organisation — the company as a whole (company name only, never the project)
  * and the business unit (`unit`). They stay sections of their own even with `expand`, so the pack can tell which
- * organisation a KPI belongs to; merged into the kpi section they would lose it.
+ * organisation a KPI belongs to; merged into the kpi section they would lose it. The requirement searches stay sections
+ * of their own for the same reason: they feed no readiness item.
  */
-export const WORKIQ_SCOPED_ASPECTS: readonly WorkIqAspect[] = ['kpiCompany', 'kpiUnit'];
+export const WORKIQ_SCOPED_ASPECTS: readonly WorkIqAspect[] = ['kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice'];
 /**
  * Follow-up searches built from the generator's own "what is missing" list (one round per stage). D-15: 4 → 8, every
  * round of the measured runs used all 4.
@@ -187,6 +194,7 @@ export function workIqSearches(q: WorkIqQuestion): { key: string; query: string 
 export const ASPECT_ITEMS: Record<WorkIqAspect, readonly ReadinessKey[]> = {
   org: ['org'], people: ['org'], locations: ['locations'], process: ['workflow'], data: ['dataCatalog'],
   kpi: ['kpi'], engagements: ['customers', 'engagements'], issues: ['issues'], kpiCompany: ['kpi'], kpiUnit: ['kpi'],
+  rules: [], systems: [], voice: [],
 };
 
 export interface PlannedSearch {
@@ -304,6 +312,9 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
       issues: `${s}の課題は何ですか?`,
       kpiCompany: `${q.company}の全社のKPI/OKRは何ですか?`,
       kpiUnit: `${unit}のKPI/OKRは何ですか?`,
+      rules: `${s}に適用される規程・ガイドライン・セキュリティ基準・SLAは何ですか?`,
+      systems: `${s}の現行システムと運用手順は何ですか?`,
+      voice: `${s}の問い合わせ・クレーム・障害・監査指摘は何ですか?`,
     }
     : {
       org: `What is the organisation structure of ${s} and its roles?`,
@@ -316,6 +327,9 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
       issues: `What are the issues of ${s}?`,
       kpiCompany: `What are the company-wide KPIs/OKRs of ${q.company}?`,
       kpiUnit: `What are the KPIs/OKRs of ${unit}?`,
+      rules: `What policies, guidelines, security standards and SLAs apply to ${s}?`,
+      systems: `What are the current systems and operating procedures of ${s}?`,
+      voice: `What are the inquiries, complaints, incidents and audit findings of ${s}?`,
     };
   return text[aspect];
 }
@@ -338,7 +352,10 @@ export function workIqUnitSubject(q: Pick<WorkIqQuestion, 'company' | 'project' 
 export function workIqAspectKeywords(q: Pick<WorkIqQuestion, 'company' | 'project' | 'unit'>, aspect: WorkIqAspect): string {
   if (aspect === 'kpiCompany') return `${q.company} company-wide KPI OKR targets mid-term plan`;
   if (aspect === 'kpiUnit') return `${workIqUnitSubject(q)} division KPI OKR targets scorecard`;
-  const words: Record<Exclude<WorkIqAspect, 'kpiCompany' | 'kpiUnit'>, string> = {
+  if (aspect === 'rules') return `${workIqSubject(q)} policy guideline security standard SLA compliance AI usage policy`;
+  if (aspect === 'systems') return `${workIqSubject(q)} current systems applications operations runbook`;
+  if (aspect === 'voice') return `${workIqSubject(q)} inquiries complaints incidents audit findings feedback`;
+  const words: Record<Exclude<WorkIqAspect, 'kpiCompany' | 'kpiUnit' | 'rules' | 'systems' | 'voice'>, string> = {
     org: 'organization team structure roles',
     kpi: 'KPI OKR targets scorecard',
     process: 'engagement process request intake delivery handoff',

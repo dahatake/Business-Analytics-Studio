@@ -15,6 +15,14 @@ export const CatalogItem = z.object({
     z.array(text(200).min(1)).max(1000).optional(),
   ),
   domain: optionalText(200),
+  /** Data supply chain attributes (IPA requirements handbook table 29): who owns it, where it came from and on what terms. */
+  owner: optionalText(200),
+  provenance: optionalText(500),
+  license: optionalText(500),
+  personalData: optionalText(100),
+  quality: optionalText(500),
+  updateFrequency: optionalText(100),
+  retention: optionalText(200),
   url: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : typeof v === 'string' ? v.trim() : v), z.url({ protocol: /^https?$/ }).max(2000).optional()),
 });
 export type CatalogItem = z.infer<typeof CatalogItem>;

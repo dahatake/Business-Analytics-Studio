@@ -109,7 +109,7 @@ function KpiDraftCard({ d, props }: { d: KpiDraft; props: DraftListProps }) {
     d.original.period && t('proj.draft.orig.period', { v: d.original.period }),
   ].filter(Boolean).join(lang === 'ja' ? '、' : '; ');
   return (
-    <section className="proj-draft" aria-label={t('proj.draft.nameFor', { name })} data-testid={`proj-kpi-draft-${d.candidateId}`}>
+    <section className="proj-draft" id={`proj-kpi-draft-${d.id}`} tabIndex={-1} aria-label={t('proj.draft.nameFor', { name })} data-testid={`proj-kpi-draft-${d.candidateId}`}>
       <div className="proj-okr-head"><DraftBadges by={d.by} /><strong>{name}</strong></div>
       {d.origin === 'proposed' && <Badge appearance="outline" color="warning">{t('sol.origin.proposed')}</Badge>}
       {original && <p className="muted">{t('proj.draft.original', { text: original })}</p>}
@@ -162,7 +162,7 @@ function OkrDraftCard({ o, props }: { o: OkrDraft; props: DraftListProps }) {
   const setKr = (i: number, next: Partial<OkrDraft['keyResults'][number]>) => patch({ keyResults: o.keyResults.map((kr, j) => (j === i ? { ...kr, ...next } : kr)) });
   const linkedDrafts = o.keyResults.map((kr) => kr.kpiId).filter((id) => drafts.kpis.some((d) => d.id === id));
   return (
-    <section className="proj-draft" aria-label={t('proj.draft.nameFor', { name })} data-testid={`proj-okr-draft-${o.candidateId}`}>
+    <section className="proj-draft" id={`proj-okr-draft-${o.id}`} tabIndex={-1} aria-label={t('proj.draft.nameFor', { name })} data-testid={`proj-okr-draft-${o.candidateId}`}>
       <div className="proj-okr-head"><DraftBadges by={o.by} /><strong>{name}</strong></div>
       {o.origin === 'proposed' && <Badge appearance="outline" color="warning">{t('sol.origin.proposed')}</Badge>}
       <CopilotNotes reason={o.reason} unverified={o.unverified} />

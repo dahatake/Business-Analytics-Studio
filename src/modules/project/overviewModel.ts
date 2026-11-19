@@ -64,8 +64,19 @@ export interface StrategyNode {
   lane: 'objective' | 'okr' | 'kpi' | 'issue' | 'solution';
   label: string;
   score: number | null;
+  /** FR-350: 'new' = an unsaved draft item (id `<lane>:draft:<ref>`); 'changed' = a saved item with a pending AI draft change. */
+  draft?: 'new' | 'changed';
 }
-export interface StrategyLink { source: string; target: string; direct: boolean }
+export interface StrategyLink { source: string; target: string; direct: boolean; draft?: boolean }
+/** FR-350: draft data shown next to the confirmed data, never merged into it. */
+export interface StrategyDrafts {
+  objectives?: { id: string; text: string }[];
+  okrs?: { id: string; objective: string; kpiIds: string[]; objectiveIds: string[] }[];
+  kpis?: { id: string; name: string }[];
+  /** Saved issues/solutions that an unapproved strategy draft would change. */
+  changed?: string[];
+  objectiveIssues?: { objectiveId: string; issueId: string }[];
+}
 export interface StrategyMap { nodes: StrategyNode[]; links: StrategyLink[]; issues: EntityOf<'issue'>[]; solutions: EntityOf<'solution'>[] }
 
 /** Audience filtering happens before both graph construction and AI context construction. */
@@ -130,7 +141,7 @@ export function issueScore(issue: EntityOf<'issue'>, axis: OverviewAxis, ctx: Ch
   }
 }
 
-export function strategyMap(ctx: CheckContext, state: Pick<OverviewState, 'objectiveIssues'>, axis: OverviewAxis, lang: Lang, descending = true): StrategyMap {
+export function strategyMap(ctx: CheckContext, state: Pick<OverviewState, 'objectiveIssues'>, axis: OverviewAxis, lang: Lang, descending = true, drafts: StrategyDrafts = {}): StrategyMap {
   const issues = entitiesOf('issue', ctx.pack);
   const solutions = entitiesOf('solution', ctx.pack);
   const nodes: StrategyNode[] = [];
@@ -138,15 +149,26 @@ export function strategyMap(ctx: CheckContext, state: Pick<OverviewState, 'objec
   const add = (lane: StrategyNode['lane'], ref: string, label: string, score: number | null = null) => {
     nodes.push({ id: `${lane}:${ref}`, ref, lane, label, score });
   };
+  const addDraft = (lane: StrategyNode['lane'], ref: string, label: string) => {
+    nodes.push({ id: `${lane}:draft:${ref}`, ref, lane, label, score: null, draft: 'new' });
+  };
   ctx.objectives.forEach((o) => add('objective', o.id, o.text));
   ctx.kpi.okrs.forEach((o) => add('okr', o.id, loc(o.objective, lang)));
   ctx.kpi.kpis.forEach((k) => add('kpi', k.id, loc(k.name, lang)));
   issues.forEach((i) => add('issue', i.id, loc(i.name, lang), issueScore(i, axis, ctx)));
   solutions.forEach((s) => add('solution', s.id, loc(s.name, lang)));
+  const saved = new Set(nodes.map((n) => n.id));
+  drafts.objectives?.forEach((o) => { if (!saved.has(`objective:${o.id}`)) addDraft('objective', o.id, o.text); });
+  drafts.okrs?.forEach((o) => addDraft('okr', o.id, o.objective));
+  drafts.kpis?.forEach((k) => addDraft('kpi', k.id, k.name));
+  const changed = new Set(drafts.changed);
+  nodes.forEach((n) => { if (!n.draft && (n.lane === 'issue' || n.lane === 'solution') && changed.has(n.ref)) n.draft = 'changed'; });
   const known = new Set(nodes.map((n) => n.id));
-  const connect = (source: string, target: string, direct = false) => {
-    if (known.has(source) && known.has(target) && !links.some((l) => l.source === source && l.target === target)) links.push({ source, target, direct });
+  const connect = (source: string, target: string, direct = false, draft = false) => {
+    if (known.has(source) && known.has(target) && !links.some((l) => l.source === source && l.target === target)) links.push({ source, target, direct, ...(draft ? { draft } : {}) });
   };
+  // A draft may point at a saved item or at another draft with the same id.
+  const nodeOf = (lane: StrategyNode['lane'], ref: string) => known.has(`${lane}:${ref}`) ? `${lane}:${ref}` : `${lane}:draft:${ref}`;
   ctx.kpi.okrs.forEach((o) => {
     const objectives = o.companyObjectiveIds?.length ? o.companyObjectiveIds : ctx.projectObjectiveIds;
     objectives.forEach((id) => connect(`objective:${id}`, `okr:${o.id}`));
@@ -161,19 +183,27 @@ export function strategyMap(ctx: CheckContext, state: Pick<OverviewState, 'objec
     });
   });
   state.objectiveIssues.forEach((x) => connect(`objective:${x.objectiveId}`, `issue:${x.issueId}`, true));
+  drafts.okrs?.forEach((o) => {
+    o.objectiveIds.forEach((id) => connect(nodeOf('objective', id), `okr:draft:${o.id}`, false, true));
+    o.kpiIds.forEach((id) => connect(`okr:draft:${o.id}`, nodeOf('kpi', id), false, true));
+  });
+  drafts.objectiveIssues?.forEach((x) => connect(nodeOf('objective', x.objectiveId), `issue:${x.issueId}`, true, true));
   const scores = issues.map((i) => ({ id: i.id, value: issueScore(i, axis, ctx) }));
   for (const n of nodes.filter((n) => n.lane !== 'issue')) {
     const related = new Set<string>();
+    // Saved items keep the scores of saved relationships only; drafts may also follow draft links.
     const walk = (id: string, upstream: boolean) => {
       if (related.has(id)) return;
       related.add(id);
-      links.filter((l) => upstream ? l.target === id : l.source === id).forEach((l) => walk(upstream ? l.source : l.target, upstream));
+      links.filter((l) => (n.draft === 'new' || !l.draft) && (upstream ? l.target === id : l.source === id)).forEach((l) => walk(upstream ? l.source : l.target, upstream));
     };
     walk(n.id, n.lane === 'solution');
     const values = scores.filter((s) => related.has(`issue:${s.id}`)).flatMap((s) => s.value === null ? [] : [s.value]);
     n.score = values.length ? Math.max(...values) : null;
   }
   nodes.sort((a, b) => {
+    // Unsaved drafts follow the saved items of their lane.
+    if ((a.draft === 'new') !== (b.draft === 'new')) return a.draft === 'new' ? 1 : -1;
     if (a.score === null || b.score === null) return a.score === b.score ? a.id.localeCompare(b.id) : a.score === null ? 1 : -1;
     return (descending ? b.score - a.score : a.score - b.score) || a.id.localeCompare(b.id);
   });

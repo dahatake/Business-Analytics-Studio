@@ -4,6 +4,10 @@ import type { EntityOf } from '../../data/schema.ts';
 import type { UseCase } from '../usecases/store.ts';
 import { DEFINITION_STATUSES } from './kpiOkr.ts';
 import type { KpiData, KpiOrigin } from './model.ts';
+import {
+  clearSectionStamp, normalizeRequirementExtras, stampSection,
+  type RequirementExtras,
+} from './requirementsModel.ts';
 import { EVIDENCE_BASES, simulate, type KpiSimulation } from './simulate.ts';
 
 /**
@@ -18,12 +22,21 @@ import { EVIDENCE_BASES, simulate, type KpiSimulation } from './simulate.ts';
  * policy, assets and partners are first-class changes with their own deliverable (Ward & Daniel: business changes and
  * enabling changes; Kotter, HBR 1995, for changes in people and organisation).
  */
-export const SOLUTION_TYPES = ['digital', 'process', 'people', 'asset', 'partner'] as const;
+export const SOLUTION_TYPES = ['digital', 'prompt', 'agent', 'process', 'people', 'asset', 'partner'] as const;
 export type SolutionType = (typeof SOLUTION_TYPES)[number];
 
+/**
+ * "digital" is an application (a system with fixed behaviour); "prompt" is an instruction to a generative AI that people
+ * run themselves; "agent" is an AI that acts or decides within limits. They share the system's deliverables but differ in
+ * what must be specified (IPA requirements handbook 5.3, 5.4, 8.5).
+ */
+export const isSystemType = (t: SolutionType): boolean => t === 'digital' || t === 'prompt' || t === 'agent';
+
 /** The final deliverable that fits each type. */
-export const DELIVERABLE_OF: Record<SolutionType, 'requirements' | 'processPlan' | 'changePlan' | 'investmentPlan' | 'sourcingPlan'> = {
+export const DELIVERABLE_OF: Record<SolutionType, 'requirements' | 'promptSpec' | 'agentSpec' | 'processPlan' | 'changePlan' | 'investmentPlan' | 'sourcingPlan'> = {
   digital: 'requirements',
+  prompt: 'promptSpec',
+  agent: 'agentSpec',
   process: 'processPlan',
   people: 'changePlan',
   asset: 'investmentPlan',
@@ -64,7 +77,8 @@ export const StrategyDataSchema = z.object({
   /** The definition status confirmed in the app (e.g. the customer said there is none). Overrides the pack's. */
   definition: z.object({ status: z.enum(DEFINITION_STATUSES), note: z.string() }).extend(ByWhom.shape).optional().catch(undefined),
 });
-export type StrategyData = z.infer<typeof StrategyDataSchema>;
+/** The strategy data and the requirement management parts (ledger, evidence, signals, change records) next to it. */
+export type StrategyData = z.infer<typeof StrategyDataSchema> & RequirementExtras;
 
 export const emptyStrategy = (): StrategyData => ({ types: {}, contributions: [], sections: {} });
 
@@ -82,7 +96,11 @@ export function normalizeStrategy(raw: unknown): StrategyData {
   }) : [];
   const sections = StrategyDataSchema.shape.sections.safeParse(r.sections);
   const definition = StrategyDataSchema.shape.definition.safeParse(r.definition);
-  return { types: okTypes, contributions, sections: sections.success ? sections.data : {}, ...(definition.success && definition.data ? { definition: definition.data } : {}) };
+  return {
+    types: okTypes, contributions, sections: sections.success ? sections.data : {},
+    ...(definition.success && definition.data ? { definition: definition.data } : {}),
+    ...normalizeRequirementExtras(r),
+  };
 }
 
 /** Type of a solution: the confirmed one, else inferred (Microsoft products named → digital, else process). */
@@ -186,7 +204,7 @@ export function strategyThread(c: StrategyContext): StrategyThread {
       kpisWithoutSolution: kpis.filter((k) => k.solutionIds.length === 0).map((k) => k.id),
       solutionsWithoutKpi: threadSolutions.filter((s) => s.kpiIds.length === 0).map((s) => s.id),
       solutionsWithoutContribution: threadSolutions.filter((s) => s.contributionKpiIds.length === 0).map((s) => s.id),
-      digitalWithoutUseCase: threadSolutions.filter((s) => s.type === 'digital' && s.useCaseIds.length === 0).map((s) => s.id),
+      digitalWithoutUseCase: threadSolutions.filter((s) => isSystemType(s.type) && s.useCaseIds.length === 0).map((s) => s.id),
     },
   };
 }
@@ -209,9 +227,13 @@ export function upsertContribution(data: StrategyData, c: Contribution): Strateg
 
 export const removeContribution = (data: StrategyData, id: string): StrategyData => ({ ...data, contributions: data.contributions.filter((c) => c.id !== id) });
 
-export function setSection(data: StrategyData, solutionId: string, sectionId: string, text: string | null): StrategyData {
+/** Writes a section (or clears it with null). With `meta` the author and time are recorded next to the text. */
+export function setSection(data: StrategyData, solutionId: string, sectionId: string, text: string | null, meta?: { by: string; at: string }): StrategyData {
   const own = { ...(data.sections[solutionId] ?? {}) };
-  if (text === null || !text.trim()) delete own[sectionId];
+  const cleared = text === null || !text.trim();
+  if (cleared) delete own[sectionId];
   else own[sectionId] = text;
-  return { ...data, sections: { ...data.sections, [solutionId]: own } };
+  const next: StrategyData = { ...data, sections: { ...data.sections, [solutionId]: own } };
+  if (cleared) return data.sectionMeta?.[solutionId]?.[sectionId] ? clearSectionStamp(next, solutionId, sectionId) : next;
+  return meta ? stampSection(next, solutionId, sectionId, meta.by, meta.at) : next;
 }

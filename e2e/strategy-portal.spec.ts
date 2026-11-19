@@ -1,0 +1,138 @@
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
+import { open, seedDeviceData, setup } from './helpers.ts';
+import { samplePack } from '../src/data/sample.ts';
+
+/** FR-349 / FR-350: the strategy map is a portal to each item's input place, and shows drafts next to saved data. */
+
+const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+
+async function scan(page: Page) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
+    .exclude('[data-tabster-dummy]')
+    .analyze();
+  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
+}
+
+const focusedId = (page: Page) => page.evaluate(() => document.activeElement?.id ?? '');
+
+test('an issue opens its editor, and the return bar brings focus back to that item on the map', async ({ page }) => {
+  await open(page, '/', { lang: 'en' });
+  await expect(page.getByTestId('strategy-portal-hint')).toBeVisible();
+  expect(await scan(page)).toEqual([]);
+  await page.locator('[id="stg-node-issue:issue-lead-time"]').click();
+  await expect(page).toHaveURL(/#\/relations\?.*edit=issue-lead-time/);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId('portal-return-link')).toContainText('Long order-to-ship lead time');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await page.getByTestId('portal-return-link').click();
+  await expect(page.getByTestId('strategy-map')).toBeVisible();
+  await expect.poll(() => focusedId(page)).toBe('stg-node-issue:issue-lead-time');
+  await expect(page.getByTestId('portal-return')).toHaveCount(0);
+});
+
+test('a KPI opens its row on the KPI tab and a lane heading opens its list', async ({ page }) => {
+  await open(page, '/', { lang: 'en' });
+  await page.locator('[id="stg-node-kpi:kpi-otd"]').focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/#\/analysis\?tab=kpi&target=proj-kpi-row-kpi-otd/);
+  await expect.poll(() => focusedId(page)).toBe('proj-kpi-row-kpi-otd');
+  await page.getByTestId('portal-return-link').click();
+  await expect.poll(() => focusedId(page)).toBe('stg-node-kpi:kpi-otd');
+  await page.locator('#stg-lane-okr').click();
+  await expect.poll(() => focusedId(page)).toBe('proj-okr-panel');
+});
+
+async function seedProject(page: Page) {
+  await setup(page, { lang: 'en' });
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('bas.e2e.portal')) return;
+    sessionStorage.setItem('bas.e2e.portal', '1');
+    const createdAt = '2026-11-10T00:00:00.000Z';
+    localStorage.setItem('bas.projects', JSON.stringify({
+      version: 1,
+      state: {
+        companies: [{ id: 'co-a', name: 'Contoso', createdAt }],
+        projects: [{ id: 'pj-alpha', companyId: 'co-a', name: 'Alpha', createdAt, step: 'kpi' }],
+        target: { kind: 'project', projectId: 'pj-alpha' },
+        lastProjectId: 'pj-alpha',
+        demoStep: 'define',
+      },
+    }));
+  });
+  await page.goto('/#/');
+  await expect(page.locator('main#main')).toBeVisible();
+  const anchor = {
+    asOf: '2026-11-01', refreshTriggers: [], refreshEvents: [],
+    entityScope: { legalEntity: 'Contoso', figuresScope: ['Contoso'] },
+    statedObjectives: [{ id: 'obj-reach', text: 'Triple partner-led customer reach', horizon: 'FY2027', basis: 'published', scope: 'legalEntity', sourceIds: ['S1'] }],
+    companyKpis: [], segments: [], structuralIssues: [], analystHypotheses: [],
+    sources: [{ id: 'S1', title: 'Mid-term plan', type: 'public', provenance: 'primary', url: 'https://example.com/plan', accessedDate: '2026-11-01', locator: 'p. 4' }],
+  };
+  const okr = {
+    kpis: [{ id: 'k-reach', name: 'Customer Reach', target: '10x', unit: 'x', sourceIds: [] }],
+    objectives: [],
+  };
+  const pack = { ...samplePack, extensions: { ...samplePack.extensions, okr, companyAnchor: { version: 1, savedAt: '2026-11-01T00:00:00.000Z', anchor } } };
+  await seedDeviceData(page, {
+    'bas.packs.index': JSON.stringify({ 'pj-alpha': {
+      projectId: 'pj-alpha', packId: pack.packId, company: pack.company, isSample: false,
+      entities: pack.entities.length, importedAt: '2026-11-10T00:00:00.000Z', files: ['synthetic.json'],
+    } }),
+    'bas.binary.pack.pj-alpha': JSON.stringify(pack),
+  });
+  await page.reload();
+  await expect(page.getByTestId('strategy-map')).toBeVisible();
+}
+
+test('drafts appear dashed on the map; a draft objective is checked and saved in a popup', async ({ page }) => {
+  await seedProject(page);
+  const draftObjective = page.locator('[id="stg-node-objective:draft:obj-reach"]');
+  await expect(draftObjective.locator('[data-draft="new"]')).toContainText('Draft (not saved)');
+  await expect(page.getByTestId('strategy-drafts')).toContainText('1 drafts');
+
+  // A KPI draft adopted on the KPI tab shows up on the map before it is saved.
+  await page.goto('/#/analysis?tab=kpi');
+  await page.getByTestId('proj-adopt-select-k-reach').check();
+  await page.getByTestId('proj-adopt-kpi').click();
+  await page.goto('/#/');
+  const draftKpi = page.locator('[id^="stg-node-kpi:draft:"]');
+  await expect(draftKpi).toHaveCount(1);
+  await expect(draftKpi).toHaveAccessibleName(/Customer Reach.*Draft \(not saved\)/);
+  await expect(draftKpi).toHaveAccessibleDescription('KPIs (optional)');
+  await expect(page.getByTestId('strategy-drafts')).toContainText('2 drafts');
+  expect(await scan(page)).toEqual([]);
+
+  await draftObjective.click();
+  const dialog = page.getByTestId('strategy-objective-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId('strategy-objective-text')).toHaveValue('Triple partner-led customer reach');
+  await expect(page.getByTestId('strategy-objective-url')).toHaveValue('https://example.com/plan');
+  await page.getByTestId('strategy-objective-url').fill('');
+  await page.getByTestId('strategy-objective-save').click();
+  await expect(page.getByTestId('strategy-objective-errors')).toBeVisible();
+  expect(await scan(page)).toEqual([]);
+  await page.getByTestId('strategy-objective-url').fill('https://example.com/plan');
+  await page.getByTestId('strategy-objective-save').click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId('strategy-objective-saved')).toBeVisible();
+  const saved = page.locator('[id="stg-node-objective:obj-reach"]');
+  await expect(saved).toBeVisible();
+  await expect(draftObjective).toHaveCount(0);
+  await expect.poll(() => focusedId(page)).toBe('stg-node-objective:obj-reach');
+  await expect(saved).toHaveAttribute('href', '#/projects?target=company-anchor-co-a');
+  await page.reload();
+  await expect(page.locator('[id="stg-node-objective:obj-reach"]')).toBeVisible();
+});
+
+test('the external view shows confirmed data only and keeps company objectives non-interactive', async ({ page }) => {
+  await open(page, '/', { lang: 'en', audience: 'external' });
+  await expect(page.getByTestId('strategy-map')).toBeVisible();
+  await expect(page.locator('#stg-lane-objective')).toHaveCount(0);
+  await expect(page.locator('#stg-empty-objective')).toHaveCount(0);
+  await expect(page.locator('[data-draft]')).toHaveCount(0);
+  await expect(page.locator('#stg-lane-issue')).toHaveAttribute('href', /#\/relations/);
+});

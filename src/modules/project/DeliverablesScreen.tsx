@@ -12,13 +12,15 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { AuthorBadge, BackToHome, downloadText, useTargetNames } from './common.tsx';
 import {
-  approveField, evaluateStep, fieldHintKey, fieldKey, hasDate, hasNumber, inputKey, normalizeDeliverables, paybackLimit, PAYBACK_LIMIT_RANGE, PAYBACK_MAX_YEARS, progressOf, resultKey,
+  approveField, evaluateStep, fieldHintKey, fieldIsVague, fieldKey, hasDate, hasNumber, inputKey, normalizeDeliverables, paybackLimit, PAYBACK_LIMIT_RANGE, PAYBACK_MAX_YEARS, progressOf, resultKey,
   setField, setPaybackLimit, setSignOff, STEP_DEFS, type CheckContext, type TodoResult,
 } from './deliverables.ts';
 import { deliverableNameKey, Refs, StrategySummary, TodoItem, todayIn, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { inputCount } from './stepDashboard.ts';
+import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
 import { useDeliverables, useFieldDrafts, useProjTransient, useProjUi } from './stores.ts';
 import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
+import { ChangeLogPanel, EvidencePanel, IssueSignalsPanel, RequirementLedgerPanel } from './RequirementsPanels.tsx';
 import { simulateTaskImpact, type ImpactInputs } from './taskImpact.ts';
 import './project.css';
 
@@ -264,6 +266,8 @@ export function DeliverablesScreen() {
         <p><StrategySummary ctx={ctx} /></p>
       </section>
 
+      <DiscoveryAdvicePanel step={step} ctx={ctx} />
+
       {selectedTask && <TaskWorkbench key={selectedTask.todo.id} result={selectedTask} ctx={ctx} step={step} />}
 
       <Panel title={t('dlv.screen.exit')} testId="dlv-exit" className="dlv-exit">
@@ -275,7 +279,10 @@ export function DeliverablesScreen() {
 
       {step === 'kpi' && <KpiDefinitionPanel ctx={ctx} />}
       {step === 'solution' && <SolutionStrategyPanel ctx={ctx} />}
+      {step === 'deliverable' && <EvidencePanel ctx={ctx} />}
       {step === 'deliverable' && <SolutionDocsPanel ctx={ctx} />}
+      {step === 'deliverable' && <RequirementLedgerPanel ctx={ctx} />}
+      {step === 'deliverable' && <ChangeLogPanel ctx={ctx} />}
       {step === 'deliverable' && <PaybackCriterion />}
 
       <Panel title={t('dlv.screen.inputs')} testId="dlv-inputs" className="dlv-inputs">
@@ -291,8 +298,8 @@ export function DeliverablesScreen() {
           {def.fields.map((f) => {
             const v = doc[f.id];
             const text = v?.text ?? '';
-            const missing = text.trim() !== '' && ((f.quantified && !hasNumber(text)) || (f.timeBound && !hasDate(text)));
-            const message = missing ? t(f.quantified && !hasNumber(text) ? 'dlv.screen.needNumber' : 'dlv.screen.needDate') : undefined;
+            const missing = text.trim() !== '' && fieldIsVague(f, text);
+            const message = missing ? t(f.quantified && !hasNumber(text) ? 'dlv.screen.needNumber' : f.timeBound && !hasDate(text) ? 'dlv.screen.needDate' : 'dlv.screen.needSpecific') : undefined;
             const label = t(fieldKey(step, f.id));
             const approvedDate = v?.approved ? fmt.date(todayIn(PARAMS.timeZone, new Date(v.approved.at))) : '';
             return (
@@ -346,6 +353,7 @@ export function DeliverablesScreen() {
         </div>
       </Panel>
 
+      {step === 'asis' && <IssueSignalsPanel ctx={ctx} />}
       <StrategyThreadPanel ctx={ctx} />
     </div>
   );

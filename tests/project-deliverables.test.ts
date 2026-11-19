@@ -9,7 +9,7 @@ import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import {
   applyDraft, approveField, cyclicInitiatives, emptyDeliverables, evaluateStep, fieldHintKey, fieldKey, inputKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit,
-  paybackYears, progressOf, resultKey, setField, setPaybackLimit, setSignOff, statedValues, STEP_DEFS, todoKey, todoWhyKey, valueMismatches,
+  paybackYears, progressOf, rankedIssues, resultKey, setField, setPaybackLimit, setQualification, setSignOff, statedValues, STEP_DEFS, todoKey, todoWhyKey, valueMismatches,
   type CheckContext, type DeliverableData,
 } from '../src/modules/project/deliverables.ts';
 import type { EntityOf } from '../src/data/schema.ts';
@@ -20,6 +20,7 @@ import { buildDraft, buildTaskDrafts, draftEntities, draftPrompt, draftRequest, 
 import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContribution, type StrategyData } from '../src/modules/project/strategy.ts';
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
+import { stepDashboard } from '../src/modules/project/stepDashboard.ts';
 import { humanDescription, parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, suggestOwner, unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
 
 const TODAY = '2026-11-09';
@@ -59,6 +60,14 @@ function drafted(c: CheckContext, lang: 'ja' | 'en' = 'ja', audience: 'internal'
 }
 
 const OBJECTIVE = { id: 'obj-mtp-1', text: '中期経営計画: 2027 年度までに納期遵守率 98 %' };
+
+/** The person qualifies every issue of the pack (FR-347). */
+function qualifyAll(data: DeliverableData, c: CheckContext, verdict: 'pursue' | 'notNow' | 'no' = 'pursue'): DeliverableData {
+  for (const i of c.pack.pack.entities.filter((e) => e.kind === 'issue')) {
+    data = setQualification(data, i.id, { verdict, reason: `${i.id}: measured by its KPI; the gap is worth acting on`, ...(verdict === 'pursue' ? { different: 'Budget is now approved' } : {}), at: '2026-11-09T10:00:00Z', by: 'Tester' });
+  }
+  return data;
+}
 
 it('passes applied upstream text to the next step draft without leaking it to the external request', () => {
   const ctx = demoCtx();
@@ -482,9 +491,10 @@ describe('step deliverables: validity checks', () => {
     for (const s of IMPROVEMENT_STEPS) expect(progressOf(evaluateStep(s, c)).complete, s).toBe(false);
   });
 
-  it('the demo meets every data check; the fields, the sign-offs and the strategy work are left', () => {
+  it('the demo meets every data check; the fields, the sign-offs, the qualification and the strategy work are left', () => {
     const open = (c: CheckContext, s: ImprovementStep) => evaluateStep(s, c).filter((r) => !r.done).map((r) => r.todo.id).sort();
-    const userWork = (s: ImprovementStep, extra: string[]) => STEP_DEFS[s].todos.filter((x) => x.kind === 'manual' || x.id.endsWith('-doc') || extra.includes(x.id)).map((x) => x.id).sort();
+    // Qualifying issues is the person's judgment, like a sign-off: the demo data never decides it.
+    const userWork = (s: ImprovementStep, extra: string[]) => STEP_DEFS[s].todos.filter((x) => x.kind === 'manual' || x.id.endsWith('-doc') || x.id === 'asis-qualify' || extra.includes(x.id)).map((x) => x.id).sort();
     const c = demoCtx();
     for (const s of IMPROVEMENT_STEPS) expect(open(c, s), s).toEqual(userWork(s, STRATEGY_TODOS));
     // Once the strategy panels are done, only the fields and the sign-offs remain.
@@ -495,22 +505,22 @@ describe('step deliverables: validity checks', () => {
   it('the band names the next thing to do and lists open criteria first; nothing is next once the step is complete', () => {
     const c = demoCtx();
     const results = evaluateStep('asis', c);
-    expect(nextTodo(results)?.todo.id).toBe('asis-doc');
+    expect(nextTodo(results)?.todo.id).toBe('asis-qualify');
     const ordered = openFirst(results).map((r) => r.todo.id);
-    expect(ordered.slice(0, 3)).toEqual(['asis-doc', 'asis-field', 'define-agree']);
+    expect(ordered.slice(0, 4)).toEqual(['asis-qualify', 'asis-doc', 'asis-field', 'define-agree']);
     expect([...ordered].sort()).toEqual(results.map((r) => r.todo.id).sort());
-    // After the draft the field check passes, so the sign-offs become next; after them, nothing is left.
-    let data = drafted(c);
+    // After the qualification and the draft the field check passes, so the sign-offs become next; after them, nothing is left.
+    let data = qualifyAll(drafted(c), c);
     expect(nextTodo(evaluateStep('asis', { ...c, deliverables: data }))?.todo.id).toBe('asis-field');
     data = setSignOff(data, 'asis-field', { at: '2026-11-09T10:00:00Z', by: 'Tester' });
     data = setSignOff(data, 'define-agree', { at: '2026-11-09T10:00:00Z', by: 'Tester' });
     expect(nextTodo(evaluateStep('asis', { ...c, deliverables: data }))).toBeUndefined();
   });
 
-  it('after "Draft with Copilot", the strategy work and the sign-offs every step is complete (ja and en)', () => {
+  it('after "Draft with Copilot", the qualification, the strategy work and the sign-offs every step is complete (ja and en)', () => {
     for (const lang of ['ja', 'en'] as const) {
       const base = demoCtx();
-      let data = drafted(base, lang);
+      let data = qualifyAll(drafted(base, lang), base);
       for (const s of IMPROVEMENT_STEPS) for (const x of STEP_DEFS[s].todos.filter((y) => y.kind === 'manual')) data = setSignOff(data, x.id, { at: '2026-11-09T10:00:00Z', by: 'Tester' });
       const c = withStrategy({ ...base, deliverables: data });
       for (const s of IMPROVEMENT_STEPS) {
@@ -808,5 +818,105 @@ describe('Draft with Copilot', () => {
     for (const entity of c.pack.pack.entities.filter((e) => e.classification === 'internal')) {
       expect(request.prompt).not.toContain(entity.id);
     }
+  });
+});
+
+describe('issue qualification (FR-347: Khalsa "Should they do it?")', () => {
+  /** The demo pack plus one low-priority issue that has no solution and no KPI. */
+  const extraCtx = (): CheckContext => {
+    const raw = clone();
+    raw.entities.push({ ...raw.entities.find((e) => e.kind === 'issue')!, id: 'issue-extra', impact: 1, feasibility: 1, causeIds: [], kpiIds: [] } as never);
+    return demoCtx({ pack: loadPack(raw) });
+  };
+  const issueIds = (c: CheckContext) => c.pack.pack.entities.filter((e) => e.kind === 'issue').map((e) => e.id);
+
+  it('an issue nobody qualified is a yellow light: the As-Is stays open until every issue has a verdict', () => {
+    const c = demoCtx();
+    const open = byId('asis', c)['asis-qualify']!;
+    expect(open.outcome).toMatchObject({ ok: false, code: 'issuesUnqualified', vars: { n: issueIds(c).length } });
+    expect(open.outcome?.refs?.map((r) => (r.type === 'entity' ? r.id : '')).sort()).toEqual(issueIds(c).sort());
+    let data = qualifyAll(c.deliverables, c);
+    data = setQualification(data, issueIds(c)[0]!, { verdict: 'no', reason: 'Worth less than it costs', at: TODAY, by: 'Tester' });
+    expect(byId('asis', { ...c, deliverables: data })['asis-qualify']!.outcome).toMatchObject({ ok: true, code: 'issuesQualified', vars: { pursue: issueIds(c).length - 1, out: 1 } });
+  });
+
+  it('a "no" or "not now" takes the issue off the path to a solution, and the checks say how many were left out', () => {
+    const c = extraCtx();
+    expect(byId('solution', c)['sol-issues']!.outcome).toMatchObject({ ok: false, code: 'issuesWithoutSolution', refs: [{ type: 'entity', id: 'issue-extra' }] });
+    expect(byId('kpi', c)['kpi-coverage']!.outcome?.code).toBe('issuesNotMeasured');
+    for (const verdict of ['no', 'notNow'] as const) {
+      const data = setQualification(c.deliverables, 'issue-extra', { verdict, reason: 'One complaint a year; not worth a project', at: TODAY, by: 'Tester' });
+      const q = { ...c, deliverables: data };
+      expect(byId('solution', q)['sol-issues']!.outcome, verdict).toMatchObject({ ok: true, code: 'pursuedIssuesSolved', vars: { out: 1 } });
+      expect(byId('kpi', q)['kpi-coverage']!.outcome, verdict).toMatchObject({ ok: true, code: 'pursuedIssuesTracked', vars: { out: 1 } });
+    }
+    // A "pursue" keeps it on the path: it still needs a solution and a KPI.
+    const pursued = setQualification(c.deliverables, 'issue-extra', { verdict: 'pursue', reason: 'Lost two key accounts', different: 'New CFO sponsors it', at: TODAY, by: 'Tester' });
+    expect(byId('solution', { ...c, deliverables: pursued })['sol-issues']!.done).toBe(false);
+  });
+
+  it('the top-priority check moves to the best pursued issue; when every issue is qualified out, that "no" is the result', () => {
+    const c = demoCtx();
+    const [first, second] = rankedIssues(c.pack);
+    const data = setQualification(c.deliverables, first!.id, { verdict: 'notNow', reason: 'Waiting for the ERP upgrade', at: TODAY, by: 'Tester' });
+    const top = byId('tobe', { ...c, deliverables: data })['uc-top-issue']!.outcome!;
+    expect(top.ok ? top.vars?.issue : top.refs?.[0]).toEqual(top.ok ? second!.id : { type: 'entity', id: second!.id });
+    const none = { ...c, deliverables: qualifyAll(c.deliverables, c, 'no') };
+    expect(byId('asis', none)['asis-qualify']!.done).toBe(true);
+    for (const [step, id] of [['tobe', 'uc-top-issue'], ['kpi', 'kpi-coverage'], ['solution', 'sol-issues']] as const) {
+      expect(byId(step, none)[id]!.outcome?.code, id).toBe('noPursuedIssues');
+    }
+  });
+
+  it('a verdict needs its evidence; "pursue" also needs what is different this time; a broken stored entry is dropped alone', () => {
+    const base = { at: TODAY, by: 'Tester' };
+    expect(() => setQualification(emptyDeliverables(), 'issue-x', { verdict: 'no', reason: '   ', ...base })).toThrow();
+    expect(() => setQualification(emptyDeliverables(), 'issue-x', { verdict: 'pursue', reason: 'Costs 40M a year', ...base })).toThrow();
+    const ok = setQualification(emptyDeliverables(), 'issue-x', { verdict: 'pursue', reason: ' Costs 40M a year ', different: 'Budget approved', ...base });
+    expect(ok.qualifications?.['issue-x']?.reason).toBe('Costs 40M a year');
+    const stored = JSON.parse(JSON.stringify({ ...ok, qualifications: { ...ok.qualifications, 'issue-y': { verdict: 'maybe', reason: 'x', ...base } } }));
+    expect(Object.keys(normalizeDeliverables(stored).qualifications ?? {})).toEqual(['issue-x']);
+    expect(setQualification(ok, 'issue-x', null).qualifications).toEqual({});
+  });
+
+  it('the draft takes its scope from the verdicts, quotes reasons only for an internal audience, and the live prompt carries each verdict', () => {
+    const c = demoCtx();
+    const out = rankedIssues(c.pack)[0]!;
+    const data = setQualification(qualifyAll(c.deliverables, c), out.id, { verdict: 'no', reason: 'Competitors are equally slow', at: TODAY, by: 'Tester' });
+    const q = { ...c, deliverables: data };
+    const internal = buildDraft({ step: 'asis', ctx: q, lang: 'en', audience: 'internal' });
+    expect(internal.scopeOut).toContain(`${out.name.en}: no (Competitors are equally slow)`);
+    expect(internal.scopeIn).not.toContain(out.name.en);
+    expect(internal.constraints).toContain('what is different this time (Budget is now approved)');
+    const external = buildDraft({ step: 'asis', ctx: q, lang: 'en', audience: 'external' });
+    expect(external.scopeOut).not.toContain('Competitors are equally slow');
+    expect(external.constraints).not.toContain('Budget is now approved');
+    const prompt = draftPrompt({ step: 'solution', ctx: q, lang: 'en', audience: 'external' });
+    expect(prompt).toContain(`"id":"${out.id}","kind":"issue"`);
+    expect(prompt).toMatch(new RegExp(`"id":"${out.id}"[^}]*"qualification":"no"`));
+    expect(prompt).not.toContain('Competitors are equally slow');
+  });
+
+  it('dashboard tiles give the same verdict as the criteria they stand for', () => {
+    const c = extraCtx();
+    const data = setQualification(qualifyAll(c.deliverables, c), 'issue-extra', { verdict: 'no', reason: 'Rare', at: TODAY, by: 'Tester' });
+    const q = { ...c, deliverables: data };
+    const asis = stepDashboard('asis', q);
+    expect(asis.tiles.find((t) => t.id === 'issuesQualified')).toMatchObject({ value: issueIds(c).length, total: issueIds(c).length, todoId: 'asis-qualify' });
+    expect(asis.detail.step === 'asis' && asis.detail.issues.find((i) => i.id === 'issue-extra')?.verdict).toBe('no');
+    const sol = stepDashboard('solution', q);
+    const tile = sol.tiles.find((t) => t.id === 'issuesSolved')!;
+    expect(tile).toMatchObject({ value: issueIds(c).length - 1, total: issueIds(c).length - 1 });
+    expect(sol.results.find((r) => r.todo.id === 'sol-issues')!.done).toBe(true);
+    expect(sol.detail.step === 'solution' && sol.detail.qualifiedOut).toBe(1);
+    expect(stepDashboard('kpi', q).tiles.find((t) => t.id === 'issuesTracked')).toMatchObject({ value: issueIds(c).length - 1, total: issueIds(c).length - 1 });
+  });
+
+  it('the criterion links to the issue table of the As-Is dashboard', () => {
+    const r = evaluateStep('asis', demoCtx()).find((x) => x.todo.id === 'asis-qualify')!;
+    const { path, query } = parseHash(todoHref(r));
+    expect(path).toBe('/step');
+    expect(query.get('step')).toBe('asis');
+    expect(query.get('target')).toBe('step-dash-issues');
   });
 });

@@ -6,7 +6,7 @@ import { demoAnalyses } from '../src/modules/project/analysis.ts';
 import { demoDiscussion } from '../src/modules/project/discussion.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
-import { applyDraft, DeliverableDataSchema, emptyDeliverables, STEP_DEFS, type CheckContext, type DeliverableData } from '../src/modules/project/deliverables.ts';
+import { applyDraft, DeliverableDataSchema, emptyDeliverables, setQualification, STEP_DEFS, type CheckContext, type DeliverableData } from '../src/modules/project/deliverables.ts';
 import { buildDraft } from '../src/modules/project/deliverableDraft.ts';
 import { clearHandoff, confirmHandoff, handoffView, handoffViews, inheritedItems, inputLabels } from '../src/modules/project/handoff.ts';
 import { FORM_DRAFT_SCHEMAS, mockFormDraft, parseFormDraft, requestFormDraft } from '../src/modules/project/formDraft.ts';
@@ -15,7 +15,7 @@ import { setRuntimeSettingsProvider } from '../src/ai/client.ts';
 const pack = loadPack(samplePack);
 const AT = '2026-11-09T09:00:00Z';
 
-/** Demo project with every deliverable drafted: the automatic ToDos of asis, tobe and kpi pass, the manual ones are open. */
+/** Demo project with every deliverable drafted and every issue qualified: the automatic ToDos of asis, tobe and kpi pass, the manual ones are open. */
 function draftedCtx(): CheckContext {
   const c: CheckContext = {
     pack, discussion: demoDiscussion(), kpi: demoKpis(pack.pack), analysis: demoAnalyses(pack.pack), useCases: demoUseCases(),
@@ -23,6 +23,9 @@ function draftedCtx(): CheckContext {
   };
   let data = c.deliverables;
   for (const step of IMPROVEMENT_STEPS) data = applyDraft(data, step, buildDraft({ step, ctx: c, lang: 'ja', audience: 'internal' }), { overwrite: false, mock: true, at: AT }).data;
+  for (const issue of pack.pack.entities.filter((e) => e.kind === 'issue')) {
+    data = setQualification(data, issue.id, { verdict: 'pursue', reason: 'Measured gap is worth closing', different: 'Sponsor and budget are in place', at: AT, by: 'Tester' });
+  }
   return { ...c, deliverables: data, objectives: [{ id: 'o1', text: 'Grow margin' }], projectObjectiveIds: ['o1'] };
 }
 
@@ -93,6 +96,18 @@ describe('step handoff: ToDo-gated confirmation and item lineage', () => {
     const data = confirmHandoff(signOff(c.deliverables, 'asis'), 'asis', c, 'ja', '', AT);
     const confirmed = data.handoffs!.asis!.items.filter((i) => i.kind === 'issue').map((i) => i.label);
     expect(inputLabels('asis', 'issue', { ...c, deliverables: data }, 'ja')).toEqual(confirmed);
+  });
+
+  it('a changed verdict reaches the next step: a "no" removes the issue from what the To-Be is built on (FR-347)', () => {
+    const c = draftedCtx();
+    const data = confirmHandoff(signOff(c.deliverables, 'asis'), 'asis', c, 'ja', '', AT);
+    const issue = pack.pack.entities.find((e) => e.kind === 'issue')!;
+    const reasoned = setQualification(data, issue.id, { ...data.qualifications![issue.id]!, reason: 'Re-measured: the gap is twice as large' });
+    expect(handoffView('asis', { ...c, deliverables: reasoned }, 'ja').changes).toEqual([expect.objectContaining({ id: `issue:${issue.id}`, change: 'changed' })]);
+    const declined = setQualification(data, issue.id, { verdict: 'no', reason: 'Worth less than it costs', at: AT, by: 'Tester' });
+    const view = handoffView('asis', { ...c, deliverables: declined }, 'ja');
+    expect(view.changes).toEqual([expect.objectContaining({ id: `issue:${issue.id}`, change: 'removed' })]);
+    expect(inputLabels('asis', 'issue', { ...c, deliverables: declined }, 'ja')).not.toContain(issue.name.ja);
   });
 });
 

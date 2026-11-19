@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Select, Textarea } from '@fluentui/react-components';
-import { Add20Regular, ArrowDownload20Regular, ArrowReset20Regular, Delete20Regular, Edit20Regular, Sparkle20Regular } from '@fluentui/react-icons';
+import { Add20Regular, ArrowDownload20Regular, ArrowReset20Regular, Delete20Regular, Edit20Regular, Search20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { getEntity, loaded } from '../../data/pack.ts';
+import type { EvidenceKind } from '../../data/extensionSchemas.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { hrefFor } from '../../state/router.ts';
 import { loc } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
+import type { WorkIqAspect } from '../ai/relayClient.ts';
 import { downloadText, ScrollRegion, useTargetNames } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { threadOf } from './deliverables.ts';
@@ -14,13 +16,16 @@ import { FormDraftReview } from './FormDraftReview.tsx';
 import { requestFormDraft } from './formDraft.ts';
 import { inputLabels } from './handoff.ts';
 import { newId, type KpiData, type KpiOrigin } from './model.ts';
+import type { QualityIssue } from './requirementQuality.ts';
+import { addEvidence } from './requirementsModel.ts';
 import { EVIDENCE_BASES, SIM_RUNS, validRange, type EvidenceBasis } from './simulate.ts';
-import { buildSolutionDoc, kindKey, sectionKey, solutionDocMarkdown } from './solutionDocs.ts';
+import { buildSolutionDoc, kindKey, sectionGuide, sectionKey, solutionDocMarkdown } from './solutionDocs.ts';
 import {
   gapCount, normalizeStrategy, removeContribution, setSection, setSolutionType, SOLUTION_TYPES, upsertContribution,
   type Contribution, type SolutionType, type StrategyData, type StrategyThread,
 } from './strategy.ts';
 import { useKpis, useProjUi, useScopeKpis, useStrategy } from './stores.ts';
+import { errorCodeOf, useWorkIqSearch, type WorkIqFinding } from './useWorkIqSearch.ts';
 
 const ORIGIN_COLOR: Record<KpiOrigin, 'brand' | 'informative' | 'warning'> = { customerDefined: 'brand', companyAnchor: 'informative', proposed: 'warning' };
 
@@ -30,12 +35,12 @@ export function OriginBadge({ origin }: { origin?: KpiOrigin }) {
   return <Badge size="small" appearance="outline" color={ORIGIN_COLOR[origin]} data-origin={origin}>{t(`sol.origin.${origin}`)}</Badge>;
 }
 
-const entityName = (id: string, lang: 'ja' | 'en') => {
+export const entityName = (id: string, lang: 'ja' | 'en') => {
   const e = getEntity(id);
   return e && 'name' in e ? loc(e.name as Parameters<typeof loc>[0], lang) : id;
 };
 
-function useStrategyWriter() {
+export function useStrategyWriter() {
   const set = useStrategy((s) => s.set);
   return (fn: (d: StrategyData) => StrategyData) => set((prev) => fn(normalizeStrategy(prev)));
 }
@@ -47,7 +52,7 @@ function useKpiWriter() {
   return (fn: (d: KpiData) => KpiData) => setStore(fn(data));
 }
 
-const by = () => useProjUi.getState().editor.trim();
+export const by = () => useProjUi.getState().editor.trim();
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 /* ---------- Line of sight: company objective → OKR → KPI → solution ---------- */
@@ -505,16 +510,56 @@ export function SimulationPanel({ ctx }: { ctx: CheckContext }) {
 
 /* ---------- Final deliverable per solution: requirements spec or the plan that fits ---------- */
 
-function SectionEditor({ solutionId, id, text, edited, kind, facts }: { solutionId: string; id: string; text: string; edited: boolean; kind: string; facts: string[] }) {
-  const { t, lang } = useI18n();
+/** The kind of Work IQ search that finds the material a section is built on (handbook 8.1, 12, 13). */
+const SECTION_ASPECT: Record<string, WorkIqAspect> = {
+  nonFunctionalReq: 'rules', constraints: 'rules', policyChange: 'rules', governance: 'rules', contract: 'rules', procurement: 'rules', selection: 'rules',
+  fallback: 'rules', logging: 'rules', roleSplit: 'rules', reviewProcedure: 'rules',
+  functionalReq: 'voice', risks: 'voice', impact: 'voice',
+  dataReq: 'systems', dataSupply: 'systems', monitoring: 'systems', promptContext: 'systems',
+};
+const ASPECT_KIND: Record<'rules' | 'systems' | 'voice', EvidenceKind> = { rules: 'policy', systems: 'system', voice: 'feedback' };
+
+function SectionEditor({ solutionId, id, text, edited, kind, facts, quality, stamp }: {
+  solutionId: string; id: string; text: string; edited: boolean; kind: string; facts: string[]; quality: QualityIssue[]; stamp?: { by: string; at: string };
+}) {
+  const { t, lang, fmt } = useI18n();
   const write = useStrategyWriter();
+  const wi = useWorkIqSearch();
+  const aspect = SECTION_ASPECT[id] as 'rules' | 'systems' | 'voice' | undefined;
   const [draft, setDraft] = useState<string | null>(null);
+  const [found, setFound] = useState<{ state: 'busy' | 'done' | 'error'; items: WorkIqFinding[]; code?: string } | null>(null);
+  const [saved, setSaved] = useState(false);
+  const meta = () => ({ by: by(), at: new Date().toISOString() });
   const commit = () => {
     if (draft === null) return;
-    if (draft !== text) write((d) => setSection(d, solutionId, id, draft));
+    if (draft !== text) write((d) => setSection(d, solutionId, id, draft, meta()));
     setDraft(null);
   };
-  const context = { solution: entityName(solutionId, lang), document: kind, section: t(sectionKey(id) as MessageKey), current: draft ?? text, facts };
+  const guide = sectionGuide(id, lang);
+  const evidence = (found?.items ?? []).map((f) => ({ text: f.answer.slice(0, 1500), source: f.citations.map((c) => c.title).join(', ') || f.question }));
+  const context = {
+    solution: entityName(solutionId, lang), document: kind, section: t(sectionKey(id) as MessageKey), current: draft ?? text, facts,
+    ...(guide.length ? { guide } : {}), ...(evidence.length ? { evidence } : {}),
+  };
+  const search = async () => {
+    if (!aspect) return;
+    setFound({ state: 'busy', items: [] });
+    setSaved(false);
+    try {
+      setFound({ state: 'done', items: await wi.search(aspect) });
+    } catch (e) {
+      setFound({ state: 'error', items: [], code: errorCodeOf(e) });
+    }
+  };
+  const saveEvidence = () => {
+    if (!aspect || !found) return;
+    const at = new Date().toISOString();
+    found.items.forEach((f, i) => write((d) => addEvidence(d, {
+      id: `ev-wi-${Date.now().toString(36)}-${i}`, kind: ASPECT_KIND[aspect], title: t(sectionKey(id) as MessageKey), summary: f.answer.slice(0, 1500),
+      origin: 'workiq', note: f.question, citations: f.citations, at, by: by(),
+    })));
+    setSaved(true);
+  };
   return (
     <div className="dlv-section-edit">
       <Field
@@ -522,6 +567,7 @@ function SectionEditor({ solutionId, id, text, edited, kind, facts }: { solution
           <span className="dlv-field-label">
             {t(sectionKey(id) as MessageKey)}
             {edited && <Badge size="small" appearance="tint" color="brand">{t('sol.doc.edited')}</Badge>}
+            {edited && stamp && <span className="muted" data-testid={`sol-doc-stamp-${solutionId}-${id}`}>{t('sol.doc.stamp', { by: stamp.by || '—', at: fmt.date(stamp.at.slice(0, 10)) })}</span>}
             {edited && <Button size="small" appearance="subtle" icon={<ArrowReset20Regular />} onClick={() => write((d) => setSection(d, solutionId, id, null))} data-testid={`sol-doc-reset-${solutionId}-${id}`}>{t('sol.doc.reset')}</Button>}
           </span>
         ) }}
@@ -535,6 +581,35 @@ function SectionEditor({ solutionId, id, text, edited, kind, facts }: { solution
           data-testid={`sol-doc-${solutionId}-${id}`}
         />
       </Field>
+      {quality.length > 0 && (
+        <ul className="dlv-quality" data-testid={`sol-doc-quality-${solutionId}-${id}`}>
+          {quality.map((q, i) => <li key={`${q.code}-${i}`}>{t(q.code === 'vague' ? 'sol.doc.qualityVague' : 'sol.doc.qualityCompound', { term: q.term ?? '', line: q.line.slice(0, 80) })}</li>)}
+        </ul>
+      )}
+      {aspect && (
+        <div className="dlv-evidence-find">
+          <Button size="small" icon={<Search20Regular />} disabled={!wi.ready || found?.state === 'busy'} onClick={() => void search()} data-testid={`sol-doc-find-${solutionId}-${id}`}>
+            {found?.state === 'busy' ? t('sol.doc.finding') : t('sol.doc.findEvidence')}
+          </Button>
+          {!wi.ready && <span className="muted">{t('sol.ev.notReady')}</span>}
+          {found?.state === 'error' && <span role="alert">{t('sol.ev.error', { code: found.code ?? 'unknown' })}</span>}
+          {found?.state === 'done' && (found.items.length === 0
+            ? <span className="muted">{t('sol.doc.evidenceNone')}</span>
+            : (
+              <div data-testid={`sol-doc-found-${solutionId}-${id}`}>
+                <strong>{t('sol.doc.evidenceFound')}</strong>
+                {found.items.map((f, i) => (
+                  <details key={i}>
+                    <summary>{f.answer.slice(0, 80)}</summary>
+                    <pre className="dlv-form-draft-text">{f.answer}</pre>
+                    {f.citations.length > 0 && <ul>{f.citations.map((c) => <li key={c.url}>{c.title}</li>)}</ul>}
+                  </details>
+                ))}
+                <Button size="small" appearance="subtle" disabled={saved} onClick={saveEvidence} data-testid={`sol-doc-find-save-${solutionId}-${id}`}>{saved ? t('sol.doc.evidenceSaved') : t('sol.doc.evidenceSave')}</Button>
+              </div>
+            ))}
+        </div>
+      )}
       <FormDraftReview
         kind="section"
         testId={`sol-doc-draft-${solutionId}-${id}`}
@@ -542,7 +617,7 @@ function SectionEditor({ solutionId, id, text, edited, kind, facts }: { solution
         request={() => requestFormDraft('section', context, lang)}
         preview={(d) => <pre className="dlv-form-draft-text">{d.text}</pre>}
         onApprove={(d) => {
-          write((s) => setSection(s, solutionId, id, d.text));
+          write((s) => setSection(s, solutionId, id, d.text, meta()));
           setDraft(null);
         }}
       />
@@ -582,6 +657,9 @@ export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
               <Badge size="small" appearance="filled" color="informative">{t(kindKey(d.kind))}</Badge>{' '}
               <Badge size="small" appearance="tint" color={d.complete ? 'success' : 'warning'} data-testid={`sol-doc-state-${d.solutionId}`}>
                 {d.complete ? t('sol.doc.complete') : t('sol.doc.open', { n: open })}
+              </Badge>{' '}
+              <Badge size="small" appearance="tint" color={d.clean ? 'success' : 'warning'} data-testid={`sol-doc-clean-${d.solutionId}`}>
+                {d.clean ? t('sol.doc.clean') : t('sol.doc.quality', { n: d.sections.reduce((a, x) => a + x.quality.length, 0) })}
               </Badge>
             </summary>
             <div className="proj-row">
@@ -597,6 +675,8 @@ export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
                   edited={s.edited}
                   kind={t(kindKey(d.kind))}
                   facts={factsFor(d.solutionId)}
+                  quality={s.quality}
+                  {...(ctx.strategy.sectionMeta?.[d.solutionId]?.[s.id] ? { stamp: ctx.strategy.sectionMeta[d.solutionId]![s.id]! } : {})}
                 />
               ))}
             </div>

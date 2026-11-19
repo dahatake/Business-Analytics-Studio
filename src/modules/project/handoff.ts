@@ -2,7 +2,7 @@ import type { Lang } from '../../i18n/core.ts';
 import { IMPROVEMENT_STEPS, type ImprovementStep } from '../../state/projects.ts';
 import { loc } from '../../state/text.ts';
 import {
-  evaluateStep, progressOf, rankedIssues,
+  evaluateStep, progressOf, pursuedIssues, qualificationOf,
   type CheckContext, type DeliverableData, type Handoff, type HandoffItem,
 } from './deliverables.ts';
 
@@ -46,7 +46,11 @@ export function stepItems(step: ImprovementStep, ctx: CheckContext, lang: Lang):
     .map(([id, v]) => item('field', `${step}.${id}`, id, v.text));
   switch (step) {
     case 'asis':
-      return [...rankedIssues(ctx.pack).map((e) => item('issue', e.id, loc(e.name, lang), e)), ...fields];
+      // FR-347: issues qualified out end at the As-Is; a verdict is part of what the To-Be is built on.
+      return [...pursuedIssues(ctx).map((e) => {
+        const q = qualificationOf(ctx.deliverables, e.id);
+        return item('issue', e.id, loc(e.name, lang), q ? [e, q.verdict, q.reason, q.different ?? null] : e);
+      }), ...fields];
     case 'tobe':
       return [
         ...ctx.useCases.filter((u) => u.origin === 'registered').map((u) => {

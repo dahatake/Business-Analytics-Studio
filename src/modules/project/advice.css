@@ -1,0 +1,16 @@
+.step-advice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--spacingVerticalS); }
+.step-advice-item {
+  display: grid; gap: var(--spacingVerticalXS); justify-items: start;
+  padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+  background: var(--colorNeutralBackground2);
+  border-radius: var(--borderRadiusMedium);
+  border-inline-start: 4px solid var(--colorNeutralStroke1);
+}
+.step-advice-item[data-tone='yellow'] { border-inline-start-color: var(--colorPaletteYellowBorder2); }
+.step-advice-item[data-tone='green'] { border-inline-start-color: var(--colorPaletteGreenBorder2); }
+.step-advice-head { display: flex; flex-wrap: wrap; gap: var(--spacingHorizontalXS); align-items: center; }
+.step-advice-text { margin: 0; }
+.step-advice-refs { display: flex; flex-wrap: wrap; gap: var(--spacingHorizontalS); }
+@media (forced-colors: active) {
+  .step-advice-item { border: 1px solid CanvasText; border-inline-start-width: 4px; }
+}

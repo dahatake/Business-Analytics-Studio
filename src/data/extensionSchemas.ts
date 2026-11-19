@@ -120,6 +120,35 @@ export function hasEngagementContext(item: EngagementsExtension['items'][number]
 }
 
 /**
+ * Material a requirements definition needs and a pack rarely holds: the rules a solution must obey (laws, standards,
+ * internal policies, security, privacy, SLAs, AI use policy, operating rules), the voices of users (inquiries,
+ * complaints, incidents, audit findings, feedback) and the data an AI is evaluated on. Each item cites its sources
+ * (IPA requirements handbook 8.1, 12, 13). Always internal.
+ */
+export const EVIDENCE_KINDS = ['law', 'standard', 'policy', 'security', 'privacy', 'sla', 'aiPolicy', 'operations', 'system', 'inquiry', 'complaint', 'incident', 'audit', 'feedback', 'evalData'] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+/** What a solution must obey or live with: rules, and the current systems and how they are run. */
+export const RULE_KINDS = ['law', 'standard', 'policy', 'security', 'privacy', 'sla', 'aiPolicy', 'operations', 'system'] as const;
+export const VOICE_KINDS = ['inquiry', 'complaint', 'incident', 'audit', 'feedback'] as const;
+export const isRuleKind = (k: EvidenceKind): boolean => (RULE_KINDS as readonly string[]).includes(k);
+export const isVoiceKind = (k: EvidenceKind): boolean => (VOICE_KINDS as readonly string[]).includes(k);
+
+export const RequirementEvidenceExtension = z.object({
+  items: z.array(z.object({
+    id: z.string().min(1),
+    kind: z.enum(EVIDENCE_KINDS),
+    title: LocalizableSchema,
+    summary: LocalizableSchema,
+    /** Voices: how many records the summary stands for. */
+    count: z.number().int().nonnegative().optional(),
+    /** Voices: 1 (minor) to 5 (severe), independent of how often it happens. */
+    severity: z.number().int().min(1).max(5).optional(),
+    sourceIds: z.array(z.string().min(1)).min(1),
+  }).passthrough()),
+}).passthrough();
+export type RequirementEvidenceExtension = z.infer<typeof RequirementEvidenceExtension>;
+
+/**
  * FR-321: evidence labels a Microsoft 365 Copilot business report puts on its statements
  * (【事実】 fact, 【外部】 external, 【仮説】 hypothesis, 【解釈】 interpretation, 【要確認】 toConfirm, 【提案目標】 proposedTarget).
  */

@@ -69,7 +69,7 @@ export function CompanyAnchorPanel({ company }: { company: Company }) {
     }
   };
   return (
-    <section className="proj-company-info" data-testid={`company-anchor-${company.id}`}>
+    <section className="proj-company-info" id={`company-anchor-${company.id}`} tabIndex={-1} data-testid={`company-anchor-${company.id}`}>
       <h3 className="proj-h2">{t('proj.anchor.title')}</h3>
       <p className="muted">{t('proj.anchor.lead')}</p>
       {loaded.error && <MessageBar intent="error"><MessageBarBody>{t('proj.anchor.storageError')}</MessageBarBody></MessageBar>}

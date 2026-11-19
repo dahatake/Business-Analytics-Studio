@@ -8,11 +8,27 @@ import { demoDiscussion } from '../src/modules/project/discussion.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { buildDraft, buildTaskDrafts, draftToText } from '../src/modules/project/deliverableDraft.ts';
-import { emptyDeliverables, STEP_DEFS } from '../src/modules/project/deliverables.ts';
+import { emptyDeliverables, setQualification, STEP_DEFS } from '../src/modules/project/deliverables.ts';
 import type { ImprovementStep } from '../src/state/projects.ts';
 import type { RepairOption } from '../src/modules/project/taskResolution.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+
+/** Demo deliverables with every issue qualified as "pursue" by the person (FR-347). */
+function qualifiedDemo() {
+  let data = emptyDeliverables();
+  for (const issue of samplePack.entities.filter((e) => e.kind === 'issue')) {
+    data = setQualification(data, issue.id, { verdict: 'pursue', reason: '測定した差に価値がある', different: '予算とスポンサーが決まった', at: '2026-11-09T00:00:00Z', by: 'E2E' });
+  }
+  return data;
+}
+
+/** The person has already qualified every demo issue: the scenario is about the rest of the step. */
+async function seedQualified(page: Page) {
+  await seedDeviceData(page, { 'bas.scope.demo.proj.deliverables': JSON.stringify(qualifiedDemo()) });
+  await page.reload();
+  await expect(page.locator('main#main')).toBeVisible();
+}
 
 async function scan(page: Page) {
   const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
@@ -302,6 +318,7 @@ test.describe('step deliverables and to-do band', () => {
     await go(page, '/home');
     await fakeAi(page);
     await fakeAi(page);
+    await seedQualified(page);
     const steps = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
     const stepper = page.getByTestId('proj-stepper');
     for (const step of steps) await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('data-complete', 'false');
@@ -355,6 +372,7 @@ test.describe('step deliverables and to-do band', () => {
     await page.setViewportSize({ width: 1240, height: 750 });
     await go(page, '/home');
     await fakeAi(page);
+    await seedQualified(page);
     const steps = [
       ['asis', 'asis-doc', 'problem'],
       ['tobe', 'tobe-doc', 'vision'],
@@ -433,13 +451,14 @@ test.describe('step deliverables and to-do band', () => {
     expect(box!.width).toBeGreaterThan(1000); // full width
     await expect(band).toContainText('ステップ 1/5: 現状分析');
     await expect(band).toContainText('成果物: 現状分析レポート（優先順位つき課題一覧と KPI/OKR ギャップ）');
-    // Demo: the data checks pass; the deliverable fields, the field check and the sponsor's agreement are still open.
-    await expect(page.getByTestId('dlv-progress')).toHaveText('8/11 完了');
+    // Demo: the data checks pass; the issue qualification, the deliverable fields, the field check and the sponsor's agreement are still open.
+    await expect(page.getByTestId('dlv-progress')).toHaveText('8/12 完了');
     await expect(page.getByTestId('dlv-todo-define-sources')).toHaveAttribute('data-done', 'true');
     await expect(page.getByTestId('dlv-todo-asis-doc')).toHaveAttribute('data-done', 'false');
     await expect(page.getByTestId('dlv-result-asis-doc')).toHaveText('未記入 10 項目、数値・期限が足りない 0 項目');
+    await expect(page.getByTestId('dlv-result-asis-qualify')).toHaveText('取り組むかどうかを判断していない課題が 5 件あります（黄信号）');
     // The head line says what to do next, and the open criteria come first in the list.
-    await expect(page.getByTestId('dlv-next')).toHaveAttribute('data-todo', 'asis-doc');
+    await expect(page.getByTestId('dlv-next')).toHaveAttribute('data-todo', 'asis-qualify');
     await expect(page.getByTestId('dlv-next')).toContainText('次にやること:');
     await expect(band.locator('.dlv-band-list > li').first()).toHaveAttribute('data-done', 'false');
     expect(await scan(page)).toEqual([]);
@@ -448,6 +467,8 @@ test.describe('step deliverables and to-do band', () => {
   test('Draft with Copilot fills the deliverable, the sign-off completes the step', async ({ page }) => {
     await go(page, '/home');
     await fakeAi(page);
+    // Every issue was already qualified by the person (FR-347); the draft and the sign-offs finish the step.
+    await seedQualified(page);
     await openStepDraft(page);
     const dialog = page.getByTestId('dlv-draft-dialog');
     await expect(dialog).toBeVisible();
@@ -456,7 +477,7 @@ test.describe('step deliverables and to-do band', () => {
     expect(await scan(page)).toEqual([]);
     await dialog.getByTestId('dlv-draft-apply').click();
     await expect(dialog).toBeHidden();
-    await expect(page.getByTestId('dlv-progress')).toHaveText('9/11 完了');
+    await expect(page.getByTestId('dlv-progress')).toHaveText('10/12 完了');
     await page.getByTestId('dlv-sign-asis-field').check();
     await page.getByTestId('dlv-sign-define-agree').check();
     await expect(page.getByTestId('dlv-progress')).toHaveText('完了条件をすべて満たしました');
@@ -495,7 +516,7 @@ test.describe('step deliverables and to-do band', () => {
 
     await problem.fill('リードタイムを短くする');
     await expect(page.getByText('数値を入れてください')).toBeVisible();
-    await expect(page.getByTestId('dlv-screen-progress')).toHaveText('10/11 完了');
+    await expect(page.getByTestId('dlv-screen-progress')).toHaveText('11/12 完了');
     expect(await scan(page)).toEqual([]);
 
     // Kept after a reload (project-scoped storage).
@@ -745,7 +766,7 @@ test.describe('step deliverables and to-do band', () => {
     await decision.getByRole('link', { name: /対応する/ }).click();
     await expect(page).toHaveURL(/#\/discussion/);
     await expect(page.locator('#proj-tree')).toBeFocused();
-    await expect(page.getByTestId('dlv-progress')).toHaveText('6/11 完了');
+    await expect(page.getByTestId('dlv-progress')).toHaveText('6/12 完了');
   });
 
   test('automatic mode: summary only on short windows, full list on tall ones', async ({ page }) => {
@@ -754,7 +775,7 @@ test.describe('step deliverables and to-do band', () => {
     });
     await open(page, '/home');
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.getByTestId('dlv-progress')).toHaveText('8/11 完了');
+    await expect(page.getByTestId('dlv-progress')).toHaveText('8/12 完了');
     await page.setViewportSize({ width: 1600, height: 1400 });
     await expect(page.getByTestId('dlv-band-toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('dlv-todo-asis-doc')).toBeVisible();
@@ -845,6 +866,7 @@ test.describe('step handoff and Copilot form drafts', () => {
   test('a step is confirmed only when its ToDos are done; its items become the next step input and a later edit asks for reconfirmation', async ({ page }) => {
     await go(page, '/home');
     await fakeAi(page);
+    await seedQualified(page);
     const stepper = page.getByTestId('proj-stepper');
     const asis = stepper.locator('[data-step="asis"]');
     await asis.click();

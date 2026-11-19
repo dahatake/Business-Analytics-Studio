@@ -54,6 +54,10 @@ export interface SectionDraftContext {
   current: string;
   /** Facts from earlier steps the section can cite (KPI, contribution, use case). */
   facts: string[];
+  /** The points this kind of section must cover (handbook tables), in order. */
+  guide?: string[];
+  /** Material found for this section (Work IQ answer, imported file): quote it with its source, never go beyond it. */
+  evidence?: { text: string; source: string }[];
 }
 export type FormDraftContext = { usecase: UseCaseDraftContext; contribution: ContributionDraftContext; section: SectionDraftContext };
 
@@ -65,10 +69,15 @@ const SHAPE: Record<FormDraftKind, string> = {
 
 export function formDraftPrompt<K extends FormDraftKind>(kind: K, context: FormDraftContext[K], lang: Lang): string {
   const language = lang === 'ja' ? 'Japanese' : 'English';
+  const sectionRules = kind === 'section'
+    ? ['Cover every point of CONTEXT.guide in order, one statement per line; each statement must be verifiable (a number, a bound or a yes/no check).',
+      'Use CONTEXT.evidence only as it is written and name its source; where evidence is missing, write the point as an open question instead of inventing it.']
+    : [];
   return [
     `${MARK}${kind}]`,
     `Draft the ${kind} described by CONTEXT for a business improvement project. Write in ${language}.`,
     'Build on the given inputs from earlier steps; do not invent company facts. Mark any assumption as an assumption.',
+    ...sectionRules,
     `Answer with one JSON object only, shaped ${SHAPE[kind]}.`,
     `CONTEXT: ${JSON.stringify(context)}`,
   ].join('\n');
@@ -128,11 +137,13 @@ export function mockFormDraft<K extends FormDraftKind>(kind: K, context: FormDra
   }
   const c = context as SectionDraftContext;
   const facts = c.facts.slice(0, 4).map((f) => `- ${f}`).join('\n');
+  const guide = (c.guide ?? []).map((g) => `- ${g}`).join('\n');
+  const evidence = (c.evidence ?? []).slice(0, 3).map((e) => `- ${e.text} (${e.source})`).join('\n');
   const head = `${c.solution}: ${c.section}`;
   const body = ja
     ? `${c.document}の「${c.section}」の下書きです。前のステップで確定した内容に基づきます。`
     : `Draft of "${c.section}" in the ${c.document}, based on what the earlier steps confirmed.`;
-  const draft: FormDraft['section'] = { text: [head, body, facts, c.current.trim() ? (ja ? `現在の記述: ${c.current.trim()}` : `Current text: ${c.current.trim()}`) : ''].filter(Boolean).join('\n') };
+  const draft: FormDraft['section'] = { text: [head, body, facts, evidence, guide, c.current.trim() ? (ja ? `現在の記述: ${c.current.trim()}` : `Current text: ${c.current.trim()}`) : ''].filter(Boolean).join('\n') };
   return draft as FormDraft[K];
 }
 

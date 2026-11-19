@@ -6,13 +6,13 @@ import type { Persona } from '../../state/personas.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
 import type { Localizable } from '../../state/text.ts';
 import {
-  cyclicInitiatives, evaluateStep, hasDate, hasNumber, nextTodo, paybackLimit, paybackYears, progressOf, projectHasKpi, rankedIssues, STEP_DEFS, threadOf, valueMismatches,
-  type CheckContext, type TodoResult, type ValueMismatch,
+  cyclicInitiatives, evaluateStep, fieldIsVague, isQualifiedOut, nextTodo, paybackLimit, paybackYears, progressOf, projectHasKpi, pursuedIssues, qualificationOf, rankedIssues, STEP_DEFS, threadOf, valueMismatches,
+  type CheckContext, type QualifyVerdict, type TodoResult, type ValueMismatch,
 } from './deliverables.ts';
 import { kpiDefinitionState, validateKpi, type DefinitionStatus } from './kpiOkr.ts';
 import type { KpiOrigin } from './model.ts';
 import { realisedShare, triangularMean, validRange, type KpiSimulation } from './simulate.ts';
-import type { SolutionType } from './strategy.ts';
+import { isSystemType, type SolutionType } from './strategy.ts';
 
 /**
  * FR-317: the step dashboard. Everything is computed from the Project pack and the project's saved data, and every
@@ -79,6 +79,8 @@ export interface IssueRow {
   /** One of its KPIs is a project KPI, so the issue is tracked by the project's KPI/OKR. */
   inProject: boolean;
   solutionIds: string[];
+  /** FR-347: the person's verdict; absent = not qualified yet (a yellow light). */
+  verdict?: QualifyVerdict;
 }
 
 /** A registered use case of the to-be state and what it is traced to. */
@@ -212,13 +214,15 @@ export type StepDetail =
     step: 'tobe';
     objectives: { id: string; text: string; linked: boolean }[];
     useCases: UseCaseRow[];
-    /** The top issues by priority and the use cases that describe their solved state. */
+    /** The top pursued issues by priority and the use cases that describe their solved state. */
     topIssues: IssueCoverage[];
+    /** Issues qualified out in the As-Is (FR-347): not counted here. */
+    qualifiedOut: number;
     /** KPIs and OKRs this project added (origin 'proposed'): hypotheses until the sponsor agrees. */
     proposed: { kpis: KpiRow[]; okrs: OkrRow[] };
   }
   | { step: 'kpi'; definition: DefinitionStatus; kpis: KpiRow[]; okrs: OkrRow[] }
-  | { step: 'solution'; solutions: SolutionRow[]; coverage: CoverageRow[]; sims: SimRow[]; issues: IssueCoverage[] }
+  | { step: 'solution'; solutions: SolutionRow[]; coverage: CoverageRow[]; sims: SimRow[]; issues: IssueCoverage[]; qualifiedOut: number }
   | { step: 'deliverable'; initiatives: InitiativeRow[]; paybackLimit: number; solutions: SolutionRow[]; gaps: number; trace: TraceRow[] };
 
 /** The detail of one step. */
@@ -276,10 +280,10 @@ function useCaseRows(c: CheckContext): UseCaseRow[] {
   });
 }
 
-/** Every ranked issue with the use cases and solutions that address it. */
+/** Every pursued issue (FR-347: issues qualified out are left out) with the use cases and solutions that address it. */
 function issueCoverage(c: CheckContext, useCases: UseCaseRow[]): IssueCoverage[] {
   const solutions = entities(c, 'solution');
-  return rankedIssues(c.pack).map((i, n) => ({
+  return pursuedIssues(c).map((i, n) => ({
     id: i.id,
     rank: n + 1,
     score: priorityScore(i, DEFAULT_WEIGHTS),
@@ -290,6 +294,8 @@ function issueCoverage(c: CheckContext, useCases: UseCaseRow[]): IssueCoverage[]
 
 /** How many top issues the To-Be must describe (the vital few). */
 export const TOP_ISSUES = 3;
+
+const qualifiedOutCount = (c: CheckContext) => entities(c, 'issue').filter((i) => isQualifiedOut(c.deliverables, i.id)).length;
 
 /** How much of each existing input a step can use. */
 export function inputCount(id: string, c: CheckContext): number {
@@ -332,7 +338,7 @@ export function docStatus(step: ImprovementStep, c: CheckContext): DocStatus {
     const text = v?.text.trim() ?? '';
     if (!text) continue;
     if (v?.author === 'ai') byAi += 1;
-    if ((f.quantified && !hasNumber(text)) || (f.timeBound && !hasDate(text))) vague += 1;
+    if (fieldIsVague(f, text)) vague += 1;
     else complete += 1;
   }
   return { total: fields.length, complete, vague, byAi };
@@ -344,6 +350,7 @@ function asis(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
   const issues: IssueRow[] = ranked.map((i, n) => {
     const linked = issueKpis(c, i);
     const gap = worstGap(linked);
+    const verdict = qualificationOf(c.deliverables, i.id)?.verdict;
     return {
       id: i.id,
       rank: n + 1,
@@ -356,6 +363,7 @@ function asis(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
       ...(gap ? { gap } : {}),
       inProject: linked.some((k) => projectHasKpi(c.kpi.kpis, k)),
       solutionIds: solutions.filter((s) => s.issueIds.includes(i.id)).map((s) => s.id),
+      ...(verdict ? { verdict } : {}),
     };
   });
   const kpis = [...new Map(ranked.flatMap((i) => issueKpis(c, i)).map((k) => [k.id, k])).values()];
@@ -382,6 +390,7 @@ function asis(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
       { id: 'kpisAchieved', kind: 'ratio', value: comparable.filter((k) => kpiStatus(k) === 'achieved').length, total: comparable.length, href: '/analysis?tab=kpi' },
       { id: 'kpisRegressed', kind: 'problems', value: comparable.filter((k) => kpiStatus(k) === 'regressed').length, total: comparable.length, href: '/analysis?tab=kpi' },
       { id: 'mismatches', kind: 'problems', value: mismatches.length, total: checked, todoId: 'asis-reconcile', href: '/discussion' },
+      { id: 'issuesQualified', kind: 'ratio', value: issues.filter((i) => i.verdict).length, total: issues.length, todoId: 'asis-qualify', href: '/step?step=asis' },
       { id: 'decisions', kind: 'count', value: decisions, total: c.discussion.themes.length, todoId: 'define-decision', href: '/discussion' },
     ],
     detail: { step: 'asis', issues, mismatches, checkedValues: checked, themes: c.discussion.themes.length, decisions, causes: causeBars, kpis },
@@ -413,6 +422,7 @@ function tobe(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
       objectives: objectives.map((o) => ({ ...o, linked: linkedIds.has(o.id) })),
       useCases,
       topIssues,
+      qualifiedOut: qualifiedOutCount(c),
       proposed: { kpis: kpis.filter((k) => k.origin === 'proposed'), okrs: okrs.filter((o) => proposedOkrIds.has(o.id)) },
     },
   };
@@ -441,7 +451,7 @@ function kpiOkrRows(c: CheckContext): { kpis: KpiRow[]; okrs: OkrRow[] } {
 
 function kpi(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
   const { kpis: rows, okrs } = kpiOkrRows(c);
-  const issues = entities(c, 'issue');
+  const issues = entities(c, 'issue').filter((i) => !isQualifiedOut(c.deliverables, i.id));
   const packKpis = entities(c, 'kpi');
   const consistent = packKpis.filter((k) => {
     const v = chooseKpiVisual(k);
@@ -512,7 +522,7 @@ function solution(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
       { id: 'solutionsEstimated', kind: 'ratio', value: solutions.filter((s) => !thread.gaps.solutionsWithoutContribution.includes(s.id)).length, total: solutions.length, todoId: 'sol-contribution', href: '/deliverables?step=solution&target=sol-types' },
       { id: 'gapsClosed', kind: 'ratio', value: closed.length, total: coverage.length, todoId: 'sol-target', href: '/deliverables?step=solution&target=sol-sim' },
     ],
-    detail: { step: 'solution', solutions, coverage, sims, issues },
+    detail: { step: 'solution', solutions, coverage, sims, issues, qualifiedOut: qualifiedOutCount(c) },
   };
 }
 
@@ -543,7 +553,7 @@ function deliverable(c: CheckContext): { tiles: DashTile[]; detail: StepDetail }
     const owned = rows.filter((r) => r.solutionId === s.id && r.ownerId).length;
     return {
       solutionId: s.id, type: s.type, issueIds, kpiIds: s.kpiIds, useCaseIds: s.useCaseIds, initiativeIds: s.initiativeIds, owned,
-      complete: issueIds.length > 0 && s.kpiIds.length > 0 && (s.type !== 'digital' || s.useCaseIds.length > 0)
+      complete: issueIds.length > 0 && s.kpiIds.length > 0 && (!isSystemType(s.type) || s.useCaseIds.length > 0)
         && s.initiativeIds.length > 0 && owned === s.initiativeIds.length,
     };
   });

@@ -51,19 +51,22 @@ export function parseCsv(input: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim() !== ''));
 }
 
-const FIELDS = ['id', 'name', 'description', 'columns', 'domain', 'url'] as const;
+const FIELDS = ['id', 'name', 'description', 'columns', 'domain', 'owner', 'provenance', 'license', 'personalData', 'quality', 'updateFrequency', 'retention', 'url'] as const;
 
 function csvToRecords(textIn: string): { records: Record<string, unknown>[] } | { error: ImportError } {
   const rows = parseCsv(textIn);
   if (rows.length === 0) return { error: 'empty' };
   const header = rows[0]!.map((h) => h.trim().toLowerCase());
   if (!header.includes('name')) return { error: 'noName' };
+  // Headers are matched case-insensitively ("personalData", "PersonalData" and "personaldata" are the same column).
+  const canonical = new Map<string, string>(FIELDS.map((f) => [f.toLowerCase(), f]));
   const records = rows.slice(1).map((r) => {
     const rec: Record<string, unknown> = {};
     header.forEach((h, i) => {
-      if (!(FIELDS as readonly string[]).includes(h)) return;
+      const field = canonical.get(h);
+      if (!field) return;
       const v = r[i] ?? '';
-      rec[h] = h === 'columns' ? v.split(/[;|]/).map((c) => c.trim()).filter(Boolean) : v;
+      rec[field] = field === 'columns' ? v.split(/[;|]/).map((c) => c.trim()).filter(Boolean) : v;
     });
     return rec;
   });

@@ -27,6 +27,7 @@ import { AiSettingsDialogHost } from './modules/ai/AiSettingsPanel.tsx';
 import { openAiSettings } from './modules/ai/uiStore.ts';
 import { useBrandVariants } from './modules/ops/theme.ts';
 import { DeviceStorageStatus, useDeviceBlocked } from './ui/DeviceStorageStatus.tsx';
+import { PortalReturnBar } from './ui/PortalReturnBar.tsx';
 
 /** Fluent themes from the 16-step brand ramp (PARAM-017). Dark mode lifts brand foregrounds for contrast. */
 function useThemes(): { dark: Theme; light: Theme } {
@@ -243,6 +244,7 @@ export function App() {
             }} />
             {!restricted && <ExpectedOutcomesBar />}
             {!restricted && <StepBandSlot />}
+            {!restricted && <PortalReturnBar />}
           </div>
           <div className="layout">
             <NavRail current={route.path} />

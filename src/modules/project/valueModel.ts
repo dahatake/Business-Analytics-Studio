@@ -3,7 +3,7 @@ import type { LoadedPack } from '../../data/pack.ts';
 import type { EntityOf } from '../../data/schema.ts';
 import { buildYears } from './deliverables.ts';
 import { EVIDENCE_BASES, SIM_RUNS, validRange } from './simulate.ts';
-import { solutionType, type SolutionType, type StrategyData } from './strategy.ts';
+import { isSystemType, solutionType, type SolutionType, type StrategyData } from './strategy.ts';
 import type { EngineLine, EngineLink, EngineModel, EngineRange } from './valueEngine.ts';
 
 /**
@@ -880,7 +880,7 @@ export function ruleDraft(c: DraftContext): ValueDraft {
       });
     }
     const hasDis = c.data.benefits.some((b) => b.solutionId === s.id && b.sign === 'disbenefit');
-    if (!hasDis && open(s.id, 'disbenefit') && (s.type === 'digital' || s.type === 'asset') && cost > 0) {
+    if (!hasDis && open(s.id, 'disbenefit') && (isSystemType(s.type) || s.type === 'asset') && cost > 0) {
       lines.push({
         solutionId: s.id, lever: 'cost', nature: 'financial', timing: 'annual', sign: 'disbenefit',
         label: ja ? '運用・保守の費用' : 'Running and maintenance cost',

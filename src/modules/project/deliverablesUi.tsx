@@ -16,6 +16,7 @@ import { usePackVersion } from '../../state/packEdits.ts';
 import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
+import { catalogForScope, useCatalogImport } from '../usecases/catalog.ts';
 import { reasonKey } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
@@ -49,11 +50,15 @@ export function useCheckContext(): AppCheckContext {
   const anchorVersion = company?.anchorRef?.version;
   const objectives = useMemo(() => companyObjectives(companyId), [companyId, anchorVersion]);
   const alignments = project?.alignments;
+  const storedCatalog = useCatalogImport((s) => s.value);
+  const catalogScope = useCatalogImport((s) => s.scope);
+  const catalog = useMemo(() => catalogForScope(storedCatalog, catalogScope)?.items, [storedCatalog, catalogScope]);
   return useMemo(() => ({
     pack: loaded, discussion, kpi, analysis, useCases, deliverables: normalizeDeliverables(raw), today: isDemo ? PARAMS.asOfDate : todayIn(),
     strategy: normalizeStrategy(rawStrategy), objectives,
     projectObjectiveIds: [...new Set((alignments ?? []).filter((a) => a.kind !== 'unaligned').flatMap((a) => a.objectiveIds))],
-  }), [discussion, kpi, analysis, useCases, raw, isDemo, rawStrategy, objectives, alignments, packVersion]);
+    ...(catalog?.length ? { catalog } : {}),
+  }), [discussion, kpi, analysis, useCases, raw, isDemo, rawStrategy, objectives, alignments, packVersion, catalog]);
 }
 
 /** The company's stated objectives (company anchor), the top of the company → OKR → KPI → solution chain. */
@@ -172,6 +177,8 @@ export function todoHref(r: TodoResult): string {
     q.set('target', 'uc-list');
   } else if (path === '/plan') {
     q.set('target', r.todo.id === 'plan-schedule' ? 'gantt-panel' : 'plan-table');
+  } else if (path === '/step') {
+    q.set('target', 'step-dash-issues');
   }
   return hrefFor(path, q);
 }

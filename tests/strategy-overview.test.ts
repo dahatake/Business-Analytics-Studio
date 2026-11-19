@@ -10,6 +10,10 @@ import {
   availableAxes, humanizeProposal, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, strategyMap,
   validateOverviewProposal, type OverviewProposal,
 } from '../src/modules/project/overviewModel.ts';
+import {
+  appendObjective, emptyDestination, laneHref, nodeDestination, packObjectiveDrafts, type ObjectiveInput,
+} from '../src/modules/project/strategyPortal.ts';
+import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 
 const context = (): AppCheckContext => ({
   pack: loadPack(samplePack), kpi: demoKpis(samplePack), discussion: { themes: [], records: [] },
@@ -170,5 +174,78 @@ describe('validated draft and approval updates', () => {
     ], currentScope(), loaded)).rejects.toThrow('invalid data');
     expect(loaded).toBe(before);
     expect(usePackEdits.getState().value.upserts).toEqual([]);
+  });
+});
+
+describe('strategy map portal and drafts (FR-349, FR-350)', () => {
+  const okrDraft = { id: 'okr-d', objective: 'Draft OKR', kpiIds: ['kpi-d'], objectiveIds: ['obj-new'] };
+  const drafts = (issueId: string) => ({
+    objectives: [{ id: 'obj-growth', text: 'Already saved' }, { id: 'obj-new', text: 'Draft objective' }],
+    okrs: [okrDraft], kpis: [{ id: 'kpi-d', name: 'Draft KPI' }],
+    changed: [issueId], objectiveIssues: [{ objectiveId: 'obj-new', issueId }],
+  });
+
+  it('shows drafts as separate nodes and dashed links after the saved items, never replacing saved data', () => {
+    const ctx = context();
+    const issue = entitiesOf('issue', ctx.pack)[0]!;
+    const plain = strategyMap(ctx, state, 'impact', 'en');
+    const map = strategyMap(ctx, state, 'impact', 'en', true, drafts(issue.id));
+    const node = (id: string) => map.nodes.find((n) => n.id === id);
+    expect(node('objective:draft:obj-growth')).toBeUndefined();
+    expect(node('objective:obj-growth')?.draft).toBeUndefined();
+    expect(node('objective:draft:obj-new')).toMatchObject({ ref: 'obj-new', label: 'Draft objective', draft: 'new' });
+    expect(node(`issue:${issue.id}`)?.draft).toBe('changed');
+    expect(map.links).toContainEqual({ source: 'objective:draft:obj-new', target: 'okr:draft:okr-d', direct: false, draft: true });
+    expect(map.links).toContainEqual({ source: 'okr:draft:okr-d', target: 'kpi:draft:kpi-d', direct: false, draft: true });
+    expect(map.links).toContainEqual({ source: 'objective:draft:obj-new', target: `issue:${issue.id}`, direct: true, draft: true });
+    const kpis = map.nodes.filter((n) => n.lane === 'kpi');
+    expect(kpis.at(-1)?.id).toBe('kpi:draft:kpi-d');
+    expect(map.nodes.filter((n) => !n.draft || n.draft === 'changed').map((n) => [n.id, n.score])).toEqual(plain.nodes.map((n) => [n.id, n.score]));
+    expect(map.links.filter((l) => !l.draft)).toEqual(plain.links);
+  });
+
+  it('opens each item where it is entered or checked, and the popup only where no screen exists', () => {
+    const issueNode = { lane: 'issue' as const, ref: 'I-1' };
+    expect(nodeDestination(issueNode, 'c1', true)).toEqual({ kind: 'link', href: '#/relations?view=table&target=relation-table&edit=I-1&field=name' });
+    expect(nodeDestination({ lane: 'kpi', ref: 'k1' }, 'c1', true)).toEqual({ kind: 'link', href: '#/analysis?tab=kpi&target=proj-kpi-row-k1' });
+    expect(nodeDestination({ lane: 'kpi', ref: 'k1', draft: 'new' }, 'c1', true)).toEqual({ kind: 'link', href: '#/analysis?tab=kpi&target=proj-kpi-draft-k1' });
+    expect(nodeDestination({ lane: 'okr', ref: 'o1', draft: 'new' }, 'c1', true)).toEqual({ kind: 'link', href: '#/analysis?tab=kpi&target=proj-okr-draft-o1' });
+    expect(nodeDestination({ lane: 'objective', ref: 'obj', draft: 'new' }, 'c1', true)).toEqual({ kind: 'objective', draftId: 'obj' });
+    expect(nodeDestination({ lane: 'objective', ref: 'obj', draft: 'new' }, 'c1', false)).toEqual({ kind: 'link', href: '#/projects?target=company-anchor-c1' });
+    expect(nodeDestination({ lane: 'objective', ref: 'obj' }, 'c1', true)).toEqual({ kind: 'link', href: '#/projects?target=company-anchor-c1' });
+    expect(emptyDestination('objective', 'c1', true)).toEqual({ kind: 'objective' });
+    expect(emptyDestination('objective', '', true)).toEqual({ kind: 'link', href: '#/projects' });
+    expect(emptyDestination('kpi', '', false)).toEqual({ kind: 'link', href: '#/analysis?tab=kpi&target=proj-kpi-name' });
+    expect(emptyDestination('solution', '', false)).toEqual({ kind: 'link', href: '#/relations?view=table&target=relation-table&create=solution&field=name' });
+    expect(laneHref('okr', '')).toBe('#/analysis?tab=kpi&target=proj-okr-panel');
+  });
+
+  const input = (patch: Partial<ObjectiveInput> = {}): ObjectiveInput => ({
+    text: 'Double recurring revenue', horizon: 'FY2027', basis: 'customerStated', scope: 'legalEntity', scopeName: '',
+    source: { title: 'Kickoff notes', type: 'internal', url: '', locator: '2026-04-10', accessedDate: '2026-11-16', excerpt: '' }, ...patch,
+  });
+
+  it('adds an objective with its own source as a valid anchor, keeping a free draft id', () => {
+    const first = appendObjective(null, input({ id: 'obj-new' }), 'Contoso', '2026-11-16');
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.id).toBe('obj-new');
+    expect(first.anchor.entityScope.legalEntity).toBe('Contoso');
+    expect(first.anchor.statedObjectives[0]).toMatchObject({ id: 'obj-new', sourceIds: ['S-1'] });
+    expect(first.anchor.sources[0]).toMatchObject({ id: 'S-1', type: 'internal', provenance: 'unknown' });
+    const second = appendObjective(first.anchor, input({ id: 'obj-new' }), 'Contoso', '2026-11-16');
+    expect(second.ok && [second.id, second.anchor.statedObjectives.length, second.anchor.sources.at(-1)?.id]).toEqual(['OBJ-2', 2, 'S-2']);
+    expect(CompanyAnchorVersionSchema.safeParse({ version: 1, savedAt: '2026-11-16T00:00:00.000Z', anchor: first.anchor }).success).toBe(true);
+    const roundTrip = packObjectiveDrafts({ companyAnchor: { version: 1, savedAt: '2026-11-16T00:00:00.000Z', anchor: first.anchor } }, []);
+    expect(roundTrip).toEqual([{ ...input({ id: 'obj-new' }), source: { ...input().source } }]);
+    expect(packObjectiveDrafts({ companyAnchor: { version: 1, savedAt: '2026-11-16T00:00:00.000Z', anchor: first.anchor } }, ['obj-new'])).toEqual([]);
+    expect(packObjectiveDrafts({ companyAnchor: { broken: true } }, [])).toEqual([]);
+  });
+
+  it('reports the missing fields instead of saving an objective without a usable source', () => {
+    const published = appendObjective(null, input({ basis: 'published', source: { ...input().source, type: 'public' } }), 'Contoso', '2026-11-16');
+    expect(published).toEqual({ ok: false, errors: ['url'] });
+    const empty = appendObjective(null, input({ text: ' ', horizon: '', source: { ...input().source, title: '', locator: '', accessedDate: '' } }), 'Contoso', '2026-11-16');
+    expect(empty.ok ? [] : [...empty.errors].sort()).toEqual(['accessedDate', 'horizon', 'locator', 'text', 'title']);
   });
 });

@@ -177,3 +177,126 @@ test.describe('step dashboard', () => {
     await expect(ai).toHaveCount(0);
   });
 });
+
+test.describe('issue qualification (FR-347)', () => {
+  test('every issue starts as a yellow light; a verdict needs its reason, "pursue" also what is different, and a "no" leaves the solution path', async ({ page }) => {
+    await go(page, '/step?step=asis');
+    const tile = page.getByTestId('step-dash-tile-issuesQualified');
+    await expect(tile).toHaveAttribute('data-tone', 'open');
+    await expect(tile).toHaveAttribute('data-value', '0');
+    const issues = page.getByTestId('step-dash-issues');
+    const first = issues.locator('tbody tr').first();
+    const firstId = (await first.getAttribute('data-issue'))!;
+    await expect(page.getByTestId(`qualify-cell-${firstId}`)).toContainText('未判断（黄信号）');
+
+    // The criterion's link opens this table.
+    await page.getByTestId('dlv-band').getByTestId('dlv-todo-asis-qualify').getByRole('link', { name: /対応する/ }).click();
+    await expect(page).toHaveURL(/#\/step\?step=asis.*target=step-dash-issues/);
+    await expect(page.locator('#step-dash-issues')).toBeFocused();
+
+    // "No": the evidence is shown, the reason is required.
+    await page.getByTestId(`qualify-open-${firstId}`).click();
+    const dialog = page.getByTestId('qualify-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('qualify-evidence')).toContainText('現状');
+    expect(await scan(page)).toEqual([]);
+    await dialog.getByTestId('qualify-save').click();
+    await expect(dialog).toContainText('判断を選んでください。');
+    await dialog.getByTestId('qualify-verdict-no').check();
+    await expect(dialog.getByTestId('qualify-different')).toHaveCount(0);
+    await dialog.getByTestId('qualify-save').click();
+    await expect(dialog).toContainText('入力してください。');
+    await dialog.getByTestId('qualify-reason').fill('競合も同じ水準で、差の価値が投資に見合わない');
+    await dialog.getByTestId('qualify-save').click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId(`qualify-cell-${firstId}`)).toHaveAttribute('data-verdict', 'no');
+    await expect(tile).toHaveAttribute('data-value', '1');
+
+    // "Pursue" asks what is different this time.
+    const second = (await issues.locator('tbody tr').nth(1).getAttribute('data-issue'))!;
+    await page.getByTestId(`qualify-open-${second}`).click();
+    await dialog.getByTestId('qualify-verdict-pursue').check();
+    await dialog.getByTestId('qualify-reason').fill('失注の主因で、年 1.2 億円の差');
+    await dialog.getByTestId('qualify-save').click();
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId('qualify-different').fill('全社の計画統合が今期の経営方針になった');
+    await dialog.getByTestId('qualify-save').click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId(`qualify-cell-${second}`)).toHaveAttribute('data-verdict', 'pursue');
+
+    // Kept after a reload, with who recorded it; downstream steps say the "no" was left out.
+    await page.reload();
+    await expect(page.getByTestId(`qualify-cell-${firstId}`)).toHaveAttribute('data-verdict', 'no');
+    await page.getByTestId(`qualify-open-${firstId}`).click();
+    await expect(dialog.getByTestId('qualify-saved')).toContainText('E2E');
+    await dialog.getByRole('button', { name: 'キャンセル' }).click();
+    await page.goto('/#/step?step=solution');
+    await expect(page.getByTestId('step-dash-qualified-out')).toContainText('1 件');
+    await expect(page.getByTestId('step-dash-issue-solutions').locator(`tr[data-issue="${firstId}"]`)).toHaveCount(0);
+    await expectTilesMatchBand(page);
+  });
+
+  test('the qualification dialog has no accessibility violations in English', async ({ page }) => {
+    await go(page, '/step?step=asis', 'en');
+    const id = (await page.getByTestId('step-dash-issues').locator('tbody tr').first().getAttribute('data-issue'))!;
+    await page.getByTestId(`qualify-open-${id}`).click();
+    const dialog = page.getByTestId('qualify-dialog');
+    await dialog.getByTestId('qualify-verdict-pursue').check();
+    await expect(dialog.getByTestId('qualify-different')).toBeVisible();
+    await expect(dialog).toContainText('What is different this time');
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+  });
+});
+
+test.describe('Khalsa advice on every step screen (FR-351)', () => {
+  test('each step shows its advice on the dashboard and on the deliverable screen, with links and a next conversation', async ({ page }) => {
+    await go(page, '/step?step=asis');
+    for (const step of STEPS) {
+      await page.goto(`/#/step?step=${step}`);
+      const advice = page.getByTestId('step-advice');
+      await expect(advice).toBeVisible();
+      await expect(advice.getByTestId(`step-advice-ask.${step}`)).toBeVisible();
+      await page.goto(`/#/deliverables?step=${step}`);
+      await expect(page.getByTestId('step-advice')).toBeVisible();
+      await expect(page.getByTestId(`step-advice-ask.${step}`)).toBeVisible();
+    }
+  });
+
+  test('the advice follows the data: qualifying the issues removes the yellow light, and its link opens the work', async ({ page }) => {
+    await go(page, '/step?step=asis');
+    const item = page.getByTestId('step-advice-unqualified');
+    await expect(item).toHaveAttribute('data-tone', 'yellow');
+    await expect(item).toContainText('判断していない課題が 5 件');
+    await expect(page.getByTestId('step-advice-summary')).toBeVisible();
+    await item.getByRole('link', { name: '対応する' }).click();
+    await expect(page.locator('#step-dash-issues')).toBeFocused();
+    const rows = page.getByTestId('step-dash-issues').locator('tbody tr');
+    const n = await rows.count();
+    for (let i = 0; i < n; i++) {
+      const id = (await rows.nth(i).getAttribute('data-issue'))!;
+      await page.getByTestId(`qualify-open-${id}`).click();
+      const dialog = page.getByTestId('qualify-dialog');
+      await dialog.getByTestId('qualify-verdict-no').check();
+      await dialog.getByTestId('qualify-reason').fill('差は年 4,000 万円で、投資に見合わない');
+      await dialog.getByTestId('qualify-save').click();
+      await expect(dialog).toBeHidden();
+    }
+    await expect(page.getByTestId('step-advice-unqualified')).toHaveCount(0);
+    await expect(page.getByTestId('step-advice-allDeclined')).toHaveAttribute('data-tone', 'info');
+    await page.goto('/#/step?step=solution');
+    await expect(page.getByTestId('step-advice-noPursued')).toBeVisible();
+  });
+
+  test('the advice panel passes axe on every step in English and has no Japanese', async ({ page }) => {
+    await go(page, '/step?step=asis', 'en');
+    for (const step of STEPS) {
+      await page.goto(`/#/step?step=${step}`);
+      await expect(page.getByTestId('step-advice')).toBeVisible();
+      await expect(page.getByTestId('step-advice')).toContainText('Advice based on Khalsa');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      expect(await scan(page), step).toEqual([]);
+      expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+    }
+  });
+});

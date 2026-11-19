@@ -3,12 +3,25 @@
 .strategy-map { width: 100%; min-width: 1250px; display: block; }
 .strategy-lane { fill: var(--colorNeutralForeground1); font-size: 16px; font-weight: 600; }
 .strategy-empty, .strategy-score { fill: var(--colorNeutralForeground2); font-size: 12px; }
+.strategy-empty { font-size: 13px; }
 .strategy-label { fill: var(--colorNeutralForeground1); font-size: 13px; }
 .strategy-node { fill: var(--colorNeutralBackground2); stroke: var(--colorBrandStroke1); stroke-width: 2; }
 .strategy-node.issue { stroke: var(--colorPaletteMarigoldBorder2); }
 .strategy-node.solution { stroke: var(--colorPaletteGreenBorder2); }
 .strategy-link { fill: none; stroke: var(--colorBrandStroke1); stroke-width: 5; opacity: .5; }
 .strategy-link.direct { stroke-dasharray: 8 5; }
+/* FR-349: every item is a way in; FR-350: drafts are dashed and labelled, never styled like saved data. */
+.strategy-map a, .strategy-map [role='button'] { cursor: pointer; outline: none; }
+.strategy-map a:hover .strategy-node, .strategy-map [role='button']:hover .strategy-node { fill: var(--colorNeutralBackground2Hover); }
+.strategy-map a:focus-visible .strategy-node, .strategy-map [role='button']:focus-visible .strategy-node,
+.strategy-map a:focus-visible .strategy-hit, .strategy-map [role='button']:focus-visible .strategy-hit { stroke: var(--colorStrokeFocus2); stroke-width: 4; }
+.strategy-hit { fill: transparent; stroke: transparent; stroke-width: 2; }
+.strategy-map a:hover .strategy-hit, .strategy-map [role='button']:hover .strategy-hit { stroke: var(--colorNeutralStroke1); stroke-dasharray: 4 3; }
+.strategy-map a .strategy-lane, .strategy-map a .strategy-empty { text-decoration: underline; }
+.strategy-empty { fill: var(--colorBrandForeground1); }
+.strategy-node.is-draft { stroke-dasharray: 6 4; fill: var(--colorNeutralBackground1); }
+.strategy-draft-badge { fill: var(--colorPaletteMarigoldForeground2); font-size: 12px; font-weight: 600; }
+.strategy-link.draft { stroke: var(--colorPaletteMarigoldBorder2); stroke-dasharray: 3 4; }
 .strategy-next { border-inline-start: 4px solid var(--colorBrandStroke1); }
 .strategy-next a { font-size: 18px; font-weight: 600; }
 .strategy-refs { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }

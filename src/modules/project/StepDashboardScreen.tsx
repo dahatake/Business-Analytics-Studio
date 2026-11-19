@@ -11,12 +11,15 @@ import { EntityRef } from '../../ui/EntityRef.tsx';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { ScrollRegion } from './common.tsx';
-import { inputKey, type TodoResult } from './deliverables.ts';
+import { inputKey, type CheckContext, type TodoResult } from './deliverables.ts';
 import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
+import { QualifyCell } from './IssueQualification.tsx';
+import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
 import { HandoffPanel } from './HandoffPanel.tsx';
 import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
 import { StrategyOverview } from './StrategyOverview.tsx';
+import { isSystemType } from './strategy.ts';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
 import { ValueModelPanel } from './ValuePanel.tsx';
@@ -44,6 +47,17 @@ function OkNg({ ok }: { ok: boolean }) {
 function HiddenNote({ n }: { n: number }) {
   const { t } = useI18n();
   return n > 0 ? <p className="muted" data-testid="step-dash-hidden">{t('proj.dash.hidden', { n })}</p> : null;
+}
+
+/** FR-347: issues a person qualified out in the As-Is are not counted here; say so rather than silently drop them. */
+function QualifiedOutNote({ n }: { n: number }) {
+  const { t } = useI18n();
+  return n > 0 ? (
+    <p className="muted" data-testid="step-dash-qualified-out">
+      {t('proj.dash.qualifiedOut', { n })}{' '}
+      <a href={hrefFor('/step', { step: 'asis', target: 'step-dash-issues' })} onClick={revisitRouteTarget}>{t('proj.dash.qualifiedOutLink')}</a>
+    </p>
+  ) : null;
 }
 
 function Empty({ text = 'proj.dash.empty' }: { text?: MessageKey }) {
@@ -140,15 +154,16 @@ function Refs({ ids, visible }: { ids: string[]; visible: Visible }) {
   );
 }
 
-function AsisDetail({ d, visible, nameOf }: { d: DetailOf<'asis'>; visible: Visible; nameOf: NameOf }) {
+function AsisDetail({ d, visible, nameOf, ctx }: { d: DetailOf<'asis'>; visible: Visible; nameOf: NameOf; ctx: CheckContext }) {
   const { t, lang, fmt } = useI18n();
   const issues = d.issues.filter((i) => visible(i.id));
   const kpis = d.kpis.filter((k) => visible(k.id));
   const mismatches = d.mismatches.filter((m) => m.where.type !== 'issue' || visible(m.where.id));
   return (
     <>
-      <Panel title={t('proj.dash.asis.issues')} testId="step-dash-issues" className="span-full">
+      <Panel title={t('proj.dash.asis.issues')} testId="step-dash-issues" id="step-dash-issues" className="span-full">
         <p className="muted">{t('proj.dash.asis.issuesHint')}</p>
+        <p className="muted">{t('proj.qualify.hint')}</p>
         {d.issues.length === 0 ? <Empty /> : (
           <ScrollRegion label={t('proj.dash.asis.issues')}>
             <table className="data-table compact">
@@ -163,22 +178,27 @@ function AsisDetail({ d, visible, nameOf }: { d: DetailOf<'asis'>; visible: Visi
                 <th scope="col">{t('proj.dash.col.source')}</th>
                 <th scope="col">{t('proj.dash.col.cause')}</th>
                 <th scope="col">{t('proj.dash.col.solution')}</th>
+                <th scope="col">{t('proj.dash.col.verdict')}</th>
               </tr></thead>
               <tbody>
-                {issues.map((i) => (
-                  <tr key={i.id} data-issue={i.id}>
-                    <td className="num">{i.rank}</td>
-                    <th scope="row"><EntityRef id={i.id} /></th>
-                    <td className="num">{fmt.number(i.score)}</td>
-                    <td className="num">{fmt.number(i.impact)}</td>
-                    <td className="num">{fmt.number(i.feasibility)}</td>
-                    <td className="num">{i.gap ? fmt.percent(i.gap.remaining) : '–'}</td>
-                    <td><YesNo ok={i.inProject} /></td>
-                    <td><YesNo ok={i.sourced} /></td>
-                    <td><YesNo ok={i.caused} /></td>
-                    <td><YesNo ok={i.solutionIds.length > 0} /></td>
-                  </tr>
-                ))}
+                {issues.map((i) => {
+                  const issue = ctx.pack.byId.get(i.id);
+                  return (
+                    <tr key={i.id} data-issue={i.id} data-verdict={i.verdict ?? 'none'}>
+                      <td className="num">{i.rank}</td>
+                      <th scope="row"><EntityRef id={i.id} /></th>
+                      <td className="num">{fmt.number(i.score)}</td>
+                      <td className="num">{fmt.number(i.impact)}</td>
+                      <td className="num">{fmt.number(i.feasibility)}</td>
+                      <td className="num">{i.gap ? fmt.percent(i.gap.remaining) : '–'}</td>
+                      <td><YesNo ok={i.inProject} /></td>
+                      <td><YesNo ok={i.sourced} /></td>
+                      <td><YesNo ok={i.caused} /></td>
+                      <td><YesNo ok={i.solutionIds.length > 0} /></td>
+                      <td>{issue?.kind === 'issue' && <QualifyCell issue={issue} ctx={ctx} />}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </ScrollRegion>
@@ -319,6 +339,7 @@ function TobeDetail({ d, visible }: { d: DetailOf<'tobe'>; visible: Visible }) {
           </ScrollRegion>
         )}
         <HiddenNote n={d.topIssues.length - top.length} />
+        <QualifiedOutNote n={d.qualifiedOut} />
       </Panel>
       <Panel title={t('proj.dash.tobe.useCases')} testId="step-dash-use-cases" className="span-full">
         {d.useCases.length === 0 ? <Empty text="proj.dash.tobe.noUseCases" /> : (
@@ -459,6 +480,7 @@ function SolutionDetail({ d, visible, nameOf }: { d: DetailOf<'solution'>; visib
           </ScrollRegion>
         )}
         <HiddenNote n={d.issues.length - issues.length} />
+        <QualifiedOutNote n={d.qualifiedOut} />
       </Panel>
       <Panel title={t('proj.dash.chart.range.panel')} testId="step-dash-range" className="span-full">
         <RangeChart sims={d.sims} />
@@ -523,7 +545,7 @@ function DeliverableDetail({ d, visible, nameOf, today }: { d: DetailOf<'deliver
                     <th scope="row"><EntityRef id={r.solutionId} /> <span className="muted">{t(`sol.type.${r.type}` as MessageKey)}</span></th>
                     <td><Refs ids={r.issueIds} visible={visible} /></td>
                     <td className="num">{r.kpiIds.length}</td>
-                    <td>{r.type === 'digital' ? <Refs ids={r.useCaseIds} visible={visible} /> : '–'}</td>
+                    <td>{isSystemType(r.type) ? <Refs ids={r.useCaseIds} visible={visible} /> : '–'}</td>
                     <td><Refs ids={r.initiativeIds} visible={visible} /></td>
                     <td className="num">{t('proj.dash.ratio', { value: fmt.number(r.owned), total: fmt.number(r.initiativeIds.length) })}</td>
                     <td><OkNg ok={r.complete} /></td>
@@ -574,9 +596,9 @@ function DeliverableDetail({ d, visible, nameOf, today }: { d: DetailOf<'deliver
   );
 }
 
-function StepDetailPanels({ d, visible, nameOf, today }: { d: StepDetail; visible: Visible; nameOf: NameOf; today: string }) {
+function StepDetailPanels({ d, visible, nameOf, today, ctx }: { d: StepDetail; visible: Visible; nameOf: NameOf; today: string; ctx: CheckContext }) {
   switch (d.step) {
-    case 'asis': return <AsisDetail d={d} visible={visible} nameOf={nameOf} />;
+    case 'asis': return <AsisDetail d={d} visible={visible} nameOf={nameOf} ctx={ctx} />;
     case 'tobe': return <TobeDetail d={d} visible={visible} />;
     case 'kpi': return <KpiDetail d={d} />;
     case 'solution': return <SolutionDetail d={d} visible={visible} nameOf={nameOf} />;
@@ -658,6 +680,7 @@ export function StepDashboardScreen() {
       <StrategyOverview ctx={ctx} step={step} />
       <StepBriefPanel d={d} ctx={ctx} audience={audience} />
       <Summary d={d} />
+      <DiscoveryAdvicePanel step={step} ctx={ctx} />
       <HandoffPanel ctx={ctx} step={step} />
       <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">
         <p className="muted">{t('proj.dash.tilesHint')}</p>
@@ -665,7 +688,7 @@ export function StepDashboardScreen() {
           {d.tiles.map((tile) => <Tile key={tile.id} tile={tile} results={d.results} />)}
         </ul>
       </Panel>
-      <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} />
+      <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} ctx={ctx} />
       {(step === 'solution' || step === 'deliverable') && <ValueModelPanel ctx={ctx} nameOf={nameOf} />}
       <DecisionSupport step={step} report={report} visible={report ? visible(report.sourceId) : false} />
       <DocPanel d={d} />

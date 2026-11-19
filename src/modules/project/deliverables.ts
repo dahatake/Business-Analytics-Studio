@@ -8,9 +8,11 @@ import type { MessageKey } from '../../i18n/core.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
 import type { Localizable } from '../../state/text.ts';
 import type { UseCase } from '../usecases/store.ts';
+import type { CatalogItem } from '../usecases/catalogSchema.ts';
 import { categoriesOf } from './analysis.ts';
 import { validateKpi, kpiDefinitionState } from './kpiOkr.ts';
 import type { AnalysisData, DiscussionData, KpiData, KpiDef } from './model.ts';
+import { checkAnyLanguage } from './requirementQuality.ts';
 import { buildSolutionDoc } from './solutionDocs.ts';
 import { emptyStrategy, strategyThread, type CompanyObjective, type StrategyData, type StrategyThread } from './strategy.ts';
 
@@ -58,6 +60,24 @@ export type Handoff = z.infer<typeof HandoffSchema>;
 export const CriterionSchema = z.object({ value: z.number().min(PAYBACK_LIMIT_RANGE.min).max(PAYBACK_LIMIT_RANGE.max), at: z.string(), by: z.string() });
 export type Criterion = z.infer<typeof CriterionSchema>;
 
+/**
+ * FR-347: qualifying an issue (Khalsa & Illig, "Let's Get Real or Let's Not Play": "Should they do it?"). Until a
+ * person turns the yellow light green (pursue) or red (not now / no), the app does not assume the issue must be
+ * solved. A "no" is a result too: it needs the same evidence as a "yes" and ends the issue's path at the As-Is.
+ */
+export const QUALIFY_VERDICTS = ['pursue', 'notNow', 'no'] as const;
+export type QualifyVerdict = (typeof QUALIFY_VERDICTS)[number];
+export const QualificationSchema = z.object({
+  verdict: z.enum(QUALIFY_VERDICTS),
+  /** The evidence and impact the verdict rests on (how it is measured, now, wanted, what the difference is worth). */
+  reason: z.string().trim().min(1),
+  /** Pursue only: what stopped it being solved before and what is different this time. */
+  different: z.string().trim().min(1).optional(),
+  at: z.string(),
+  by: z.string(),
+}).refine((q) => q.verdict !== 'pursue' || q.different !== undefined, { path: ['different'] });
+export type Qualification = z.infer<typeof QualificationSchema>;
+
 export const DeliverableDataSchema = z.object({
   /** step → field id → value. */
   docs: z.record(z.string(), z.record(z.string(), FieldValueSchema)),
@@ -71,6 +91,13 @@ export const DeliverableDataSchema = z.object({
   criteria: z.object({ paybackMaxYears: CriterionSchema.optional().catch(undefined) }).optional().catch(undefined),
   /** step → the person's confirmation that the step is finished and its items go to the next step (handoff.ts). */
   handoffs: z.record(z.string(), HandoffSchema).optional().catch(undefined),
+  /** FR-347: issue id → the person's verdict on whether the issue is worth solving now. Absent = not qualified yet. A broken entry is dropped alone. */
+  qualifications: z.record(z.string(), z.unknown())
+    .transform((r): Record<string, Qualification> => Object.fromEntries(Object.entries(r).flatMap(([id, v]) => {
+      const q = QualificationSchema.safeParse(v);
+      return q.success ? [[id, q.data]] : [];
+    })))
+    .optional().catch(undefined),
 });
 export type DeliverableData = z.infer<typeof DeliverableDataSchema>;
 
@@ -113,6 +140,8 @@ export interface FieldDef {
   quantified?: boolean;
   /** Must also contain a date or period (SMART: time-bound). */
   timeBound?: boolean;
+  /** Must be verifiable: wording such as "easy to use" needs a measurable bound (ISO/IEC/IEEE 29148). */
+  specific?: boolean;
 }
 
 export interface CheckContext {
@@ -130,6 +159,8 @@ export interface CheckContext {
   objectives?: CompanyObjective[];
   /** Company objectives the project is aligned to (Project.alignments). */
   projectObjectiveIds?: string[];
+  /** The data dictionary imported for this project (the pack's own dictionary is used when absent). */
+  catalog?: CatalogItem[];
 }
 
 /** The context the app builds: every strategy field resolved. */
@@ -188,6 +219,11 @@ export function projectHasKpi(kpis: KpiDef[], k: EntityOf<'kpi'>): boolean {
   return kpis.some((p) => p.id === k.id || textOf(p.name).some((n) => n.trim() !== '' && (n === k.name.ja || n === k.name.en)));
 }
 
+/** True when the field's text fails its own rule: no number, no date, or wording that cannot be verified. */
+export function fieldIsVague(f: FieldDef, text: string): boolean {
+  return (!!f.quantified && !hasNumber(text)) || (!!f.timeBound && !hasDate(text)) || (!!f.specific && checkAnyLanguage(text).some((i) => i.code === 'vague'));
+}
+
 function docCheck(step: ImprovementStep, fields: FieldDef[]) {
   return (c: CheckContext): CheckOutcome => {
     const doc = c.deliverables.docs[step] ?? {};
@@ -199,7 +235,7 @@ function docCheck(step: ImprovementStep, fields: FieldDef[]) {
       if (!text) {
         empty += 1;
         refs.push({ type: 'field', step, id: f.id });
-      } else if ((f.quantified && !hasNumber(text)) || (f.timeBound && !hasDate(text))) {
+      } else if (fieldIsVague(f, text)) {
         vague += 1;
         refs.push({ type: 'field', step, id: f.id });
       }
@@ -230,7 +266,7 @@ const TOBE_FIELDS: FieldDef[] = [
   { id: 'toBeProcess' },
   { id: 'gap', quantified: true },
   { id: 'hypotheses' },
-  { id: 'success', quantified: true, timeBound: true },
+  { id: 'success', quantified: true, timeBound: true, specific: true },
 ];
 
 const KPI_FIELDS: FieldDef[] = [
@@ -245,7 +281,7 @@ const SOLUTION_FIELDS: FieldDef[] = [
   { id: 'options' },
   { id: 'actors' },
   { id: 'scenario' },
-  { id: 'acceptance', quantified: true },
+  { id: 'acceptance', quantified: true, specific: true },
   { id: 'dataNeeds' },
   { id: 'risks' },
 ];
@@ -297,6 +333,27 @@ export function setPaybackLimit(data: DeliverableData, value: Criterion | null):
   else criteria.paybackMaxYears = value;
   return { ...data, criteria };
 }
+
+/* ---------- Qualification (FR-347) ---------- */
+
+export const qualificationOf = (d: DeliverableData, issueId: string): Qualification | undefined => d.qualifications?.[issueId];
+
+/** The person decided not to solve the issue now ("not now" or "no"): it leaves the path to a solution. */
+export function isQualifiedOut(d: DeliverableData, issueId: string): boolean {
+  const v = qualificationOf(d, issueId)?.verdict;
+  return v === 'notNow' || v === 'no';
+}
+
+/** Record (or clear) a verdict. Invalid input (an empty reason, a pursue without "what is different") throws. */
+export function setQualification(data: DeliverableData, issueId: string, value: Qualification | null): DeliverableData {
+  const qualifications = { ...(data.qualifications ?? {}) };
+  if (value === null) delete qualifications[issueId];
+  else qualifications[issueId] = QualificationSchema.parse(value);
+  return { ...data, qualifications };
+}
+
+/** Issues still on the path to a solution, in priority order: every issue except those qualified out. */
+export const pursuedIssues = (c: Pick<CheckContext, 'pack' | 'deliverables'>) => rankedIssues(c.pack).filter((i) => !isQualifiedOut(c.deliverables, i.id));
 
 /* ---------- Reconciliation: numbers written in text vs the KPI values ---------- */
 
@@ -505,6 +562,18 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           return pass(checked ? 'valuesReconciled' : 'noStatedValues', { n: checked });
         },
       },
+      {
+        // After the evidence checks: a verdict rests on sources, causes, the KPI and its baseline (no guessing).
+        id: 'asis-qualify', kind: 'auto', href: '/step?step=asis',
+        check: (c) => {
+          const issues = rankedIssues(c.pack);
+          if (issues.length === 0) return fail('noIssues');
+          const open = issues.filter((i) => !qualificationOf(c.deliverables, i.id));
+          if (open.length) return fail('issuesUnqualified', entityRefs(open), { n: open.length });
+          const out = issues.filter((i) => isQualifiedOut(c.deliverables, i.id)).length;
+          return pass('issuesQualified', { pursue: issues.length - out, out });
+        },
+      },
       { id: 'asis-doc', kind: 'auto', href: docHref('asis'), check: docCheck('asis', ASIS_FIELDS) },
       { id: 'asis-field', kind: 'manual', href: docHref('asis') },
       { id: 'define-agree', kind: 'manual', href: docHref('asis') },
@@ -556,8 +625,9 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
       {
         id: 'uc-top-issue', kind: 'auto', href: '/usecases',
         check: (c) => {
-          const top = rankedIssues(c.pack)[0];
-          if (!top) return fail('noIssues');
+          if (kindOf(c.pack, 'issue').length === 0) return fail('noIssues');
+          const top = pursuedIssues(c)[0];
+          if (!top) return fail('noPursuedIssues');
           const solutions = kindOf(c.pack, 'solution').filter((s) => s.issueIds.includes(top.id)).map((s) => s.id);
           const covered = c.useCases.some((u) => u.origin === 'registered' && u.relatedIds.some((id) => id === top.id || solutions.includes(id)));
           return covered ? pass('topIssueCovered', { issue: top.id }) : fail('topIssueUncovered', [{ type: 'entity', id: top.id }]);
@@ -618,10 +688,13 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
       {
         id: 'kpi-coverage', kind: 'auto', href: '/analysis?tab=kpi',
         check: (c) => {
-          const issues = kindOf(c.pack, 'issue');
-          if (issues.length === 0) return fail('noIssues');
+          const all = kindOf(c.pack, 'issue');
+          if (all.length === 0) return fail('noIssues');
+          const issues = all.filter((i) => !isQualifiedOut(c.deliverables, i.id));
+          if (issues.length === 0) return fail('noPursuedIssues');
+          const out = all.length - issues.length;
           const bad = issues.filter((i) => !issueKpis(c, i).some((k) => projectHasKpi(c.kpi.kpis, k)));
-          return bad.length ? fail('issuesNotMeasured', entityRefs(bad), { n: bad.length }) : pass('allIssuesTracked', { n: issues.length });
+          return bad.length ? fail('issuesNotMeasured', entityRefs(bad), { n: bad.length }) : pass(out ? 'pursuedIssuesTracked' : 'allIssuesTracked', { n: issues.length, out });
         },
       },
       {
@@ -657,9 +730,12 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
         check: (c) => {
           const issues = kindOf(c.pack, 'issue');
           if (issues.length === 0) return fail('noIssues');
+          const pursued = pursuedIssues(c);
+          if (pursued.length === 0) return fail('noPursuedIssues');
+          const out = issues.length - pursued.length;
           const solutions = kindOf(c.pack, 'solution');
-          const bad = rankedIssues(c.pack).filter((i) => !solutions.some((s) => s.issueIds.includes(i.id)));
-          return bad.length ? fail('issuesWithoutSolution', entityRefs(bad), { n: bad.length }) : pass('allIssuesSolved', { n: issues.length });
+          const bad = pursued.filter((i) => !solutions.some((s) => s.issueIds.includes(i.id)));
+          return bad.length ? fail('issuesWithoutSolution', entityRefs(bad), { n: bad.length }) : pass(out ? 'pursuedIssuesSolved' : 'allIssuesSolved', { n: pursued.length, out });
         },
       },
       {

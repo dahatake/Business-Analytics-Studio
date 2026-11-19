@@ -149,7 +149,7 @@ export function KpiOkrPanel() {
                 const pct = achievementPct(k);
                 const name = loc(k.name, lang);
                 return (
-                  <tr key={k.id}>
+                  <tr key={k.id} id={`proj-kpi-row-${k.id}`} tabIndex={-1}>
                     <th scope="row">{name} <OriginBadge origin={k.origin} /></th>
                     <td><OrgBadge org={k.org} testId={`proj-kpi-org-${k.id}`} /></td>
                     <td>{loc(k.unit, lang)}</td>
@@ -179,7 +179,7 @@ export function KpiOkrPanel() {
         <form className="proj-kpi-form" onSubmit={(e) => { e.preventDefault(); submitKpi(); }} aria-label={t(editing ? 'proj.kpi.editTitle' : 'proj.kpi.addTitle')}>
           <h3 className="proj-h3">{t(editing ? 'proj.kpi.editTitle' : 'proj.kpi.addTitle')}</h3>
           <div className="proj-kpi-fields">
-            <Field label={t('proj.kpi.name')} {...fieldProps('name')}><Input value={form.name} onChange={(_, d) => setForm({ ...form, name: d.value })} data-testid="proj-kpi-name" /></Field>
+            <Field label={t('proj.kpi.name')} {...fieldProps('name')}><Input value={form.name} onChange={(_, d) => setForm({ ...form, name: d.value })} id="proj-kpi-name" data-testid="proj-kpi-name" /></Field>
             <Field label={t('proj.kpi.unit')} {...fieldProps('unit')}><Input value={form.unit} onChange={(_, d) => setForm({ ...form, unit: d.value })} /></Field>
             <Field label={t('proj.kpi.baseline')} {...fieldProps('baseline')}><Input type="number" value={form.baseline} onChange={(_, d) => setForm({ ...form, baseline: d.value })} /></Field>
             <Field label={t('proj.kpi.current')} {...fieldProps('current')}><Input type="number" value={form.current} onChange={(_, d) => setForm({ ...form, current: d.value })} /></Field>
@@ -199,7 +199,7 @@ export function KpiOkrPanel() {
           {data.okrs.map((o) => {
             const pct = okrPct(o, data.kpis);
             return (
-              <li key={o.id} className="proj-okr">
+              <li key={o.id} className="proj-okr" id={`proj-okr-${o.id}`} tabIndex={-1}>
                 <div className="proj-okr-head">
                   <strong>{loc(o.objective, lang)}</strong>
                   <OriginBadge origin={o.origin} />
@@ -236,7 +236,7 @@ export function KpiOkrPanel() {
         <OkrDraftList data={data} commit={setStore} />
         <form className="proj-okr-form" onSubmit={(e) => { e.preventDefault(); submitOkr(); }} aria-label={t('proj.okr.addTitle')}>
           <h3 className="proj-h3">{t('proj.okr.addTitle')}</h3>
-          <Field label={t('proj.okr.objective')}><Input value={objective} onChange={(_, d) => setObjective(d.value)} /></Field>
+          <Field label={t('proj.okr.objective')}><Input id="proj-okr-objective" value={objective} onChange={(_, d) => setObjective(d.value)} /></Field>
           <div className="proj-form-row">
             <OrgFields level={okrOrg.level} name={okrOrg.name} idPrefix="proj-okr-new" onChange={(level, name) => setOkrOrg({ level, name })} />
           </div>

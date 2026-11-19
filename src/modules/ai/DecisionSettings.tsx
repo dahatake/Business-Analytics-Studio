@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Radio, RadioGroup, Spinner } from '@fluentui/react-components';
+import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { Delete20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { DECISION_MODEL, DECISION_PRICE, decisionUrl, validateDecisionConnection } from '../../ai/decision.ts';
-import type { DecisionInput, DecisionSaveError } from './relayClient.ts';
-import { EntraConnection } from './EntraConnection.tsx';
+import { DECISION_MODEL, DECISION_PRICE, decisionEndpointFromChat, decisionUrl, validateDecisionConnection } from '../../ai/decision.ts';
+import { inspectEntraInstance, listEntraInstances, type DecisionInput, type DecisionSaveError, type FoundryInstanceDetail } from './relayClient.ts';
 import { isDecisionReady, useAiSettings } from './settingsStore.ts';
 import './ai.css';
 
@@ -15,47 +14,61 @@ const isOwn = (code: string): code is OwnError => (OWN_ERRORS as readonly string
 type Message = { kind: 'saved' | 'deleted' } | { kind: 'error'; code: DecisionSaveError; providerStatus?: number };
 
 /**
- * D-37: the optional Microsoft Foundry Decision connection. It is saved only after a synthetic test request succeeds
- * in the relay, using a vault-held key or the shared Entra sign-in. When unset, KPI/OKR drafting works as before.
+ * D-37: the optional Microsoft Foundry Decision connection. It runs on the Foundry resource, sign-in and key of the chat
+ * connection above — nothing is chosen or authenticated twice — and only asks for the Decision deployment name. It is saved
+ * only after a synthetic test request succeeds in the relay. When unset, KPI/OKR drafting works as before.
  */
 export function DecisionSettings() {
   const { t } = useI18n();
   const s = useAiSettings();
   const saved = s.decision;
-  const [endpoint, setEndpoint] = useState(saved?.endpoint ?? '');
+  const chat = s.relayConnection;
+  const auth = chat?.auth === 'entraId' ? 'entraId' : 'apiKey';
+  const tenantId = chat?.tenantId ?? '';
+  const endpoint = decisionEndpointFromChat(chat?.endpoint) ?? '';
   const [deployment, setDeployment] = useState(saved?.deployment ?? 'decision-1-1');
-  const [key, setKey] = useState('');
-  const [auth, setAuth] = useState<'apiKey' | 'entraId'>(saved?.auth ?? 'apiKey');
-  const [tenantId, setTenantId] = useState(saved?.tenantId ?? '');
+  const [deployments, setDeployments] = useState<FoundryInstanceDetail['deployments']>([]);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const [validationRequested, setValidationRequested] = useState(false);
+  const signedIn = s.entra?.signedIn === true;
 
   useEffect(() => {
-    if (saved) {
-      setEndpoint(saved.endpoint);
-      setDeployment(saved.deployment);
-      setAuth(saved.auth ?? 'apiKey');
-      setTenantId(saved.tenantId ?? '');
-    }
-  }, [saved?.endpoint, saved?.deployment, saved?.auth, saved?.tenantId]);
+    if (saved) setDeployment(saved.deployment);
+  }, [saved?.deployment]);
 
   useEffect(() => {
     setConsent(false);
-  }, [endpoint, deployment, auth, tenantId, key]);
+  }, [endpoint, deployment, auth, tenantId]);
+
+  // The deployments of the chat connection's resource, so the Decision one can be picked rather than typed.
+  useEffect(() => {
+    setDeployments([]);
+    if (auth !== 'entraId' || !signedIn || !endpoint || !tenantId) return;
+    let active = true;
+    const signal = AbortSignal.timeout(90_000);
+    void (async () => {
+      const host = new URL(endpoint).hostname.split('.')[0];
+      const instance = (await listEntraInstances(tenantId, signal)).find((i) => i.endpoint !== null && new URL(i.endpoint).hostname.split('.')[0] === host);
+      if (!instance) return;
+      const detail = await inspectEntraInstance(instance.id, instance.tenantId, signal, 'decision');
+      if (!active) return;
+      setDeployments(detail.deployments);
+      setDeployment((current) => detail.deployments.some((d) => d.name === current) ? current : (detail.deployments[0]?.name ?? current));
+    })().catch(() => undefined);
+    return () => { active = false; };
+  }, [auth, signedIn, endpoint, tenantId]);
 
   if (!s.relayReachable) return <p className="muted" data-testid="ai-decision-unreachable">{t('ai.decision.needsRelay')}</p>;
 
-  const draft: DecisionInput = {
-    endpoint: endpoint.trim(), deployment: deployment.trim(),
-    ...(auth === 'entraId' ? { auth, tenantId } : key.trim() ? { key: key.trim() } : {}),
-  };
+  const draft: DecisionInput = auth === 'entraId' ? { endpoint, deployment: deployment.trim(), auth, tenantId } : { endpoint, deployment: deployment.trim() };
   const checked = validateDecisionConnection(draft);
   const blockers = [
-    !checked.ok ? t(isOwn(checked.error) ? `ai.decision.err.${checked.error}` : `ai.conn.msg.${checked.error}`) : null,
-    auth === 'apiKey' && !key.trim() && (!saved || saved.auth === 'entraId') ? t('ai.decision.err.keyMissing') : null,
-    auth === 'entraId' && !s.entra?.signedIn ? t('ai.conn.msg.notSignedIn') : null,
+    !endpoint ? t('ai.decision.needsChat') : null,
+    endpoint && !checked.ok ? t(isOwn(checked.error) ? `ai.decision.err.${checked.error}` : `ai.conn.msg.${checked.error}`) : null,
+    endpoint && auth === 'entraId' && !signedIn ? t('ai.conn.msg.notSignedIn') : null,
+    endpoint && auth === 'apiKey' && !s.foundryKeySaved ? t('ai.decision.err.keyMissing') : null,
     !consent ? t('ai.decision.consentRequired') : null,
   ].filter((reason) => reason !== null);
   const showBlockers = validationRequested && blockers.length > 0;
@@ -70,7 +83,6 @@ export function DecisionSettings() {
     try {
       const r = await s.saveDecision(draft);
       setMessage(r.ok ? { kind: 'saved' } : { kind: 'error', code: r.error, ...(r.providerStatus ? { providerStatus: r.providerStatus } : {}) });
-      if (r.ok) setKey('');
     } finally {
       setConsent(false);
       setBusy(false);
@@ -83,10 +95,6 @@ export function DecisionSettings() {
     try {
       const r = await s.deleteDecision();
       setMessage(r.ok ? { kind: 'deleted' } : { kind: 'error', code: r.error });
-      if (r.ok) {
-        setEndpoint('');
-        setKey('');
-      }
     } finally {
       setBusy(false);
     }
@@ -105,30 +113,21 @@ export function DecisionSettings() {
         </Badge>
       </p>
       {saved && <p className="muted" data-testid="ai-decision-saved">{`${saved.endpoint} / ${saved.deployment}`}</p>}
-      <RadioGroup value={auth} onChange={(_, d) => { setAuth(d.value === 'entraId' ? 'entraId' : 'apiKey'); setKey(''); }} aria-labelledby="ai-decision-auth-label" disabled={busy} data-testid="ai-decision-auth">
-        <span id="ai-decision-auth-label" className="ai-label">{t('ai.settings.auth')}</span>
-        <Radio value="apiKey" label={t('ai.auth.apiKey')} data-testid="ai-decision-auth-apikey" />
-        <Radio value="entraId" label={t('ai.auth.entraId')} data-testid="ai-decision-auth-entra" />
-      </RadioGroup>
-      {auth === 'entraId' ? <div inert={busy}><EntraConnection decision={{
-        value: { endpoint, deployment, entraTenantId: tenantId },
-        update: (patch) => {
-          if (patch.endpoint !== undefined) setEndpoint(patch.endpoint);
-          if (patch.deployment !== undefined) setDeployment(patch.deployment);
-          if (patch.entraTenantId !== undefined) setTenantId(patch.entraTenantId);
-        },
-      }} /></div> : <>
-        <Field label={t('ai.decision.endpoint')} hint={t('ai.decision.endpointHint')}>
-          <Input value={endpoint} onChange={(_, d) => setEndpoint(d.value)} placeholder="https://my-resource.services.ai.azure.com" disabled={busy} data-testid="ai-decision-endpoint" />
-        </Field>
+      <p className="muted" data-testid="ai-decision-shared">{t(endpoint ? 'ai.decision.shared' : 'ai.decision.needsChat')}</p>
+      {endpoint && (
         <Field label={t('ai.decision.deployment')}>
-          <Input value={deployment} onChange={(_, d) => setDeployment(d.value)} disabled={busy} data-testid="ai-decision-deployment" />
+          {deployments.length > 0 ? (
+            <Select value={deployment} onChange={(_, d) => setDeployment(d.value)} disabled={busy} data-testid="ai-decision-deployment">
+              {!deployments.some((x) => x.name === deployment) && <option value={deployment}>{deployment}</option>}
+              {deployments.map((x) => <option key={x.name} value={x.name}>{`${x.name} (${x.model}${x.version ? ` ${x.version}` : ''}, ${x.sku})`}</option>)}
+            </Select>
+          ) : (
+            <Input value={deployment} onChange={(_, d) => setDeployment(d.value)} disabled={busy} data-testid="ai-decision-deployment" />
+          )}
         </Field>
-        <Field label={t('ai.decision.key')} hint={t(saved && saved.auth !== 'entraId' ? 'ai.decision.keyHintSaved' : 'ai.decision.keyHint')}>
-          <Input type="password" value={key} onChange={(_, d) => setKey(d.value)} autoComplete="off" disabled={busy} data-testid="ai-decision-key" />
-        </Field>
-      </>}
+      )}
       {checked.ok && <p className="muted" data-testid="ai-decision-destination">{t('ai.mediaConn.destination', { url: decisionUrl(checked.value) })}</p>}
+      {endpoint && auth === 'entraId' && <p className="muted">{t('ai.decision.entraAccess')}</p>}
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={busy} label={t('ai.decision.consent')} data-testid="ai-decision-consent" />
       {showBlockers && (
         <MessageBar intent="error" data-testid="ai-decision-blockers">

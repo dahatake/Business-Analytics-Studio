@@ -273,32 +273,35 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     }
   });
 
-  test('Decision supports API keys and the shared Entra resource picker without changing the chat connection', async ({ page }) => {
+  test('Decision reuses the chat connection: no second resource picker, sign-in or key', async ({ page }) => {
     const tenantId = '11111111-2222-3333-4444-555555555555';
     const endpoint = 'https://decision-resource.services.ai.azure.com';
     const resourceId = '/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/decision-resource';
     let decision: Record<string, unknown> | null = null;
-    let signedIn = false;
+    let entraMode = false;
     const saves: Record<string, unknown>[] = [];
     await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: false }, connection: null, connectionVerifiedAt: null, decision,
-      entra: { signedIn, account: signedIn ? 'user@example.test' : null, tenantId, signIn: { status: signedIn ? 'signedIn' : 'idle' } },
+      secrets: { foundryKey: !entraMode },
+      connection: {
+        endpoint: 'https://decision-resource.openai.azure.com/openai/v1', deployment: 'chat', apiVersion: '2025-04-01-preview',
+        ...(entraMode ? { auth: 'entraId', tenantId } : {}),
+      },
+      connectionVerifiedAt: '2026-11-19T00:00:00.000Z', decision,
+      entra: { signedIn: entraMode, account: entraMode ? 'user@example.test' : null, tenantId, signIn: { status: entraMode ? 'signedIn' : 'idle' } },
     } }));
     await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId, name: 'Directory', signedIn: true }] } }));
-    await page.route('**/relay/entra/signin', (route) => {
-      signedIn = true;
-      return route.fulfill({ json: { url: null } });
-    });
     await page.route('**/relay/entra/instances', (route) => route.fulfill({ json: { instances: [{
       id: resourceId, name: 'decision-resource', kind: 'AIServices', location: 'japaneast', resourceGroup: 'rg',
       subscriptionId: tenantId, subscriptionName: 'Subscription', tenantId,
       endpoint: 'https://decision-resource.openai.azure.com/openai/v1', keyAuthDisabled: false,
     }] } }));
     await page.route('**/relay/entra/inspect', (route) => {
-      expect(route.request().postDataJSON()).toEqual({ resourceId, tenantId, kind: 'decision' });
+      const body = route.request().postDataJSON() as Record<string, unknown>;
       return route.fulfill({ json: {
-        deployments: [{ name: 'decision-1-1', model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' }],
-        access: { canCall: false, canAssign: true },
+        deployments: body.kind === 'decision'
+          ? [{ name: 'decision-1-1', model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' }]
+          : [{ name: 'chat', model: 'gpt-chat-latest', version: '1', sku: 'GlobalStandard' }],
+        access: { canCall: true, canAssign: false },
       } });
     });
     await page.route('**/relay/decision', (route) => {
@@ -308,56 +311,33 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       }
       const input = route.request().postDataJSON() as Record<string, unknown>;
       saves.push(input);
-      const { key: _key, ...connection } = input;
-      decision = { ...connection, verifiedAt: '2026-11-19T00:00:00.000Z' };
+      decision = { ...input, verifiedAt: '2026-11-19T00:00:00.000Z' };
       return route.fulfill({ json: { decision } });
-    });
-    await page.route('**/relay/entra', (route) => {
-      signedIn = false;
-      decision = decision ? { ...decision, verifiedAt: null } : null;
-      return route.fulfill({ json: {} });
     });
     await openAiSettings(page, { lang: 'en' });
     const panel = page.getByTestId('ai-decision');
-    await panel.getByTestId('ai-decision-endpoint').fill(endpoint);
-    await panel.getByTestId('ai-decision-key').fill(FAKE_KEY);
+    await expect(panel.getByTestId('ai-decision-shared')).toBeVisible();
+    await expect(panel.getByTestId('ai-decision-key')).toHaveCount(0);
+    await expect(panel.getByTestId('ai-decision-endpoint')).toHaveCount(0);
+    await expect(panel.getByTestId('ai-entra')).toHaveCount(0);
+    await expect(panel.getByTestId('ai-decision-destination')).toContainText(`${endpoint}/providers/microsoft/v1/systemone`);
     await panel.getByTestId('ai-decision-consent').check();
     await panel.getByTestId('ai-decision-test').click();
     await expect(panel.getByTestId('ai-decision-msg')).toBeVisible();
-    expect(saves[0]).toEqual({ endpoint, deployment: 'decision-1-1', key: FAKE_KEY });
-    await expect(panel.getByTestId('ai-decision-key')).toHaveValue('');
+    expect(saves[0]).toEqual({ endpoint, deployment: 'decision-1-1' });
 
-    await panel.getByTestId('ai-decision-auth-entra').check();
-    await expect(panel.getByTestId('ai-decision-key')).toHaveCount(0);
-    await panel.getByTestId('ai-entra-signin').click();
-    await expect(panel.getByTestId('ai-decision-auth-entra')).toBeChecked();
-    await panel.getByTestId('ai-entra-instance').selectOption(resourceId);
-    await expect(panel.getByTestId('ai-entra-deployment')).toHaveValue('decision-1-1');
-    await expect(panel.getByTestId('ai-decision-destination')).toContainText(`${endpoint}/providers/microsoft/v1/systemone`);
-    await expect(panel.getByTestId('ai-entra-assign')).toHaveCount(0);
-    await expect(page.getByTestId('ai-auth-apikey')).toBeChecked();
-    await expect(page.getByTestId('ai-endpoint')).toHaveValue('');
+    entraMode = true;
+    await page.reload();
+    await page.getByTestId('nav-ai-settings').click();
+    await expect(panel.getByTestId('ai-entra')).toHaveCount(0);
+    await expect(panel.getByTestId('ai-decision-deployment')).toHaveValue('decision-1-1');
+    await expect(panel.getByTestId('ai-decision-consent')).not.toBeChecked();
+    await panel.getByTestId('ai-decision-destination').scrollIntoViewIfNeeded();
+    expect(await scan(page, ['[data-testid="ai-decision"]'])).toEqual([]);
     await panel.getByTestId('ai-decision-consent').check();
     await panel.getByTestId('ai-decision-test').click();
     await expect.poll(() => saves.length).toBe(2);
     expect(saves[1]).toEqual({ endpoint, deployment: 'decision-1-1', auth: 'entraId', tenantId });
-    await expect(panel.getByTestId('ai-decision-msg')).toBeVisible();
-    await page.reload();
-    await page.getByTestId('nav-ai-settings').click();
-    await expect(panel.getByTestId('ai-decision-auth-entra')).toBeChecked();
-    await expect(panel.getByTestId('ai-entra-deployment')).toHaveValue('decision-1-1');
-
-    await panel.getByTestId('ai-decision-auth-apikey').check();
-    await panel.getByTestId('ai-decision-auth-entra').check();
-    await expect(panel.getByTestId('ai-entra-deployment')).toHaveValue('decision-1-1');
-    await expect(panel.getByTestId('ai-decision-consent')).not.toBeChecked();
-    await panel.getByTestId('ai-decision-destination').scrollIntoViewIfNeeded();
-    expect(await scan(page, ['[data-testid="ai-decision"]'])).toEqual([]);
-    await panel.getByTestId('ai-entra-signout').click();
-    await expect(panel.getByTestId('ai-entra-signin')).toBeVisible();
-    await panel.getByTestId('ai-decision-test').click();
-    await expect(panel.getByTestId('ai-decision-blockers')).toContainText('Sign in');
-    expect(saves).toHaveLength(2);
   });
 
   test('selects a directory and signs in before showing its Foundry resources', async ({ page }) => {

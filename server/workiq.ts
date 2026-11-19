@@ -205,6 +205,8 @@ export interface PlannedSearch {
   items: readonly ReadinessKey[];
   /** The ladder wording behind a `ladder` search, as packGenerate's follow-up rounds would ask it. */
   wording?: string;
+  /** An `answer` search's second wording (English keywords), asked once when the first returned an error or nothing. */
+  alt?: string;
   /** `retrieve` capabilities this search is limited to (one Microsoft 365 source); absent = every source. */
   sources?: readonly WorkIqSource[];
 }
@@ -272,7 +274,7 @@ export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?
   return [
     ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: kind(a), items: ASPECT_ITEMS[a] })),
     ...(ladder ? q.aspects.map((a): PlannedSearch => ({ key: `${a}-en`, query: workIqAspectKeywords(q, a), kind: kind(a), items: ASPECT_ITEMS[a] })) : []),
-    ...(q.expand && opts.answers ? q.aspects.filter((a) => WORKIQ_ANSWER_ASPECTS.includes(a)).map((a): PlannedSearch => ({ key: `${a}-answer`, query: workIqAspectQuery(q, a), kind: 'answer', items: ASPECT_ITEMS[a] })) : []),
+    ...(q.expand && opts.answers ? q.aspects.filter((a) => WORKIQ_ANSWER_ASPECTS.includes(a)).map((a): PlannedSearch => ({ key: `${a}-answer`, query: workIqAspectQuery(q, a), kind: 'answer', items: ASPECT_ITEMS[a], alt: workIqAspectKeywords(q, a) })) : []),
     ...(ladder ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
     ...purpose.map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })),
     ...(opts.sources ? purpose.slice(0, SOURCE_FANOUT_TOPICS).flatMap((t, n) => WORKIQ_SOURCES.map((s): PlannedSearch => ({ key: `purpose-${n + 1}-${s}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [], sources: [s] }))) : []),
@@ -370,11 +372,12 @@ export function workIqAspectKeywords(q: Pick<WorkIqQuestion, 'company' | 'projec
 
 /**
  * Sections that also get Microsoft 365 Copilot's synthesized answer (`ask`) on the `retrieve` route: Agentic
- * Retrieval's answer synthesis for the items whose facts are figures or steps spread over several files. On 2026-11-19
- * the KPI question as `ask` returned the defined KPIs with their targets and cited the strategy deck, which no
- * search excerpt contained whole.
+ * Retrieval's answer synthesis. On 2026-11-19 the KPI question as `ask` returned the defined KPIs with their targets,
+ * which no search excerpt contained whole. On 2026-11-20 (study §16) `retrieve` returned 2–7 hits per section where `ask`
+ * returned 8–20 cited sources and the facts themselves (41 hub locations, the organisation's leaders and roles, named
+ * customer engagements, the issues of an analysis report), so every content section now gets one.
  */
-export const WORKIQ_ANSWER_ASPECTS: readonly WorkIqAspect[] = ['kpi', 'process', 'data'];
+export const WORKIQ_ANSWER_ASPECTS: readonly WorkIqAspect[] = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues'];
 
 export function workIqTopicQuery(q: WorkIqQuestion, topic: string): string {
   return `${workIqSubject(q)} ${topic}`;

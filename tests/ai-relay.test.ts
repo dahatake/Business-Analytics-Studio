@@ -1568,7 +1568,8 @@ process.stdin.on('data', (d) => {
     expect(workIqAspectQuery({ ...hub, unit: 'Microsoft 日本法人 営業本部' }, 'kpiUnit')).toBe('Microsoft 日本法人 営業本部のKPI/OKRは何ですか?');
     expect(workIqAspectQuery(hub, 'kpiCompany')).toBe('Microsoftの全社のKPI/OKRは何ですか?');
     const plan = workIqPlan(hub, { sources: true, answers: true });
-    expect(plan.filter((p) => p.kind === 'answer').map((p) => [p.key, p.items])).toEqual([['kpi-answer', ['kpi']], ['process-answer', ['workflow']]]);
+    expect(plan.filter((p) => p.kind === 'answer').map((p) => [p.key, p.items])).toEqual([['kpi-answer', ['kpi']], ['org-answer', ['org']], ['process-answer', ['workflow']]]);
+    expect(plan.find((p) => p.key === 'org-answer')?.alt).toBe('Microsoft Innovation Hub FY27 organization team structure roles');
     expect(plan.filter((p) => p.key.endsWith('-en')).map((p) => p.key)).toEqual(['kpi-en', 'org-en', 'process-en']);
     // The ask-only route (no ladder) adds neither: every search there is already an ask.
     expect(workIqPlan(hub, { ladder: false }).some((p) => p.kind === 'answer' || p.key.endsWith('-en'))).toBe(false);
@@ -1584,6 +1585,12 @@ process.stdin.on('data', (d) => {
     const messy = withAnswer(sec, ask('://aka.ms/hub/x)\n\n- 5 wins [1](https://contoso.sharepoint.com/s.pptx)\n\n- 5 wins\n\n- 20%'), 'ja', 't') as typeof sec;
     expect(messy.answer).toMatch(/^Microsoft 365 Copilot の回答[^\n]*\n- 5 wins\n\n- 20%\n\nsearch text$/);
     expect(withAnswer(sec, ask('見つからない'), 'ja', 't')).toBe(sec);
+    // Links cut in the middle by Work IQ (2026-11-20) leave no URL debris in the text.
+    const cut = withAnswer(sec, ask('.com/personal/x/_layouts/15/Doc.aspx?sourcedoc=%7BED42F939%7D&file=a.docx&Defaul\n\n- 拠点は東京 [資料](https://contoso.sharepoint.com/_layouts/15/Doc.aspx?sourcedoc=%7B1%7D&file=a [文書](https://contoso.sharepoint.com/b 根拠: 2026-11-10'), 'ja', 't') as typeof sec;
+    expect(cut.answer).toMatch(/^Microsoft 365 Copilot の回答[^\n]*\n- 拠点は東京 資料 文書 根拠: 2026-11-10/);
+    expect(cut.answer).not.toMatch(/sourcedoc|_layouts|https:/);
+    const tail = withAnswer(sec, ask('6NClzxSBirLZF3J1cPtpAm1PB2qY6WwPyYNmk7HWTT4r-RnMbxkju&driveItemId=015OOEXIBQ4NYQFHZ66JAJN3KDLMUWOWE4&threadId=19%3Ameeting 課題は再Discovery'), 'ja', 't') as typeof sec;
+    expect(tail.answer).toMatch(/^Microsoft 365 Copilot の回答[^\n]*\n課題は再Discovery/);
     expect(withAnswer(sec, new WorkIqError('workiqTimeout'), 'ja', 't')).toBe(sec);
     // A section whose searches all failed is kept from the answer alone.
     expect(withAnswer({ key: 'kpi', error: 'workiqTimeout' }, ask('KPI 5 件'), 'ja', 't')).toMatchObject({ key: 'kpi', answer: expect.stringContaining('KPI 5 件'), fetchedAt: 't' });
@@ -2477,6 +2484,15 @@ describe('D-37 Microsoft Foundry Decision through the relay (FR-325 candidate pr
 
     expect(await call(req('DELETE', '/relay/decision'), ctx())).toEqual({ status: 200, body: { decision: null } });
     expect(vault.get('decisionKey')).toBeUndefined();
+  });
+
+  it('reuses the Foundry connection key when no Decision key is given, so the key is entered once', async () => {
+    vault.set('foundryKey', DECISION_KEY);
+    const ok = decisionReply({ test: noul(0.97) });
+    const saved = await save({ endpoint: ENDPOINT, deployment: 'decision-1-1' }, { fetch: ok.fetch });
+    expect(saved.status).toBe(200);
+    expect(ok.sent[0]!.headers).toMatchObject({ 'api-key': DECISION_KEY });
+    expect(await status()).toMatchObject({ verifiedAt: expect.any(String) });
   });
 
   it('screens with noul questions only and returns probabilities only when every answer is valid', async () => {

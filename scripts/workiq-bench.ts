@@ -11,10 +11,14 @@
  *       for blind 0/1/2 relevance grades.
  *   node scripts/workiq-bench.ts report [<run.json>]
  *       Offline: metrics and the merge/rerank simulations from a saved run.
- *   node scripts/workiq-bench.ts pipeline --project <pj-id> [--rounds 3]
- *       Billed (Foundry + Copilot Credits): one real pack generation with that project's inputs through the relay's own
+ *   node scripts/workiq-bench.ts pipeline --project <pj-id> [--rounds 3] [--provider foundry|copilotSdk] [--keep]
+ *       Billed (Foundry or Copilot Credits + Work IQ): one real pack generation with that project's inputs through the relay's own
  *       handlers (/relay/ai, /relay/workiq/ask, /relay/site, /relay/news), as the dialog wires them. Saves timings and
- *       counts only; the pack itself is discarded. Not recorded in the app's usage ledger.
+ *       counts only; the pack itself is discarded. Not recorded in the app's usage ledger. `--keep` also writes the pack and
+ *       the Work IQ answers to logs/workiq-bench/kept-*.json (internal data: delete it after the audit).
+ *   node scripts/workiq-bench.ts recall [<kept.json>]
+ *       Offline: how many of the proper names in each Work IQ section reach the pack (counts only are saved). The name
+ *       match is crude (it also counts metadata words), so compare runs of the same input, never absolute values.
  *   node scripts/workiq-bench.ts fields --project <pj-id>
  *       Billed (4 Work IQ searches + 1 Foundry call): which facts about engagements (date, customer, status, money,
  *       progress …) the Microsoft 365 results state, per engagement. Saves counts only (docs/engagements-readiness-decision.md).
@@ -593,7 +597,7 @@ function report(file?: string) {
 
 /* ---------- End-to-end: one real pack generation through the relay handlers (metrics only, nothing saved) ---------- */
 
-async function pipeline(projectId: string, rounds: number) {
+async function pipeline(projectId: string, rounds: number, provider: 'foundry' | 'copilotSdk' = 'foundry', keep = false) {
   const g = reportOf(projectId);
   const i = g.inputs as Json;
   const lang = i.lang === 'en' ? 'en' : 'ja';
@@ -634,8 +638,9 @@ async function pipeline(projectId: string, rounds: number) {
     const shapes: Json[] = [];
     const gate: Json[] = [];
     const problems: Json[] = [];
+    const sectionsKept: unknown[] = [];
     const r = await gen.generatePack(input, {
-      provider: 'foundry',
+      provider,
       complete: async (prompt, signal, stage) => {
         // The app's own sending gate (src/ai/client.ts preflight): the same estimate and per-call limit as in the browser.
         const estimated = budget.estimateTokens(prompt);
@@ -649,7 +654,7 @@ async function pipeline(projectId: string, rounds: number) {
           const block = from >= 0 ? prompt.slice(from + head.length, prompt.indexOf('\n# ', from + head.length)) : '';
           problems.push({ stage, list: block.split('\n').filter(Boolean).map((l) => l.replace(/"[^"]*"/g, '"…"').replace(/\(([a-z]+)-[^)]*\)/g, '($1-…)').slice(0, 160)) });
         }
-        const b = await post('/relay/ai', { use: 'packBuild', provider: 'foundry', lang, prompt, maxOutputTokens: policy.PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: policy.PACK_BUILD_TIMEOUT_MS }, signal);
+        const b = await post('/relay/ai', { use: 'packBuild', provider, lang, prompt, maxOutputTokens: policy.PER_USE_LIMITS.packBuild?.maxOutputTokens, timeoutMs: policy.PACK_BUILD_TIMEOUT_MS }, signal);
         try {
           const a = JSON.parse(String(b.text ?? '{}')) as Json;
           const ents = Array.isArray(a.entities) ? (a.entities as Json[]) : [];
@@ -668,8 +673,10 @@ async function pipeline(projectId: string, rounds: number) {
       fetchWorkIq: async (q, signal) => {
         const t = Date.now();
         try {
-          const b = await post('/relay/workiq/ask', { provider: 'foundry', ...q, aspects: q.aspects ?? [], topics: q.topics ?? [], timeZone: 'Asia/Tokyo' }, signal);
-          return (Array.isArray(b.sections) ? b.sections : b) as never;
+          const b = await post('/relay/workiq/ask', { provider, ...q, aspects: q.aspects ?? [], topics: q.topics ?? [], timeZone: 'Asia/Tokyo' }, signal);
+          const got = (Array.isArray(b.sections) ? b.sections : b) as never;
+          if (keep) sectionsKept.push(got);
+          return got;
         } finally {
           wiqMs += Date.now() - t;
           wiqCalls++;
@@ -703,6 +710,8 @@ async function pipeline(projectId: string, rounds: number) {
     };
     console.log(JSON.stringify(out, null, 1));
     save('pipeline', out);
+    // --keep: the pack and the Work IQ answers stay on this machine (logs/ is git-ignored) for the recall audit.
+    if (keep) save('kept', { pack: r.pack, workiq: sectionsKept, report: rep });
   } finally {
     await server.close();
   }
@@ -765,6 +774,54 @@ async function fields(projectId: string) {
   save('fields', out);
 }
 
+/* ---------- Recall: which named facts of the Work IQ answers reach the pack ---------- */
+
+const GENERIC = new Set(['FY27', 'FY26', 'Microsoft', 'Innovation', 'Hub', 'Work', 'IQ', 'SharePoint', 'Teams', 'Copilot', 'Meeting', 'Email', 'Outlook', 'PowerPoint', 'Excel', 'Word', 'Customer', 'Journey', 'Azure', 'AI', 'KPI', 'OKR', 'STU', 'SE', 'Japan']);
+
+/** Distinct proper names in a text: Latin names, katakana words and Japanese company names. */
+function namesIn(text: string): string[] {
+  const out = new Set<string>();
+  const clean = text.replace(/https?:\/\/\S*/g, ' ');
+  for (const m of clean.matchAll(/\b[A-Z][A-Za-z0-9&.-]{2,}(?: [A-Z][A-Za-z0-9&.-]{2,}){0,2}/g)) {
+    const t = m[0].replace(/[.-]+$/, '');
+    if (!GENERIC.has(t) && !/^(?:FY|Q)\d/.test(t) && !/^(?:The|This|That|These|Those|And|For|With)\b/.test(t)) out.add(t);
+  }
+  for (const m of clean.matchAll(/[ァ-ヶー]{4,}/g)) out.add(m[0]);
+  for (const m of clean.matchAll(/[\p{Script=Han}ぁ-んァ-ヶー]{2,12}(?:株式会社|ホールディングス|製鋼所|銀行|電力|工業|自動車|製作所|ガス|鉄道|商事|物産|生命|保険)/gu)) out.add(m[0]);
+  return [...out];
+}
+
+/** Share of each section's names that appear anywhere in the pack outside its source entries (counts only are saved). */
+function recall(file?: string) {
+  const f = file ?? readdirSync(OUT).filter((n) => n.startsWith('kept-')).sort().pop();
+  if (!f) throw new Error('no kept-*.json: run pipeline --keep first');
+  const kept = JSON.parse(readFileSync(f.includes('/') || f.includes('\\') ? f : join(OUT, f), 'utf8')) as { pack: Json; workiq: unknown[] };
+  const pack: Json = { ...kept.pack, entities: (Array.isArray(kept.pack.entities) ? kept.pack.entities as Json[] : []).filter((e) => e.kind !== 'source') };
+  const ext = isObj(pack.extensions) ? { ...pack.extensions } : {};
+  delete ext.collection;
+  const haystack = JSON.stringify({ ...pack, extensions: ext }).toLowerCase();
+  const sections = kept.workiq.flatMap((x) => (Array.isArray(x) ? x : [x])).filter(isObj) as Json[];
+  const byKey = new Map<string, Set<string>>();
+  for (const s of sections) {
+    if (typeof s.answer !== 'string') continue;
+    const key = String(s.key).replace(/^[ab]\d*-/, '');
+    const set = byKey.get(key) ?? new Set<string>();
+    for (const n of namesIn(s.answer)) set.add(n);
+    byKey.set(key, set);
+  }
+  const rows = [...byKey].map(([key, names]) => {
+    const list = [...names];
+    const hit = list.filter((n) => haystack.includes(n.toLowerCase()));
+    return { key, names: list.length, inPack: hit.length, recall: list.length ? Math.round((hit.length / list.length) * 100) : null, missed: list.filter((n) => !hit.includes(n)) };
+  });
+  const total = rows.reduce((a, r) => ({ names: a.names + r.names, inPack: a.inPack + r.inPack }), { names: 0, inPack: 0 });
+  const kinds: Record<string, number> = {};
+  for (const e of Array.isArray(kept.pack.entities) ? kept.pack.entities as Json[] : []) kinds[String(e.kind)] = (kinds[String(e.kind)] ?? 0) + 1;
+  for (const r of rows) console.log(`${r.key.padEnd(28)} names=${String(r.names).padStart(3)} inPack=${String(r.inPack).padStart(3)} recall=${r.recall}%  missed: ${r.missed.slice(0, 12).join(' / ')}`);
+  console.log(`TOTAL names=${total.names} inPack=${total.inPack} recall=${Math.round((total.inPack / Math.max(1, total.names)) * 100)}%`, JSON.stringify(kinds));
+  save('recall', { kind: 'recall', file: f, total, kinds, rows: rows.map(({ missed, ...r }) => r) });
+}
+
 /* ---------- CLI ---------- */
 
 const [cmdName, ...rest] = process.argv.slice(2);
@@ -778,12 +835,13 @@ try {
   } else if (cmdName === 'pipeline') {
     const project = flag('project');
     if (!project) throw new Error('--project <pj-id> is required');
-    await pipeline(project, Number(flag('rounds') ?? 3));
+    await pipeline(project, Number(flag('rounds') ?? 3), flag('provider') === 'copilotSdk' ? 'copilotSdk' : 'foundry', rest.includes('--keep'));
   } else if (cmdName === 'fields') {
     const project = flag('project');
     if (!project) throw new Error('--project <pj-id> is required');
     await fields(project);
-  } else if (cmdName === 'report') report(rest[0]);
+  } else if (cmdName === 'recall') recall(rest[0]);
+  else if (cmdName === 'report') report(rest[0]);
   else console.log('usage: node scripts/workiq-bench.ts startup [--runs 3] | run --project <pj-id> [--concurrency 4] [--max-calls 60] [--judge] | pipeline --project <pj-id> [--rounds 3] | fields --project <pj-id> | report [<run.json>]');
   process.exit(0);
 } catch (e) {

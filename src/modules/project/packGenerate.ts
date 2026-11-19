@@ -564,6 +564,7 @@ function rules(lang: Lang): string {
       '- ニュースの見出し（source-news-*）は出来事・課題・原因の根拠にだけ使い、顧客・仕入先の取引関係や拠点・製品の値の根拠にしない。目的と関係しない出来事（障害・株価・人事など）をニュースだけを根拠に課題にしない。',
       '- 業種を製造業と決めつけない。営業・サービス・管理の組織なら工場・生産ライン・物流の用語を使わず、その組織の言葉（顧客、案件、提案、イベント、レポート等）で書く。',
       '- 拠点: 営業所・オフィス・Hub・ブリーフィングセンター等は role:"office"、capacityTPerMonth:0、city（例 "Tokyo"）と country を書く（座標はアプリが city から補う）。海外拠点も資料にあれば含める。',
+      '- 網羅: 達成度の最低件数は下限であって目標ではない。資料に名前が出る顧客（customer）・案件（engagements）・拠点（site）・人物（person）・KPI は、根拠（sourceIds）と必須項目がそろうものをすべて出す。目的に直接関係するものを先に出し、1 回の上限に収まらないものは gaps の missing に名前を書く。同じものを重複して出さず、別の案件には別の id を付ける。',
       '- Work IQ の回答（source-workiq-*）は Microsoft 365 の社内情報の要約で、区分ごとに分かれている。各区分を対応する場所に使う: 組織→person/site、KPI・OKR→extensions.okr（数値の基準値・現在値・目標値がそろう時だけ kpi エンティティ）、業務の流れ→extensions.workflow、データ資産→extensions.dataCatalog、拠点→site、顧客→customer、案件・取り組み→下記の engagements の規則、課題→issue/cause。回答に書かれていない値は作らず、「見つからない」とされた項目は作らない。人物は氏名と役職だけにする。「Project の目的に関する社内情報」の区分は目的の論点ごとの検索結果で、目的の課題・原因・施策・取り組み・KPI の第一の根拠として使う。',
       '- extensions.workflow.stages: このチーム（組織）の仕事を、受け取るもの（inputs）→行う作業（activities）→出すもの（outputs）→次の段（next）／引き継ぐ他チーム（handoffTo）の順に書く。使うレポート・システムは data。各段に sourceIds。',
       '- extensions.okr: kpis（name・definition・target・current・unit・period・owner は文字列で原文どおり。現在値が資料にない時は current を書かない）と objectives（objective・keyResults）。各要素に sourceIds。顧客がすでに KPI/OKR を定義しているかを必ず確かめ、definitionStatus（defined=定義が見つかり記録した / partial=KPI だけなど一部 / undefined=資料に「定義していない」と明記 / notRetrieved=確かめられなかった）と checkedSources（確かめた資料・会議の名前）を書く。見つからないことは undefined の根拠にならない（notRetrieved にする）。中期経営計画などの経営目標に対応する OKR は objective にその目標の文言を含める。',
@@ -582,6 +583,7 @@ function rules(lang: Lang): string {
       '- News headlines (source-news-*) may support events, issues and causes only; never customer or supplier relationships, or site and product values. Never turn an event unrelated to the purpose (outages, share prices, appointments…) into an issue on news alone.',
       '- Do not assume manufacturing. For a sales, service or administrative organisation, avoid plant, production-line and logistics terms and use its own (customers, engagements, proposals, events, reports…).',
       '- Sites: sales offices, hubs, briefing centres and similar are role:"office" with capacityTPerMonth:0, plus city (e.g. "Tokyo") and country (the app sets coordinates from the city). Include locations abroad when the material names them.',
+      '- Completeness: the readiness minimums are a floor, not a target. Output every customer, engagement, site, person and KPI the material names that has a basis (sourceIds) and the required fields. Put those most relevant to the purpose first; name any that do not fit the per-answer limit in the gap\'s missing list. Never output the same thing twice, and give each distinct piece of work its own id.',
       '- The Work IQ answers (source-workiq-*) summarise internal Microsoft 365 information, one per section. Use each where it belongs: organisation → person/site, KPI/OKR → extensions.okr (kpi entities only when baseline, current and target numbers are all stated), process → extensions.workflow, data assets → extensions.dataCatalog, locations → site, customers → customer, work records → engagements rules below, issues → issue/cause. Never create values they do not state or items they report as not found. People: name and title only. The "internal information on the project purpose" section searched each point of the purpose: use it first for the purpose\'s issues, causes, solutions, work records and KPIs.',
       '- extensions.workflow.stages: the team\'s work as what it receives (inputs) → what it does (activities) → what it hands over (outputs) → next stage ids (next) / other teams taking over (handoffTo); reports and systems used go in data. sourceIds on each stage.',
       '- extensions.okr: kpis (name, definition, target, current, unit, period, owner as strings, worded as in the material; omit current when the material has no current value) and objectives (objective, keyResults). sourceIds on each. Always check whether the customer already defines KPIs/OKRs and write definitionStatus (defined = found and recorded / partial = e.g. KPIs only / undefined = the material states there is none / notRetrieved = could not be checked) and checkedSources (names of the documents or meetings checked). Not finding a definition is not evidence there is none (use notRetrieved). For OKRs serving a company objective (e.g. the medium-term plan), quote that objective in the objective text.',
@@ -784,6 +786,33 @@ const READINESS_EXTENSIONS = ['okr', 'workflow', 'dataCatalog', 'engagements'] a
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /**
+ * Measured 2026-11-20 (live Copilot run): three engagements were deleted only because they reused the id
+ * "engagement-aeon-dojo". An item that differs from the first one with that id is a different piece of work: it keeps
+ * its content and gets a free id (`-2`, `-3` …). An exact copy keeps its id and is dropped as the duplicate it is.
+ */
+function keepDistinctEngagements(list: unknown, reserved: Set<string>) {
+  if (!Array.isArray(list)) return;
+  const first = new Map<string, string>();
+  const used = new Set([...reserved, ...list.filter(isObj).map((x) => x.id).filter((x): x is string => typeof x === 'string')]);
+  for (const x of list.filter(isObj)) {
+    if (typeof x.id !== 'string' || !x.id) continue;
+    const id = x.id;
+    const body = JSON.stringify({ ...x, id: undefined, sourceIds: undefined });
+    const seen = first.get(id);
+    if (seen === undefined) {
+      first.set(id, body);
+      continue;
+    }
+    if (seen === body) continue;
+    let n = 2;
+    while (used.has(`${id}-${n}`)) n++;
+    x.id = `${id}-${n}`;
+    used.add(`${id}-${n}`);
+    first.set(`${id}-${n}`, body);
+  }
+}
+
+/**
  * Mechanical repairs that need no model call. Measured 2026-11-12: OKR items without an `id` and workflow stages with
  * `next: "stage-x"` failed the schema, and the fix answer then deleted the whole OKR (13 KPI/OKR items lost).
  */
@@ -809,7 +838,10 @@ export function repairExtensions(pack: Pack): Pack {
     ids(ext.okr.kpis, 'okr-kpi');
     ids(ext.okr.objectives, 'okr-objective');
   }
-  if (isObj(ext.engagements)) ids(ext.engagements.items, 'engagement', entitiesOf(pack).map((e) => String(e.id)));
+  if (isObj(ext.engagements)) {
+    ids(ext.engagements.items, 'engagement', entitiesOf(pack).map((e) => String(e.id)));
+    keepDistinctEngagements(ext.engagements.items, new Set(entitiesOf(pack).map((e) => String(e.id))));
+  }
   if (isObj(ext.workflow) && Array.isArray(ext.workflow.stages)) {
     ids(ext.workflow.stages, 'stage');
     for (const s of ext.workflow.stages.filter(isObj)) for (const k of ['next', 'inputs', 'activities', 'outputs', 'data', 'handoffTo']) asList(s, k);

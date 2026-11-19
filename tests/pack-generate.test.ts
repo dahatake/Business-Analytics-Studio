@@ -536,15 +536,16 @@ describe('FR-311 pack generation (D-12)', () => {
     const result = pruneInvalid(fixed, NOW);
     expect(result.verify.ok).toBe(true);
     const ext = EngagementsExtension.parse((result.pack.extensions as Record<string, unknown>).engagements);
-    expect(ext.items).toEqual([good, { id: 'engagement-3', name: 'Pilot', period: 'FY27', customer: 'Contoso', sourceIds: [source.id] }]);
+    expect(ext.items).toEqual([good, { id: 'engagement-3', name: 'Pilot', period: 'FY27', customer: 'Contoso', sourceIds: [source.id] }, { id: 'engagement-good-2', name: 'Duplicate id', status: 'Delivered', sourceIds: [source.id] }]);
+    // A different piece of work that reuses an id keeps its content under a free id; only an exact copy is dropped.
     expect(result.removed.map((p) => p.path)).toEqual(expect.arrayContaining([
       'extensions.engagements.items[1].customerId',
-      'extensions.engagements.items[2]', 'extensions.engagements.items[3]', 'extensions.engagements.items[4]', 'extensions.engagements.items[5]',
+      'extensions.engagements.items[3]', 'extensions.engagements.items[4]', 'extensions.engagements.items[5]',
     ]));
-    expect(readiness(result.pack).find((r) => r.key === 'engagements')).toMatchObject({ have: 2, need: 1, met: true });
+    expect(readiness(result.pack).find((r) => r.key === 'engagements')).toMatchObject({ have: 3, need: 1, met: true });
     const correction = { ...good, outcome: 'Follow-up agreed' };
     const corrected = applyFix(result.pack, { sections: { extensions: { engagements: { items: [correction] } } } }, new Set());
-    expect(EngagementsExtension.parse((corrected.extensions as Record<string, unknown>).engagements).items).toEqual([correction, ext.items[1]]);
+    expect(EngagementsExtension.parse((corrected.extensions as Record<string, unknown>).engagements).items).toEqual([correction, ext.items[1], ext.items[2]]);
   });
 
   it.each(['ja', 'en'] as const)('D-16: one generation action retains all eight readiness items through fixes (%s)', async (lang) => {

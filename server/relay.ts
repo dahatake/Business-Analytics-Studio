@@ -1278,7 +1278,8 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       if (!('kind' in c)) return c;
       credential = c;
     } else {
-      const key = v.key ?? vault.get('decisionKey');
+      // One Foundry resource, one key: without its own key, Decision reuses the chat connection's.
+      const key = v.key ?? vault.get('decisionKey') ?? vault.get('foundryKey');
       if (!key) return json(400, { error: 'keyMissing' });
       credential = { kind: 'key', key };
     }
@@ -1297,7 +1298,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (!result.ok) return json(result.status, result.body);
     let sealKey: string;
     if (credential.kind === 'key') {
-      if (v.key === null && vault.get('decisionKey') !== credential.key) return json(409, { error: 'keyChanged' });
+      if (v.key === null && vault.get('decisionKey') !== credential.key && vault.get('foundryKey') !== credential.key) return json(409, { error: 'keyChanged' });
       vault.set('decisionKey', credential.key);
       sealKey = credential.key;
     } else {

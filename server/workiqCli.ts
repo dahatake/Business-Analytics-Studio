@@ -806,7 +806,7 @@ function clipText(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s;
 }
 
-export const ANSWER_MAX_CHARS = 3_000;
+export const ANSWER_MAX_CHARS = 4_000;
 
 /**
  * Markdown links reduced to their titles and numbered citation markers dropped; the URLs are kept as citations. On
@@ -819,7 +819,14 @@ export function withoutInlineLinks(text: string): string {
   const plain = text
     .replace(/\s*\[\^?\d+\]\(https:\/\/[^\s)]+\)/g, '')
     .replace(/\[([^\]\n]{1,200})\]\(https:\/\/[^\s)]+\)/g, '$1')
-    .replace(/^(?:[:/)\]][^\n]*\n)+/, '');
+    // Work IQ's own answer text also holds links cut in the middle (2026-11-20: `…&Defaul.com/personal/…`); a cut link
+    // is dropped with its label, as is any URL left bare.
+    .replace(/\[([^\]\n]{1,200})\]\(https?:\/\/\S*/g, '$1')
+    .replace(/https?:\/\/\S*/g, '')
+    .replace(/\S*(?:sourcedoc=|_layouts\/|%7B[0-9A-F]{4}|&file=)\S*/gi, '')
+    .replace(/[\x21-\x7E]{60,}/g, '')
+    .replace(/^(?:[:/)\]][^\n]*\n)+/, '')
+    .replace(/^[\s、,。.)\]:/]+/, '');
   const seen = new Set<string>();
   return plain.split(/\n\s*\n/).filter((p) => {
     const k = p.replace(/\s+/g, ' ').trim();
@@ -1033,9 +1040,14 @@ export class WorkIqCliService {
         plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve', sources: this.searchTool === 'retrieve', answers: this.searchTool === 'retrieve' });
         const limit = new AdaptiveLimit();
         // A synthesized answer takes about a minute, so it neither counts toward the fast streak nor is retried long.
-        raw = await inAdaptivePool(plan, limit, (p) => (p.kind === 'answer'
-          ? this.retrieveInSession(p.query, question.timeZone, question.lang, signal, 1, { ctx: question, ask: true })
-          : this.retrieveInSession(p.query, question.timeZone, question.lang, signal, undefined, { ctx: question, sources: p.sources, limit })));
+        raw = await inAdaptivePool(plan, limit, async (p) => {
+          if (p.kind !== 'answer') return this.retrieveInSession(p.query, question.timeZone, question.lang, signal, undefined, { ctx: question, sources: p.sources, limit });
+          const first = await this.retrieveInSession(p.query, question.timeZone, question.lang, signal, 1, { ctx: question, ask: true });
+          if (!p.alt || signal?.aborted || (!retrieveError(first) && withoutInlineLinks(deepReadText(first)))) return first;
+          // An answer that failed or came back empty is asked once more as English keywords (the wording Work IQ's planner keeps whole).
+          const second = await this.retrieveInSession(p.alt, question.timeZone, question.lang, signal, 0, { ctx: question, ask: true });
+          return retrieveError(second) ? first : second;
+        });
       } finally {
         this.keepSessionIdle();
       }
@@ -1101,8 +1113,11 @@ export class WorkIqCliService {
       }
       plan.forEach((p, i) => {
         if (p.kind !== 'answer') return;
-        const at = merged.findIndex((s) => s.key === p.items[0]);
-        if (at >= 0) merged[at] = withAnswer(merged[at]!, raw[i]!, question.lang, fetchedAt);
+        // An aspect that feeds two readiness items (engagements: customers and engagements) answers both.
+        for (const item of p.items) {
+          const at = merged.findIndex((s) => s.key === item);
+          if (at >= 0) merged[at] = withAnswer(merged[at]!, raw[i]!, question.lang, fetchedAt);
+        }
       });
       return [...merged, ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
     });

@@ -55,6 +55,15 @@ export function parseDecisionEndpoint(endpoint: unknown, allowTestHttp = false):
   return url.origin;
 }
 
+/** Decision runs on the Foundry resource of the chat connection, whichever of its hosts (openai, services.ai, cognitiveservices) was entered there. */
+export function decisionEndpointFromChat(endpoint: unknown, allowTestHttp = false): string | null {
+  if (typeof endpoint !== 'string') return null;
+  let url: URL;
+  try { url = new URL(endpoint.trim()); } catch { return null; }
+  const name = /^([a-z0-9][a-z0-9-]{1,62})\.openai\.azure\.com$/.exec(url.hostname)?.[1];
+  return parseDecisionEndpoint(name ? `https://${name}.services.ai.azure.com` : url.origin, allowTestHttp);
+}
+
 /** Body of PUT /relay/decision: the key may be omitted to keep the saved one. */
 export function validateDecisionConnection(input: unknown, allowTestHttp = false):
   { ok: true; value: DecisionConnection; key: string | null } | { ok: false; error: DecisionInputError } {

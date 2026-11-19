@@ -806,6 +806,52 @@ function clipText(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s;
 }
 
+export const ANSWER_MAX_CHARS = 3_000;
+
+/**
+ * Markdown links reduced to their titles and numbered citation markers dropped; the URLs are kept as citations. On
+ * 2026-11-19 a live KPI answer was 18,172 characters, mostly ~200-character SharePoint links, and its second KPI
+ * started at character 2,527; without the links it was 7,372 and started at 1,650. The same live answers also began
+ * with the tail of a link (`://aka.ms/…)`) and repeated paragraphs that differed only in their citation markers; both
+ * are dropped (6,661 characters).
+ */
+export function withoutInlineLinks(text: string): string {
+  const plain = text
+    .replace(/\s*\[\^?\d+\]\(https:\/\/[^\s)]+\)/g, '')
+    .replace(/\[([^\]\n]{1,200})\]\(https:\/\/[^\s)]+\)/g, '$1')
+    .replace(/^(?:[:/)\]][^\n]*\n)+/, '');
+  const seen = new Set<string>();
+  return plain.split(/\n\s*\n/).filter((p) => {
+    const k = p.replace(/\s+/g, ' ').trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).join('\n\n').trim();
+}
+
+/**
+ * Microsoft 365 Copilot's synthesized answer (`ask`, WORKIQ_ANSWER_ASPECTS) put first in its section, with the links it
+ * cites added to the citations and removed from the text. A failed or "not found" answer leaves the section as it was;
+ * a section whose searches all failed is kept from the answer alone.
+ */
+export function withAnswer(section: WorkIqSectionAnswer, result: Json | WorkIqError, lang: 'ja' | 'en', fetchedAt: string, maxChars = WORKIQ_ITEM_MAX_CHARS): WorkIqSectionAnswer {
+  if (retrieveError(result)) return section;
+  const text = withoutInlineLinks(deepReadText(result));
+  if (!text) return section;
+  const payload = retrievalPayload(result as Json);
+  const head = lang === 'ja' ? 'Microsoft 365 Copilot の回答（Work IQ ask。根拠のリンクは引用に記録）:' : 'Microsoft 365 Copilot answer (Work IQ ask; the links behind it are in the citations):';
+  const body = clipText(`${head}\n${text}`, Math.min(ANSWER_MAX_CHARS, maxChars));
+  const base = 'error' in section ? { key: section.key, question: '', answer: '', citations: [] as WorkIqCitation[], sensitivity: null, fetchedAt } : section;
+  const rest = clipText(base.answer, Math.max(0, maxChars - body.length - 2));
+  const citations = [...base.citations];
+  for (const h of Array.isArray(payload?.retrievalHits) ? payload.retrievalHits.filter(isObj) : []) {
+    const url = httpsUrl(h.webUrl);
+    if (!url || citations.length >= MAX_CITATIONS || citations.some((c) => c.url === url.href)) continue;
+    citations.push({ title: hitMeta(h).title ?? url.hostname, url: url.href });
+  }
+  return { ...base, answer: rest ? `${body}\n\n${rest}` : body, citations };
+}
+
 /**
  * An `ask` answer in the `retrieve` payload shape, so the merge and the generator read both alike: the answer text is
  * the top-level markdown (marked as a Copilot summary) and every https link it cites becomes a citation-only hit.
@@ -937,13 +983,13 @@ export class WorkIqCliService {
    * whole question, whichever search tool the session has; with `conversationId`, a further turn of that `ask`
    * conversation. `sources` limits a `retrieve` to those Microsoft 365 sources. Each attempt is reported to `limit`.
    */
-  private async retrieveInSession(query: string, timeZone: string, lang: 'ja' | 'en', signal?: AbortSignal, retries: number = RETRY_BACKOFF.length, opts: { ctx?: AskContext; files?: readonly string[]; conversationId?: string; sources?: readonly WorkIqSource[]; limit?: AdaptiveLimit } = {}): Promise<Json | WorkIqError> {
+  private async retrieveInSession(query: string, timeZone: string, lang: 'ja' | 'en', signal?: AbortSignal, retries: number = RETRY_BACKOFF.length, opts: { ctx?: AskContext; files?: readonly string[]; conversationId?: string; sources?: readonly WorkIqSource[]; limit?: AdaptiveLimit; ask?: boolean } = {}): Promise<Json | WorkIqError> {
     for (let attempt = 0; ; attempt++) {
       let r: Json | WorkIqError;
       const t0 = Date.now();
       try {
         const s = await this.openSession(signal);
-        if (opts.files || opts.conversationId || this.searchTool === 'ask') {
+        if (opts.files || opts.conversationId || opts.ask || this.searchTool === 'ask') {
           const args = opts.conversationId ? { question: query, conversationId: opts.conversationId }
             : opts.files ? { question: query, fileUrls: [...opts.files] } : { question: workIqAskQuestion(query, lang, opts.ctx) };
           const answer = await s.request('tools/call', { name: 'ask', arguments: args }, Math.max(this.timeoutMs, ASK_TIMEOUT_MS), signal);
@@ -984,9 +1030,12 @@ export class WorkIqCliService {
         } catch {
           // Reported by the searches below, which try to start the session again.
         }
-        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve', sources: this.searchTool === 'retrieve' });
+        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve', sources: this.searchTool === 'retrieve', answers: this.searchTool === 'retrieve' });
         const limit = new AdaptiveLimit();
-        raw = await inAdaptivePool(plan, limit, (p) => this.retrieveInSession(p.query, question.timeZone, question.lang, signal, undefined, { ctx: question, sources: p.sources, limit }));
+        // A synthesized answer takes about a minute, so it neither counts toward the fast streak nor is retried long.
+        raw = await inAdaptivePool(plan, limit, (p) => (p.kind === 'answer'
+          ? this.retrieveInSession(p.query, question.timeZone, question.lang, signal, 1, { ctx: question, ask: true })
+          : this.retrieveInSession(p.query, question.timeZone, question.lang, signal, undefined, { ctx: question, sources: p.sources, limit })));
       } finally {
         this.keepSessionIdle();
       }
@@ -1014,7 +1063,7 @@ export class WorkIqCliService {
       };
       if (!question.expand) return plan.map((_, i) => single(i));
       const items: ItemSearches[] = REQUIREMENTS.map((req) => {
-        const idx = plan.flatMap((p, i) => (p.items.includes(req.key) ? [i] : []));
+        const idx = plan.flatMap((p, i) => (p.kind !== 'answer' && p.items.includes(req.key) ? [i] : []));
         return { key: req.key, queries: idx.map((i) => plan[i]!.query), wordings: idx.flatMap((i) => (plan[i]!.wording ? [plan[i]!.wording!] : [])), results: idx.map((i) => raw[i]!) };
       });
       const purposeIdx = plan.flatMap((p, i) => (p.kind === 'purpose' ? [i] : []));
@@ -1045,6 +1094,11 @@ export class WorkIqCliService {
           merged[i] = withDeepRead(merged[i]!, d.files, answers[n]!.result, question.lang, WORKIQ_ITEM_MAX_CHARS, answers[n]!.followUp);
         });
       }
+      plan.forEach((p, i) => {
+        if (p.kind !== 'answer') return;
+        const at = merged.findIndex((s) => s.key === p.items[0]);
+        if (at >= 0) merged[at] = withAnswer(merged[at]!, raw[i]!, question.lang, fetchedAt);
+      });
       return [...merged, ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
     });
   }

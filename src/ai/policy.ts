@@ -65,15 +65,21 @@ export const PACK_BUILD_MAX_PROMPT_CHARS = 200_000;
 
 export const WORKIQ_SOURCE = {
   use: 'packBuild' as const,
-  providers: ['foundry'] as readonly Provider[],
-  data: 'To Work IQ: company and project names, purpose, focus and as-of date in the questions the relay builds, and, for a deep read, the links of the OneDrive or SharePoint files Work IQ itself cited (and, when they do not answer, one follow-up turn in that ask conversation). Some searches name the Microsoft 365 source to search. The answer and citation titles are internal and go to Foundry as packBuild material',
-  enableCondition: 'Microsoft Foundry selected and verified + Work IQ tenant and app (client) ID saved in the relay + the user signed in by device code (delegated WorkIQAgent.Ask) + opt-in per run in the pack dialog',
+  providers: ['foundry', 'copilotSdk'] as readonly Provider[],
+  /** A verified Work IQ retrieval is required before a customer pack is built only with these providers. */
+  requiredFor: ['foundry'] as readonly Provider[],
+  data: 'To Work IQ: company and project names, purpose, focus and as-of date in the questions the relay builds, and, for a deep read, the links of the OneDrive or SharePoint files Work IQ itself cited (and, when they do not answer, one follow-up turn in that ask conversation). Some searches name the Microsoft 365 source to search. The answer and citation titles are internal and go to the selected provider (Microsoft Foundry or GitHub Copilot) as packBuild material',
+  enableCondition: 'Microsoft Foundry or GitHub Copilot selected and ready + the Work IQ CLI (or a tenant and app (client) ID signed in by device code, delegated WorkIQAgent.Ask) saved and verified in the relay + opt-in per run in the pack dialog. Required for Foundry, optional for GitHub Copilot',
   cost: 'Billed by Microsoft as Copilot Credits or within the Microsoft 365 Copilot licence; unknown to the app and not counted in the app budget',
-  decidedBy: 'docs/decision-guide.md D-14 (2026-11-11)',
+  decidedBy: 'docs/decision-guide.md D-14 (2026-11-11; GitHub Copilot added 2026-11-19)',
 };
 
 export function workIqAllowedFor(provider: Provider): boolean {
   return WORKIQ_SOURCE.providers.includes(provider);
+}
+
+export function workIqRequiredFor(provider: Provider): boolean {
+  return WORKIQ_SOURCE.requiredFor.includes(provider);
 }
 
 export const WORKIQ_MAX_ANSWER_CHARS = 12_000;

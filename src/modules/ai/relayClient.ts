@@ -606,7 +606,10 @@ export function setSpeechRoute(route: SpeechRoute): Promise<SpeechSeparateResult
 export function deleteSeparateSpeech(): Promise<SpeechSeparateResult> {
   return speechCall('/relay/speech/separate', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
 }
-/* ---------- Microsoft Work IQ (D-14, Microsoft Foundry only) ---------- */
+/* ---------- Microsoft Work IQ (D-14: Microsoft Foundry, or GitHub Copilot by choice) ---------- */
+
+/** The provider the Work IQ material goes to; the relay refuses any other. */
+export type WorkIqProvider = 'foundry' | 'copilotSdk';
 
 export type WorkIqSettingsInput = { method: 'cli' } | { method: 'app'; tenantId: string; clientId: string };
 
@@ -650,9 +653,9 @@ export async function pollWorkIqSignIn(): Promise<{ status: 'pending'; interval:
   return (await res.json()) as { status: 'pending'; interval: number } | { status: 'signedIn'; account: string | null };
 }
 
-export async function verifyWorkIq(): Promise<WorkIqStatus> {
+export async function verifyWorkIq(provider: WorkIqProvider = 'foundry'): Promise<WorkIqStatus> {
   const res = await relayFetch('/relay/workiq/verify', {
-    ...jsonInit('POST', { provider: 'foundry' }), signal: AbortSignal.timeout(330_000),
+    ...jsonInit('POST', { provider }), signal: AbortSignal.timeout(330_000),
   });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const status = asWorkIq(((await res.json()) as { workiq?: unknown }).workiq);
@@ -661,8 +664,8 @@ export async function verifyWorkIq(): Promise<WorkIqStatus> {
 }
 
 /** The user's own acceptance of the Work IQ CLI EULA (the button sits next to the EULA link). */
-export async function acceptWorkIqEula(): Promise<void> {
-  const res = await relayFetch('/relay/workiq/eula', { ...jsonInit('POST', { provider: 'foundry', accept: true }), signal: AbortSignal.timeout(125_000) });
+export async function acceptWorkIqEula(provider: WorkIqProvider = 'foundry'): Promise<void> {
+  const res = await relayFetch('/relay/workiq/eula', { ...jsonInit('POST', { provider, accept: true }), signal: AbortSignal.timeout(125_000) });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
 }
 
@@ -696,8 +699,8 @@ function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
  * `searches`. A failed section comes back as `{ key, error }`; the call itself fails only when none could run (sign-in,
  * permission, EULA, CLI missing).
  */
-export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: readonly WorkIqAspect[]; topics?: readonly string[]; expand?: boolean }, signal?: AbortSignal): Promise<WorkIqSectionInfo[]> {
-  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { provider: 'foundry', ...q, aspects: q.aspects ?? [], topics: q.topics ?? [] }), signal });
+export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: readonly WorkIqAspect[]; topics?: readonly string[]; expand?: boolean; provider?: WorkIqProvider }, signal?: AbortSignal): Promise<WorkIqSectionInfo[]> {
+  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { ...q, provider: q.provider ?? 'foundry', aspects: q.aspects ?? [], topics: q.topics ?? [] }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const b = (await res.json()) as { sections?: unknown };
   if (!Array.isArray(b.sections)) throw new RelayError(502, 'badRelayAnswer');
@@ -723,9 +726,9 @@ export interface WorkIqAnswerInfo {
   fetchedAt: string;
 }
 
-/** One question to Work IQ through the relay, which refuses it unless the provider is Microsoft Foundry. */
-export async function askWorkIq(q: WorkIqQuestionInput, signal?: AbortSignal): Promise<WorkIqAnswerInfo> {
-  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { provider: 'foundry', ...q }), signal });
+/** One question to Work IQ through the relay, which refuses it unless the provider may use Work IQ (D-14). */
+export async function askWorkIq(q: WorkIqQuestionInput & { provider?: WorkIqProvider }, signal?: AbortSignal): Promise<WorkIqAnswerInfo> {
+  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { ...q, provider: q.provider ?? 'foundry' }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const b = (await res.json()) as Partial<WorkIqAnswerInfo>;
   const a = answerInfo(b);

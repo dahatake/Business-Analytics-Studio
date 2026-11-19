@@ -423,3 +423,88 @@ node scripts/workiq-bench.ts pipeline --project <pj-id> --rounds 3              
 - 単体テスト（`tests/ai-relay.test.ts`）: ソースごとの検索が目的の概念 1 件 × 4 ソース増え `capabilities` が付く（偽の CLI もソース指定のときはファイルを `OneDriveAndSharePoint` からだけ返す）、`searchTerms` を多く含む資料が同点の RRF で先に来る（無いときは検索文の語で）、`queryTerms`・`termCoverage`、並列数が速い成功で増え失敗で半分になり上限・下限を守る、`inAdaptivePool` が並列数を超えない、精読が「見つからない」と答えたときだけ同じ会話で追い質問して見出しと `deepRead.followUp` が変わる、PDF・viewer.aspx を精読しない。`npm run typecheck` と `npx vitest run`（46 ファイル・780 件）が成功。
 - 実サービス（2026-11-15、§11 と同じ Project・同じ 8 観点・`expand`。Work IQ だけで、モデルは呼ばない）: 計画した検索 56 件（うちソース指定 16 件）、9 区分すべて成功（エラー 0）、引用の重複なし 62 件、精読は 4 区分（すべて事実が見つかったため追い質問は 0 回）、壁時計 267 秒。復旧前の作成は Work IQ が使えず（`stopReasons: workIqUnavailable`）、分析の準備の 8 項目中 1 項目だけが満たされていた。
 - 限界: 並列数の上限 6 は 1 回の計測による（8 で失敗した）。追い質問の効果は 1 件の会話で確かめただけで、今回の実行では起きなかった。ソースごとの検索の効果（3.6 倍）は 1 つの質問での計測である。モデルを含む作成全体の前後比較（分析の準備の項目数）は、アプリで Project を作り直して報告の `retrieved[].deepRead` と準備の項目を比べる。
+
+## 13. 第 6 回（2026-11-19）: KPI が取れないのに、Microsoft 365 Copilot に聞くと答えが返る
+
+依頼: 「KPI が取得できていない。Microsoft 365 Copilot に `Microsoft Innovation HubのKPI/OKRは何ですか?` と聞くと取得できる。原因と効果的な解決策を深く調べて実装する」。参照: [Agentic Retrieval Overview](https://learn.microsoft.com/en-us/azure/search/agentic-retrieval-overview)、[RAG and Generative AI](https://learn.microsoft.com/en-us/azure/search/retrieval-augmented-generation-overview)。方針: 保存された生成記録と、Work IQ の生の応答（`retrieve` の `searchMetadata.searchTerms`）を出発点にし、同じ質問を言い方だけ変えて A/B で比べる。M365 の本文はリポジトリに残さない。
+
+### 13.1 原因（生の記録から）
+
+| # | 原因 | 根拠 |
+|---|---|---|
+| 1 | その作成では Work IQ が呼ばれていなかった | 端末の保存（`records` の `bas.binary.pack.<id>`）の生成記録が `provider: 'copilotSdk'`・`useWorkIq: false`。資料は公開 Web 6 件とニュース 10 件だけで、分析の準備は 8 項目中 1 項目（KPI 0/2）。D-14 により Work IQ は Foundry のときだけ使い、GitHub Copilot のときは画面に出さない（利用者の決定のため変えない） |
+| 2 | 検索文が長い日本語の複合文で、Work IQ の検索語から主題が落ちていた | `retrieve` の `searchTerms` が、BAS の KPI の検索文（`「…FY27」（Microsoft）: KPI・OKR の定義と目標値・実績値` など）では常に `microsoft, innovation, hub, fy27` だけ。組織・プロセス・データ・案件の検索文も同じ。利用者の質問では `kpi, okr` が残り、FY27 戦略の資料が 1 位 |
+| 3 | 合成（Microsoft 365 Copilot の回答）を、`retrieve` が使えるときは使っていなかった | 同じ質問の `ask` は、KPI の表（Hub SE 1 人あたり最低 5 件の End-to-end platform wins、Billed Revenue と ACR の 20 % の influence）を根拠付きで返した。BAS は `ask` を `retrieve` の代替と精読にだけ使っていた |
+
+### 13.2 A/B（2026-11-19、Asia/Tokyo、CLI 1.0.x、`retrieve` strategy `grounding`）
+
+| 検索文 | `searchTerms`（主題の語） | 結果 |
+|---|---|---|
+| BAS の KPI 検索文（長い日本語の複合文） | microsoft, innovation, hub, fy27 のみ | 6 件。KPI の資料は 1 位でない |
+| `Microsoft Innovation HubのKPI/OKRは何ですか?` | + kpi, okr | 4 件。FY27 戦略の資料が 1 位 |
+| `Microsoft Innovation Hub FY27 の 重要業績評価指標 と 目標値` | + kpi, targets（英訳される） | 戦略の資料が 1 位 |
+| 英語のキーワード（`… engagement process from request intake to delivery and handoff`） | 全語が残る | Playbook・Internal Guide・Checklist |
+| 英語のキーワード（`… organization team structure roles`） | 全語が残る | 組織のメール・業務分析レポート |
+| 英語のキーワード（`… data reports dashboards systems tools`） | 全語が残る | 8 件（Hub Analytics の資料・Reporting & Insights） |
+| 日本語の長い文（組織・プロセス・データ・案件の各区分） | microsoft, innovation, hub, fy27 のみ | 主題に関係ない資料が混ざる |
+
+### 13.3 Agentic Retrieval との対応と実装
+
+| Agentic Retrieval の構成要素 | BAS の実装（今回の変更は太字） |
+|---|---|
+| クエリ計画（LLM が焦点を絞ったサブクエリに分ける） | **区分ごとの検索文を短い質問（`workIqAspectQuery`、例「Microsoft Innovation Hub FY27のKPI/OKRは何ですか?」）にし、同じ区分の英語のキーワード検索（`workIqAspectKeywords`、`<区分>-en`）を足す**。主語は Project 名（企業名を含まなければ企業名を前に付ける。`workIqSubject`）。目的の概念の検索も括弧を使わない |
+| 並列実行 | 4〜6 並列（`AdaptiveLimit`、§12） |
+| セマンティック ランカー | RRF と `searchTerms` の被覆（§12）。主題の語が `searchTerms` に残るようになったので効く |
+| 回答の合成（引用付き） | **KPI・業務プロセス・データの 3 区分（`WORKIQ_ANSWER_ASPECTS`）で、同じ短い質問を `ask` に送り、Microsoft 365 Copilot の回答を区分の先頭に置く（`withAnswer`、3,000 文字まで）。リンクは引用に移して本文から外し、同じ段落の繰り返しと冒頭のリンクの断片を除く（`withoutInlineLinks`）**。失敗・「見つからない」は区分を変えない。検索がすべて失敗した区分は回答だけで残す |
+| 反復検索 | 精読と同じ会話での追い質問（§12） |
+
+`ask` の代替経路（`retrieve` が読み込めないとき）は、すべての検索がすでに `ask` なので、英語のキーワード検索と合成の追加はしない。合成の `ask` は 1 回約 1 分のため、並列数の調整（速い成功の連続）には数えず、再試行は 1 回まで。データの扱い（D-14）は変わらない（同じ Work IQ CLI に送る検索が増えるだけ）。
+
+### 13.4 検証
+
+- 単体テスト（`tests/ai-relay.test.ts`）: 短い質問と英語のキーワードの文面、計画に `kpi-en`・`kpi-answer` が入り `ask` の代替経路には入らない、合成の回答が区分の先頭に入りリンクが引用に移る、繰り返しの段落とリンクの断片を除く、失敗・「見つからない」で区分が変わらない、検索が失敗した区分を回答だけで残す。検索の総数（31 件）と精読・追い質問の順番。`npm run typecheck` と `npx vitest run`（60 ファイル・1,030 件）が成功。
+- 実サービス（2026-11-19、Work IQ だけで、モデルは呼ばない。`askSections`・全 8 観点・`expand`）: 9 区分すべて成功、壁時計 360 秒。KPI の区分は先頭が Microsoft 365 Copilot の回答で、「最低 5 件の platform wins」「20 %」を含み、引用 18 件。業務プロセス（引用 9 件）とデータ（引用 16 件）も先頭が回答。
+- 限界: A/B は 1 つの Project・1 人のテナントでの計測。合成は Microsoft 365 Copilot の要約なので、根拠の資料は引用から確かめる。モデルを含む作成全体の前後比較（分析の準備の項目数）は、接続先を Microsoft Foundry にして Work IQ CLI を設定し、アプリで作り直して報告の準備の項目を比べる。
+
+## 14. 第 7 回（2026-11-19）: GitHub Copilot に Work IQ のプラグインを設定すれば、Work IQ に問い合わせられるか
+
+**問い。** 利用者の環境で GitHub Copilot に Work IQ の MCP サーバー（またはプラグイン）を設定すれば、BAS の顧客パック作成で GitHub Copilot も Work IQ を使えるか。
+
+**一次資料。** `@github/copilot-sdk` 1.0.30 の型（`SessionConfig` の `mcpServers`・`disabledMcpServers`・`pluginDirectories`・`enableConfigDiscovery`・`onPermissionRequest`）、`server/copilot.ts`、D-14 の原文、利用者の VS Code の `mcp.json`（`workiq` = `npx -y @microsoft/workiq mcp`。BAS の CLI 方式と同じ CLI）、そして実機の SDK セッションのイベント（`tool.execution_start/complete`）。
+
+| 計測 | 構成 | 観測 |
+|---|---|---|
+| 1 | SDK セッションに Work IQ を `mcpServers` で渡し `availableTools: ['mcp:*']`（claude-haiku-4.5）。「Microsoft Innovation Hub の KPI/OKR は何ですか?」 | モデルは `workiq-retrieve` を 3 回呼んだ。結果（24〜39 KB）は約 20 KB を超えたため「Output too large to read at once」として一時ファイルに逃がされ、モデルは本文を読めなかった。`ask` は許可が必要で、許可の応答を誤ると失敗（正しくは `{kind:'approve-once'}`）。回答は文書名の列挙だけで KPI の値なし |
+| 2 | 1 と同じで許可を `approve-once`、`ask` を使うよう指示 | `ask` 2 回・約 140 秒で、中継の経路と同じ KPI の表（ジャーニー網羅 75%、深いエンゲージメント 40%、50 件、5 件以上の受注、売上影響 20%、コミュニティ成果 2 件）。ただし引用は残らず、実行ごとに呼ぶ道具と回数が変わった |
+| 3 | BAS と同じ設定（`availableTools: []`・既定のモード） | 利用者の MCP サーバー・プラグインの MCP サーバー・組み込みの `github-mcp-server` がセッションごとに起動していた（`copilot.ts` の説明と矛盾）。Work IQ のプラグインを入れていれば、BAS の AI 呼び出しのたびに Work IQ CLI が起動する |
+| 4 | `mode: 'empty'` | 利用者の MCP は止まるが、認証が `user`（copilot のログイン）から `gh-cli` に変わる。採らない |
+| 5 | `client.rpc.mcp.discover({ workingDirectory })` で得た名前と `github-mcp-server` を `disabledMcpServers` に渡す | すべて無効のまま、認証は `user`、応答 3.7 秒 |
+
+**結論。** 技術的には可能（計測 2）だが、エージェントに Work IQ を道具として渡す経路は、(1) 大きな `retrieve` の結果を読めない、(2) `ask` の許可が必要、(3) 引用が残らず D-2 の出典（`internal`・`origin: m365`）を作れない、(4) 非決定的で遅い、ため顧客パックには使えない。Work IQ の取得はもともと中継が LLM と独立に行っており、Copilot での制限は方針（D-14）だけだった。そこで次を実装した。
+
+- **A（不具合の修正）:** `server/copilot.ts` が `rpc.mcp.discover` で得た利用者・ワークスペース・プラグインの MCP サーバー名と `github-mcp-server` を `disabledMcpServers` に渡す。BAS の Copilot セッションでは Work IQ を含む外部の道具が起動しない（tests/pack-generate.test.ts）。
+- **B（D-14 の追記）:** 中継の `/relay/workiq/{verify,eula,ask}` は Foundry と GitHub Copilot を受け付け（ほかは `providerNotAllowed`）、Copilot では保存済みのモデル（`copilotNotConfigured`）と Copilot の外部接続先の許可（`outboundNotAllowed`）を確かめる。画面では Copilot のとき Work IQ は任意（§15 で、検証済みなら既定でオンに変更）。回答は Copilot（`api.githubcopilot.com`）に送られることを表示する（tests/ai-relay.test.ts、tests/ai-features.test.ts、e2e/pack-generate.spec.ts、e2e/ai.spec.ts）。
+
+**限界。** Copilot のモデルが中継の取得結果をどれだけ使うかは、Foundry と同じ `packBuild` の入力で、モデルごとの差は未計測。計測は利用者 1 名・1 テナント。
+
+## 15. 第 8 回（2026-11-19）: GitHub Copilot でも Work IQ CLI を使うべきか — 作成全体の実機の前後比較
+
+**問い。** 本来は Foundry IQ を使いたいが、現在のテナントでは Work IQ（Foundry IQ のナレッジ ソース）が使えない。GitHub Copilot を使うときも、Copilot 経由（プラグイン）ではなく、BAS の中継が Work IQ CLI で取得する方式（BAS 側の Agentic Retrieval）にすべきか。
+
+**Agentic Retrieval との対応（BAS の中継で実装済み、§11〜§13）。** クエリ計画は区分ごとの短い質問と英語のキーワード。LLM による反復のクエリ計画は、モデルが作成後に申告した不足（gaps）を次の Work IQ の検索の主題にする追加取得（最大 3 回）。ほかに、4〜6 並列、RRF と `searchTerms` の被覆による再ランク、`ask` の合成と精読、引用付きの統合がある。いずれも接続先に依存しない（`packGenerate.ts` の `fetchWorkIq`）。Copilot 専用の追加の実装は不要で、変えたのは中継が Copilot を受け付けること（§14）と画面の既定だけである。
+
+**計測（アプリの `generatePack` と中継の本物のハンドラー `/relay/{ai,site,news,workiq/ask}` をそのまま使用。同じ Project の保存済みの入力。モデル claude-sonnet-5.5。M365 の本文は git の外 `logs/live-gen/` に置いた）。**
+
+| | 2026-11-18 アプリでの作成（Work IQ なし） | 2026-11-19 Work IQ CLI あり |
+|---|---|---|
+| 分析の準備（8 項目） | 1（issues のみ） | **8**（org 2/2・locations 1/1・customers 2/1・workflow 3/3・dataCatalog 4/3・kpi 5/2・engagements 3/1・issues 3/1） |
+| KPI | 0 件 | 4 件（ジャーニー内の比率 75%、Hub SE 主導 50 件以上、Architecture Design/Rapid Prototyping 40%、1 人あたり 5 件以上の win）。すべて `source-workiq-*` の出典付き。§13 で M365 Copilot が返した値と一致 |
+| 取得した資料 | Web 6・ニュース 10 | Web 6・ニュース 10・Work IQ 22 区分（初回 9 区分。追加取得は基盤 8 主題・業務 5 主題） |
+| 追加取得の終了理由 | — | 基盤・業務とも `satisfied`（1 回ずつ） |
+| 検査 | — | 修正 3 回、取り除いた項目 0、引用に無い数値 0 |
+| 所要時間 | 約 2 分 | 873 秒（Work IQ の初回取得 527 秒、追加取得 99 秒と 37 秒、モデルの呼び出し 8 回で計約 210 秒） |
+| 入力の大きさ | 約 1.6 万文字 | 最大 19.4 万文字・約 11.9 万トークン（Copilot で切り捨てや失敗なし） |
+
+**結論。** GitHub Copilot でも、Work IQ はプラグイン経由（§14 の計測 1・2: 引用が残らない、非決定的）ではなく、中継の Work IQ CLI 経由で使う。差は接続先ではなく Work IQ を使うかどうかで生じていた。そこで作成ダイアログでは、Copilot でも取得を検証済みなら Work IQ を既定で選ぶようにした（Foundry と同じ。Project ごとに前回の選択を引き継ぎ、外せる。Copilot では必須ではない）。選択の文言には、回答と引用が GitHub Copilot に送られることを示す（`proj.gen.useWorkIqCopilot`、e2e/pack-generate.spec.ts）。
+
+**限界。** 1 つの Project・1 回の実行・1 つのモデルでの計測。所要時間の大部分は Work IQ の取得である。Foundry IQ の Agentic Retrieval（`retrieve` の知識ベース）は、テナントで Work IQ のナレッジ ソースが使えるようになってから、同じハーネスで比べる。

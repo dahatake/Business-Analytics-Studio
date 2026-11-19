@@ -967,6 +967,7 @@ describe('GitHub Copilot adapter (server/copilot.ts)', () => {
         };
       }
       async deleteSession(id: string) { deleted.push(id); }
+      rpc = { mcp: { discover: async () => ({ servers: [{ name: 'workiq', source: 'user' }, { name: 'azure', source: 'plugin' }] }) } };
     }
     return { sdk: { CopilotClient: Client } as unknown as CopilotSdk, created, deleted, get aborted() { return aborted; } };
   }
@@ -985,6 +986,8 @@ describe('GitHub Copilot adapter (server/copilot.ts)', () => {
     const r = await new CopilotService(async () => f.sdk).complete({ model: 'claude-opus', system: 'SYS', prompt: 'P', timeoutMs: 1000 });
     expect(r).toEqual({ text: '{"ok":true}', inputTokens: 100, outputTokens: 50, premiumRequests: 10 });
     expect(f.created[0]).toMatchObject({ model: 'claude-opus', availableTools: [], systemMessage: { mode: 'replace', content: 'SYS' }, enableSessionStore: false });
+    // The user's Copilot MCP servers and plugins (e.g. a Work IQ plugin) and the built-in GitHub one are not started.
+    expect(f.created[0]!.disabledMcpServers).toEqual(['workiq', 'azure', 'github-mcp-server']);
     const permission = (f.created[0]!.onPermissionRequest as () => { kind: string })();
     expect(permission.kind).toBe('reject');
     expect(f.deleted).toEqual(['s1']);

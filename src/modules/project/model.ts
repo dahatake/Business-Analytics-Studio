@@ -55,6 +55,20 @@ export type DiscussionData = z.infer<typeof DiscussionDataSchema>;
 export const KPI_ORIGINS = ['customerDefined', 'companyAnchor', 'proposed'] as const;
 export type KpiOrigin = (typeof KPI_ORIGINS)[number];
 
+/**
+ * FR-341: the organisation a KPI/OKR belongs to, on the same four levels as companyAnchor statedObjectives.scope.
+ * group = グループ・持株会社, legalEntity = 全社・事業会社 (one legal entity), business = 事業部・事業本部,
+ * department = 部門・チーム. inferred = the level/name was estimated from the purpose and Work IQ material, not stated.
+ */
+export const ORG_LEVELS = ['group', 'legalEntity', 'business', 'department'] as const;
+export type OrgLevel = (typeof ORG_LEVELS)[number];
+export const KpiOrgSchema = z.object({
+  level: z.enum(ORG_LEVELS),
+  name: z.string().optional(),
+  inferred: z.boolean().optional(),
+});
+export type KpiOrg = z.infer<typeof KpiOrgSchema>;
+
 export const KpiDefSchema = z.object({
   id: z.string().min(1),
   name: LocalizableSchema,
@@ -68,6 +82,8 @@ export const KpiDefSchema = z.object({
   sourceIds: z.array(z.string()).optional(),
   /** FR-325: the internal KPI/OKR candidate (extensions.okr) this KPI was adopted from. */
   adoptedFrom: z.string().optional(),
+  /** FR-341: the organisation the KPI belongs to (全社 / 事業部 …). */
+  org: KpiOrgSchema.optional(),
 });
 export type KpiDef = z.infer<typeof KpiDefSchema>;
 
@@ -81,6 +97,8 @@ export const OkrSchema = z.object({
   /** FR-325: the internal KPI/OKR candidate (extensions.okr) this OKR was adopted from. */
   adoptedFrom: z.string().optional(),
   sourceIds: z.array(z.string()).optional(),
+  /** FR-341: the organisation the objective belongs to (全社 / 事業部 …). */
+  org: KpiOrgSchema.optional(),
 });
 export type Okr = z.infer<typeof OkrSchema>;
 

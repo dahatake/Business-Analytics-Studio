@@ -52,7 +52,7 @@ test('launch screen: AI settings and the generator are reachable; missing requir
   await expect(settings.getByTestId('ai-workiq-check')).toBeDisabled(); // nothing saved yet
   await settings.getByTestId('ai-provider-copilot').check();
   await expect(settings.getByTestId('ai-copilot')).toBeVisible();
-  await expect(settings.getByTestId('ai-workiq')).toHaveCount(0); // D-14: Work IQ belongs to Microsoft Foundry only
+  await expect(settings.getByTestId('ai-workiq')).toBeVisible(); // D-14: optional with GitHub Copilot (required with Foundry)
   await expect(settings.getByTestId('ai-copilot-signin')).toContainText('Not checked');
   await expect(settings.getByTestId('ai-endpoint')).toHaveCount(0);
   await expect(settings.getByTestId('ai-price-request')).toHaveCount(0); // Copilot charges cannot be priced or capped by BAS
@@ -179,7 +179,7 @@ test('generator fits narrow screens and can be resized in both directions', asyn
   }
 });
 
-test('D-14: with GitHub Copilot as the provider the generator neither offers nor mentions Work IQ', async ({ page }) => {
+test('D-14: with GitHub Copilot as the provider Work IQ is optional and does not block the start until it is set up', async ({ page }) => {
   await seed(page, 'en');
   await page.getByTestId('launch-ai-settings').click();
   const settings = page.getByTestId('ai-settings-dialog');
@@ -188,7 +188,29 @@ test('D-14: with GitHub Copilot as the provider the generator neither offers nor
   await page.getByTestId('launch-generate-pj-c').click();
   const dialog = page.getByTestId('gen-dialog');
   await expect(dialog.getByTestId('gen-news')).toBeVisible();
-  await expect(dialog.getByTestId('gen-workiq-section')).toHaveCount(0);
+  await expect(dialog.getByTestId('gen-workiq')).not.toBeChecked();
+  await expect(dialog.getByTestId('gen-workiq')).toBeDisabled(); // nobody verified Work IQ retrieval
+  await expect(dialog.getByTestId('gen-workiq-note')).toContainText('optional with GitHub Copilot');
+  await expect(dialog.getByTestId('gen-sends')).not.toContainText('Work IQ');
+});
+
+test('D-14: with GitHub Copilot and a verified Work IQ CLI, Work IQ is used by default and its destination is named', async ({ page }) => {
+  await page.route('**/relay/status', async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ json: { ...await response.json(), workiq: { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: true, verifiedAt: '2026-11-19T00:00:00.000Z' } } });
+  });
+  await seed(page, 'en');
+  await page.getByTestId('launch-ai-settings').click();
+  const settings = page.getByTestId('ai-settings-dialog');
+  await settings.getByTestId('ai-provider-copilot').check();
+  await settings.getByTestId('ai-settings-dialog-close').click();
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await expect(dialog.getByTestId('gen-workiq')).toBeEnabled();
+  await expect(dialog.getByTestId('gen-workiq')).toBeChecked();
+  await expect(dialog.getByTestId('gen-workiq-section')).toContainText('send the answers and citations to GitHub Copilot');
+  await expect(dialog.getByTestId('gen-sends')).toContainText('Work IQ');
+  await dialog.getByTestId('gen-workiq').uncheck();
   await expect(dialog.getByTestId('gen-sends')).not.toContainText('Work IQ');
 });
 

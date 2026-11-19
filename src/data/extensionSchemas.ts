@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LocalizableSchema } from '../modules/project/model.ts';
+import { LocalizableSchema, ORG_LEVELS } from '../modules/project/model.ts';
 
 export const GlossaryEntrySchema = z.object({
   term: LocalizableSchema,
@@ -56,12 +56,15 @@ export const OkrExtension = z.object({
     unit: z.string().optional(),
     period: z.string().optional(),
     owner: LocalizableSchema.optional(),
+    /** FR-341: an id in orgUnits — the organisation this KPI belongs to. */
+    orgUnitId: z.string().optional(),
     sourceIds: SourceIds,
   }).passthrough()).default([]),
   objectives: z.array(z.object({
     id: z.string().min(1),
     objective: LocalizableSchema,
     owner: LocalizableSchema.optional(),
+    orgUnitId: z.string().optional(),
     keyResults: z.array(z.object({
       text: LocalizableSchema,
       target: z.string().optional(),
@@ -78,6 +81,19 @@ export const OkrExtension = z.object({
   definitionStatus: z.enum(['defined', 'partial', 'undefined', 'notRetrieved']).optional(),
   /** What was searched to decide the status (document names, meetings), so the claim can be checked. */
   checkedSources: z.array(z.string()).optional(),
+  /**
+   * FR-341: the organisations the KPI/OKR belong to — the company itself and the business unit the purpose concerns.
+   * basis: userInput = typed when generating; stated = named in the material; inferred = estimated from the purpose
+   * and Work IQ material (reason and sourceIds say why).
+   */
+  orgUnits: z.array(z.object({
+    id: z.string().min(1),
+    level: z.enum(ORG_LEVELS),
+    name: z.string().min(1),
+    basis: z.enum(['userInput', 'stated', 'inferred']),
+    reason: z.string().optional(),
+    sourceIds: SourceIds,
+  }).passthrough()).optional(),
 }).passthrough();
 export type OkrExtension = z.infer<typeof OkrExtension>;
 

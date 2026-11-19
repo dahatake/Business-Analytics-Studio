@@ -69,7 +69,7 @@ export interface PackGenInput {
   /** Optional public-only subject for a project-specific Google News query. Consent is per run. */
   publicWebTopic?: string;
   webTopicConfirmed?: boolean;
-  /** D-14: ask Microsoft Work IQ (Microsoft Foundry runs only; the dialog never sets it for GitHub Copilot). */
+  /** D-14: ask Microsoft Work IQ (always offered with Microsoft Foundry; with GitHub Copilot only when the user opts in for this run). */
   useWorkIq: boolean;
   /** Most follow-up rounds per stage while the analysis readiness check still finds gaps (1..MAX_WORKIQ_ROUNDS). */
   workIqRounds?: number;
@@ -173,7 +173,7 @@ export interface GenDeps {
   /** `terms`: the project purpose's terms; the relay uses them only to choose which of the site's own links to read. */
   fetchSite?: (url: string, signal: AbortSignal, terms?: readonly string[]) => Promise<{ pages: SitePageLike[]; failed: { url: string; error: string }[] }>;
   fetchNews?: (company: string, lang: Lang, signal: AbortSignal, topic?: string) => Promise<{ provider: string; fetchedAt: string; articles: NewsLike[] }>;
-  /** D-14: Microsoft Work IQ through the relay (wired by the dialog for Microsoft Foundry only). One answer, or one per section. */
+  /** D-14: Microsoft Work IQ through the relay (wired by the dialog for Microsoft Foundry, or GitHub Copilot when the user opts in). One answer, or one per section. */
   fetchWorkIq?: (query: WorkIqQuery, signal: AbortSignal) => Promise<WorkIqLike | WorkIqSectionLike[]>;
   now?: () => Date;
   /** Recorded in the generation report. */

@@ -8,6 +8,10 @@ import { base64Bytes, copilotMediaCapability, type MediaCapability, type MediaPa
  * sign-in (`copilot login`); the relay never sees or stores a GitHub token. Sessions run with no tools at all and a
  * replaced system prompt, so the model only reads the prompt it is given (no web, files, shell or MCP), and they are
  * deleted after each call so nothing accumulates in the user's Copilot history.
+ *
+ * The runtime still starts every MCP server and plugin of the user's Copilot configuration (for example a Work IQ
+ * plugin) for each session even when no tool is offered (measured 2026-11-19), so each session disables all of them by
+ * name. Work IQ material reaches the model only through the relay's own Work IQ retrieval (D-14), never as a tool.
  */
 
 export interface CopilotModel {
@@ -63,6 +67,17 @@ export interface SdkClient {
   listModels(): Promise<{ id: string; name?: string; billing?: { multiplier?: number }; policy?: { state?: string }; capabilities?: unknown }[]>;
   createSession(config: Record<string, unknown>): Promise<SdkSession>;
   deleteSession?(sessionId: string): Promise<void>;
+  rpc?: { mcp?: { discover?(params: { workingDirectory?: string }): Promise<{ servers?: { name?: unknown }[] }> } };
+}
+
+/** Built into the Copilot runtime and not listed by `mcp.discover`. */
+const BUILTIN_MCP_SERVERS = ['github-mcp-server'];
+
+/** Every MCP server the runtime would start for a session: user, workspace and plugin ones, plus the built-in one. */
+async function mcpServersToDisable(client: SdkClient, workingDirectory: string): Promise<string[]> {
+  const found = await client.rpc?.mcp?.discover?.({ workingDirectory }).catch(() => undefined);
+  const names = (found?.servers ?? []).map((s) => s.name).filter((n): n is string => typeof n === 'string' && n !== '');
+  return [...new Set([...names, ...BUILTIN_MCP_SERVERS])];
 }
 export interface CopilotSdk {
   CopilotClient: new (options?: Record<string, unknown>) => SdkClient;
@@ -145,10 +160,12 @@ export class CopilotService {
     if (input.media?.length && !mediaFits(input.media, copilotMediaCapability(model?.capabilities))) throw new CopilotError('unsupportedAttachment');
     if (input.signal?.aborted) throw new CopilotError('aborted');
 
+    const disabledMcpServers = await mcpServersToDisable(client, this.workDir);
     const session = await client.createSession({
       model: input.model,
       systemMessage: { mode: 'replace', content: input.system },
       availableTools: [],
+      disabledMcpServers,
       onPermissionRequest: () => ({ kind: 'reject', feedback: 'Tools are disabled in Business Analytics Studio.' }),
       enableSessionStore: false,
       workingDirectory: this.workDir,

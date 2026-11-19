@@ -8,7 +8,7 @@ import {
 } from '@fluentui/react-icons';
 import { AiLiveError, aiLive, preflight, readLedger, rebindLedgerScope } from '../../ai/client.ts';
 import { jstDay, jstMonth } from '../../ai/budget.ts';
-import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS } from '../../ai/policy.ts';
+import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, workIqAllowedFor, workIqRequiredFor } from '../../ai/policy.ts';
 import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
 import { isReadableFile, preparePackLogo, withoutPackLogo } from '../../data/packImport.ts';
 import { anchorFreshness } from '../../data/companyAnchor.ts';
@@ -21,7 +21,7 @@ import { useSettings } from '../../state/settings.ts';
 import { AiReadiness } from '../ai/AiConnectionForm.tsx';
 import { AiSettingsDialog } from '../ai/AiSettingsPanel.tsx';
 import { TokenTable, yenFine } from '../ai/AiCommon.tsx';
-import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect } from '../ai/relayClient.ts';
+import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect, type WorkIqProvider } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import { saveAnalysisForProject } from './stores.ts';
@@ -180,8 +180,9 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     return () => clearInterval(timer);
   }, [phase]);
 
-  // D-14: Work IQ is part of the Microsoft Foundry path only; with GitHub Copilot it is neither shown nor sent.
-  const workIqShown = ai.provider === 'foundry';
+  // D-14: once Work IQ retrieval is set up it is used with either provider unless unchecked; only Microsoft Foundry requires it.
+  const workIqShown = workIqAllowedFor(ai.provider);
+  const workIqRequired = workIqRequiredFor(ai.provider);
   const workIqOn = workIqShown && workIqReady(ai) && useWorkIq;
   const topic = useNews ? publicWebTopic.trim() : '';
   const topicInvalid = !!topic && !NewsRequest.safeParse({ company: companyName, lang, topic, topicConfirmed: true }).success;
@@ -236,7 +237,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const ready = liveReady(ai);
   const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget
     && (!logoApproved || !!logoFile)
-    && (!workIqShown || workIqReady(ai)) && !topicInvalid && (!topic || publicTopicOk) && (!anchorEnabled || !anchorLoad.error);
+    && (!workIqRequired || workIqReady(ai)) && !topicInvalid && (!topic || publicTopicOk) && (!anchorEnabled || !anchorLoad.error);
 
   const addFiles = async (files: FileList) => {
     const notes: string[] = [];
@@ -323,8 +324,8 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
         }, signal),
         fetchSite: (url, signal, terms) => fetchSitePages(url, signal, terms),
         fetchNews: (company, l, signal, publicTopic) => fetchNewsHeadlines(company, l, signal, publicTopic),
-        ...(settings.provider === 'foundry' && input.useWorkIq ? {
-          fetchWorkIq: (q, signal) => askWorkIqSections({ ...q, aspects: (q.aspects ?? []) as WorkIqAspect[], topics: q.topics ?? [], timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }, signal),
+        ...((settings.provider === 'foundry' || settings.provider === 'copilotSdk') && input.useWorkIq ? {
+          fetchWorkIq: (q, signal) => askWorkIqSections({ ...q, provider: settings.provider as WorkIqProvider, aspects: (q.aspects ?? []) as WorkIqAspect[], topics: q.topics ?? [], timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }, signal),
         } : {}),
       }, (e) => {
         setProgress(e);
@@ -488,11 +489,11 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                             checked={workIqOn}
                             disabled={!workIqReady(ai)}
                             onChange={(_, d) => setUseWorkIq(d.checked === true)}
-                            label={t('proj.gen.useWorkIq')}
+                            label={t(workIqRequired ? 'proj.gen.useWorkIq' : 'proj.gen.useWorkIqCopilot')}
                             data-testid="gen-workiq"
                           />
                           <p className="muted" data-testid="gen-workiq-note">
-                            {!workIqReady(ai) ? t('proj.gen.workIqNotReady') : ai.workiq?.method === 'cli' ? t('proj.gen.workIqHintCli') : t('proj.gen.workIqHint', { account: ai.workiq?.account ?? '—' })}
+                            {!workIqReady(ai) ? t(workIqRequired ? 'proj.gen.workIqNotReady' : 'proj.gen.workIqOptionalNotReady') : ai.workiq?.method === 'cli' ? t('proj.gen.workIqHintCli') : t('proj.gen.workIqHint', { account: ai.workiq?.account ?? '—' })}
                           </p>
                           {workIqOn && (
                             <Field label={t('proj.gen.workIqRounds')} hint={t('proj.gen.workIqRoundsHint', { max: MAX_WORKIQ_ROUNDS })}>

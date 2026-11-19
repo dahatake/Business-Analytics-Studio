@@ -515,7 +515,8 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       expect(checks).toBe(2);
       expect(await scan(page)).toEqual([]);
       await page.getByTestId('ai-provider-copilot').check();
-      await expect(page.getByTestId('ai-workiq')).toHaveCount(0);
+      // D-14 (2026-11-19): Work IQ is offered with GitHub Copilot too, but it is optional there, so it is not a readiness item.
+      await expect(page.getByTestId('ai-workiq')).toBeVisible();
       await expect(page.getByTestId('ai-readiness')).not.toContainText('Work IQ');
     });
 

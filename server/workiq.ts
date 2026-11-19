@@ -184,7 +184,7 @@ export const ASPECT_ITEMS: Record<WorkIqAspect, readonly ReadinessKey[]> = {
 export interface PlannedSearch {
   key: string;
   query: string;
-  kind: 'aspect' | 'ladder' | 'purpose' | 'topic';
+  kind: 'aspect' | 'ladder' | 'purpose' | 'topic' | 'answer';
   items: readonly ReadinessKey[];
   /** The ladder wording behind a `ladder` search, as packGenerate's follow-up rounds would ask it. */
   wording?: string;
@@ -244,12 +244,17 @@ export function purposeTopics(q: Pick<WorkIqQuestion, 'company' | 'project' | 'p
  * concepts (keys `purpose-<n>`). `ladder: false` keeps the purpose searches but drops the wordings, for the slower
  * synthesized `ask` fallback (server/workiqCli.ts). `sources: true` (the `retrieve` route; `ask` cannot select a source)
  * adds the first SOURCE_FANOUT_TOPICS purpose concepts once per Microsoft 365 source (keys `purpose-<n>-<source>`).
+ * With `expand` and the ladder wordings (the `retrieve` route), each section is also searched as English keywords
+ * (keys `<aspect>-en`), and `answers: true` adds Microsoft 365 Copilot's synthesized answer (`ask`) to the WORKIQ_ANSWER_ASPECTS sections
+ * (keys `<aspect>-answer`, kind `answer`).
  */
-export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?: boolean } = {}): PlannedSearch[] {
+export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?: boolean; answers?: boolean } = {}): PlannedSearch[] {
   const ladder = q.expand && opts.ladder !== false;
   const purpose = q.expand ? purposeTopics(q) : [];
   return [
     ...q.aspects.map((a): PlannedSearch => ({ key: a, query: workIqAspectQuery(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })),
+    ...(ladder ? q.aspects.map((a): PlannedSearch => ({ key: `${a}-en`, query: workIqAspectKeywords(q, a), kind: 'aspect', items: ASPECT_ITEMS[a] })) : []),
+    ...(q.expand && opts.answers ? q.aspects.filter((a) => WORKIQ_ANSWER_ASPECTS.includes(a)).map((a): PlannedSearch => ({ key: `${a}-answer`, query: workIqAspectQuery(q, a), kind: 'answer', items: ASPECT_ITEMS[a] })) : []),
     ...(ladder ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
     ...purpose.map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })),
     ...(opts.sources ? purpose.slice(0, SOURCE_FANOUT_TOPICS).flatMap((t, n) => WORKIQ_SOURCES.map((s): PlannedSearch => ({ key: `purpose-${n + 1}-${s}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [], sources: [s] }))) : []),
@@ -257,36 +262,78 @@ export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?
   ];
 }
 
-/** A search request about the organisation behind the project (not a prompt: Work IQ returns evidence). */
+/**
+ * The organisation a search is about, as plain words: the project name when it already names the company
+ * ("Microsoft Innovation Hub FY27"), otherwise company and project. No quotes or brackets, which Work IQ's query
+ * planner does not need (docs/workiq-agentic-retrieval-study.md §13).
+ */
+export function workIqSubject(q: Pick<WorkIqQuestion, 'company' | 'project'>): string {
+  return q.project.toLowerCase().includes(q.company.toLowerCase()) ? q.project : `${q.company} ${q.project}`;
+}
+
+/**
+ * A search about the organisation behind the project, worded as the short question a person would ask Microsoft 365
+ * Copilot. Measured 2026-11-19 (study §13): Work IQ's query planner kept only the Latin subject words
+ * (`searchTerms` microsoft, innovation, hub, fy27) of the former long Japanese compound requests ("…の KPI・OKR の
+ * 定義の有無と所在資料、目標値・スコアカード…") and lost the topic, while the short question
+ * "Microsoft Innovation HubのKPI/OKRは何ですか?" kept kpi and okr and ranked the strategy deck that defines them first.
+ * Qualifiers (units, owners, periods) belong to the deep read and the synthesized answer, not to the search.
+ */
 export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): string {
-  const ja = q.lang === 'ja';
-  const subject = ja ? `「${q.project}」（${q.company}）` : `"${q.project}" (${q.company})`;
-  const text: Record<WorkIqAspect, string> = ja
+  const s = workIqSubject(q);
+  const text: Record<WorkIqAspect, string> = q.lang === 'ja'
     ? {
-      org: `${subject}の組織・チームの概要、ミッション、役割分担、体制、組織図`,
-      kpi: `${subject}の KPI・OKR の定義の有無と所在資料、目標値・スコアカード・実績値（数値・単位・期間・責任者）、経営目標との対応`,
-      process: `${subject}の業務プロセス: 依頼や受付（インプット）、各工程の作業、成果物（アウトプット）、次に引き継ぐチーム`,
-      data: `${subject}のチームが管理・利用するデータ、レポート、ダッシュボード、システム、データ定義やデータ辞書`,
-      locations: `${subject}の拠点・オフィス・施設の一覧（都市と国）`,
-      people: `${subject}の主要な関係者と役割（氏名と役職）`,
-      engagements: `${subject}の顧客・案件・エンゲージメント・提案・成果物の事例と件数`,
-      issues: `${subject}の課題・原因・改善施策・リスク（目的: ${q.purpose}${q.focus ? `、重点: ${q.focus}` : ''}）`,
+      org: `${s}の組織体制と役割は何ですか?`,
+      kpi: `${s}のKPI/OKRは何ですか?`,
+      process: `${s}の業務プロセスは何ですか?`,
+      data: `${s}で使うデータ・レポート・ダッシュボードは何ですか?`,
+      locations: `${s}の拠点はどこですか?`,
+      people: `${s}の主要な関係者と役割は誰ですか?`,
+      engagements: `${s}の顧客事例と案件は何ですか?`,
+      issues: `${s}の課題は何ですか?`,
     }
     : {
-      org: `${subject}: organisation and team overview, mission, roles and responsibilities, structure, org chart`,
-      kpi: `${subject}: whether KPIs/OKRs are defined and where, targets, scorecards and actuals (figures, units, periods, owners), and the company objectives they serve`,
-      process: `${subject}: business process: requests and intake (inputs), work in each step, deliverables (outputs), the team that takes over next`,
-      data: `${subject}: data, reports, dashboards, systems and data definitions or data dictionaries the team owns or uses`,
-      locations: `${subject}: list of locations, offices and facilities (city and country)`,
-      people: `${subject}: key people and their roles (name and title)`,
-      engagements: `${subject}: customers, engagements, proposals and deliverables with examples and counts`,
-      issues: `${subject}: issues, causes, improvement initiatives and risks (purpose: ${q.purpose}${q.focus ? `; focus: ${q.focus}` : ''})`,
+      org: `What is the organisation structure of ${s} and its roles?`,
+      kpi: `What are the KPIs/OKRs of ${s}?`,
+      process: `What is the business process of ${s}?`,
+      data: `What data, reports and dashboards does ${s} use?`,
+      locations: `Where are the locations of ${s}?`,
+      people: `Who are the key people of ${s} and their roles?`,
+      engagements: `What are the customer engagements and opportunities of ${s}?`,
+      issues: `What are the issues of ${s}?`,
     };
   return text[aspect];
 }
 
+/**
+ * The same aspect as English keywords, searched alongside the question with `expand`. Work IQ's planner turns a query
+ * into English search terms; given English keywords it keeps every one (2026-11-19: "… organization team structure
+ * roles", "… engagement process request intake delivery handoff"), which the Japanese question alone may not.
+ */
+export function workIqAspectKeywords(q: Pick<WorkIqQuestion, 'company' | 'project'>, aspect: WorkIqAspect): string {
+  const words: Record<WorkIqAspect, string> = {
+    org: 'organization team structure roles',
+    kpi: 'KPI OKR targets scorecard',
+    process: 'engagement process request intake delivery handoff',
+    data: 'data reports dashboards systems tools',
+    locations: 'locations offices sites',
+    people: 'key people roles leaders',
+    engagements: 'customer engagements opportunities wins examples',
+    issues: 'issues challenges risks improvements',
+  };
+  return `${workIqSubject(q)} ${words[aspect]}`;
+}
+
+/**
+ * Sections that also get Microsoft 365 Copilot's synthesized answer (`ask`) on the `retrieve` route: Agentic
+ * Retrieval's answer synthesis for the items whose facts are figures or steps spread over several files. On 2026-11-19
+ * the KPI question as `ask` returned the defined KPIs with their targets and cited the strategy deck, which no
+ * search excerpt contained whole.
+ */
+export const WORKIQ_ANSWER_ASPECTS: readonly WorkIqAspect[] = ['kpi', 'process', 'data'];
+
 export function workIqTopicQuery(q: WorkIqQuestion, topic: string): string {
-  return q.lang === 'ja' ? `「${q.project}」（${q.company}）: ${topic}` : `"${q.project}" (${q.company}): ${topic}`;
+  return `${workIqSubject(q)} ${topic}`;
 }
 
 export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {

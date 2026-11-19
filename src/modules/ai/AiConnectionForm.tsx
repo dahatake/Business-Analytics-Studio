@@ -5,9 +5,10 @@ import {
 } from '@fluentui/react-components';
 import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode } from './relayClient.ts';
+import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode, type WorkIqProvider } from './relayClient.ts';
 import { connectionTestPreflight, isConfigured, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { EntraConnection } from './EntraConnection.tsx';
+import { workIqRequiredFor } from '../../ai/policy.ts';
 import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
 
@@ -242,15 +243,17 @@ const WORKIQ_ERRORS = [
 type WorkIqMessage = (typeof WORKIQ_ERRORS)[number] | 'failed';
 const workIqMessage = (code: string | undefined): WorkIqMessage => ((WORKIQ_ERRORS as readonly string[]).includes(code ?? '') ? (code as WorkIqMessage) : 'failed');
 export const WORKIQ_EULA_URL = 'https://github.com/microsoft/work-iq';
+const workIqProviderOf = (p: AiProvider): WorkIqProvider => (p === 'copilotSdk' ? 'copilotSdk' : 'foundry');
 
 /**
- * D-14: Microsoft Work IQ for the customer pack, Microsoft Foundry only. Two routes, both run by the relay:
+ * D-14: Microsoft Work IQ for the customer pack: required with Microsoft Foundry, optional with GitHub Copilot. Two routes, both run by the relay:
  * Microsoft's Work IQ CLI on this PC (its own sign-in; no app registration or admin consent in BAS), or the user's own
  * public-client app registration (delegated WorkIQAgent.Ask) signed in by device code. This screen never sees a token.
  */
 export function WorkIqSettings() {
   const { t } = useI18n();
   const workiq = useAiSettings((s) => s.workiq);
+  const provider = useAiSettings((s) => s.provider);
   const reachable = useAiSettings((s) => s.relayReachable);
   const budget = useAiSettings((s) => s.monthlyBudgetJpy);
   const { saveWorkIq, deleteWorkIq, refreshRelay } = useAiSettings.getState();
@@ -287,7 +290,7 @@ export function WorkIqSettings() {
     setBusy(true);
     setMessage(null);
     try {
-      await acceptWorkIqEula();
+      await acceptWorkIqEula(workIqProviderOf(provider));
       setMessage('eulaAccepted');
     } catch (error) {
       setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
@@ -339,7 +342,7 @@ export function WorkIqSettings() {
     setChecking(true);
     setMessage(null);
     try {
-      await verifyWorkIq();
+      await verifyWorkIq(workIqProviderOf(provider));
       setMessage('verified');
     } catch (error) {
       setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
@@ -509,6 +512,7 @@ export function CopilotSettings() {
         </Button>
       </div>
       {message && <p role="status" className="muted" data-testid="ai-copilot-msg">{t(`ai.copilot.msg.${message}`)}</p>}
+      <WorkIqSettings />
     </div>
   );
 }
@@ -529,7 +533,7 @@ export function PriceFields() {
   );
 }
 
-/** Readiness of the chosen provider for live sends, as one line: every condition of liveReady() (and Work IQ for Foundry). */
+/** Readiness of the chosen provider for live sends, as one line: every condition of liveReady() (and Work IQ where it is required, D-14). */
 export function AiReadiness() {
   const { t } = useI18n();
   const s = useAiSettings();
@@ -539,7 +543,7 @@ export function AiReadiness() {
     ['consent', s.sendConsent],
     ['live', s.liveEnabled],
   ];
-  if (s.provider === 'foundry') items.splice(2, 0, ['workiq', workIqReady(s)]);
+  if (workIqRequiredFor(s.provider)) items.splice(2, 0, ['workiq', workIqReady(s)]);
   return (
     <ul className="ai-readiness" data-testid="ai-readiness">
       {items.map(([key, ok]) => (

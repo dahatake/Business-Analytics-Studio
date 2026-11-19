@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { replaceFileSync } from './files.ts';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
-import { AI_LIMITS, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, isAiUse, type AiUse, type Provider } from '../src/ai/policy.ts';
+import { AI_LIMITS, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, isAiUse, workIqAllowedFor, type AiUse, type Provider } from '../src/ai/policy.ts';
 import { MAX_SECRET_LENGTH, SecretVault, isSecretName } from './vault.ts';
 import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
@@ -403,6 +403,9 @@ const WORKIQ_STATUS: Record<WorkIqErrorCode, number> = {
 };
 
 const WORKIQ_ASK_FIELDS = new Set(['provider', 'company', 'project', 'purpose', 'focus', 'asOf', 'lang', 'timeZone', 'aspects', 'topics', 'expand']);
+
+/** D-14: the providers whose customer pack may use Work IQ material (Microsoft Foundry, and GitHub Copilot since 2026-11-19). */
+const workIqProvider = (value: unknown): value is Provider => (value === 'foundry' || value === 'copilotSdk') && workIqAllowedFor(value);
 
 /** Server-side check that the selected provider has a complete connection. */
 export function relayAiDecision(configured: boolean): RelayRefusal[] {
@@ -844,7 +847,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
     const body = parseBody(req.body);
     if (!body || Object.keys(body).some((k) => k !== 'provider')) return json(400, { error: 'invalidQuestion' });
-    if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
+    if (!workIqProvider(body.provider)) return json(403, { error: 'providerNotAllowed' });
     const s = workiqSettings();
     if (!s) return json(409, { error: 'notConfigured' });
     if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
@@ -873,7 +876,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const body = parseBody(req.body);
     // The user's explicit acceptance, made on the screen that links the EULA; never sent by anything else.
     if (!body || Object.keys(body).some((k) => k !== 'provider' && k !== 'accept') || body.accept !== true) return json(400, { error: 'invalidSettings' });
-    if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
+    if (!workIqProvider(body.provider)) return json(403, { error: 'providerNotAllowed' });
     if (workiqSettings()?.method !== 'cli') return json(409, { error: 'notConfigured' });
     if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
     try {
@@ -902,9 +905,11 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
     const body = parseBody(req.body);
     if (!body || Object.keys(body).some((k) => !WORKIQ_ASK_FIELDS.has(k))) return json(400, { error: 'invalidQuestion' });
-    // D-14: Work IQ belongs to the Microsoft Foundry path only; GitHub Copilot SDK runs never reach it.
-    if (body.provider !== 'foundry') return json(403, { error: 'foundryOnly' });
-    if (!configured()) return json(403, { error: 'foundryNotConfigured' });
+    // D-14: Work IQ material goes only to the selected provider, which must be ready (and allowed by the outbound list).
+    if (!workIqProvider(body.provider)) return json(403, { error: 'providerNotAllowed' });
+    if (body.provider === 'foundry' && !configured()) return json(403, { error: 'foundryNotConfigured' });
+    if (body.provider === 'copilotSdk' && !copilotOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+    if (body.provider === 'copilotSdk' && !configuredFor('copilotSdk')) return json(403, { error: 'copilotNotConfigured' });
     const s = workiqSettings();
     if (!s) return json(409, { error: 'notConfigured' });
     if (!workIqOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });

@@ -16,8 +16,8 @@ import {
   relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
 } from '../server/relay.ts';
 import { spawn } from 'node:child_process';
-import { MAX_PURPOSE_SEARCHES, WorkIqError, purposeTopics, type WorkIqQuestion } from '../server/workiq.ts';
-import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
+import { MAX_PURPOSE_SEARCHES, WORKIQ_OUTBOUND_HOSTS, WorkIqError, purposeTopics, workIqAspectKeywords, workIqAspectQuery, workIqPlan, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
+import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withAnswer, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
 import { blankTestImage } from '../server/media.ts';
 import { foundryMediaEndpoint, separateSpeechTestUrl, validateSeparateSpeech } from '../src/ai/mediaConnection.ts';
@@ -1189,12 +1189,13 @@ describe('D-14 Work IQ through the relay (Microsoft Foundry only)', () => {
     expect(m.calls.some((c) => c.url.includes('login.microsoftonline.com'))).toBe(false);
   });
 
-  it('is refused for GitHub Copilot, without a verified Foundry connection, with an outbound allowlist lacking its hosts, and for free-form fields', async () => {
+  it('is refused for other providers, without a ready provider, with an outbound allowlist lacking its hosts, and for free-form fields', async () => {
     const m = microsoft();
     const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
     await signIn(m, workiq);
     m.calls.length = 0;
-    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'copilotSdk' }), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'foundryOnly' });
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'other' }), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'providerNotAllowed' });
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'copilotSdk' }), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'copilotNotConfigured' });
     expect((await call(req('POST', '/relay/workiq/ask', question), ctx(m.doFetch, { workiq }))).body).toEqual({ error: 'foundryNotConfigured' });
     await verifyFoundry();
     const foundryOnly: RelayConfig = { ...STRICT_RELAY_CONFIG, outboundHosts: ['res.services.ai.azure.com'] };
@@ -1259,12 +1260,12 @@ describe('D-14 Work IQ through the relay (Microsoft Foundry only)', () => {
       .toEqual({ status: 502, body: { error: 'workiqNoGrounding' } });
   });
 
-  it('refuses diagnostics without sign-in, for Copilot, arbitrary prompts, and restricted outbound hosts', async () => {
+  it('refuses diagnostics without sign-in, for other providers, arbitrary prompts, and restricted outbound hosts', async () => {
     const m = microsoft();
     const workiq = workIqServiceFor(vault, { fetch: m.doFetch, now: () => clock });
     expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiq })).body).toEqual({ error: 'notConfigured' });
     await call(req('PUT', '/relay/workiq', { tenantId: TENANT, clientId: CLIENT }), { workiq });
-    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'copilotSdk' }), { workiq })).body).toEqual({ error: 'foundryOnly' });
+    expect((await call(req('POST', '/relay/workiq/verify', { provider: 'other' }), { workiq })).body).toEqual({ error: 'providerNotAllowed' });
     expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry', prompt: 'private' }), { workiq })).status).toBe(400);
     expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiq, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['example.com'] } })).body).toEqual({ error: 'outboundNotAllowed' });
     expect((await call(req('POST', '/relay/workiq/verify', { provider: 'foundry' }), { workiq })).body).toEqual({ error: 'notSignedIn' });
@@ -1424,7 +1425,7 @@ process.stdin.on('data', (d) => {
     await call(req('PUT', '/relay/workiq', { method: 'cli' }));
     expect(await verify(cli('eula'))).toEqual({ status: 412, body: { error: 'workiqEulaRequired' } });
     expect((await call(req('POST', '/relay/workiq/eula', { provider: 'foundry' }), { workiqCli: cli('eula') })).status).toBe(400);
-    expect((await call(req('POST', '/relay/workiq/eula', { provider: 'copilotSdk', accept: true }), { workiqCli: cli('eula') })).body).toEqual({ error: 'foundryOnly' });
+    expect((await call(req('POST', '/relay/workiq/eula', { provider: 'other', accept: true }), { workiqCli: cli('eula') })).body).toEqual({ error: 'providerNotAllowed' });
     expect(calls().map((c) => c.name)).toEqual(['retrieve']);
     expect(await call(req('POST', '/relay/workiq/eula', { provider: 'foundry', accept: true }), { workiqCli: cli('eula') })).toEqual({ status: 200, body: { accepted: true } });
     expect(calls().at(-1)).toEqual({ name: 'accept_eula', arguments: { eulaUrl: WORKIQ_EULA_URL } });
@@ -1506,28 +1507,64 @@ process.stdin.on('data', (d) => {
     expect(r.status).toBe(200);
     const sections = (r.body as { sections: { key: string; question: string; answer: string; citations: { title: string }[]; searches: string[] }[] }).sections;
     expect(sections.map((s) => s.key)).toEqual(['org', 'locations', 'customers', 'workflow', 'dataCatalog', 'kpi', 'engagements', 'issues', 'purpose']);
-    // 1 section search + 3 wordings × 8 items + 1 search built from the purpose, then that purpose search once per source.
+    // 1 section question + its English keywords + 3 wordings × 8 items + 1 search built from the purpose, then that purpose search once per source.
     const searches = calls().filter((c) => c.name === 'retrieve');
-    expect(searches).toHaveLength(30);
+    expect(searches).toHaveLength(31);
+    expect(searches.map((c) => String(c.arguments.query))).toContain('Contoso Delivery KPI OKR targets scorecard');
     expect(searches.some((c) => String(c.arguments.query).includes('Reduce late deliveries'))).toBe(true);
     const bySource = searches.filter((c) => c.arguments.capabilities);
     expect(bySource.map((c) => c.arguments.capabilities)).toEqual([[{ name: 'OneDriveAndSharePoint' }], [{ name: 'Email' }], [{ name: 'Meetings' }], [{ name: 'TeamsMessages' }]]);
     expect(new Set(bySource.map((c) => c.arguments.query)).size).toBe(1);
+    // The KPI section also gets Microsoft 365 Copilot's synthesized answer to the short question, with the project as background.
+    const answers = calls().filter((c) => c.name === 'ask' && !c.arguments.fileUrls);
+    expect(answers).toHaveLength(1);
+    expect(String(answers[0]!.arguments.question)).toMatch(/Subject: What are the KPIs\/OKRs of Contoso Delivery\?\nBackground [\s\S]*Reduce late deliveries/);
     // Then the top files are read in full, each once (here both are the KPI item's: it found the overview in all four of its searches).
-    const reads = calls().filter((c) => c.name === 'ask');
+    const reads = calls().filter((c) => c.name === 'ask' && c.arguments.fileUrls);
     expect(reads.map((c) => c.arguments.fileUrls)).toEqual([['https://contoso.sharepoint.com/common.docx', 'https://contoso.sharepoint.com/kpi.xlsx']]);
     expect(String(reads[0]!.arguments.question)).toMatch(/Read only the attached files[\s\S]*KPI and OKR definitions[\s\S]*Reduce late deliveries/);
     const kpi = sections.find((s) => s.key === 'kpi')!;
-    expect(kpi.answer).toMatch(/^Deep read \(facts Work IQ ask extracted from the top 2 files\):\n- Overview <https:\/\/contoso\.sharepoint\.com\/common\.docx>\n- KPI scorecard <https:\/\/contoso\.sharepoint\.com\/kpi\.xlsx>\nFY27 NSAT actual 4\.2/);
+    expect(kpi.answer).toMatch(/^Microsoft 365 Copilot answer \(Work IQ ask; the links behind it are in the citations\):\nNSAT target 4\.5 \(FY27\) KPI scorecard\. See[^\n]*\n\nDeep read \(facts Work IQ ask extracted from the top 2 files\):\n- Overview <https:\/\/contoso\.sharepoint\.com\/common\.docx>\n- KPI scorecard <https:\/\/contoso\.sharepoint\.com\/kpi\.xlsx>\nFY27 NSAT actual 4\.2/);
     expect((kpi as unknown as { deepRead: unknown }).deepRead).toEqual({ files: 2 });
     expect(kpi.searches).toEqual(['KPI and OKR definitions with targets and actuals', 'metrics and attainment in scorecards, QBRs and business reviews', 'fiscal-year targets, commitments and success measures']);
-    expect(kpi.question.split('\n')).toHaveLength(4);
-    expect(kpi.citations.map((c) => c.title).sort()).toEqual(['KPI scorecard', 'Overview', 'Plan']);
+    expect(kpi.question.split('\n')).toHaveLength(5);
+    expect(kpi.citations.map((c) => c.title).sort()).toEqual(['KPI scorecard', 'Overview', 'Plan', 'teams.microsoft.com']);
     // The overview every search returned is sent once, with the item that ranked it highest.
     const all = sections.map((s) => s.answer).join('\n');
     expect(all.split('Shared overview').length - 1).toBe(1);
-    expect(all.split('NSAT target 4.5').length - 1).toBe(1);
+    expect(all.split('NSAT target 4.5 (FY27).').length - 1).toBe(1);
     expect(sections.filter((s) => s.key !== 'kpi').every((s) => s.citations.length === 0)).toBe(true);
+  });
+
+  it('words each section as the short question a person asks Copilot, plus English keywords, and synthesizes the figure sections', () => {
+    // 2026-11-19 (study §13): the long compound request kept only microsoft/innovation/hub/fy27 as search terms; this question kept kpi and okr.
+    const hub: WorkIqQuestion = { company: 'Microsoft', project: 'Microsoft Innovation Hub FY27', purpose: 'Hub の価値を高める', focus: '', asOf: '2026-11-19', lang: 'ja', timeZone: 'Asia/Tokyo', aspects: ['kpi', 'org', 'process'], topics: [], expand: true };
+    expect(workIqAspectQuery(hub, 'kpi')).toBe('Microsoft Innovation Hub FY27のKPI/OKRは何ですか?');
+    expect(workIqAspectKeywords(hub, 'kpi')).toBe('Microsoft Innovation Hub FY27 KPI OKR targets scorecard');
+    // A project that does not name the company gets it in front; no quotes or brackets.
+    const other = { ...hub, company: 'Contoso', project: 'Delivery', lang: 'en' as const };
+    expect(workIqAspectQuery(other, 'kpi')).toBe('What are the KPIs/OKRs of Contoso Delivery?');
+    expect(workIqTopicQuery(other, 'NSAT target')).toBe('Contoso Delivery NSAT target');
+    const plan = workIqPlan(hub, { sources: true, answers: true });
+    expect(plan.filter((p) => p.kind === 'answer').map((p) => [p.key, p.items])).toEqual([['kpi-answer', ['kpi']], ['process-answer', ['workflow']]]);
+    expect(plan.filter((p) => p.key.endsWith('-en')).map((p) => p.key)).toEqual(['kpi-en', 'org-en', 'process-en']);
+    // The ask-only route (no ladder) adds neither: every search there is already an ask.
+    expect(workIqPlan(hub, { ladder: false }).some((p) => p.kind === 'answer' || p.key.endsWith('-en'))).toBe(false);
+
+    const ask = (answer: string) => askAsRetrieval({ content: [{ type: 'text', text: answer }], structuredContent: { answer } }, 'ja');
+    const sec = { key: 'kpi', question: 'q', answer: 'search text', citations: [{ title: 'a', url: 'https://contoso.sharepoint.com/a.docx' }], sensitivity: null, fetchedAt: 't' };
+    const out = withAnswer(sec, ask('End-to-end Platform Wins: SE 1 人あたり 5 件 [戦略](https://contoso.sharepoint.com/s.pptx) [1](https://contoso.sharepoint.com/s.pptx)'), 'ja', 't') as typeof sec;
+    // The links are kept as citations, not as text: a live answer was 18,172 characters, mostly SharePoint links.
+    expect(out.answer).toMatch(/^Microsoft 365 Copilot の回答[^\n]*\nEnd-to-end Platform Wins: SE 1 人あたり 5 件 戦略\n\nsearch text$/);
+    expect(out.answer).not.toContain('要約回答');
+    expect(out.citations.map((c) => c.url)).toEqual(['https://contoso.sharepoint.com/a.docx', 'https://contoso.sharepoint.com/s.pptx']);
+    // Live answers began with a link's tail and repeated paragraphs that differed only in their citation markers.
+    const messy = withAnswer(sec, ask('://aka.ms/hub/x)\n\n- 5 wins [1](https://contoso.sharepoint.com/s.pptx)\n\n- 5 wins\n\n- 20%'), 'ja', 't') as typeof sec;
+    expect(messy.answer).toMatch(/^Microsoft 365 Copilot の回答[^\n]*\n- 5 wins\n\n- 20%\n\nsearch text$/);
+    expect(withAnswer(sec, ask('見つからない'), 'ja', 't')).toBe(sec);
+    expect(withAnswer(sec, new WorkIqError('workiqTimeout'), 'ja', 't')).toBe(sec);
+    // A section whose searches all failed is kept from the answer alone.
+    expect(withAnswer({ key: 'kpi', error: 'workiqTimeout' }, ask('KPI 5 件'), 'ja', 't')).toMatchObject({ key: 'kpi', answer: expect.stringContaining('KPI 5 件'), fetchedAt: 't' });
   });
 
   it('plans the purpose concepts: named things first, then each purpose clause and the focus, capped', () => {
@@ -1628,12 +1665,12 @@ process.stdin.on('data', (d) => {
     const svc = cli('deepnone');
     try {
       const sections = await svc.askSections(q);
-      const asks = calls().filter((c) => c.name === 'ask');
+      const asks = calls().filter((c) => c.name === 'ask' && (c.arguments.fileUrls || c.arguments.conversationId));
       expect(asks.map((c) => Object.keys(c.arguments).sort())).toEqual([['fileUrls', 'question'], ['conversationId', 'question']]);
       expect(asks[1]!.arguments.conversationId).toBe('c2');
       expect(String(asks[1]!.arguments.question)).toMatch(/other Microsoft 365 information/);
       const kpi = sections.find((s) => s.key === 'kpi') as { answer: string; citations: { url: string }[]; deepRead: unknown };
-      expect(kpi.answer).toMatch(/^Deep read \(not in the top 2 files, so asked again over all of Microsoft 365 in the same conversation\):\n[\s\S]*FY27 NSAT actual 4\.3/);
+      expect(kpi.answer).toMatch(/\n\nDeep read \(not in the top 2 files, so asked again over all of Microsoft 365 in the same conversation\):\n[\s\S]*FY27 NSAT actual 4\.3/);
       expect(kpi.deepRead).toEqual({ files: 2, followUp: true });
       expect(kpi.citations.map((c) => c.url)).toContain('https://contoso.sharepoint.com/qbr.docx');
     } finally {
@@ -1647,7 +1684,9 @@ process.stdin.on('data', (d) => {
     try {
       await restarted.askSections(q);
       expect(Number(readFileSync(`${log}.starts`, 'utf8'))).toBe(2);
-      expect(calls().filter((c) => !c.arguments.fileUrls).every((c) => c.name === 'retrieve')).toBe(true);
+      // Searches go through retrieve; ask is used only for the KPI section's synthesized answer and the deep read.
+      expect(calls().filter((c) => c.name === 'ask' && !c.arguments.fileUrls).map((c) => String(c.arguments.question))).toEqual([expect.stringMatching(/Subject: What are the KPIs\/OKRs of Contoso Delivery\?/)]);
+      expect(calls().some((c) => c.name === 'retrieve')).toBe(true);
     } finally {
       restarted.closeSession();
     }
@@ -1704,12 +1743,13 @@ process.stdin.on('data', (d) => {
     expect(small.answer.length).toBe(41);
   });
 
-  it('retrieves customer evidence with citations and labels for a Foundry pack, and never for Copilot', async () => {
+  it('retrieves customer evidence with citations and labels for a Foundry pack; Copilot needs its own saved model', async () => {
     await call(req('PUT', '/relay/workiq', { method: 'cli' }));
     expect((await call(req('POST', '/relay/workiq/ask', question), { workiqCli: cli('ok') })).body).toEqual({ error: 'foundryNotConfigured' });
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
-    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'copilotSdk' }), { workiqCli: cli('ok') })).body).toEqual({ error: 'foundryOnly' });
+    // A verified Foundry connection does not make Copilot ready: Work IQ material goes only to the provider the user set up.
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, provider: 'copilotSdk' }), { workiqCli: cli('ok') })).body).toEqual({ error: 'copilotNotConfigured' });
     expect(calls()).toEqual([]);
 
     const r = await call(req('POST', '/relay/workiq/ask', question), { workiqCli: cli('ok') });
@@ -1727,6 +1767,19 @@ process.stdin.on('data', (d) => {
     expect(retrieve!.arguments).toMatchObject({ strategy: 'grounding', timeZone: 'Asia/Tokyo' });
     expect(String(retrieve!.arguments.query)).toContain('"Contoso"');
     expect(String(retrieve!.arguments.query)).toContain('Reduce late deliveries');
+  });
+
+  it('retrieves for a GitHub Copilot pack once a Copilot model is saved, unless the outbound list lacks the Copilot hosts', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }));
+    const copilot = { ...question, provider: 'copilotSdk' };
+    const noCopilotHosts: RelayConfig = { ...STRICT_RELAY_CONFIG, outboundHosts: ['res.openai.azure.com', ...WORKIQ_OUTBOUND_HOSTS] };
+    expect((await call(req('POST', '/relay/workiq/ask', copilot), { workiqCli: cli('ok'), config: noCopilotHosts })).body).toEqual({ error: 'outboundNotAllowed' });
+    expect(calls()).toEqual([]);
+    const r = await call(req('POST', '/relay/workiq/ask', copilot), { workiqCli: cli('ok') });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ answer: 'Contoso: on-time delivery 92% in FY26 [^h1].', sensitivity: 'Confidential, General' });
+    expect(calls().map((c) => c.name)).toEqual(['retrieve']);
   });
 
   it('switching to the app registration forgets the CLI verification', async () => {

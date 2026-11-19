@@ -318,7 +318,7 @@ function separateVerifiedAt(s: SavedSpeech, foundry: RelayConnection | null, vau
   const key = vault.get('speechSeparateKey');
   return key && tokenMatches(s.verification, separateSpeechSignature(s.connection, null, s.verifiedAt, key)) ? s.verifiedAt : null;
 }
-/* D-44: Microsoft Foundry Decision model on its own resource and API key (decision.json + vault `decisionKey`). */
+/* D-37: Microsoft Foundry Decision model on its own resource and API key (decision.json + vault `decisionKey`). */
 
 const DECISION_FILE = 'decision.json';
 type SavedDecision = DecisionConnection & { verifiedAt: string; verification: string };
@@ -830,7 +830,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     };
   };
 
-  /** FR-325 / D-44: the Decision connection is reported only with a still-valid seal (key unchanged). */
+  /** FR-325 / D-37: the Decision connection is reported only with a still-valid seal (key unchanged). */
   const decisionStatus = () => {
     const d = loadDecision(vault.dir, config);
     return d ? { endpoint: d.endpoint, deployment: d.deployment, verifiedAt: decisionVerifiedAt(d, vault) } : null;

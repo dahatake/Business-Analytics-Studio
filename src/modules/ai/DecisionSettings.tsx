@@ -14,7 +14,7 @@ const isOwn = (code: string): code is OwnError => (OWN_ERRORS as readonly string
 type Message = { kind: 'saved' | 'deleted' } | { kind: 'error'; code: DecisionSaveError; providerStatus?: number };
 
 /**
- * D-44: the optional Microsoft Foundry Decision connection. It is saved only after a synthetic test request succeeds
+ * D-37: the optional Microsoft Foundry Decision connection. It is saved only after a synthetic test request succeeds
  * in the relay; the key goes to the relay vault only. When it is not set, KPI/OKR drafting works as before.
  */
 export function DecisionSettings() {

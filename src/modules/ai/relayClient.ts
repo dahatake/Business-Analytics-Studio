@@ -35,7 +35,7 @@ export interface RelayStatus {
   media: MediaStatus;
   /** FR-329: whether Speech uses the Foundry connection or a separate Speech resource. */
   speechConnection: SpeechConnectionStatus;
-  /** D-44: Microsoft Foundry Decision model on its own resource; `verifiedAt` is null once the key changes. */
+  /** D-37: Microsoft Foundry Decision model on its own resource; `verifiedAt` is null once the key changes. */
   decision: DecisionStatus | null;
 }
 
@@ -621,7 +621,7 @@ export function deleteSeparateSpeech(): Promise<SpeechSeparateResult> {
   return speechCall('/relay/speech/separate', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
 }
 
-/* ---------- D-44: Microsoft Foundry Decision model ---------- */
+/* ---------- D-37: Microsoft Foundry Decision model ---------- */
 
 export const DECISION_SAVE_ERRORS = [...DECISION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon'] as const;
 export type DecisionSaveError = (typeof DECISION_SAVE_ERRORS)[number] | 'failed';

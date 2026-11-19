@@ -1,5 +1,5 @@
 /**
- * D-44: Microsoft Foundry `Microsoft-Decision-1.1` for closed judgements (gates, filters, ranking) that the chat model used
+ * D-37: Microsoft Foundry `Microsoft-Decision-1.1` for closed judgements (gates, filters, ranking) that the chat model used
  * to make inside generated text. Shared by the relay and the browser; nothing here sends data.
  * API: POST <resource>/providers/microsoft/v1/systemone with `model` = deployment name, `state` and typed `questions`.
  */

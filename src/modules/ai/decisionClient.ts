@@ -6,7 +6,7 @@ import { currentScope } from '../../state/projects.ts';
 import { decisionScreen } from './relayClient.ts';
 import { isDecisionReady, useAiSettings } from './settingsStore.ts';
 
-/** D-44 / PARAM-191: per-use limits of the Decision pre-screen (one request per screening, tiny output). */
+/** D-37 / PARAM-191: per-use limits of the Decision pre-screen (one request per screening, tiny output). */
 export const DECISION_LIMITS = { dailyCalls: 30, minIntervalMs: AI_LIMITS.minIntervalMs, maxInputTokens: 30_000, maxOutputTokens: 256 } as const;
 
 export class DecisionUnavailable extends Error {
@@ -29,7 +29,7 @@ export async function decisionLive(req: DecisionRequest, signal?: AbortSignal): 
   const estimatedCostJpy = decisionCostJpy(estimatedInputTokens, outputTokens);
   const budget = checkBudget(readLedger(), new Date(), { use: req.use, estimatedInputTokens, maxOutputTokens: outputTokens, estimatedCostJpy },
     { ...AI_LIMITS, monthlyBudgetJpy: s.monthlyBudgetJpy }, DECISION_LIMITS);
-  if (!budget.allowed) throw new DecisionUnavailable(budget.reasons[0]);
+  if (!budget.allowed) throw new DecisionUnavailable(budget.reasons[0] ?? 'failed');
   const scope = currentScope();
   const attribution = { provider: 'foundry' as const, stage: 'decision', ...(scope !== null ? { scope } : {}) };
   try {

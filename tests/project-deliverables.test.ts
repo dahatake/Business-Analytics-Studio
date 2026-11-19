@@ -20,7 +20,7 @@ import { buildDraft, buildTaskDrafts, draftEntities, draftPrompt, draftRequest, 
 import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContribution, type StrategyData } from '../src/modules/project/strategy.ts';
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
-import { parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, unsupportedNumbers, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
+import { parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, unsupportedNumbers, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -84,16 +84,23 @@ describe('Copilot task repairs', () => {
     raw.entities = raw.entities.map((e) => e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
     return { step: 'asis', todoId: 'define-kpi-link', ctx: demoCtx({ pack: loadPack(raw) }), lang: 'ja', audience: 'internal' };
   };
+  const links = (options: RepairOption[]) => options.filter((o) => o.kind === 'link');
+  const creates = (options: RepairOption[]) => options.filter((o) => o.kind === 'create');
   const proposal = (optionIds: string[]) => ({ optionIds });
   const choice = (id: string, optionIds: string[], extra: object = {}) => ({ id, label: `Choice ${id}`, optionIds, rationale: 'Grounded in the supplied sources.', ...extra });
   const response = (choices: object[], extra: object = {}) => ({ choices, recommendedId: 'a', reasoning: 'A is better than B because it is fully sourced.', missingInformation: [], ...extra });
+  const kpiDraft: EntityDraft = {
+    name: { ja: '所要日数', en: 'Days required' }, description: { ja: '出典の課題を測る指標', en: 'Measures the sourced issue' },
+    unit: { ja: '日', en: 'days' }, period: { ja: '月次', en: 'Monthly' }, direction: 'decrease', scale: 'ratio',
+  };
+  const causeDraft: EntityDraft = { name: { ja: '工程間の待ち', en: 'Waiting between processes' }, description: { ja: '出典に基づく原因の仮説', en: 'Cause hypothesis from the source' } };
 
   it('repairs all missing KPI relationships without changing observations, sign-offs or unrelated fields', () => {
     const input = missingLinks();
-    const options = repairOptions(input);
+    const options = links(repairOptions(input));
     expect(options.length).toBeGreaterThan(0);
     const preview = previewResolution(input, proposal(options.map((o) => o.id)), options, '2026-11-16T00:00:00Z');
-    expect(preview.result.done).toBe(true);
+    expect(preview.result!.done).toBe(true);
     expect(resolutionRequest(input, options).use).toBe('deliverableDraft');
     const entities = preview.changes.flatMap((change) => change.op === 'upsert' ? [change.entity] : []);
     expect(entities).toHaveLength(5);
@@ -106,15 +113,16 @@ describe('Copilot task repairs', () => {
     expect(byId('asis', input.ctx)['define-kpi-link']!.done).toBe(false);
   });
 
-  it('rejects invented, duplicate and tampered edits, and does not claim a partial repair is resolved', () => {
+  it('rejects invented, duplicate, data-less and tampered edits, and does not claim a partial repair is resolved', () => {
     const input = missingLinks();
     const options = repairOptions(input);
-    const [first, second] = [options[0]!.id, options[1]!.id];
+    const [first, second] = links(options).map((o) => o.id) as [string, string];
     const parse = (value: object) => parseResolution(JSON.stringify(value), options);
-    expect(() => parse(response([choice('a', ['link:invented']), choice('b', [])]))).toThrow(/unknown/);
-    expect(() => parse(response([choice('a', [first, first]), choice('b', [])]))).toThrow(/duplicate/);
-    expect(() => parse(response([choice('a', [first]), choice('b', [])], { target: 999 }))).toThrow();
-    expect(() => parse(response([choice('a', [])]))).toThrow(); // a single choice gives the reviewer nothing to compare
+    expect(() => parse(response([choice('a', ['link:invented']), choice('b', [second])]))).toThrow(/unknown/);
+    expect(() => parse(response([choice('a', [first, first]), choice('b', [second])]))).toThrow(/duplicate/);
+    expect(() => parse(response([choice('a', [first]), choice('b', [second])], { target: 999 }))).toThrow();
+    expect(() => parse(response([choice('a', [first])]))).toThrow(); // a single choice gives the reviewer nothing to compare
+    expect(() => parse(response([choice('a', [first]), choice('b', [], { label: 'Escalate' })]))).toThrow(); // every choice must be a data draft
     expect(() => parse(response([choice('a', [first, second]), choice('b', [second, first])]))).toThrow(/duplicate choices/); // reordering is not an alternative
     expect(() => parse(response([choice('a', [first]), choice('b', [first], { rationale: ' grounded in the supplied sources ' })]))).toThrow(/duplicate choices/); // relabeling is a paraphrase
     const sameEdits = parse(response([
@@ -122,49 +130,104 @@ describe('Copilot task repairs', () => {
       choice('b', [first], { rationale: 'Only after the owner confirms the source.', tradeoffs: 'Delays completion until sign-off.' }),
     ]));
     expect(sameEdits.choices.map((c) => c.optionIds)).toEqual([[first], [first]]); // same edits, different reasoning
-    expect(() => parse(response([choice('a', [first]), choice('b', [])], { recommendedId: 'z' }))).toThrow(/recommends an unknown/);
-    expect(() => parse(response([choice('a', [first], { texts: { [first]: 'x' } }), choice('b', [])]))).toThrow(/unknown field/);
-    expect(() => parse(response([choice('a', []), choice('b', [], { label: ' choice A ' })]))).toThrow(/duplicate choices/);
-    expect(() => parse(response([choice('a', []), choice('b', [], { label: 'Escalate' })]))).toThrow(/missing/);
-    const parsed = parse(response([choice('a', [first]), choice('b', [], { tradeoffs: 'Leaves the task open.' })], { missingInformation: ['Owner decision'] }));
+    expect(() => parse(response([choice('a', [first]), choice('b', [second])], { recommendedId: 'z' }))).toThrow(/recommends an unknown/);
+    expect(() => parse(response([choice('a', [first], { texts: { [first]: 'x' } }), choice('b', [second])]))).toThrow(/unknown field/);
+    expect(() => parse(response([choice('a', [first], { drafts: { [first]: causeDraft } }), choice('b', [second])]))).toThrow(/unknown entity/);
+    const parsed = parse(response([choice('a', [first]), choice('b', [first, second], { tradeoffs: 'Links a less certain KPI.' })], { missingInformation: ['Owner decision'] }));
     expect(parsed.recommendedId).toBe('a');
-    expect(parsed.choices.map((c) => c.optionIds.length)).toEqual([1, 0]);
+    expect(parsed.choices.map((c) => c.optionIds.length)).toEqual([1, 2]);
     const one = options[0]!;
     const bad = one.kind === 'link' ? { ...one, relatedId: 'kpi-invented' } : { ...one, text: '999999' };
     expect(() => previewResolution(input, proposal([one.id]), [bad], 'now')).toThrow(/no longer/);
-    expect(previewResolution(input, proposal([one.id]), options, 'now').result.done).toBe(false);
+    expect(() => previewResolution(input, proposal([]), options, 'now')).toThrow(/changes no data/);
+    expect(previewResolution(input, proposal([one.id]), options, 'now').result!.done).toBe(false);
   });
 
-  it('asks for compared choices, forwards reviewer direction, and rejects AI field text with unsupported numbers', () => {
+  it('asks for compared data drafts, forwards reviewer direction, and rejects AI field text with unsupported numbers', () => {
     const input: ResolutionInput = { ctx: demoCtx(), step: 'asis', todoId: 'asis-doc', lang: 'ja', audience: 'internal' };
     const options = repairOptions(input);
     const field = options.find((o) => o.kind === 'field')!;
     const prompt = resolutionRequest(input, options, '  現場責任者の合意を優先する  ').prompt;
     expect(prompt).toContain('2 to 4 materially different choices');
     expect(prompt).toContain('comparing it with every other choice');
+    expect(prompt).toContain('must include at least one supplied option id');
     expect(prompt).toContain('"現場責任者の合意を優先する"');
     expect(resolutionRequest(input, options).prompt).not.toContain('Reviewer direction');
     expect(unsupportedNumbers('リードタイム１６日、改善率 37.5 %', '16 days')).toEqual(['37.5']);
     expect(() => previewResolution(input, { optionIds: [field.id], texts: { [field.id]: '在庫回転を 987654 回改善する。' } }, options, 'now')).toThrow(/unsupported numbers.*987654/);
     const rewritten = previewResolution(input, { optionIds: [field.id], texts: { [field.id]: '出典の記述に基づき、現状の課題を整理する。' } }, options, 'now');
     expect(rewritten.selected[0]).toMatchObject({ kind: 'field', text: '出典の記述に基づき、現状の課題を整理する。' });
-    expect(() => previewResolution(input, { optionIds: [], texts: { [field.id]: 'x' } }, options, 'now')).toThrow(/unknown field/);
+    expect(() => previewResolution(input, { optionIds: [field.id], texts: { 'field:asis:invented': 'x' } }, options, 'now')).toThrow(/unknown field/);
   });
 
-  it('does not suggest unsourced or hidden relationships, nor create missing KPI values or human decisions', () => {
+  it('never proposes unsourced or hidden relationships, and drafts new entities only for sourced, visible issues', () => {
     const input = missingLinks();
     const raw = clone();
     raw.entities = raw.entities.map((e) => e.kind === 'kpi' ? { ...e, sourceIds: [] } : e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
-    expect(repairOptions({ ...input, ctx: demoCtx({ pack: loadPack(raw) }) })).toEqual([]);
+    const unsourced = repairOptions({ ...input, ctx: demoCtx({ pack: loadPack(raw) }) });
+    expect(links(unsourced)).toEqual([]);
+    // With no linkable KPI the task still gets a data draft: a new KPI grounded in the issue's own sources.
+    expect(creates(unsourced)).toContainEqual(expect.objectContaining({ entityKind: 'kpi', issueId: 'issue-lead-time', newId: 'kpi-draft-lead-time', evidenceIds: ['src-annual-report'] }));
     const external = { ...input, audience: 'external' as const };
     const request = resolutionRequest(external, repairOptions(external));
     expect(request.prompt).not.toContain('issue-skills');
     expect(request.prompt).not.toContain('person-');
     expect(request.entities?.some((e) => e.kind === 'person')).toBe(false);
     expect(repairOptions({ ...input, todoId: 'define-decision' })).toEqual([]);
-    const empty = clone();
-    empty.entities = empty.entities.filter((e) => e.kind !== 'kpi').map((e) => e.kind === 'issue' ? { ...e, kpiIds: [] } : e);
-    expect(repairOptions({ ...input, ctx: demoCtx({ pack: loadPack(empty) }) })).toEqual([]);
+    const unsourcedIssues = clone();
+    unsourcedIssues.entities = unsourcedIssues.entities.filter((e) => e.kind !== 'kpi').map((e) => e.kind === 'issue' ? { ...e, kpiIds: [], sourceIds: [] } : e);
+    expect(repairOptions({ ...input, ctx: demoCtx({ pack: loadPack(unsourcedIssues) }) })).toEqual([]);
+  });
+
+  it('turns an approved KPI draft into linked data only after a person supplies the measured values and an owner', () => {
+    const input = missingLinks();
+    const options = creates(repairOptions(input));
+    expect(options).toHaveLength(5);
+    const ids = options.map((o) => o.id);
+    const drafts = Object.fromEntries(ids.map((id) => [id, kpiDraft]));
+    const parse = (value: object) => parseResolution(JSON.stringify(value), options);
+    expect(() => parse(response([choice('a', [ids[0]!]), choice('b', ids, { drafts })]))).toThrow(/without its draft/);
+    expect(() => parse(response([choice('a', [ids[0]!], { drafts: { [ids[0]!]: causeDraft } }), choice('b', ids, { drafts })]))).toThrow(/incomplete/);
+    expect(parse(response([choice('a', [ids[0]!], { drafts: { [ids[0]!]: kpiDraft } }), choice('b', ids, { drafts })])).choices).toHaveLength(2);
+
+    const pending = previewResolution(input, { optionIds: ids, drafts }, options, 'now');
+    expect(pending.result).toBeNull();
+    expect(pending.changes).toEqual([]);
+    expect(pending.missing).toHaveLength(ids.length * 4);
+    expect(() => previewResolution(input, { optionIds: ids, drafts: { ...drafts, [ids[0]!]: { ...kpiDraft, baseline: 777 } } }, options, 'now')).toThrow(/unsupported numbers.*777/);
+    const human = Object.fromEntries(options.map((o) => [o.id, o.issueId === 'issue-cash'
+      ? { baseline: 68, current: 61, target: 45, ownerId: 'person-sato-yui' }
+      : { baseline: 20, current: 18, target: 10, ownerId: 'person-sato-yui' }]));
+    expect(() => previewResolution(input, { optionIds: ids, drafts, human: { ...human, [ids[0]!]: { ...human[ids[0]!], target: human[ids[0]!]!.baseline } } }, options, 'now')).toThrow(/direction/);
+    const notPerson = previewResolution(input, { optionIds: ids, drafts, human: { ...human, [ids[0]!]: { ...human[ids[0]!], ownerId: 'issue-cash' } } }, options, 'now');
+    expect(notPerson.missing).toEqual([{ optionId: ids[0], field: 'ownerId' }]);
+
+    const preview = previewResolution(input, { optionIds: ids, drafts, human }, options, 'now');
+    expect(preview.missing).toEqual([]);
+    expect(preview.result!.done).toBe(true);
+    const entities = preview.changes.flatMap((c) => c.op === 'upsert' ? [c.entity] : []);
+    const kpis = entities.filter((e) => e.kind === 'kpi');
+    expect(kpis.map((k) => k.id)).toEqual(options.map((o) => o.newId));
+    expect(kpis[0]).toMatchObject({ author: 'ai', world: 'digital', type: 'metric', ownerId: 'person-sato-yui', direction: 'decrease', sourceIds: options[0]!.evidenceIds });
+    for (const option of options) {
+      const issue = entities.find((e) => e.id === option.issueId);
+      expect(issue?.kind === 'issue' && issue.kpiIds).toEqual([option.newId]);
+    }
+    expect(input.ctx.pack.byId.has(options[0]!.newId)).toBe(false);
+  });
+
+  it('drafts a sourced cause for each issue without one and links it on approval', () => {
+    const raw = clone();
+    raw.entities = raw.entities.map((e) => e.kind === 'issue' ? { ...e, causeIds: [] } : e);
+    const input: ResolutionInput = { step: 'asis', todoId: 'define-causes', ctx: demoCtx({ pack: loadPack(raw) }), lang: 'ja', audience: 'internal' };
+    const options = creates(repairOptions(input));
+    expect(options.map((o) => o.newId)).toContain('cause-draft-lead-time');
+    const ids = options.map((o) => o.id);
+    const preview = previewResolution(input, { optionIds: ids, drafts: Object.fromEntries(ids.map((id) => [id, causeDraft])) }, options, 'now');
+    expect(preview.missing).toEqual([]);
+    expect(preview.result!.done).toBe(true);
+    const cause = preview.changes.find((c) => c.op === 'upsert' && c.entity.id === options[0]!.newId);
+    expect(cause).toMatchObject({ entity: { kind: 'cause', world: 'real', author: 'ai', sourceIds: options[0]!.evidenceIds } });
   });
 
   it('repairs only failed document fields and refuses a regression of a previously completed numeric check', () => {
@@ -172,7 +235,7 @@ describe('Copilot task repairs', () => {
     const input: ResolutionInput = { ctx, step: 'asis', todoId: 'asis-doc', lang: 'ja', audience: 'internal' };
     const options = repairOptions(input);
     const preview = previewResolution(input, proposal(options.map((o) => o.id)), options, '2026-11-16');
-    expect(preview.result.done).toBe(true);
+    expect(preview.result!.done).toBe(true);
     expect(preview.changes).toEqual([]);
     expect(preview.deliverables.docs.asis?.problem?.author).toBe('ai');
     expect(preview.deliverables.signOffs).toEqual({});
@@ -192,21 +255,22 @@ describe('Copilot task repairs', () => {
     raw.entities = raw.entities.map((e) => e.id === 'issue-lead-time' && e.kind === 'issue' ? { ...e, description: { ja: '999 日', en: '999 days' }, kpiIds: [] } : e);
     // Linking a KPI makes an existing unsupported numeric assertion checkable, exposing a regression.
     const inconsistent = { ...missingLinks(), ctx: demoCtx({ pack: loadPack(raw) }) };
-    const links = repairOptions(inconsistent).filter((o) => o.kind === 'link' && o.relatedId === 'kpi-lead-time');
+    const leadTime = repairOptions(inconsistent).filter((o) => o.kind === 'link' && o.relatedId === 'kpi-lead-time');
     expect(byId('asis', inconsistent.ctx)['asis-reconcile']!.done).toBe(true);
-    expect(() => previewResolution(inconsistent, proposal(links.map((o) => o.id)), links, 'now')).toThrow(/regress/);
+    expect(() => previewResolution(inconsistent, proposal(leadTime.map((o) => o.id)), leadTime, 'now')).toThrow(/regress/);
   });
 
   it('uses the live gate without a mock fallback and reports invalid provider responses', async () => {
     const input = missingLinks();
     const options = repairOptions(input);
+    const [first, second] = links(options).map((o) => o.id) as [string, string];
     const request = { ...resolutionRequest(input, options) };
     writeLedger([]);
     setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, provider: 'copilotSdk' }));
-    const transport = vi.fn(async () => ({ text: JSON.stringify(response([choice('a', [options[0]!.id]), choice('b', [])])), inputTokens: 100, outputTokens: 100 }));
+    const transport = vi.fn(async () => ({ text: JSON.stringify(response([choice('a', [first]), choice('b', [second])])), inputTokens: 100, outputTokens: 100 }));
     setLiveTransport(transport);
     const result = await requestResolution(request, options, new AbortController().signal);
-    expect(result.choices[0]!.optionIds).toEqual([options[0]!.id]);
+    expect(result.choices[0]!.optionIds).toEqual([first]);
     expect(transport).toHaveBeenCalledWith(expect.objectContaining({ provider: 'copilotSdk', use: 'deliverableDraft' }), expect.any(AbortSignal));
     writeLedger([]);
     setLiveTransport(async () => ({ text: 'not JSON', inputTokens: 1, outputTokens: 1 }));

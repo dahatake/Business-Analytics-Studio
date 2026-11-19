@@ -650,7 +650,7 @@ export function parseKpiDraftResponse(text: string, input: DraftPromptInput): Co
   return { kpis, okrs, rejected };
 }
 
-/* ---------- D-44: Microsoft Foundry Decision pre-screen of the candidates ---------- */
+/* ---------- D-37: Microsoft Foundry Decision pre-screen of the candidates ---------- */
 
 /** PARAM-189: a candidate stays when the Decision model's probability that it measures the purpose is at least this. */
 export const SCREEN_MIN_RELEVANT = 0.5;

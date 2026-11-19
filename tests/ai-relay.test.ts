@@ -626,7 +626,7 @@ describe('relay secrets and connection', () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null }, speechConnection: { route: 'foundry', eligible: false, separate: null } } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null }, speechConnection: { route: 'foundry', eligible: false, separate: null }, decision: null } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -2336,5 +2336,86 @@ describe('FR-329 Speech on a separate Azure AI Speech resource, offered once Spe
     expect((await separate(body, { fetch: ok.fetch, ...fixed })).status).toBe(200);
     expect(await separate(body, { fetch: ok.fetch, ...fixed })).toEqual({ status: 429, body: { error: 'tooSoon' } });
     expect(ok.sent).toHaveLength(1);
+  });
+});
+
+describe('D-37 Microsoft Foundry Decision through the relay (FR-325 candidate pre-screen)', () => {
+  const DECISION_KEY = 'decision-FAKE-KEY-0123456789abcdef';
+  const ENDPOINT = 'http://127.0.0.1:9999';
+  const testConfig: RelayConfig = { ...STRICT_RELAY_CONFIG, testOutbound: true };
+  let clock = 29_000_000;
+  const ctx = (extra: Partial<RelayContext> = {}): Partial<RelayContext> => ({ config: testConfig, now: () => (clock += 10_000), ...extra });
+  type Sent = { url: string; headers: Record<string, string>; body: { model: string; state: unknown; questions: Record<string, unknown> } };
+  const decisionReply = (answers: Record<string, unknown>, status = 200) => {
+    const sent: Sent[] = [];
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      sent.push({ url: String(url), headers: init?.headers as Record<string, string>, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ answers, usage: { input_tokens: 545, output_tokens: 4 } }), { status });
+    };
+    return { sent, fetch };
+  };
+  const noul = (p: number) => ({ type: 'noul', noul: p });
+  const save = (body: unknown, extra: Partial<RelayContext> = {}) => call(req('PUT', '/relay/decision', body), ctx(extra));
+  const screenBody = {
+    use: 'kpiOkrScreen', state: { projectPurpose: 'p', candidates: [{ key: 'c1', name: 'n' }] },
+    questions: { r_c1: { type: 'noul', instructions: 'Relevant?' }, d_c1: { type: 'noul', instructions: 'Duplicate?' } },
+  };
+  const screen = (extra: Partial<RelayContext> = {}, body: unknown = screenBody) => call(req('POST', '/relay/decision/screen', body), ctx(extra));
+  const status = async () => ((await call(req('GET', '/relay/status'), ctx())).body as { decision: unknown }).decision;
+
+  afterEach(() => { for (const a of answers) expect(JSON.stringify(a.body)).not.toContain(DECISION_KEY); });
+
+  it('saves the connection only after the synthetic test passes, keeps the key in the vault, and seals it to that key', async () => {
+    expect(await status()).toBeNull();
+    expect((await save({ endpoint: 'https://evil.example', deployment: 'decision-1-1', key: DECISION_KEY })).body).toEqual({ error: 'invalidEndpoint' });
+    expect((await save({ endpoint: ENDPOINT, deployment: 'decision-1-1' })).body).toEqual({ error: 'keyMissing' });
+
+    const failing = decisionReply({}, 401);
+    expect(await save({ endpoint: ENDPOINT, deployment: 'decision-1-1', key: DECISION_KEY }, { fetch: failing.fetch })).toEqual({ status: 502, body: { error: 'unauthorized', providerStatus: 401 } });
+    expect(vault.get('decisionKey')).toBeUndefined();
+    expect(await status()).toBeNull();
+
+    const ok = decisionReply({ test: noul(0.97) });
+    const saved = await save({ endpoint: ENDPOINT, deployment: 'decision-1-1', key: DECISION_KEY }, { fetch: ok.fetch });
+    expect(saved).toEqual({ status: 200, body: { decision: { endpoint: ENDPOINT, deployment: 'decision-1-1', verifiedAt: expect.any(String) }, usage: { inputTokens: 545, outputTokens: 4 } } });
+    expect(ok.sent[0]).toMatchObject({ url: `${ENDPOINT}/providers/microsoft/v1/systemone`, headers: { 'api-key': DECISION_KEY }, body: { model: 'decision-1-1' } });
+    expect(JSON.stringify(ok.sent[0]!.body.state)).toContain('No business data');
+    expect(readFileSync(join(vault.dir, 'decision.json'), 'utf8')).not.toContain(DECISION_KEY);
+    expect((await call(req('PUT', '/relay/secrets/decisionKey', { value: 'x'.repeat(20) }))).status).toBe(404);
+
+    // Changing the key behind the seal invalidates the connection until it is tested again.
+    vault.set('decisionKey', `${DECISION_KEY}-other`);
+    expect(await status()).toMatchObject({ verifiedAt: null });
+    expect(await screen({ fetch: decisionReply({}).fetch })).toEqual({ status: 403, body: { allowed: false, reasons: ['notConfigured'] } });
+
+    expect(await call(req('DELETE', '/relay/decision'), ctx())).toEqual({ status: 200, body: { decision: null } });
+    expect(vault.get('decisionKey')).toBeUndefined();
+  });
+
+  it('screens with noul questions only and returns probabilities only when every answer is valid', async () => {
+    expect((await save({ endpoint: ENDPOINT, deployment: 'decision-1-1', key: DECISION_KEY }, { fetch: decisionReply({ test: noul(0.9) }).fetch })).status).toBe(200);
+
+    const good = decisionReply({ r_c1: noul(0.8), d_c1: noul(0.1) });
+    expect(await screen({ fetch: good.fetch })).toEqual({ status: 200, body: { answers: { r_c1: 0.8, d_c1: 0.1 }, inputTokens: 545, outputTokens: 4 } });
+    expect(good.sent[0]!.body).toEqual({ model: 'decision-1-1', state: screenBody.state, questions: screenBody.questions });
+
+    expect((await screen({ fetch: decisionReply({ r_c1: noul(0.8) }).fetch })).body).toEqual({ error: 'badProviderResponse' });
+    expect((await screen({ fetch: decisionReply({ r_c1: noul(1.4), d_c1: noul(0.1) }).fetch })).body).toEqual({ error: 'badProviderResponse' });
+    expect((await screen({ fetch: decisionReply({}, 422).fetch })).body).toEqual({ error: 'invalidApiRequest', providerStatus: 422 });
+
+    const never = decisionReply({});
+    const bad = [
+      { ...screenBody, use: 'kpiOkrDraft' },
+      { ...screenBody, questions: { r_c1: { type: 'choice', instructions: 'x', choices: ['a'] } } },
+      { ...screenBody, questions: { 'R-1': { type: 'noul', instructions: 'x' } } },
+      { ...screenBody, questions: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`q${i}`, { type: 'noul', instructions: 'x' }])) },
+      { ...screenBody, extra: 1 },
+    ];
+    for (const body of bad) expect((await screen({ fetch: never.fetch }, body)).body).toEqual({ error: 'invalidBody' });
+    expect(never.sent).toEqual([]);
+
+    const strict: RelayConfig = { ...testConfig, testOutbound: false };
+    expect((await call(req('POST', '/relay/decision/screen', screenBody), { config: strict, now: () => (clock += 10_000), fetch: never.fetch })).status).toBe(403);
+    expect(never.sent).toEqual([]);
   });
 });

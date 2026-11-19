@@ -56,7 +56,7 @@ export interface AiSettingsState {
   media: MediaStatus;
   /** FR-329: the Speech route (Foundry connection or a separate Speech resource) held by the relay. */
   speechConnection: SpeechConnectionStatus;
-  /** D-44: Microsoft Foundry Decision connection held by the relay (never the key). */
+  /** D-37: Microsoft Foundry Decision connection held by the relay (never the key). */
   decision: DecisionStatus | null;
   saveDecision: (input: DecisionInput) => Promise<DecisionSaveResult>;
   deleteDecision: () => Promise<DecisionSaveResult>;
@@ -347,7 +347,7 @@ export function isSpeechReady(s: Pick<AiSettingsState, 'media' | 'entra' | 'spee
   return sep.auth === 'entraId' ? s.entra?.signedIn === true : true;
 }
 
-/** D-44: the Decision pre-screen runs only with a still-valid relay check and the same send consent and live switch as chat. */
+/** D-37: the Decision pre-screen runs only with a still-valid relay check and the same send consent and live switch as chat. */
 export function isDecisionReady(s: Pick<AiSettingsState, 'decision' | 'liveEnabled' | 'sendConsent' | 'relayReachable'>): boolean {
   return s.relayReachable && s.liveEnabled && s.sendConsent && !!s.decision?.verifiedAt;
 }

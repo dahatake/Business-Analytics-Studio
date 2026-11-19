@@ -291,7 +291,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
     try {
       const pf = preflight(activeRequest);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
-      // D-44: the Decision model screens out unrelated and duplicate candidates before chat chooses and words them.
+      // D-37: the Decision model screens out unrelated and duplicate candidates before chat chooses and words them.
       let screenedExt = input.ext;
       let screenNote = '';
       let chatRequest = activeRequest;

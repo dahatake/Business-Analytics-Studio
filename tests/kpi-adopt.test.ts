@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   addKpiDrafts, addOkrDrafts, applyCopilotPick, discardKpiDraft, emptyDrafts, kpiAdoptState, kpiDraftPrompt, okrAdoptState,
   parseKpiDraftResponse, parseTarget, saveAllDrafts, saveKpiDraft, saveOkrDraft, MAX_AI_KPIS, type DraftPromptInput,
-  applyMissingKpiDraftResponse, missingKpiDraftPrompt, missingKpiDrafts,
+  applyMissingKpiDraftResponse, missingKpiDraftPrompt, missingKpiDrafts, applyKpiScreen, kpiScreenRequest,
 } from '../src/modules/project/kpiAdopt.ts';
+import { validateDecisionRequest } from '../src/ai/decision.ts';
 import type { KpiData } from '../src/modules/project/model.ts';
 import { samplePack } from '../src/data/sample.ts';
 
@@ -304,5 +305,36 @@ describe('Copilot drafts (kpiOkrDraft)', () => {
     expect(composite).toMatchObject({ objective: '勝ち筋を増やす', reason: 'r3' });
     expect(composite.keyResults[0]!.kpiId).toBe(wins.id);
     expect(applyCopilotPick(pick, input({ drafts: r.drafts })).added).toBe(0);
+  });
+});
+
+describe('Decision pre-screen of the candidates (FR-325 / D-37)', () => {
+  it('asks two yes/no questions per open candidate under opaque keys and passes validation', () => {
+    const data: KpiData = { kpis: [{ id: 'x', name: 'Engagements Led', unit: 'engagements', baseline: 0, current: 0, target: 50, deadline: '2027-03-31' }], okrs: [] };
+    const drafts = addKpiDrafts(['okr.kpi:k-rate'], ext, empty(), emptyDrafts(), 'ja').drafts;
+    const plan = kpiScreenRequest(input({ data, drafts }))!;
+    expect([...plan.keys.values()]).toEqual(['okr.kpi:k-reach', 'okr.kpi:k-wins', 'okr.kpi:k-eng', 'okr.obj:o-growth']);
+    expect(Object.keys(plan.request.questions)).toEqual(['r_c1', 'd_c1', 'r_c2', 'd_c2', 'r_c3', 'd_c3', 'r_c4', 'd_c4']);
+    expect(plan.request.state).toMatchObject({ projectPurpose: '顧客接点の拡大', existingKpis: ['Engagements Led (50 engagements)'] });
+    expect(JSON.stringify(plan.request)).not.toContain('okr.kpi:');
+    expect(validateDecisionRequest(plan.request)).not.toBeNull();
+    expect(kpiScreenRequest(input({ purpose: ' ' }))).toBeNull();
+  });
+
+  it('drops duplicates and unrelated candidates, keeps the rest by relevance, and refuses partial answers', () => {
+    const plan = kpiScreenRequest(input())!;
+    const answers = { r_c1: 0.9, d_c1: 0.1, r_c2: 0.6, d_c2: 0.1, r_c3: 0.95, d_c3: 0.8, r_c4: 0.2, d_c4: 0.0, r_c5: 0.7, d_c5: 0.2 };
+    const out = applyKpiScreen(ext, plan, answers)!;
+    expect(out.ext.kpis.map((k) => k.id)).toEqual(['k-reach', 'k-wins']);
+    expect(out.ext.objectives.map((o) => o.id)).toEqual(['o-growth']);
+    expect(out.excluded).toEqual([
+      { candidateId: 'okr.kpi:k-eng', why: 'duplicate', relevant: 0.95, duplicate: 0.8 },
+      { candidateId: 'okr.kpi:k-rate', why: 'unrelated', relevant: 0.2, duplicate: 0 },
+    ]);
+    expect(out.kept).toBe(3);
+    const filtered = parseKpiDraftResponse(JSON.stringify({ kpis: [{ id: 'okr.kpi:k-eng', reason: 'x' }], okrs: [] }), input({ ext: out.ext }));
+    expect(filtered.kpis).toEqual([]);
+    const { r_c2: _dropped, ...partial } = answers;
+    expect(applyKpiScreen(ext, plan, partial)).toBeNull();
   });
 });

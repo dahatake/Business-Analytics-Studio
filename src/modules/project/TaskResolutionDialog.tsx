@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Radio, RadioGroup, Textarea } from '@fluentui/react-components';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Radio, RadioGroup, Select, Textarea } from '@fluentui/react-components';
 import { AiLiveError, preflight } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
+import { loc } from '../../state/text.ts';
 import { reasonKey } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { batchSourceStamp } from './batchDraft.ts';
@@ -15,13 +16,24 @@ import { evaluateStep, normalizeDeliverables, resultKey, STEP_DEFS, todoKey } fr
 import { Refs, todoHref, useCheckContext } from './deliverablesUi.tsx';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
 import {
-  previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, RESOLUTION_GUIDANCE_MAX,
-  type RepairOption, type ResolutionInput, type ResolutionProposal,
+  HUMAN_FIELDS, humanDescription, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo,
+  RESOLUTION_GUIDANCE_MAX, type HumanField, type HumanValues, type RepairOption, type ResolutionInput, type ResolutionProposal,
 } from './taskResolution.ts';
 
 type ReadyResolution = { input: ResolutionInput; options: RepairOption[]; proposal: ResolutionProposal; stamp: string };
-type Applied = 'repaired' | 'decided';
+/** What the reviewer typed for a KPI draft, kept as text so partial input such as "1." survives re-rendering. */
+type HumanInput = Partial<Record<HumanField, string>>;
 const OTHER = '__other';
+const NUMBER_FIELDS = HUMAN_FIELDS.filter((f): f is Exclude<HumanField, 'ownerId'> => f !== 'ownerId');
+
+/** An emptied field is NaN (still missing) rather than undefined, so it never silently falls back to the AI value. */
+type HumanByOption = Record<string, HumanValues>;
+function humanValues(raw: Record<string, HumanInput>): HumanByOption {
+  return Object.fromEntries(Object.entries(raw).map(([id, values]) => [id, {
+    ...Object.fromEntries(NUMBER_FIELDS.flatMap((f) => values[f] === undefined ? [] : [[f, values[f]!.trim() ? Number(values[f]!.normalize('NFKC').trim()) : Number.NaN]])),
+    ...(values.ownerId ? { ownerId: values.ownerId } : {}),
+  }]));
+}
 
 export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const { t, lang } = useI18n();
@@ -34,9 +46,10 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const [ready, setReady] = useState<ReadyResolution | null>(null);
   const [choiceId, setChoiceId] = useState('');
   const [otherText, setOtherText] = useState('');
+  const [humanRaw, setHumanRaw] = useState<Record<string, HumanInput>>({});
   const [progress, setProgress] = useState<{ stage: AiStage; startedAt?: number } | null>(null);
   const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState<Applied | null>(null);
+  const [applied, setApplied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
   const running = useRef(false);
@@ -44,6 +57,11 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const step = Object.values(STEP_DEFS).find((def) => def.todos.some((todo) => todo.id === todoId))!.step;
   const input: ResolutionInput = { step, ctx, lang, audience, todoId };
   const result = resolutionTodo(input);
+  // Without a grounded draft there is nothing to approve, so Copilot is not called at all.
+  const draftable = useMemo(() => repairOptions({ step, ctx, lang, audience, todoId }).length > 0, [step, ctx, lang, audience, todoId]);
+  // Owners are chosen locally and never sent to Copilot; an external audience only sees shareable people.
+  const people = useMemo(() => ctx.pack.pack.entities.filter((e) => e.kind === 'person' && (audience === 'internal' || e.classification === 'shareable')), [ctx, audience]);
+  const human = humanValues(humanRaw);
   const busy = progress !== null || applying;
   const stale = !!ready && !applied && batchSourceStamp() !== ready.stamp;
   const other = choiceId === OTHER;
@@ -53,12 +71,13 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   let previewError: string | null = null;
   if (ready && choice && !stale && !applied) {
     try {
-      preview = previewResolution(ready.input, choice, ready.options, new Date().toISOString());
+      preview = previewResolution(ready.input, { ...choice, human }, ready.options, new Date().toISOString());
     } catch (value) {
       previewError = value instanceof Error ? value.message : String(value);
     }
   }
-  const canApply = !busy && !stale && !applied && !!ready && (other ? !!otherText.trim() : !!preview);
+  // Only a complete, validated data draft can be approved; Other is a direction for regenerating drafts.
+  const canApply = !busy && !stale && !applied && !!ready && !other && !!preview && !preview.missing.length;
 
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
@@ -76,7 +95,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   };
 
   const generate = async (guidance = '') => {
-    if (running.current || result.done) return;
+    if (running.current || result.done || !draftable) return;
     running.current = true;
     const abort = new AbortController();
     controller.current = abort;
@@ -120,28 +139,27 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
     try {
       assertStamp(ready.stamp);
       const at = new Date().toISOString();
-      const own = otherText.trim();
-      if (other && !own) throw new Error(t('dlv.resolve.otherRequired'));
-      if (!other && !choice) throw new Error(t('dlv.resolve.selectRequired'));
-      const plan = choice && !other ? previewResolution(ready.input, choice, ready.options, at) : null;
+      if (other || !choice) throw new Error(t('dlv.resolve.selectRequired'));
+      const plan = previewResolution(ready.input, { ...choice, human }, ready.options, at);
+      if (plan.missing.length) throw new Error(missingText(plan.missing));
       let data = normalizeDeliverables(useDeliverables.getState().value);
-      if (plan?.selected.length) {
-        const nonPackStamp = batchSourceStamp(false);
-        await commitPackChanges(plan.changes, scope, ready.input.ctx.pack);
-        assertStamp(nonPackStamp, false);
-        if (currentScope() !== scope) throw new Error(t('dlv.resolve.changed'));
-        data = plan.changes.length ? normalizeDeliverables(useDeliverables.getState().value) : plan.deliverables;
-      }
+      const nonPackStamp = batchSourceStamp(false);
+      await commitPackChanges(plan.changes, scope, ready.input.ctx.pack);
+      assertStamp(nonPackStamp, false);
+      if (currentScope() !== scope) throw new Error(t('dlv.resolve.changed'));
+      data = plan.changes.length ? normalizeDeliverables(useDeliverables.getState().value) : plan.deliverables;
       const checked = evaluateStep(step, { ...ready.input.ctx, pack: loaded, deliverables: data }).find((r) => r.todo.id === todoId)!;
       const missing = ready.proposal.missingInformation.length ? [t('dlv.resolve.missing'), ...ready.proposal.missingInformation].join('\n') : '';
-      const comparison = choice?.id === recommended.id && !other ? t('dlv.resolve.recordIsRecommended') : t('dlv.resolve.recordRecommended', { label: recommended.label });
+      const comparison = choice.id === recommended.id ? t('dlv.resolve.recordIsRecommended') : t('dlv.resolve.recordRecommended', { label: recommended.label });
+      const values = plan.selected.map((option) => humanDescription(option, ready.input, plan.drafts[option.id], human[option.id])).filter(Boolean);
       const text = [
-        other ? `${t('dlv.resolve.recordOther')}\n${own}` : t('dlv.resolve.recordChoice', { label: choice!.label }),
+        t('dlv.resolve.recordChoice', { label: choice.label }),
         comparison,
-        other ? '' : choice!.rationale,
-        other ? '' : choice!.tradeoffs ?? '',
+        choice.rationale,
+        choice.tradeoffs ?? '',
         `${t('dlv.resolve.why')}\n${ready.proposal.reasoning}`,
-        ...(plan?.selected ?? []).map((option) => repairDescription(option, ready.input)),
+        ...plan.selected.map((option) => repairDescription(option, ready.input, plan.drafts[option.id])),
+        values.length ? [t('dlv.resolve.recordValues'), ...values].join('\n') : '',
         missing,
         t(resultKey(checked.outcome!.code), checked.outcome!.vars),
       ].filter((part) => part.trim()).join('\n\n');
@@ -154,7 +172,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       });
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('dlv.batch.storageError'));
-      setApplied(plan?.selected.length ? 'repaired' : 'decided');
+      setApplied(true);
     } catch (value) {
       setError(errorText(value));
     } finally {
@@ -162,6 +180,12 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       setApplying(false);
     }
   };
+
+  function missingText(missing: { field: HumanField }[]) {
+    return t('dlv.resolve.human.missing', { fields: [...new Set(missing.map((m) => t(`dlv.resolve.human.${m.field}`)))].join(lang === 'ja' ? '、' : ', ') });
+  }
+  const setHuman = (optionId: string, field: HumanField, value: string) =>
+    setHumanRaw((prev) => ({ ...prev, [optionId]: { ...prev[optionId], [field]: value } }));
 
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open && !busy) close(); }}>
@@ -176,6 +200,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
             {error && <p role="alert" data-testid="dlv-resolve-error">{error}</p>}
             {cancelled && <p role="status">{t('dlv.batch.interrupted')}</p>}
             {stale && <p role="alert">{t('dlv.resolve.changed')}</p>}
+            {!draftable && !result.done && <p role="status" data-testid="dlv-resolve-no-draftable">{t('dlv.resolve.noDraftable')}</p>}
             {ready && recommended && !applied && (
               <>
                 <div className="dlv-resolve-recommendation" data-testid="dlv-resolve-recommendation">
@@ -194,7 +219,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                     const edits = item.optionIds.map((id) => {
                       const option = ready.options.find((o) => o.id === id)!;
                       const text = item.texts?.[id];
-                      return { option: text && option.kind === 'field' ? { ...option, text } : option };
+                      return text && option.kind === 'field' ? { ...option, text } : option;
                     });
                     return (
                       <div key={item.id} className="dlv-resolve-choice" data-testid={`dlv-resolve-choice-${item.id}`} data-recommended={item.id === recommended.id}>
@@ -203,13 +228,33 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                         <div className="dlv-resolve-choice-body">
                           <p className="proj-prewrap">{item.rationale}</p>
                           {item.tradeoffs && <p className="proj-prewrap"><strong>{t('dlv.resolve.tradeoffs')}</strong>{' '}{item.tradeoffs}</p>}
-                          {edits.length ? (
-                            <ol data-testid={`dlv-resolve-edits-${item.id}`}>
-                              {edits.map(({ option }) => (
-                                <li key={option.id}><p className="proj-prewrap">{repairDescription(option, ready.input)}</p><Refs refs={option.evidenceIds.map((evidenceId) => ({ type: 'entity', id: evidenceId }))} /></li>
-                              ))}
-                            </ol>
-                          ) : <p>{t('dlv.resolve.noEdits')}</p>}
+                          <ol data-testid={`dlv-resolve-edits-${item.id}`}>
+                            {edits.map((option) => (
+                              <li key={option.id}>
+                                <p className="proj-prewrap">{repairDescription(option, ready.input, item.drafts?.[option.id])}</p>
+                                <Refs refs={option.evidenceIds.map((evidenceId) => ({ type: 'entity', id: evidenceId }))} />
+                                {item.id === choiceId && option.kind === 'create' && option.entityKind === 'kpi' && (
+                                  <fieldset className="dlv-resolve-human" data-testid={`dlv-resolve-human-${option.newId}`}>
+                                    <legend>{t('dlv.resolve.human.title', { name: item.drafts?.[option.id]?.name[lang] ?? option.newId })}</legend>
+                                    <p>{t('dlv.resolve.human.note')}</p>
+                                    {NUMBER_FIELDS.map((field) => (
+                                      <Field key={field} label={t(`dlv.resolve.human.${field}`)} required>
+                                        <Input inputMode="decimal" disabled={busy} value={humanRaw[option.id]?.[field] ?? String(item.drafts?.[option.id]?.[field] ?? '')}
+                                          onChange={(_, d) => setHuman(option.id, field, d.value)} data-testid={`dlv-resolve-human-${option.newId}-${field}`} />
+                                      </Field>
+                                    ))}
+                                    <Field label={t('dlv.resolve.human.ownerId')} required>
+                                      <Select disabled={busy} value={humanRaw[option.id]?.ownerId ?? ''} onChange={(_, d) => setHuman(option.id, 'ownerId', d.value)}
+                                        data-testid={`dlv-resolve-human-${option.newId}-ownerId`}>
+                                        <option value="">{t('dlv.resolve.human.noOwner')}</option>
+                                        {people.map((person) => <option key={person.id} value={person.id}>{loc(person.name, lang)}</option>)}
+                                      </Select>
+                                    </Field>
+                                  </fieldset>
+                                )}
+                              </li>
+                            ))}
+                          </ol>
                         </div>
                       </div>
                     );
@@ -225,23 +270,23 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                   </div>
                 </RadioGroup>
                 {previewError && <p role="alert" data-testid="dlv-resolve-preview-error">{previewError}</p>}
-                {preview && (
+                {preview && (preview.result ? (
                   <p role="status" data-testid="dlv-resolve-preview">
-                    {t(preview.selected.length ? 'dlv.resolve.preview' : 'dlv.resolve.previewDecision', { result: t(resultKey(preview.result.outcome!.code), preview.result.outcome!.vars) })}
+                    {t('dlv.resolve.preview', { result: t(resultKey(preview.result.outcome!.code), preview.result.outcome!.vars) })}
                   </p>
-                )}
+                ) : <p role="status" data-testid="dlv-resolve-preview">{missingText(preview.missing)}</p>)}
                 {other && <p role="status" data-testid="dlv-resolve-preview">{t('dlv.resolve.previewOther')}</p>}
               </>
             )}
             {applied && (
               <p role="status" data-testid="dlv-resolve-result">
-                {t(applied === 'decided' ? 'dlv.resolve.decided' : result.done ? 'dlv.resolve.resolved' : 'dlv.resolve.remaining')}
+                {t(result.done ? 'dlv.resolve.resolved' : 'dlv.resolve.remaining')}
               </p>
             )}
             <p><a href={todoHref(result)} onClick={() => { if (!busy) close(); }}>{t('dlv.task.openAction')}</a></p>
           </DialogContent>
           <DialogActions>
-            {!applied && <Button disabled={busy || result.done} onClick={() => void generate()} data-testid="dlv-resolve-generate">{t('dlv.resolve.generate')}</Button>}
+            {!applied && <Button disabled={busy || result.done || !draftable} onClick={() => void generate()} data-testid="dlv-resolve-generate">{t('dlv.resolve.generate')}</Button>}
             {!applied && ready && other && (
               <Button disabled={busy || result.done || !otherText.trim()} onClick={() => void generate(otherText)} data-testid="dlv-resolve-regenerate">{t('dlv.resolve.regenerate')}</Button>
             )}

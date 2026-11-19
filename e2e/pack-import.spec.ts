@@ -8,6 +8,10 @@ import { COLLECTION_SECTIONS } from '../src/data/collection.ts';
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 async function scan(page: Page) {
+  // The motion test plays entrance fades; contrast is judged on the settled screen, so wait for finite animations
+  // (infinite ones such as the aurora never finish and are skipped).
+  await page.waitForFunction(() => document.getAnimations().every((a) =>
+    a.playState !== 'running' || !Number.isFinite(Number(a.effect?.getComputedTiming().endTime))));
   const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
     .exclude('[data-tabster-dummy]')
     .analyze();

@@ -158,6 +158,9 @@ test.describe('Copilot task resolution', () => {
 
   test('lets the reviewer write their own answer under Other, regenerate with it, and record it', async ({ page }) => {
     const { requests, todo } = await prepare(page, 'ja');
+    // The 5 s send interval is judged on Date; freeze it so a slow axe scan cannot outlast the interval before the refusal check.
+    const sentAt = Date.now();
+    await page.clock.setFixedTime(sentAt);
     await todo.getByTestId('dlv-resolve-define-kpi-link').click();
     await generate(page);
     await page.getByTestId('dlv-resolve-radio-other').check();
@@ -173,7 +176,7 @@ test.describe('Copilot task resolution', () => {
     await expect(page.getByTestId('dlv-resolve-choice-link-all')).toBeVisible();
     await expect(page.getByTestId('dlv-resolve-other-text')).toHaveValue(own);
     expect(requests).toHaveLength(1);
-    await page.waitForTimeout(5_100);
+    await page.clock.setFixedTime(sentAt + 5_100);
     await page.getByTestId('dlv-resolve-regenerate').click();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(page.getByTestId('dlv-resolve-radio-link-all')).toBeChecked();

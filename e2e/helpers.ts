@@ -58,14 +58,19 @@ export async function seedDeviceData(page: Page, records: Record<string, string>
   await page.evaluate(async (records) => {
     const session = await (await fetch('/device/session', { method: 'POST' })).json();
     const headers = { 'x-bas-device': session.token, 'x-bas-device-test': localStorage.getItem('bas.device.test')!, 'content-type': 'application/json' };
-    const stateResponse = await fetch('/device/state', { headers });
-    if (!stateResponse.ok) throw new Error('Device fixture read failed');
-    const state = await stateResponse.json() as DeviceSnapshot;
-    const response = await fetch('/device/state', {
-      method: 'POST', headers,
-      body: JSON.stringify({ changes: Object.entries(records).map(([key, value]) => ({ key, value, expected: state.records[key]?.revision ?? 0 })) }),
-    });
-    if (!response.ok) throw new Error('Device fixture write failed');
+    // The booting app may save a key (e.g. its default AI settings) between our read and write; the fixture's value wins.
+    for (let attempt = 1; ; attempt++) {
+      const stateResponse = await fetch('/device/state', { headers });
+      if (!stateResponse.ok) throw new Error('Device fixture read failed');
+      const state = await stateResponse.json() as DeviceSnapshot;
+      const response = await fetch('/device/state', {
+        method: 'POST', headers,
+        body: JSON.stringify({ changes: Object.entries(records).map(([key, value]) => ({ key, value, expected: state.records[key]?.revision ?? 0 })) }),
+      });
+      if (response.ok) break;
+      if (response.status !== 409 || attempt >= 5) throw new Error(`Device fixture write failed (${response.status})`);
+      await new Promise((r) => setTimeout(r, 50 * attempt));
+    }
     for (const [key, value] of Object.entries(records)) if (!key.startsWith('bas.binary.')) localStorage.setItem(key, value);
   }, records);
 }

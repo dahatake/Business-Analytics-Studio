@@ -172,6 +172,36 @@ to GUIDs before any call.
 For a new resource, prefer `disableLocalAuth: true` (keys off) with a custom subdomain, and give each user only the
 *Cognitive Services OpenAI User* role.
 
+## Microsoft Foundry Decision
+
+FR-325 / D-37. In the existing **AI Settings** dialog, the **Microsoft Foundry Decision** section offers the same
+**API key** / **Microsoft Entra ID** choice as other Foundry models. Decision is a separate deployment selection, not
+a chat-completions model; selecting it does not change the chat connection.
+
+- **API key:** enter the Foundry resource origin (`https://<subdomain>.services.ai.azure.com`), Decision deployment name
+  and resource key. An empty key keeps the existing Decision key only for an API-key connection.
+- **Microsoft Entra ID:** reuse the shared Foundry sign-in, choose a directory, resource and Decision deployment.
+  `POST /relay/entra/inspect { resourceId, tenantId, kind: 'decision' }` lists only succeeded `Microsoft-Decision-*`
+  deployments, including models that explicitly do not support chat completions. The picker derives the
+  `services.ai.azure.com` origin from the resource's custom subdomain. Decision deployments are excluded from the chat picker.
+- Give consent to the synthetic test, then **Test and save**. `PUT /relay/decision` accepts `{ endpoint, deployment,
+  key? }` (legacy API-key format) or `{ endpoint, deployment, auth: 'entraId', tenantId }` (no key).
+  Both test and screening call `/providers/microsoft/v1/systemone`; the latter uses the
+  `https://cognitiveservices.azure.com/.default` scope and sends only `Authorization: Bearer ...`, never `api-key`.
+  The chat-completions permission badge and OpenAI-role assignment do not apply to Decision: the synthetic test
+  verifies actual inference access. Permission failures are shown; no roles are assigned automatically.
+
+The relay saves only a successful test. A failed authentication change leaves the previous connection intact.
+`decision.json` contains no key or token. API-key checks retain their existing HMAC format; Entra checks bind the
+resource endpoint, deployment, resource tenant and signed-in account (including its tenant), sealed with the shared
+vault-only `foundryEntraKey`. Sign-out removes that seal key, so signing back in still requires a new test.
+Account changes or tampered settings invalidate verification. Expired-token and conditional-access errors are returned
+explicitly; an Entra connection never falls back to an API key. Both methods share the existing consent, live-mode and budget gates.
+
+When an outbound allowlist is configured, include the Decision resource host; Entra ID also needs the existing
+`login.microsoftonline.com` and `management.azure.com` entries.
+See Microsoft's [Decision API authentication examples](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision#call-the-decision-api).
+
 ## Azure AI Speech and Azure AI Vision
 
 FR-328 (replaces FR-324's separate connections). AI Settings → **Speech settings** (Azure AI Speech) and **Real

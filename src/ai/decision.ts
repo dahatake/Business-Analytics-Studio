@@ -33,13 +33,13 @@ export const DECISION_PRICE = {
 
 export const decisionCostJpy = (inputTokens: number, outputTokens: number) => ((inputTokens + outputTokens) * DECISION_PRICE.jpyPerMTokens) / 1_000_000;
 
-export interface DecisionConnection {
+export type DecisionConnection = {
   /** Foundry resource origin, e.g. https://name.services.ai.azure.com */
   endpoint: string;
   deployment: string;
-}
+} & ({ auth?: 'apiKey'; tenantId?: undefined } | { auth: 'entraId'; tenantId: string });
 
-export const DECISION_INPUT_ERRORS = ['invalidBody', 'invalidEndpoint', 'invalidDeployment', 'invalidKey'] as const;
+export const DECISION_INPUT_ERRORS = ['invalidBody', 'invalidEndpoint', 'invalidDeployment', 'invalidKey', 'invalidTenant'] as const;
 export type DecisionInputError = (typeof DECISION_INPUT_ERRORS)[number];
 
 const HOST = /^[a-z0-9][a-z0-9-]{1,62}\.(services\.ai|cognitiveservices)\.azure\.com$/;
@@ -60,12 +60,20 @@ export function validateDecisionConnection(input: unknown, allowTestHttp = false
   { ok: true; value: DecisionConnection; key: string | null } | { ok: false; error: DecisionInputError } {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: 'invalidBody' };
   const o = input as Record<string, unknown>;
-  if (Object.keys(o).some((k) => !['endpoint', 'deployment', 'key'].includes(k))) return { ok: false, error: 'invalidBody' };
+  if (Object.keys(o).some((k) => !['endpoint', 'deployment', 'key', 'auth', 'tenantId'].includes(k))) return { ok: false, error: 'invalidBody' };
+  if (o.auth !== undefined && o.auth !== 'apiKey' && o.auth !== 'entraId') return { ok: false, error: 'invalidBody' };
+  if (o.auth === 'entraId' ? typeof o.tenantId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.tenantId) : o.tenantId !== undefined) return { ok: false, error: 'invalidTenant' };
+  if (o.auth === 'entraId' && o.key !== undefined) return { ok: false, error: 'invalidBody' };
   const endpoint = parseDecisionEndpoint(o.endpoint, allowTestHttp);
   if (!endpoint) return { ok: false, error: 'invalidEndpoint' };
   if (typeof o.deployment !== 'string' || !DEPLOYMENT.test(o.deployment.trim())) return { ok: false, error: 'invalidDeployment' };
   if (o.key !== undefined && (typeof o.key !== 'string' || !/^[\x21-\x7e]{16,256}$/.test(o.key.trim()))) return { ok: false, error: 'invalidKey' };
-  return { ok: true, value: { endpoint, deployment: o.deployment.trim() }, key: typeof o.key === 'string' ? o.key.trim() : null };
+  const connection = { endpoint, deployment: o.deployment.trim() };
+  return {
+    ok: true,
+    value: o.auth === 'entraId' ? { ...connection, auth: 'entraId', tenantId: (o.tenantId as string).toLowerCase() } : connection,
+    key: typeof o.key === 'string' ? o.key.trim() : null,
+  };
 }
 
 export const decisionUrl = (c: DecisionConnection) => `${c.endpoint}${DECISION_PATH}`;

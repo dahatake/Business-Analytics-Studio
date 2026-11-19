@@ -381,6 +381,8 @@ export const aiJa = {
   'ai.decision.endpointHint': 'Foundry リソースの https://<名前>.services.ai.azure.com または https://<名前>.cognitiveservices.azure.com（パスは付けません）。',
   'ai.decision.deployment': 'デプロイ名',
   'ai.decision.key': 'API キー',
+  'ai.decision.noDeployments': 'このリソースには Microsoft Decision のデプロイがありません。Decision をデプロイしたリソースを選んでください。',
+  'ai.decision.entraAccess': '他の Foundry モデルと同じ Microsoft Entra のサインインを使います。［試験して保存］で推論の権限を確認します。チャット用のロール判定は Decision には適用しません。拒否された場合は管理者にこのリソースの権限の確認を依頼してください。',
   'ai.decision.keyHint': '中継プロセスの保管庫にだけ保存し、再表示しません。',
   'ai.decision.keyHintSaved': '空欄なら保存済みのキーを使います。保管庫にだけ保存し、再表示しません。',
   'ai.decision.consent': '入力した Foundry リソースに、架空のデータだけのテスト要求を 1 回送ることに同意します（約 300 トークン、料金が発生します）',

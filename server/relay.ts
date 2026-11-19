@@ -318,7 +318,7 @@ function separateVerifiedAt(s: SavedSpeech, foundry: RelayConnection | null, vau
   const key = vault.get('speechSeparateKey');
   return key && tokenMatches(s.verification, separateSpeechSignature(s.connection, null, s.verifiedAt, key)) ? s.verifiedAt : null;
 }
-/* D-37: Microsoft Foundry Decision model on its own resource and API key (decision.json + vault `decisionKey`). */
+/* D-37: Microsoft Foundry Decision uses a key or the shared Entra sign-in; credentials remain in the vault. */
 
 const DECISION_FILE = 'decision.json';
 type SavedDecision = DecisionConnection & { verifiedAt: string; verification: string };
@@ -328,7 +328,7 @@ export function loadDecision(dir: string, config: RelayConfig = STRICT_RELAY_CON
   if (!existsSync(path)) return null;
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8')) as Partial<SavedDecision>;
-    const r = validateDecisionConnection({ endpoint: saved.endpoint, deployment: saved.deployment }, config.testOutbound);
+    const r = validateDecisionConnection({ endpoint: saved.endpoint, deployment: saved.deployment, auth: saved.auth, tenantId: saved.tenantId }, config.testOutbound);
     if (!r.ok || typeof saved.verifiedAt !== 'string' || typeof saved.verification !== 'string') return null;
     return { ...r.value, verifiedAt: saved.verifiedAt, verification: saved.verification };
   } catch {
@@ -336,20 +336,24 @@ export function loadDecision(dir: string, config: RelayConfig = STRICT_RELAY_CON
   }
 }
 
-const decisionSignature = (c: DecisionConnection, at: string, key: string) =>
-  createHmac('sha256', key).update(JSON.stringify(['decision', c.endpoint, c.deployment, at])).digest('hex');
+const decisionSignature = (c: DecisionConnection, at: string, key: string, account?: ReturnType<EntraTokens['account']>) =>
+  createHmac('sha256', key).update(JSON.stringify([
+    'decision', c.endpoint, c.deployment, at, ...(c.auth === 'entraId' ? ['entraId', c.tenantId, account?.tenantId ?? '', account?.username ?? ''] : []),
+  ])).digest('hex');
 
-function decisionVerifiedAt(s: SavedDecision | null, vault: SecretVault): string | null {
+function decisionVerifiedAt(s: SavedDecision | null, vault: SecretVault, entra: EntraTokens): string | null {
   if (!s || !Number.isFinite(Date.parse(s.verifiedAt))) return null;
-  const key = vault.get('decisionKey');
-  return key && tokenMatches(s.verification, decisionSignature(s, s.verifiedAt, key)) ? s.verifiedAt : null;
+  const account = s.auth === 'entraId' ? entra.account() : null;
+  if (s.auth === 'entraId' && !account) return null;
+  const key = vault.get(s.auth === 'entraId' ? 'foundryEntraKey' : 'decisionKey');
+  return key && tokenMatches(s.verification, decisionSignature(s, s.verifiedAt, key, account)) ? s.verifiedAt : null;
 }
 
 type DecisionOutcome = { ok: true; value: DecisionResult } | { ok: false; status: number; body: Record<string, unknown> };
 
 /** One Decision call; provider bodies are never echoed, and only a complete, valid set of answers is returned. */
 async function callDecision(
-  conn: DecisionConnection, key: string, req: { state: unknown; questions: Record<string, unknown> }, timeoutMs: number,
+  conn: DecisionConnection, credential: FoundryCredential, req: { state: unknown; questions: Record<string, unknown> }, timeoutMs: number,
   config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal,
 ): Promise<DecisionOutcome> {
   if (signal?.aborted) return { ok: false, status: 499, body: { error: 'aborted' } };
@@ -362,7 +366,7 @@ async function callDecision(
   try {
     const res = await doFetch(url, {
       method: 'POST',
-      headers: { 'api-key': key, 'Content-Type': 'application/json' },
+      headers: { ...(credential.kind === 'key' ? { 'api-key': credential.key } : { Authorization: `Bearer ${credential.token}` }), 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: conn.deployment, state: req.state, questions: req.questions }),
       redirect: 'error',
       signal: controller.signal,
@@ -774,7 +778,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     return json(ENTRA_STATUS[error.code], { error: error.code });
   };
   /** The API key, or an Entra ID token for the saved tenant; an Entra failure is reported as `notConfigured`-style errors. */
-  const credentialFor = async (conn: RelayConnection): Promise<FoundryCredential | RelayResponse> => {
+  const credentialFor = async (conn: RelayConnection | DecisionConnection, keyName: 'foundryKey' | 'decisionKey' = 'foundryKey'): Promise<FoundryCredential | RelayResponse> => {
     if (conn.auth === 'entraId') {
       if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
       try {
@@ -783,7 +787,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         return entraFailure(error);
       }
     }
-    const key = vault.get('foundryKey');
+    const key = vault.get(keyName);
     return key ? { kind: 'key', key } : json(403, { allowed: false, reasons: ['notConfigured'] });
   };
   const workiqSettings = () => loadWorkIqSettings(vault.dir);
@@ -830,10 +834,10 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     };
   };
 
-  /** FR-325 / D-37: the Decision connection is reported only with a still-valid seal (key unchanged). */
+  /** FR-325 / D-37: the verification is bound to the key or the Entra account and tenant. */
   const decisionStatus = () => {
     const d = loadDecision(vault.dir, config);
-    return d ? { endpoint: d.endpoint, deployment: d.deployment, verifiedAt: decisionVerifiedAt(d, vault) } : null;
+    return d ? { endpoint: d.endpoint, deployment: d.deployment, ...(d.auth === 'entraId' ? { auth: d.auth, tenantId: d.tenantId } : {}), verifiedAt: decisionVerifiedAt(d, vault, entra) } : null;
   };
 
   if (path === '/relay/status') {
@@ -854,7 +858,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       return isFoundryResourceId(resourceId) && isTenantId(tenantId) ? { resourceId, tenantId: tenantId.toLowerCase() } : null;
     };
     const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
-    const inspect = (t: { resourceId: string; tenantId: string }) => inspectFoundryInstance(deps, t.resourceId, t.tenantId);
+    const inspect = (t: { resourceId: string; tenantId: string }) => inspectFoundryInstance(deps, t.resourceId, t.tenantId, body?.kind === 'decision' ? 'decision' : 'chat');
     try {
       if (path === '/relay/entra') {
         if (method === 'GET') return json(200, { entra: entraStatus() });
@@ -878,7 +882,10 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       }
       const t = target();
       if (!t) return json(400, { error: 'invalidResource' });
-      if (path === '/relay/entra/inspect') return json(200, await inspect(t));
+      if (path === '/relay/entra/inspect') {
+        if (body!.kind !== undefined && body!.kind !== 'chat' && body!.kind !== 'decision') return json(400, { error: 'invalidBody' });
+        return json(200, await inspect(t));
+      }
       if (path === '/relay/entra/role') {
         await assignFoundryRole(deps, t.resourceId, t.tenantId);
         return json(200, await inspect(t));
@@ -1262,8 +1269,19 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const v = validateDecisionConnection(parseBody(req.body), config.testOutbound);
     if (!v.ok) return json(400, { error: v.error });
     if (new URL(v.value.endpoint).protocol !== 'http:' && !endpointHostAllowed(new URL(v.value.endpoint), config)) return json(400, { error: 'hostNotAllowed' });
-    const key = v.key ?? vault.get('decisionKey');
-    if (!key) return json(400, { error: 'keyMissing' });
+    const account = v.value.auth === 'entraId' ? entra.account() : null;
+    const initialSealKey = vault.get('foundryEntraKey');
+    let credential: FoundryCredential;
+    if (v.value.auth === 'entraId') {
+      if (!account) return json(400, { error: 'notSignedIn' });
+      const c = await credentialFor(v.value);
+      if (!('kind' in c)) return c;
+      credential = c;
+    } else {
+      const key = v.key ?? vault.get('decisionKey');
+      if (!key) return json(400, { error: 'keyMissing' });
+      credential = { kind: 'key', key };
+    }
     const limitKey = 'decisionTest';
     const now = (ctx.now ?? Date.now)();
     const last = ctx.lastCall?.get(limitKey);
@@ -1271,16 +1289,26 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     ctx.lastCall?.set(limitKey, Infinity);
     let result: DecisionOutcome;
     try {
-      result = await callDecision(v.value, key, DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
+      result = await callDecision(v.value, credential, DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
     } finally {
       ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
     }
     // A failed test keeps the previous connection and key as they were.
     if (!result.ok) return json(result.status, result.body);
-    if (v.key === null && vault.get('decisionKey') !== key) return json(409, { error: 'keyChanged' });
-    vault.set('decisionKey', key);
+    let sealKey: string;
+    if (credential.kind === 'key') {
+      if (v.key === null && vault.get('decisionKey') !== credential.key) return json(409, { error: 'keyChanged' });
+      vault.set('decisionKey', credential.key);
+      sealKey = credential.key;
+    } else {
+      const current = entra.account();
+      if (current?.username !== account!.username || current?.tenantId !== account!.tenantId || vault.get('foundryEntraKey') !== initialSealKey) return json(409, { error: 'accountChanged' });
+      sealKey = vault.get('foundryEntraKey') ?? randomBytes(32).toString('hex');
+      vault.set('foundryEntraKey', sealKey);
+      vault.delete('decisionKey');
+    }
     const at = new Date((ctx.now ?? Date.now)()).toISOString();
-    writeJsonAtomic(vault.dir, DECISION_FILE, { ...v.value, verifiedAt: at, verification: decisionSignature(v.value, at, key) });
+    writeJsonAtomic(vault.dir, DECISION_FILE, { ...v.value, verifiedAt: at, verification: decisionSignature(v.value, at, sealKey, account) });
     return json(200, { decision: decisionStatus(), usage: { inputTokens: result.value.inputTokens, outputTokens: result.value.outputTokens } });
   }
 
@@ -1289,15 +1317,16 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const r = validateDecisionRequest(parseBody(req.body));
     if (!r) return json(400, { error: 'invalidBody' });
     const saved = loadDecision(vault.dir, config);
-    const key = vault.get('decisionKey');
-    if (!saved || !key || !decisionVerifiedAt(saved, vault)) return json(403, { allowed: false, reasons: ['notConfigured'] });
+    if (!saved || !decisionVerifiedAt(saved, vault, entra)) return json(403, { allowed: false, reasons: ['notConfigured'] });
+    const credential = await credentialFor(saved, 'decisionKey');
+    if (!('kind' in credential)) return credential;
     const limitKey = `decision:${r.use}`;
     const now = (ctx.now ?? Date.now)();
     const last = ctx.lastCall?.get(limitKey);
     if (last !== undefined && now - last < AI_LIMITS.minIntervalMs) return json(429, { error: 'tooSoon' });
     ctx.lastCall?.set(limitKey, Infinity);
     try {
-      const result = await callDecision(saved, key, r, DECISION_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
+      const result = await callDecision(saved, credential, r, DECISION_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
       return result.ok ? json(200, result.value) : json(result.status, result.body);
     } finally {
       ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());

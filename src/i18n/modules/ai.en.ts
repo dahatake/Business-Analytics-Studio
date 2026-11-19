@@ -372,6 +372,8 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
 
   'ai.decision.title': 'Microsoft Foundry Decision (judgement model)',
   'ai.decision.lead': '{model} writes no text; it returns only the probability of a yes/no answer. When set, KPI/OKR candidates that are unrelated to the purpose or duplicate existing items are removed before the rest go to Copilot. Everything works as before without it.',
+  'ai.decision.noDeployments': 'This resource has no Microsoft Decision deployment. Choose a resource with a Decision deployment.',
+  'ai.decision.entraAccess': 'Decision uses the same Microsoft Entra sign-in as other Foundry models. Test and save to verify inference access; the chat-completions role check does not apply to Decision. If access is denied, ask your administrator to check the resource permissions.',
   'ai.decision.price': 'Price guide: JPY {price} per million tokens (same for input and output; the Azure invoice is authoritative). One screening is about 600 tokens.',
   'ai.decision.needsRelay': 'The Decision connection needs the relay process.',
   'ai.decision.state': 'Decision pre-screening',

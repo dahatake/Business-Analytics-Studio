@@ -2,7 +2,7 @@ import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
 import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
 import { MEDIA_TEST_TIMEOUT_MS, SPEECH_INPUT_ERRORS, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
-import { DECISION_INPUT_ERRORS, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, type DecisionRequest, type DecisionResult } from '../../ai/decision.ts';
+import { DECISION_INPUT_ERRORS, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, validateDecisionConnection, type DecisionConnection, type DecisionRequest, type DecisionResult } from '../../ai/decision.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
 export type SecretName = 'foundryKey';
@@ -35,18 +35,17 @@ export interface RelayStatus {
   media: MediaStatus;
   /** FR-329: whether Speech uses the Foundry connection or a separate Speech resource. */
   speechConnection: SpeechConnectionStatus;
-  /** D-37: Microsoft Foundry Decision model on its own resource; `verifiedAt` is null once the key changes. */
+  /** D-37: Decision deployment; verification is bound to the key or the shared Entra sign-in. */
   decision: DecisionStatus | null;
 }
 
-export interface DecisionStatus { endpoint: string; deployment: string; verifiedAt: string | null }
+export type DecisionStatus = DecisionConnection & { verifiedAt: string | null };
 
 function asDecision(v: unknown): DecisionStatus | null {
   if (!v || typeof v !== 'object') return null;
   const d = v as Record<string, unknown>;
-  const endpoint = str(d.endpoint);
-  const deployment = str(d.deployment);
-  return endpoint && deployment ? { endpoint, deployment, verifiedAt: str(d.verifiedAt) } : null;
+  const parsed = validateDecisionConnection({ endpoint: d.endpoint, deployment: d.deployment, auth: d.auth, tenantId: d.tenantId }, true);
+  return parsed.ok ? { ...parsed.value, verifiedAt: str(d.verifiedAt) } : null;
 }
 
 /**
@@ -537,8 +536,8 @@ export async function listEntraInstances(tenantId: string, signal?: AbortSignal)
   return ((await res.json()) as { instances: FoundryInstanceInfo[] }).instances;
 }
 
-export async function inspectEntraInstance(resourceId: string, tenantId: string, signal?: AbortSignal): Promise<FoundryInstanceDetail> {
-  const res = await relayFetch('/relay/entra/inspect', { ...jsonInit('POST', { resourceId, tenantId }), signal });
+export async function inspectEntraInstance(resourceId: string, tenantId: string, signal?: AbortSignal, kind: 'chat' | 'decision' = 'chat'): Promise<FoundryInstanceDetail> {
+  const res = await relayFetch('/relay/entra/inspect', { ...jsonInit('POST', { resourceId, tenantId, kind }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   return (await res.json()) as FoundryInstanceDetail;
 }
@@ -623,10 +622,10 @@ export function deleteSeparateSpeech(): Promise<SpeechSeparateResult> {
 
 /* ---------- D-37: Microsoft Foundry Decision model ---------- */
 
-export const DECISION_SAVE_ERRORS = [...DECISION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon'] as const;
+export const DECISION_SAVE_ERRORS = [...DECISION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon', 'notSignedIn', 'interactionRequired', 'signInPending', 'signInFailed', 'authFailed', 'accountChanged'] as const;
 export type DecisionSaveError = (typeof DECISION_SAVE_ERRORS)[number] | 'failed';
 export type DecisionSaveResult = { ok: true; decision: DecisionStatus | null; usage?: { inputTokens: number; outputTokens: number } } | { ok: false; error: DecisionSaveError; providerStatus?: number };
-export interface DecisionInput { endpoint: string; deployment: string; key?: string }
+export type DecisionInput = DecisionConnection & { key?: string };
 
 async function decisionCall(url: string, init: RequestInit): Promise<DecisionSaveResult> {
   try {

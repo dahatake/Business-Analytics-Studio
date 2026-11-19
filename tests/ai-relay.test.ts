@@ -1983,6 +1983,7 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
         return new Response(JSON.stringify({ value: [
           { name: 'model-router', sku: { name: 'GlobalStandard' }, properties: { provisioningState: 'Succeeded', model: { name: 'model-router', version: '2025-11-18' }, capabilities: { chatCompletion: 'true' } } },
           { name: 'embed', sku: { name: 'Standard' }, properties: { provisioningState: 'Succeeded', model: { name: 'text-embedding-3-small' }, capabilities: { embeddings: 'true' } } },
+          { name: 'decision-1-1', sku: { name: 'GlobalStandard' }, properties: { provisioningState: 'Succeeded', model: { name: 'Microsoft-Decision-1.1', version: '1' }, capabilities: { chatCompletion: 'false' } } },
           { name: 'creating', sku: { name: 'Standard' }, properties: { provisioningState: 'Creating', model: { name: 'gpt-5' } } },
         ] }));
       }
@@ -1999,6 +2000,9 @@ describe('Microsoft Entra ID for Microsoft Foundry', () => {
       access: { canCall: false, canAssign: true },
     } });
     expect(puts).toHaveLength(0);
+    const decision = await call(req('POST', '/relay/entra/inspect', { resourceId: RES, tenantId: TENANT, kind: 'decision' }), ctx({ fetch }));
+    expect(decision.body).toMatchObject({ deployments: [{ name: 'decision-1-1', model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' }] });
+    expect((decision.body as { deployments: unknown[] }).deployments).toHaveLength(1);
     const role = await call(req('POST', '/relay/entra/role', { resourceId: RES, tenantId: TENANT }), ctx({ fetch }));
     expect(role.body).toMatchObject({ access: { canCall: true } });
     expect(puts).toHaveLength(1);
@@ -2364,6 +2368,89 @@ describe('D-37 Microsoft Foundry Decision through the relay (FR-325 candidate pr
   const status = async () => ((await call(req('GET', '/relay/status'), ctx())).body as { decision: unknown }).decision;
 
   afterEach(() => { for (const a of answers) expect(JSON.stringify(a.body)).not.toContain(DECISION_KEY); });
+
+  it('uses the shared Entra sign-in for testing and screening, binds verification to the account and tenant, and supports switching back to a key', async () => {
+    const tenantId = '11111111-2222-3333-4444-555555555555';
+    const body = { endpoint: ENDPOINT, deployment: 'decision-1-1', auth: 'entraId', tenantId };
+    let account: { username: string; tenantId: string } | null = { username: 'decision@example.test', tenantId };
+    let interactionRequired = false;
+    const tokens: { scope: string; tenantId?: string }[] = [];
+    const entra: EntraTokens = {
+      account: () => account,
+      signInState: () => ({ status: account ? 'signedIn' : 'idle' }),
+      startSignIn: async () => ({ url: '' }),
+      signOut: async () => { account = null; },
+      token: async (scope, tenant) => {
+        if (!account) throw new EntraError('notSignedIn');
+        if (interactionRequired) throw new EntraError('interactionRequired');
+        tokens.push({ scope, tenantId: tenant });
+        return { token: 'decision-test-bearer', objectId: 'test-object', tenantId };
+      },
+    };
+    const ok = decisionReply({ test: noul(0.9) });
+    const statusEntra = async () => (await call(req('GET', '/relay/status'), ctx({ entra }))).body;
+
+    await save({ endpoint: ENDPOINT, deployment: 'decision-1-1', key: DECISION_KEY }, { fetch: ok.fetch });
+    const keyConnection = readFileSync(join(vault.dir, 'decision.json'), 'utf8');
+    expect((await save({ ...body, tenantId: 'invalid' }, { entra, fetch: ok.fetch })).body).toEqual({ error: 'invalidTenant' });
+    expect((await save({ ...body, key: DECISION_KEY }, { entra, fetch: ok.fetch })).body).toEqual({ error: 'invalidBody' });
+    expect((await save(body, { entra, fetch: decisionReply({}, 403).fetch })).body).toEqual({ error: 'forbidden', providerStatus: 403 });
+    expect(readFileSync(join(vault.dir, 'decision.json'), 'utf8')).toBe(keyConnection);
+    expect(vault.get('decisionKey')).toBe(DECISION_KEY);
+
+    expect((await save(body, { entra, fetch: ok.fetch })).body).toMatchObject({ decision: { ...body, verifiedAt: expect.any(String) } });
+    expect(ok.sent.at(-1)!.headers).toEqual({ Authorization: 'Bearer decision-test-bearer', 'Content-Type': 'application/json' });
+    expect(vault.get('decisionKey')).toBeUndefined();
+    expect(tokens.at(-1)).toEqual({ scope: 'https://cognitiveservices.azure.com/.default', tenantId });
+    expect(readFileSync(join(vault.dir, 'decision.json'), 'utf8')).not.toContain('decision-test-bearer');
+
+    const good = decisionReply({ r_c1: noul(0.8), d_c1: noul(0.1) });
+    expect((await screen({ entra, fetch: good.fetch })).status).toBe(200);
+    expect(good.sent[0]!.headers).not.toHaveProperty('api-key');
+    expect((await screen({ entra, fetch: good.fetch, config: { ...testConfig, outboundHosts: ['127.0.0.1'] } })).body).toEqual({ error: 'outboundNotAllowed' });
+    interactionRequired = true;
+    expect((await screen({ entra, fetch: good.fetch })).body).toEqual({ error: 'interactionRequired' });
+    expect(good.sent).toHaveLength(1);
+    interactionRequired = false;
+
+    account = { username: 'decision@example.test', tenantId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' };
+    expect(await statusEntra()).toMatchObject({ decision: { verifiedAt: null } });
+    account = { username: 'other@example.test', tenantId };
+    expect(await statusEntra()).toMatchObject({ decision: { verifiedAt: null } });
+    expect((await screen({ entra, fetch: good.fetch })).status).toBe(403);
+    account = null;
+    expect((await save(body, { entra, fetch: ok.fetch })).body).toEqual({ error: 'notSignedIn' });
+    account = { username: 'decision@example.test', tenantId };
+    const saved = JSON.parse(readFileSync(join(vault.dir, 'decision.json'), 'utf8'));
+    writeFileSync(join(vault.dir, 'decision.json'), JSON.stringify({ ...saved, tenantId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
+    expect(await statusEntra()).toMatchObject({ decision: { verifiedAt: null } });
+    expect((await save(body, { entra, fetch: ok.fetch })).status).toBe(200);
+    await call(req('DELETE', '/relay/entra'), ctx({ entra }));
+    expect(await statusEntra()).toMatchObject({ decision: { verifiedAt: null } });
+    account = { username: 'decision@example.test', tenantId };
+    expect(await statusEntra()).toMatchObject({ decision: { verifiedAt: null } });
+
+    expect((await save({ endpoint: ENDPOINT, deployment: 'decision-1-1', key: DECISION_KEY }, { entra, fetch: ok.fetch })).status).toBe(200);
+    expect(ok.sent.at(-1)!.headers).toHaveProperty('api-key', DECISION_KEY);
+    expect(ok.sent.at(-1)!.headers).not.toHaveProperty('Authorization');
+    expect((await screen({ entra, fetch: good.fetch })).status).toBe(200);
+  });
+
+  it('does not save an Entra verification if the signed-in account changes during its test', async () => {
+    const tenantId = '11111111-2222-3333-4444-555555555555';
+    let username = 'before@example.test';
+    const entra: EntraTokens = {
+      account: () => ({ username, tenantId }),
+      signInState: () => ({ status: 'signedIn' }),
+      startSignIn: async () => ({ url: '' }),
+      signOut: async () => undefined,
+      token: async () => ({ token: 'fake-token', objectId: 'test-object', tenantId }),
+    };
+    const ok = decisionReply({ test: noul(0.9) });
+    const fetch: typeof globalThis.fetch = async (...args) => { username = 'after@example.test'; return ok.fetch(...args); };
+    expect((await save({ endpoint: ENDPOINT, deployment: 'decision-1-1', auth: 'entraId', tenantId }, { entra, fetch })).body).toEqual({ error: 'accountChanged' });
+    expect(existsSync(join(vault.dir, 'decision.json'))).toBe(false);
+  });
 
   it('saves the connection only after the synthetic test passes, keeps the key in the vault, and seals it to that key', async () => {
     expect(await status()).toBeNull();

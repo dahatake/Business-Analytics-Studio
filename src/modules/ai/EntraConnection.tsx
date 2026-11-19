@@ -29,14 +29,24 @@ const preferredDeployment = (d: FoundryInstanceDetail['deployments']) =>
  * Microsoft Entra ID for Microsoft Foundry: sign in once (the relay keeps MSAL's token cache in its encrypted vault), then
  * pick one of the resources the account can read and one of its chat deployments. This screen never sees a token.
  */
-export function EntraConnection() {
+type Selection = { endpoint: string; deployment: string; entraTenantId: string };
+type DecisionBinding = { value: Selection; update: (patch: Partial<Selection>) => void };
+
+export function EntraConnection({ decision }: { decision?: DecisionBinding }) {
   const { t } = useI18n();
   const entra = useAiSettings((s) => s.entra);
   const reachable = useAiSettings((s) => s.relayReachable);
-  const endpoint = useAiSettings((s) => s.endpoint);
-  const deployment = useAiSettings((s) => s.deployment);
-  const tenantId = useAiSettings((s) => s.entraTenantId);
-  const { update, refreshRelay } = useAiSettings.getState();
+  const chatEndpoint = useAiSettings((s) => s.endpoint);
+  const chatDeployment = useAiSettings((s) => s.deployment);
+  const chatTenantId = useAiSettings((s) => s.entraTenantId);
+  const endpoint = decision?.value.endpoint ?? chatEndpoint;
+  const deployment = decision?.value.deployment ?? chatDeployment;
+  const tenantId = decision?.value.entraTenantId ?? chatTenantId;
+  const { refreshRelay } = useAiSettings.getState();
+  const update = decision?.update ?? useAiSettings.getState().update;
+  const selection = useRef({ deployment, update });
+  selection.current = { deployment, update };
+  const kind = decision ? 'decision' : 'chat';
   const [instances, setInstances] = useState<FoundryInstanceInfo[] | null>(null);
   const [tenants, setTenants] = useState<FoundryTenantInfo[]>([]);
   const [directory, setDirectory] = useState(() => tenantId || entra?.tenantId || '');
@@ -77,7 +87,9 @@ export function EntraConnection() {
     setInstances(null);
     setNeedsSignIn(false);
     void listEntraInstances(directory, AbortSignal.timeout(90_000)).then((result) => {
-      if (request === instanceRequest.current) setInstances(result);
+      if (request === instanceRequest.current) setInstances(kind === 'decision'
+        ? result.map((i) => ({ ...i, endpoint: i.endpoint?.replace(/\.openai\.azure\.com\/openai\/v1\/?$/, '.services.ai.azure.com') ?? null }))
+        : result);
     }, (error: unknown) => {
       if (request !== instanceRequest.current) return;
       const code = entraMessage(error);
@@ -87,7 +99,7 @@ export function EntraConnection() {
       if (request === instanceRequest.current) setLoading(false);
     });
     return () => { instanceRequest.current += 1; };
-  }, [signedIn, directory, entra?.account, reload, t]);
+  }, [signedIn, directory, entra?.account, reload, t, kind]);
 
   useEffect(() => () => { polling.current += 1; inspectRequest.current += 1; }, []);
 
@@ -96,20 +108,20 @@ export function EntraConnection() {
     setInspecting(true);
     setDetail(null);
     try {
-      const d = await inspectEntraInstance(instance.id, instance.tenantId, AbortSignal.timeout(60_000));
+      const d = await inspectEntraInstance(instance.id, instance.tenantId, AbortSignal.timeout(60_000), kind);
       if (request !== inspectRequest.current) return;
       setDetail(d);
-      const current = useAiSettings.getState().deployment;
+      const current = selection.current.deployment;
       if (pickDeployment || !d.deployments.some((x) => x.name === current)) {
-        const best = preferredDeployment(d.deployments);
-        if (best) update({ deployment: best.name });
+        const best = kind === 'decision' ? d.deployments[0] : preferredDeployment(d.deployments);
+        if (best) selection.current.update({ deployment: best.name });
       }
     } catch (error) {
       if (request === inspectRequest.current) setMessage({ intent: 'error', text: t(`ai.entra.err.${entraMessage(error)}`) });
     } finally {
       if (request === inspectRequest.current) setInspecting(false);
     }
-  }, [t, update]);
+  }, [t, kind]);
 
   const selectedId = selected?.id;
   useEffect(() => {
@@ -292,7 +304,7 @@ export function EntraConnection() {
         <p className="ai-status" data-testid="ai-entra-selected">
           <span>{selected.kind}</span>
           {selected.keyAuthDisabled && <Badge appearance="tint" color="informative">{t('ai.entra.keyDisabled')}</Badge>}
-          {detail && (
+          {detail && !decision && (
             <Badge appearance="tint" color={detail.access.canCall ? 'success' : 'warning'} data-testid="ai-entra-access">
               {t(detail.access.canCall ? 'ai.entra.access.ok' : 'ai.entra.access.missing')}
             </Badge>
@@ -300,7 +312,7 @@ export function EntraConnection() {
         </p>
       )}
       {selected && inspecting && <Spinner size="tiny" />}
-      {selected && detail && detail.deployments.length === 0 && <p role="alert" data-testid="ai-entra-no-deployments">{t('ai.entra.noDeployments')}</p>}
+      {selected && detail && detail.deployments.length === 0 && <p role="alert" data-testid="ai-entra-no-deployments">{t(decision ? 'ai.decision.noDeployments' : 'ai.entra.noDeployments')}</p>}
       {selected && detail && detail.deployments.length > 0 && (
         <Field label={t('ai.entra.deployment')}>
           <Select value={deployment} onChange={(_, d) => update({ deployment: d.value })} data-testid="ai-entra-deployment">
@@ -309,7 +321,8 @@ export function EntraConnection() {
           </Select>
         </Field>
       )}
-      {selected && detail && !detail.access.canCall && (
+      {selected && detail && decision && <p className="muted">{t('ai.decision.entraAccess')}</p>}
+      {selected && detail && !decision && !detail.access.canCall && (
         <div className="ai-stack">
           <p className="muted">{t(detail.access.canAssign ? 'ai.entra.access.assignHint' : 'ai.entra.access.askAdmin')}</p>
           {detail.access.canAssign && (

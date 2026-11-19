@@ -473,7 +473,7 @@ export async function inspectMediaResource(deps: ArmDeps, resourceId: string, te
 }
 
 /** Chat deployments of one resource and whether the user may call it or grant themselves the role. */
-export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, tenantId: string): Promise<{ deployments: FoundryDeploymentInfo[]; access: FoundryAccess }> {
+export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, tenantId: string, kind: 'chat' | 'decision' = 'chat'): Promise<{ deployments: FoundryDeploymentInfo[]; access: FoundryAccess }> {
   if (!isFoundryResourceId(resourceId)) throw new EntraError('invalidResource');
   if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
   const [deployments, permissions] = await Promise.all([
@@ -486,7 +486,9 @@ export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, 
   const list = (deployments.body?.value ?? [])
     .filter((d) => str(d.properties?.provisioningState).toLowerCase() === 'succeeded')
     // Embeddings, audio and image deployments cannot answer chat completions.
-    .filter((d) => d.properties?.capabilities?.chatCompletion === 'true' || d.properties?.capabilities?.chatCompletion === undefined && d.properties?.capabilities?.embeddings !== 'true')
+    .filter((d) => kind === 'decision'
+      ? /^microsoft-decision-/i.test(str(d.properties?.model?.name))
+      : !/^microsoft-decision-/i.test(str(d.properties?.model?.name)) && (d.properties?.capabilities?.chatCompletion === 'true' || d.properties?.capabilities?.chatCompletion === undefined && d.properties?.capabilities?.embeddings !== 'true'))
     .map((d) => ({ name: str(d.name), model: str(d.properties?.model?.name), version: str(d.properties?.model?.version), sku: str(d.sku?.name) }))
     .filter((d) => /^[A-Za-z0-9._-]{1,64}$/.test(d.name));
   const perms = permissions.status === 200 ? permissions.body?.value ?? [] : [];

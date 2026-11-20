@@ -83,8 +83,7 @@ test('launch screen: AI settings and the generator are reachable; missing requir
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
   await page.getByTestId('launch-generate').click();
-  await expect(page.getByTestId('gen-missing')).toContainText('Company name');
-  await expect(page.getByTestId('gen-missing')).toContainText('Project name');
+  await expect(page.getByRole('alert')).toBeVisible(); // nothing is created without both names
 });
 
 test('Japanese labels on the launch screen', async ({ page }) => {
@@ -92,7 +91,7 @@ test('Japanese labels on the launch screen', async ({ page }) => {
   await expect(page.getByTestId('launch-generate')).toHaveText('Projectパックを Copilot で作成');
   await expect(page.getByTestId('launch-ai-settings')).toHaveText('AI 設定');
   await page.getByTestId('launch-generate').click();
-  await expect(page.getByTestId('gen-missing')).toContainText('企業名');
+  await expect(page.getByRole('alert')).toBeVisible();
 });
 
 test('a Foundry quota rejection explains the cause and does not retry before the requested wait', async ({ page }) => {
@@ -240,6 +239,8 @@ test('company information is entered once and reused; the project inputs come ba
   await page.getByTestId('launch-company-name').fill('Contoso');
   await page.getByTestId('launch-project-name').fill('Billing');
   await page.getByTestId('launch-generate').click();
+  await expect(page).toHaveURL(/\/data/);
+  await expect(page.getByTestId('gen-dialog')).toBeVisible();
   await expect(dialog.getByTestId('gen-company-note')).toContainText('登録済みの企業です');
   await expect(dialog.getByTestId('gen-industry')).toHaveValue('IT サービス');
   await expect(dialog.getByTestId('gen-url')).toHaveValue('https://www.contoso.example');

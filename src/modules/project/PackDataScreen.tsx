@@ -31,6 +31,7 @@ import { hrefFor, navigate } from '../../state/router.ts';
 import { readiness } from './analysisReadiness.ts';
 import { prefillFromPack, type GenerationReport } from './packGenerate.ts';
 import { PackGenerateDialog } from './PackGenerateDialog.tsx';
+import { AUTO_GENERATE_KEY } from './packAutoGenerate.ts';
 import { SharedDataMerge } from './ProjectPackImportDialog.tsx';
 import { downloadProjectFile } from './ProjectMergeDialog.tsx';
 import { ReadinessView } from './ReadinessView.tsx';
@@ -215,6 +216,13 @@ function ReadinessPanel() {
   const setTarget = useProjects((s) => s.setTarget);
   const { project } = useActiveProject();
   const [open, setOpen] = useState(false);
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    const id = sessionStorage.getItem(AUTO_GENERATE_KEY);
+    if (!id) return;
+    sessionStorage.removeItem(AUTO_GENERATE_KEY);
+    if (target.kind === 'project' && target.projectId === id) { setFresh(true); setOpen(true); }
+  }, []);
   const pack = loaded.pack as unknown as Record<string, unknown>;
   const items = useMemo(() => readiness(pack), [pack]);
   const gen = (loaded.pack.extensions as Record<string, unknown> | undefined)?.generation as Partial<GenerationReport> | undefined;
@@ -241,8 +249,8 @@ function ReadinessPanel() {
         <PackGenerateDialog
           open
           target={{ kind: 'project', projectId: project.id }}
-          prefill={prefill}
-          onClose={() => setOpen(false)}
+          prefill={fresh ? null : prefill}
+          onClose={() => { setOpen(false); setFresh(false); }}
           onOpenProject={(projectId) => {
             navigate(hrefFor('/'));
             setTarget({ kind: 'project', projectId });

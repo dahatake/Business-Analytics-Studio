@@ -13,6 +13,7 @@ import { openAiSettings } from '../ai/uiStore.ts';
 import { generatePrefillFor, PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
 import type { PackGenInput } from './packGenerate.ts';
 import { useProjectManagement } from './useProjectManagement.tsx';
+import { AUTO_GENERATE_KEY } from './packAutoGenerate.ts';
 import './project.css';
 
 /**
@@ -42,22 +43,35 @@ export function LaunchScreen() {
     useProjects.getState().setTarget(target);
   };
 
-  const create = () => {
+  const createProject = (): string | null => {
     const { addCompany, addProject } = useProjects.getState();
     const name = companyName.trim();
-    if (!name || !projectName.trim()) return setError(t('proj.err.required'));
+    if (!name || !projectName.trim()) return setError(t('proj.err.required')), null;
     const existing = useProjects.getState().companies.find((c) => c.name === name);
     let companyId = existing?.id;
     if (!companyId) {
       const r = addCompany(name);
-      if (!r.ok) return setError(t('proj.err.duplicateCompany'));
+      if (!r.ok) return setError(t('proj.err.duplicateCompany')), null;
       companyId = r.id;
     }
     const r = addProject(companyId, projectName);
     if (!r.ok) {
-      return setError(t(r.reason === 'limit' ? 'proj.err.limit' : r.reason === 'duplicate' ? 'proj.err.duplicateProject' : 'proj.err.required', { max: MAX_PROJECTS_PER_COMPANY }));
+      return setError(t(r.reason === 'limit' ? 'proj.err.limit' : r.reason === 'duplicate' ? 'proj.err.duplicateProject' : 'proj.err.required', { max: MAX_PROJECTS_PER_COMPANY })), null;
     }
-    open({ kind: 'project', projectId: r.id }, importAfter ? '/data' : '/');
+    return r.id;
+  };
+
+  const create = () => {
+    const id = createProject();
+    if (id) open({ kind: 'project', projectId: id }, importAfter ? '/data' : '/');
+  };
+
+  // Register the company and Project first, then continue on the Data management screen with the Copilot dialog open.
+  const createAndGenerate = () => {
+    const id = createProject();
+    if (!id) return;
+    sessionStorage.setItem(AUTO_GENERATE_KEY, id);
+    open({ kind: 'project', projectId: id }, '/data');
   };
 
   const sampleCompany = basePack.isSample ? t('proj.launch.sampleCompany') : tx(basePack.company.name);
@@ -180,7 +194,7 @@ export function LaunchScreen() {
             {error && <MessageBar intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <div className="proj-row">
               <Button type="submit" appearance="primary" icon={<Add20Regular />} data-testid="launch-create">{t('proj.launch.create')}</Button>
-              <Button icon={<BotSparkle20Regular />} onClick={() => setGen({ target: { kind: 'new', companyName, projectName }, prefill: null })} data-testid="launch-generate">{t('proj.gen.button')}</Button>
+              <Button icon={<BotSparkle20Regular />} onClick={createAndGenerate} data-testid="launch-generate">{t('proj.gen.button')}</Button>
               <Button appearance="subtle" icon={<Sparkle20Regular />} onClick={() => open({ kind: 'demo' }, '/data')}>{t('proj.launch.howToPack')}</Button>
             </div>
           </form>

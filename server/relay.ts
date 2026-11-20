@@ -621,7 +621,16 @@ function providerRetryAfter(headers: Headers): number | undefined {
  * tokens) can legitimately take longer: the dialog then showed "relay 502 networkError" after two 5-minute tries with
  * 0 tokens. Model calls disable undici's own timers; the call's AbortController (call.timeoutMs) remains the only limit.
  */
-const modelAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+const [opensslMajor, opensslMinor] = process.versions.openssl.split('.').map(Number);
+// OpenSSL 3.5+ can send a large hybrid key share first, which some Foundry network paths reset.
+// Send X25519 first while still offering the hybrid group; keep TLS versions and certificate checks unchanged.
+const modelAgent = new Agent({
+  headersTimeout: 0,
+  bodyTimeout: 0,
+  ...(opensslMajor! > 3 || (opensslMajor === 3 && opensslMinor! >= 5)
+    ? { connect: { ecdhCurve: 'X25519:?X25519MLKEM768:P-256:P-384' } }
+    : {}),
+});
 const modelFetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
   undiciFetch(input as never, { ...init, dispatcher: modelAgent } as never)) as unknown as typeof fetch;
 

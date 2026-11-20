@@ -36,6 +36,10 @@ been billed; DNS/authentication rejections create no inference usage record. The
 5-second interval (including concurrent tests). Output is capped at 256 tokens; a rejected modern request may be
 retried once with the legacy token parameter.
 
+On Node.js with OpenSSL 3.5 or later, the relay advertises X25519 first for Foundry inference to avoid
+TLS handshake resets on some network paths. It still offers the hybrid key exchange group and keeps
+TLS 1.3 and certificate verification enabled. Model discovery through Azure Resource Manager uses a separate connection.
+
 Supported endpoint formats (HTTPS only, no credentials, query or fragment):
 
 - Resource origin: `https://<resource>.openai.azure.com` or `https://<resource>.services.ai.azure.com`.

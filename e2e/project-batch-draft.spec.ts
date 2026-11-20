@@ -13,6 +13,11 @@ const taskText = [
 ].join('\n');
 
 function answer(request: RelayRequest): string {
+  if (request.prompt.startsWith('[bas-proj:solution:')) {
+    const context = JSON.parse(request.prompt.slice(request.prompt.indexOf('CONTEXT: ') + 9)) as { types: Record<string, { open: string[] }> };
+    const type = Object.keys(context.types)[0]!;
+    return JSON.stringify({ type, reason: '仮説', sections: Object.fromEntries(context.types[type]!.open.map((id) => [id, '提案（仮説）'])) });
+  }
   if (request.use === 'deliverableDraft') {
     const step = /\[bas-proj:deliverable:([a-z]+)\]/.exec(request.prompt)?.[1] as ImprovementStep;
     return [
@@ -75,7 +80,7 @@ async function confirmBatch(page: Page) {
 }
 
 test.describe('all-step live drafts', () => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
 
   for (const provider of ['foundry', 'copilotSdk'] as const) {
     test(`${provider}: saved settings consent sends drafts without per-send prompts and protects existing work`, async ({ page }) => {
@@ -89,10 +94,11 @@ test.describe('all-step live drafts', () => {
       }
       await confirmBatch(page);
       await expect(page.getByRole('dialog', { name: '全ステップのドラフトを一括作成' })).toBeVisible();
-      await expect(page.getByTestId('dlv-batch-progress')).toContainText('11/11', { timeout: 90_000 });
-      expect(requests).toHaveLength(11);
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
+      expect(requests).toHaveLength(16);
       expect(requests.every((request) => request.provider === provider)).toBe(true);
-      expect(requests.filter((request) => request.use === 'deliverableDraft')).toHaveLength(5);
+      expect(requests.filter((request) => request.use === 'deliverableDraft')).toHaveLength(10);
+      expect(requests.filter((request) => request.prompt.startsWith('[bas-proj:solution:'))).toHaveLength(5);
       expect(requests.filter((request) => request.use === 'stepBrief')).toHaveLength(5);
       expect(requests.filter((request) => request.use === 'strategyOverview')).toHaveLength(1);
 
@@ -100,6 +106,9 @@ test.describe('all-step live drafts', () => {
       const deliverables = JSON.parse(saved['bas.scope.demo.proj.deliverables']!.value!);
       const drafts = JSON.parse(saved['bas.scope.demo.proj.fieldDrafts']!.value!);
       const briefs = JSON.parse(saved['bas.scope.demo.proj.stepBriefs']!.value!);
+      const solutionDrafts = JSON.parse(saved['bas.scope.demo.proj.solutionDrafts']!.value!);
+      expect(Object.keys(solutionDrafts)).toHaveLength(5);
+      expect(saved['bas.scope.demo.proj.strategy']).toBeUndefined();
       expect(deliverables.docs.asis.problem.text).toBe('人が入力した成果物');
       expect(deliverables.signOffs['asis-field'].by).toBe('担当者');
       expect(deliverables.recommendations[`internal:${STEP_DEFS.asis.todos[0]!.id}`].approved.text).toBe('承認済みの提案');
@@ -135,12 +144,12 @@ test.describe('all-step live drafts', () => {
     await openBatch(page);
     await confirmBatch(page);
     await expect(page.getByTestId('dlv-batch-error')).toContainText('実接続に失敗', { timeout: 30_000 });
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/11');
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/16');
     await expect(page.getByTestId('dlv-batch-fields-asis')).toHaveAttribute('data-status', 'done');
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'failed');
     await page.getByTestId('dlv-batch-generate').click();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('11/11', { timeout: 90_000 });
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:asis]'))).toHaveLength(1);
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:tobe]'))).toHaveLength(2);
   });
@@ -151,7 +160,7 @@ test.describe('all-step live drafts', () => {
     await confirmBatch(page);
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'waiting', { timeout: 30_000 });
     await page.getByTestId('dlv-batch-stop').click();
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/11');
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/16');
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'pending');
     expect(requests).toHaveLength(2);
     await page.getByTestId('dlv-batch-fields-asis').getByRole('button', { name: 'この成果物のドラフトを確認' }).click();

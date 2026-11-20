@@ -1335,8 +1335,8 @@ process.stdin.on('data', (d) => {
           send({ id: m.id, result: { content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': { results: [], resultCount: 0, stoppedReason: 'completed' } } } });
           continue;
         }
-        const results = [{ markdown: 'Shared overview of the Contoso programme.', webUrl: 'https://contoso.sharepoint.com/common.docx', entityType: 'Files', resourceMetadata: { document: { title: 'Overview' } } }];
-        if (/KPI|scorecard/i.test(q)) results.unshift({ markdown: 'NSAT target 4.5 (FY27).', webUrl: 'https://contoso.sharepoint.com/kpi.xlsx', entityType: 'Files', resourceMetadata: { document: { title: 'KPI scorecard' } } });
+        const results = [{ markdown: 'Shared overview of the Contoso programme.', webUrl: 'https://contoso.sharepoint.com/common.docx', entityType: 'Files', contentProtection: 'allowed', resourceMetadata: { document: { title: 'Overview' } } }];
+        if (/KPI|scorecard/i.test(q)) results.unshift({ markdown: 'NSAT target 4.5 (FY27).', webUrl: 'https://contoso.sharepoint.com/kpi.xlsx', entityType: 'Files', contentProtection: 'allowed', resourceMetadata: { document: { title: 'KPI scorecard' } } });
         send({ id: m.id, result: { content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': { results, resultCount: results.length, stoppedReason: 'completed' } } } });
         continue;
       }
@@ -1648,7 +1648,7 @@ process.stdin.on('data', (d) => {
     expect(termCoverage('NSAT target', ['nsat', 'fy27'], () => 1)).toBe(0.5);
     expect(termCoverage('NSAT target', ['nsat', 'fy27'], (t) => (t === 'nsat' ? 3 : 1))).toBe(0.75);
     const found = (title: string, markdown: string, terms?: string[]) => ({ content: [], structuredContent: { 'application/vnd.ms-workiq.retrieval': {
-      results: [{ markdown, webUrl: `https://contoso.sharepoint.com/${title}`, entityType: 'Files', resourceMetadata: { document: { title } } }],
+      results: [{ markdown, webUrl: `https://contoso.sharepoint.com/${title}`, entityType: 'Files', contentProtection: 'allowed', resourceMetadata: { document: { title } } }],
       ...(terms ? { searchMetadata: { searchTerms: terms } } : {}), stoppedReason: 'completed' } } });
     // Each source is first in its own search (an RRF tie, as when mail and files are searched apart); the one with the terms wins.
     const [kpi] = mergeByItem([{ key: 'kpi', queries: ['q1', 'q2'], wordings: [], results: [found('a.docx', 'Team offsite agenda.', ['NSAT']), found('b.docx', 'NSAT 4.2 in Q1.')] }], 't');
@@ -1744,32 +1744,123 @@ process.stdin.on('data', (d) => {
     failing.closeSession();
   });
 
-  it('merges planned searches by fused rank: one item per source, the longest excerpt, protected text withheld, the budget, and failed items', () => {
+  it('preserves complementary excerpts, deduplicates shared evidence and distributes the item budget across sources', () => {
     const res = (...results: Record<string, unknown>[]) => ({ structuredContent: { 'application/vnd.ms-workiq.retrieval': { results, stoppedReason: 'completed' } } });
     const hit = (name: string, markdown: string, extra: Record<string, unknown> = {}) => ({
-      webUrl: `https://contoso.sharepoint.com/${name}`, markdown, entityType: 'Files', resourceMetadata: { document: { title: name } }, ...extra,
+      webUrl: `https://contoso.sharepoint.com/${name}`, markdown, contentProtection: 'allowed', ...extra,
+    });
+    const items = [
+      { key: 'kpi', queries: ['targets', 'actuals'], wordings: [], results: [
+        res(hit('scorecard.docx', 'Target: 95% in FY27.'), hit('overview.docx', 'Shared overview.')),
+        res(hit('scorecard.docx', 'Actual: 82% in Q1.')),
+      ] },
+      { key: 'workflow', queries: ['handoff'], wordings: [], results: [
+        res(hit('scorecard.docx', 'Handoff owner: operations.'), hit('overview.docx', 'Shared overview.')),
+      ] },
+    ];
+    const sections = mergeByItem(items, 't');
+    const answered = sections.map((s) => {
+      if ('error' in s) throw new Error(s.error);
+      return s;
+    });
+    expect(answered[0]!.answer).toContain('Target: 95% in FY27.');
+    expect(answered[0]!.answer).toContain('Actual: 82% in Q1.');
+    expect(answered[1]!.answer).toContain('Handoff owner: operations.');
+    expect(answered.map((s) => s.answer).join('\n').split('Shared overview.')).toHaveLength(2);
+    expect(answered[0]!.citations.filter((c) => c.url.endsWith('scorecard.docx'))).toHaveLength(1);
+    expect(answered[1]!.citations.some((c) => c.url.endsWith('scorecard.docx'))).toBe(true);
+
+    const [limited] = mergeByItem([{ key: 'kpi', queries: ['q'], wordings: [], results: [res(
+      hit('long.docx', 'Background. '.repeat(1000)),
+      hit('target.docx', 'Target: 95% in FY27.'),
+      hit('actual.docx', 'Actual: 82% in Q1.'),
+    )] }], 't', 700);
+    if (!limited || 'error' in limited) throw new Error('Expected evidence');
+    expect(limited.answer.length).toBeLessThanOrEqual(700);
+    expect(limited.answer).toContain('Target: 95% in FY27.');
+    expect(limited.answer).toContain('Actual: 82% in Q1.');
+    expect(limited.citations).toHaveLength(3);
+
+    const [passages] = mergeByItem([{ key: 'kpi', queries: ['overview', 'target'], wordings: [], results: [
+      res(hit('scorecard.docx', 'Background. '.repeat(1000))),
+      res(hit('scorecard.docx', 'Final target: 95% in FY27.')),
+    ] }], 't', 700);
+    if (!passages || 'error' in passages) throw new Error('Expected evidence');
+    expect(passages.answer).toContain('Final target: 95% in FY27.');
+    expect(passages.answer.length).toBeLessThanOrEqual(700);
+    expect(passages.citations).toHaveLength(1);
+  });
+
+  it('keeps organisation-scoped evidence even when a project search cites the same passage', () => {
+    const result = { structuredContent: { 'application/vnd.ms-workiq.retrieval': { results: [
+      { webUrl: 'https://contoso.sharepoint.com/scorecard.docx', markdown: 'Company target: 95%. Division target: 90%.', contentProtection: 'allowed' },
+    ] } } };
+    const sections = mergeByItem(['kpi', 'kpiCompany', 'kpiUnit'].map((key) => ({ key, queries: [key], wordings: [], results: [result] })), 't');
+    for (const section of sections) {
+      if ('error' in section) throw new Error(section.error);
+      expect(section.answer).toContain('Company target: 95%. Division target: 90%.');
+      expect(section.citations).toHaveLength(1);
+    }
+  });
+
+  it('only grounds and deep-reads result bodies with an explicit allow decision', () => {
+    const results = ['allowed', 'blocked', 'failed', 'unknown', undefined].map((contentProtection, i) => ({
+      webUrl: `https://contoso.sharepoint.com/${i}.docx`, markdown: `BODY-${i}`, contentProtection,
+    }));
+    const [section] = mergeByItem([{ key: 'kpi', queries: ['q'], wordings: [], results: [
+      { structuredContent: { 'application/vnd.ms-workiq.retrieval': {
+        results, markdown: 'LEGACY BODY-4', retrievalHits: results.map(({ webUrl }) => ({ webUrl })),
+      } } },
+    ] }], 't');
+    if (!section || 'error' in section) throw new Error('Expected evidence');
+    expect(section.answer).toContain('BODY-0');
+    expect(section.answer).not.toMatch(/BODY-[1-4]/);
+    expect(deepReadPlan([section])).toEqual([{ key: 'kpi', files: ['https://contoso.sharepoint.com/0.docx'] }]);
+    const [empty] = mergeByItem([{ key: 'kpi', queries: ['q'], wordings: [], results: [
+      { structuredContent: { 'application/vnd.ms-workiq.retrieval': { results: [], markdown: 'STALE', retrievalHits: results } } },
+    ] }], 't');
+    expect(empty).toMatchObject({ answer: '', citations: [] });
+  });
+
+  it('uses spare item capacity for a detailed Copilot answer without dropping the search evidence', () => {
+    const section = { key: 'kpi', question: 'q', answer: 'Actual: 82% in Q1.', citations: [], sensitivity: null, fetchedAt: 't' };
+    const answer = `${'Grounded KPI detail. '.repeat(240)}\n\nFinal target: 95% in FY27.`;
+    const result = askAsRetrieval({ structuredContent: { answer } }, 'en');
+    const out = withAnswer(section, result, 'en', 't');
+    if ('error' in out) throw new Error(out.error);
+    expect(out.answer).toContain('Final target: 95% in FY27.');
+    expect(out.answer).toContain('Actual: 82% in Q1.');
+    expect(out.answer.length).toBeLessThanOrEqual(9_000);
+    const full = withAnswer({ ...section, answer: `${'x '.repeat(2200)}\nSearch-only fact: owner is operations.\n${'x '.repeat(1000)}` }, result, 'en', 't');
+    if ('error' in full) throw new Error(full.error);
+    expect(full.answer).toContain('Search-only fact: owner is operations.');
+    expect(full.answer.length).toBeLessThanOrEqual(9_000);
+  });
+
+  it('merges planned searches by fused rank: complementary excerpts, protected text withheld, the budget, and failed items', () => {
+    const res = (...results: Record<string, unknown>[]) => ({ structuredContent: { 'application/vnd.ms-workiq.retrieval': { results, stoppedReason: 'completed' } } });
+    const hit = (name: string, markdown: string, extra: Record<string, unknown> = {}) => ({
+      webUrl: `https://contoso.sharepoint.com/${name}`, markdown, entityType: 'Files', contentProtection: 'allowed', resourceMetadata: { document: { title: name } }, ...extra,
     });
     const items = [
       { key: 'kpi', queries: ['q1', 'q2'], wordings: ['w2'], results: [res(hit('a', 'A text'), hit('b', 'B short')), res(hit('b', 'B much longer excerpt'), hit('c', 'PROTECTED', { contentProtection: 'blocked' }))] },
-      { key: 'issues', queries: ['q3'], wordings: [], results: [res(hit('b', 'B'), hit('d', 'D text', { sensitivityLabel: { displayName: 'Confidential' } }))] },
+      { key: 'issues', queries: ['q3'], wordings: [], results: [res(hit('b', 'B short'), hit('d', 'D text', { sensitivityLabel: { displayName: 'Confidential' } }))] },
       { key: 'org', queries: ['q4'], wordings: [], results: [new WorkIqError('workiqTimeout')] },
     ];
     const out = mergeByItem(items, '2026-11-12T00:00:00.000Z');
     const [kpi, issues, org] = out as { key: string; answer: string; question: string; searches: string[]; citations: { title: string }[]; sensitivity: string | null }[];
     // b: found by both kpi searches (1/61 + 1/62) and once for issues (1/61) → kpi, first.
-    expect(kpi!.citations.map((c) => c.title)).toEqual(['b', 'a', 'c']);
+    expect(kpi!.citations.map((c) => c.title)).toEqual(['b', 'a']);
     expect(kpi).toMatchObject({ question: 'q1\nq2', searches: ['w2'] });
-    expect(kpi!.answer).toContain('[1] b (Files) <https://contoso.sharepoint.com/b>\nB much longer excerpt');
-    expect(kpi!.answer).not.toContain('B short');
+    expect(kpi!.answer).toContain('[1] b (Files) <https://contoso.sharepoint.com/b>\nB short\n\nB much longer excerpt');
     expect(kpi!.answer).not.toContain('PROTECTED');
     expect(issues!.citations.map((c) => c.title)).toEqual(['d']);
     expect(issues!.sensitivity).toBe('Confidential');
     expect(org).toEqual({ key: 'org', error: 'workiqTimeout' });
 
     const small = mergeByItem(items.slice(0, 1), '2026-11-12T00:00:00.000Z', 40)[0] as { answer: string; citations: unknown[] };
-    expect(small.citations).toHaveLength(1);
-    expect(small.answer.endsWith('…')).toBe(true);
-    expect(small.answer.length).toBe(41);
+    expect(small.citations).toHaveLength(0);
+    expect(small.answer).toBe('');
   });
 
   it('retrieves customer evidence with citations and labels for a Foundry pack; Copilot needs its own saved model', async () => {

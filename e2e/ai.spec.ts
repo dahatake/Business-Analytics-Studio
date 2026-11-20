@@ -1405,6 +1405,9 @@ test.describe('live generation through the relay (D-12)', () => {
     await dialog.getByTestId('gen-open').click();
     await reloaded;
     await expect(page.locator('main#main')).toBeVisible();
+    await expect(page.getByTestId('dlv-batch-dialog')).toBeVisible(); // the new pack is finished by the all-items AI draft step
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dlv-batch-dialog')).toHaveCount(0);
     await page.evaluate(() => { window.location.hash = '/brand'; });
     await expect(page.getByTestId('brand-logo').locator('img')).toHaveJSProperty('naturalWidth', 1);
     await expect(page.getByTestId('brand-logo')).toContainText('20 px');

@@ -30,8 +30,13 @@ export interface DraftInput {
   audience: Audience;
 }
 
+/** What may be sent or shared for the audience: everything internally; externally only shareable items with shareable sources. */
+export function entityVisible(ctx: Pick<CheckContext, 'pack'>, audience: Audience): (e: Entity) => boolean {
+  return (e) => audience === 'internal' || (e.classification === 'shareable' && e.sourceIds.every((id) => ctx.pack.byId.get(id)?.classification === 'shareable'));
+}
+
 function visibleOf(ctx: CheckContext, audience: Audience) {
-  const show = (e: Entity) => audience === 'internal' || (e.classification === 'shareable' && e.sourceIds.every((id) => ctx.pack.byId.get(id)?.classification === 'shareable'));
+  const show = entityVisible(ctx, audience);
   const of = <K extends Entity['kind']>(kind: K) => ctx.pack.pack.entities.filter((e): e is EntityOf<K> => e.kind === kind && show(e));
   const get = (id: string) => {
     const e = ctx.pack.byId.get(id);

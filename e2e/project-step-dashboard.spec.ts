@@ -288,6 +288,33 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
     await expect(page.getByTestId('step-advice-noPursued')).toBeVisible();
   });
 
+  test('the priority aids show a summary, critique, methods and source links on every step, and follow the data (FR-358)', async ({ page }) => {
+    await go(page, '/step?step=asis');
+    for (const step of STEPS) {
+      await page.goto(`/#/step?step=${step}`);
+      const panel = page.getByTestId('step-priority');
+      await expect(panel).toBeVisible();
+      await expect(panel.getByTestId('step-priority-summary')).not.toBeEmpty();
+      await expect(panel.getByTestId('step-priority-critique')).not.toBeEmpty();
+      expect(await panel.getByTestId('step-priority-sources').getByRole('link').count()).toBeGreaterThan(0);
+      await page.goto(`/#/deliverables?step=${step}`);
+      await expect(page.getByTestId('step-priority')).toBeVisible();
+    }
+    await page.goto('/#/step?step=asis');
+    await expect(page.getByTestId('step-priority-candidates')).toBeVisible();
+  });
+
+  test('the priority aids pass axe on every step in English and have no Japanese (FR-358)', async ({ page }) => {
+    await go(page, '/step?step=asis', 'en');
+    for (const step of STEPS) {
+      await page.goto(`/#/step?step=${step}`);
+      await expect(page.getByTestId('step-priority')).toContainText('Priority aids');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      expect(await scan(page), step).toEqual([]);
+      expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+    }
+  });
+
   test('the advice panel passes axe on every step in English and has no Japanese', async ({ page }) => {
     await go(page, '/step?step=asis', 'en');
     for (const step of STEPS) {

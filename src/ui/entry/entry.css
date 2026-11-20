@@ -1,5 +1,8 @@
-.entry-surface { max-width: min(640px, 96vw); }
-.entry-form { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; overflow-y: auto; }
+.entry-surface { max-width: min(80vw, 1440px); }
+.entry-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 20px; align-items: start; max-height: 70vh; overflow-y: auto; }
+.entry-form > :not(.fui-Field):not(.entry-ref) { grid-column: 1 / -1; }
+.entry-form > .entry-wide { grid-column: 1 / -1; }
+.entry-draft { display: flex; flex-direction: column; gap: 6px; }
 .entry-ref { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .entry-ref > .fui-Field { align-self: stretch; }
 .entry-refs { border: 1px solid var(--colorNeutralStroke1, #666); border-radius: 6px; padding: 8px 12px; margin: 0; }

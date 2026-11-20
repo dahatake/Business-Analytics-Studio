@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Select, Textarea } from '@fluentui/react-components';
 import { Add20Regular, ArrowDownload20Regular, ArrowReset20Regular, Delete20Regular, Edit20Regular, Search20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { getEntity, loaded } from '../../data/pack.ts';
@@ -19,12 +19,18 @@ import { newId, type KpiData, type KpiOrigin } from './model.ts';
 import type { QualityIssue } from './requirementQuality.ts';
 import { addEvidence } from './requirementsModel.ts';
 import { EVIDENCE_BASES, SIM_RUNS, validRange, type EvidenceBasis } from './simulate.ts';
-import { buildSolutionDoc, kindKey, sectionGuide, sectionKey, solutionDocMarkdown } from './solutionDocs.ts';
+import { attachmentCandidates, buildSolutionDoc, kindKey, sectionGuide, sectionKey, solutionDocMarkdown } from './solutionDocs.ts';
+import { instructionFiles, instructionReady, safeName, systemBundle } from './copilotInstruction.ts';
+import { entityVisible } from './deliverableDraft.ts';
+import { solutionDraftKey } from './solutionDraft.ts';
+import { SolutionDraftReview } from './SolutionDraftReview.tsx';
+import { downloadZip } from './zipFiles.ts';
+import { useSettings } from '../../state/settings.ts';
 import {
-  gapCount, normalizeStrategy, removeContribution, setSection, setSolutionType, SOLUTION_TYPES, upsertContribution,
+  gapCount, isSystemType, normalizeStrategy, removeContribution, setSection, setSolutionType, SOLUTION_TYPES, upsertContribution,
   type Contribution, type SolutionType, type StrategyData, type StrategyThread,
 } from './strategy.ts';
-import { useKpis, useProjUi, useScopeKpis, useStrategy } from './stores.ts';
+import { useKpis, useProjUi, useScopeKpis, useSolutionDrafts, useStrategy } from './stores.ts';
 import { errorCodeOf, useWorkIqSearch, type WorkIqFinding } from './useWorkIqSearch.ts';
 
 const ORIGIN_COLOR: Record<KpiOrigin, 'brand' | 'informative' | 'warning'> = { customerDefined: 'brand', companyAnchor: 'informative', proposed: 'warning' };
@@ -628,6 +634,9 @@ function SectionEditor({ solutionId, id, text, edited, kind, facts, quality, sta
 export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
   const { t, lang } = useI18n();
   const names = useTargetNames();
+  const audience = useSettings((s) => s.audience);
+  const solutionDrafts = useSolutionDrafts((s) => s.value);
+  const opened = useRef(new Set<string>());
   const thread = threadOf(ctx);
   const docs = useMemo(() => thread.solutions.flatMap((ts) => {
     const s = getEntity(ts.id);
@@ -644,14 +653,51 @@ export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
     const title = `${entityName(d.solutionId, lang)} — ${t(kindKey(d.kind))}`;
     downloadText(`${names.company}-${names.project}-${title}.md`.replace(/[\\/:*?"<>|]/g, '_'), solutionDocMarkdown(d, title, lang), 'text/markdown');
   };
+  const candidatesOf = (solutionId: string) => {
+    const s = getEntity(solutionId);
+    const ts = thread.solutions.find((x) => x.id === solutionId);
+    return s?.kind === 'solution' && ts ? attachmentCandidates(s, ts, ctx, lang, entityVisible(ctx, audience), audience === 'internal') : [];
+  };
+  const exportInstruction = (d: (typeof docs)[number]) => {
+    const title = `${entityName(d.solutionId, lang)} — ${t(kindKey(d.kind))}`;
+    downloadZip(`${safeName(`${names.company}-${names.project}-${entityName(d.solutionId, lang)}`)}-copilot.zip`, instructionFiles(d, title, candidatesOf(d.solutionId), lang));
+  };
+  const exportBundle = () => {
+    const items = docs.map((d) => {
+      const ts = thread.solutions.find((x) => x.id === d.solutionId);
+      return { name: entityName(d.solutionId, lang), doc: d, candidates: candidatesOf(d.solutionId), system: !!ts && isSystemType(ts.type) };
+    });
+    downloadZip(`${safeName(`${names.company}-${names.project}`)}-software.zip`, systemBundle(items, `${names.company} ${names.project} — ${t('sol.doc.bundleTitle')}`, lang));
+  };
+  const systemCount = thread.solutions.filter((s) => isSystemType(s.type)).length;
   return (
     <Panel title={t('sol.doc.title')} className="span-full" testId="sol-docs" id="sol-docs">
       <p className="muted">{t('sol.doc.intro')}</p>
       {docs.length === 0 && <p className="muted">{t('sol.doc.none')}</p>}
+      {docs.length > 0 && (
+        <div className="proj-row">
+          <Button appearance="primary" icon={<ArrowDownload20Regular />} disabled={systemCount === 0} onClick={exportBundle} data-testid="sol-docs-bundle">{t('sol.doc.bundle')}</Button>
+          <span className="muted">{t('sol.doc.bundleHint', { n: systemCount })}</span>
+        </div>
+      )}
       {docs.map((d) => {
         const open = d.sections.filter((s) => s.open).length;
+        const pending = !!solutionDrafts[solutionDraftKey(audience, d.solutionId)];
         return (
-          <details key={d.solutionId} className="sol-doc" data-testid={`sol-doc-${d.solutionId}`}>
+          <details
+            key={d.solutionId}
+            className="sol-doc"
+            data-testid={`sol-doc-${d.solutionId}`}
+            // A new draft opens the document once; the person's open/closed choice is kept afterwards.
+            ref={(el) => {
+              const key = solutionDraftKey(audience, d.solutionId);
+              if (!pending) opened.current.delete(key);
+              else if (el && !opened.current.has(key)) {
+                el.open = true;
+                opened.current.add(key);
+              }
+            }}
+          >
             <summary>
               <strong>{entityName(d.solutionId, lang)}</strong>{' '}
               <Badge size="small" appearance="filled" color="informative">{t(kindKey(d.kind))}</Badge>{' '}
@@ -664,7 +710,14 @@ export function SolutionDocsPanel({ ctx }: { ctx: CheckContext }) {
             </summary>
             <div className="proj-row">
               <Button icon={<ArrowDownload20Regular />} onClick={() => exportDoc(d)} data-testid={`sol-doc-export-${d.solutionId}`}>{t('sol.doc.export')}</Button>
+              {d.kind === 'promptSpec' && (
+                <>
+                  <Button icon={<ArrowDownload20Regular />} disabled={!instructionReady(d)} onClick={() => exportInstruction(d)} data-testid={`sol-doc-instruction-${d.solutionId}`}>{t('sol.doc.instruction')}</Button>
+                  {!instructionReady(d) && <span className="muted">{t('sol.doc.instructionHint')}</span>}
+                </>
+              )}
             </div>
+            <SolutionDraftReview solutionId={d.solutionId} ctx={ctx} />
             <div className="dlv-fields">
               {d.sections.map((s) => (
                 <SectionEditor

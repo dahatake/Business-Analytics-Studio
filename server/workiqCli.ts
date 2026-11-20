@@ -131,7 +131,8 @@ function httpsUrl(v: unknown): URL | null {
  * - documented (learn.microsoft.com …/work-iq/mcp/retrieve): top-level `markdown` with `[^hN]` refs and `retrievalHits[]`;
  * - observed from @microsoft/workiq 1.0.x (2026-11-11): `results[]`, each with its own `markdown`, `webUrl`,
  *   `resourceMetadata`, `sensitivityLabel` and `contentProtection`.
- * A result whose `contentProtection` is not "allowed" keeps its citation but its text is not passed on.
+ * A result whose `contentProtection` is not explicitly "allowed" keeps its citation in a single answer,
+ * but its text is not passed on and it is not selected for merged grounding or a deep read.
  */
 export function parseRetrieveResult(result: unknown, question: string, fetchedAt: string, maxChars = WORKIQ_MAX_ANSWER_CHARS): WorkIqAnswer {
   const { markdown: top, entries } = readRetrieve(result);
@@ -162,6 +163,7 @@ interface RetrieveEntry {
   label: string | null;
   /** Text passed on (empty when contentProtection is not "allowed", and for documented `retrievalHits`). */
   body: string;
+  allowed: boolean;
   /** From `results[]` (has its own text and heading) rather than citation-only `retrievalHits[]`. */
   result: boolean;
 }
@@ -178,19 +180,18 @@ function readRetrieve(result: unknown): { markdown: string; entries: RetrieveEnt
     const url = httpsUrl(hit.webUrl);
     const { title, date } = hitMeta(hit);
     const label = isObj(hit.sensitivityLabel) && typeof hit.sensitivityLabel.displayName === 'string' ? hit.sensitivityLabel.displayName.trim() : '';
-    const allowed = hit.contentProtection === undefined || hit.contentProtection === 'allowed';
+    const allowed = hit.contentProtection === 'allowed' || (!isResult && hit.contentProtection === undefined);
     return {
       url, title: title ?? url?.hostname ?? '', kind: typeof hit.entityType === 'string' ? hit.entityType.slice(0, 40) : '', date, label: label || null,
-      body: isResult && allowed && typeof hit.markdown === 'string' ? hit.markdown.trim() : '', result: isResult,
+      body: isResult && allowed && typeof hit.markdown === 'string' ? hit.markdown.trim() : '', result: isResult, allowed,
     };
   };
   const meta = isObj(payload.searchMetadata) ? payload.searchMetadata : {};
+  const results = Array.isArray(payload.results) ? payload.results : null;
   return {
-    markdown: typeof payload.markdown === 'string' ? payload.markdown.trim() : '',
-    entries: [
-      ...(Array.isArray(payload.retrievalHits) ? payload.retrievalHits : []).filter(isObj).map((h) => entry(h, false)),
-      ...(Array.isArray(payload.results) ? payload.results : []).filter(isObj).map((h) => entry(h, true)),
-    ],
+    markdown: !results && typeof payload.markdown === 'string' ? payload.markdown.trim() : '',
+    entries: results ? results.filter(isObj).map((h) => entry(h, true))
+      : (Array.isArray(payload.retrievalHits) ? payload.retrievalHits : []).filter(isObj).map((h) => entry(h, false)),
     terms: Array.isArray(meta.searchTerms) ? meta.searchTerms.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map((t) => t.trim().toLowerCase()) : [],
   };
 }
@@ -249,14 +250,13 @@ export function termCoverage(text: string, terms: readonly string[], idf: (t: st
 
 /**
  * Foundry IQ–style merge of a planned fan-out (docs/workiq-agentic-retrieval-study.md). Work IQ returns no relevance
- * score, so the searches of each readiness item are fused by reciprocal rank; a source found for several items goes to
- * the one where it ranks highest, and is sent once (59 % of the hits of the 32 planned searches were duplicates in the
- * study). Within an item, sources are then reranked by how much of the item's search terms they contain (termCoverage).
- * Each item keeps its best sources within `maxChars`, in the same "[n] title (kind, date) <url>" form as a
- * single search. An item whose searches all failed is reported as `{ key, error }`.
+ * score, so the searches of each readiness item are fused by reciprocal rank. Identical passages go to the
+ * highest-ranking item; complementary passages of the same source stay with the searches that found them.
+ * Organisation-scoped sections retain their own evidence. Within an item, sources are reranked by termCoverage,
+ * then share the character budget so one long excerpt cannot crowd out every other source.
  */
 export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars = WORKIQ_SECTION_MAX_CHARS): WorkIqSectionAnswer[] {
-  type Candidate = RetrieveEntry & { id: string };
+  type Candidate = RetrieveEntry & { id: string; passages: Map<string, { text: string; items: Set<number> }> };
   const best = new Map<string, Candidate>();
   const scores = new Map<string, number[]>();
   const answered = items.map(() => 0);
@@ -271,22 +271,28 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
     answered[i]!++;
     const read = readRetrieve(r);
     for (const t of read.terms) terms[i]!.add(t);
-    const list: Candidate[] = read.markdown ? [{ id: `md:${read.markdown}`, url: null, title: '', kind: '', date: null, label: null, body: read.markdown, result: true }] : [];
-    for (const e of read.entries) if (e.url && !list.some((c) => c.id === e.url!.href)) list.push({ ...e, id: e.url.href });
-    list.forEach((c, rank) => {
+    const list: (RetrieveEntry & { id: string })[] = read.markdown ? [{ id: `md:${read.markdown}`, url: null, title: '', kind: '', date: null, label: null, body: read.markdown, result: true, allowed: true }] : [];
+    for (const e of read.entries) if (e.url && e.allowed) list.push({ ...e, id: e.url.href });
+    const ranked = new Set<string>();
+    list.forEach((c) => {
       const sc = scores.get(c.id) ?? items.map(() => 0);
-      sc[i]! += 1 / (RRF_K + rank + 1);
+      if (!ranked.has(c.id)) {
+        sc[i]! += 1 / (RRF_K + ranked.size + 1);
+        ranked.add(c.id);
+      }
       scores.set(c.id, sc);
-      const prev = best.get(c.id);
-      // Each search returns its own excerpt of a source: keep the longest, and any sensitivity label seen.
-      if (!prev) best.set(c.id, c);
-      else if (c.body.length > prev.body.length) best.set(c.id, { ...c, label: c.label ?? prev.label });
-      else if (!prev.label && c.label) prev.label = c.label;
+      const source = best.get(c.id) ?? { ...c, passages: new Map<string, { text: string; items: Set<number> }>() };
+      source.label ??= c.label;
+      const key = c.body.replace(/\s+/g, ' ').trim();
+      const passage = source.passages.get(key) ?? { text: c.body, items: new Set<number>() };
+      passage.items.add(i);
+      source.passages.set(key, passage);
+      best.set(c.id, source);
     });
   }));
-  const owner = new Map([...scores].map(([id, sc]) => [id, sc.indexOf(Math.max(...sc))]));
-  const textOf = (c: Candidate) => `${c.title}\n${c.body}`.toLowerCase();
-  const pool = [...best.values()].map(textOf);
+  const scoped = items.map((item) => WORKIQ_SCOPED_ASPECTS.some((a) => a === item.key));
+  const textOf = (c: Pick<RetrieveEntry, 'title' | 'body'>) => `${c.title}\n${c.body}`.toLowerCase();
+  const pool = [...best.values()].map((c) => textOf({ ...c, body: [...c.passages.values()].map((p) => p.text).join('\n') }));
   const df = new Map<string, number>();
   const idf = (t: string) => {
     if (!df.has(t)) df.set(t, pool.filter((x) => x.includes(t)).length);
@@ -295,32 +301,67 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
   return items.map((item, i): WorkIqSectionAnswer => {
     if (answered[i] === 0) return { key: item.key, error: firstError[i] ?? 'workiqUnavailable' };
     const itemTerms = terms[i]!.size ? [...terms[i]!] : queryTerms(item.queries.join(' '));
-    const final = (id: string) => scores.get(id)![i]! + RERANK_WEIGHT * termCoverage(textOf(best.get(id)!), itemTerms, idf);
-    const mine = [...scores.keys()].filter((id) => owner.get(id) === i).map((id) => ({ id, s: final(id) })).sort((a, b) => b.s - a.s).map(({ id }) => best.get(id)!);
-    const parts: string[] = [];
-    const citations: WorkIqCitation[] = [];
-    const labels: string[] = [];
+    const mine = [...best.values()].flatMap((c) => {
+      const passages = [...c.passages.values()].filter((p) => {
+        if (!p.items.has(i)) return false;
+        if (scoped[i]) return true;
+        const peers = [...p.items].filter((n) => !scoped[n]);
+        const owner = peers.reduce((a, b) => scores.get(c.id)![b]! > scores.get(c.id)![a]! ? b : a, peers[0]!);
+        return owner === i;
+      }).map((p) => p.text);
+      if (!passages.length) return [];
+      const distinct = passages.filter((p, n) => !passages.some((other, k) => k !== n && other.length > p.length && other.includes(p)));
+      const body = distinct.join('\n\n');
+      return [{ ...c, body, fragments: distinct, score: scores.get(c.id)![i]! + RERANK_WEIGHT * termCoverage(textOf({ ...c, body }), itemTerms, idf) }];
+    }).sort((a, b) => b.score - a.score);
+    const selected: { source: typeof mine[number]; head: string }[] = [];
     let used = 0;
+    let cited = 0;
     for (const c of mine) {
-      if (used >= maxChars) break;
-      let part = c.body;
-      if (c.url) {
-        if (citations.length >= MAX_CITATIONS) continue;
-        citations.push({ title: c.title, url: c.url.href });
-        part = c.result ? (c.body ? `${heading(citations.length, c, c.url.href)}\n${c.body}` : heading(citations.length, c, c.url.href)) : '';
-      }
-      if (c.label && !labels.includes(c.label)) labels.push(c.label);
-      if (part) {
-        parts.push(part);
-        used += part.length + 2;
-      }
+      if (selected.length >= MAX_CITATIONS) break;
+      const head = c.url ? heading(cited + 1, c, c.url.href) : '';
+      const minimum = head.length + (head && c.body ? 1 : 0) + Math.min(c.body.length, 160) + (selected.length ? 2 : 0);
+      if (used + minimum > maxChars) continue;
+      selected.push({ source: c, head });
+      if (c.url) cited++;
+      used += minimum;
     }
-    const text = parts.join('\n\n');
+    const overhead = selected.reduce((n, { source, head }) => n + head.length + (head && source.body ? 1 : 0), Math.max(0, selected.length - 1) * 2);
+    const budgets = textBudgets(selected.map(({ source }) => source.body.length), Math.max(0, maxChars - overhead));
+    const text = selected.map(({ source, head }, n) => {
+      const body = clipPassages(source.fragments, budgets[n]!);
+      return head && body ? `${head}\n${body}` : head || body;
+    }).join('\n\n');
+    const citations = selected.flatMap(({ source: c }) => c.url ? [{ title: c.title, url: c.url.href }] : []);
+    const labels = [...new Set(selected.flatMap(({ source: c }) => c.label ? [c.label] : []))];
     return {
       key: item.key, question: item.queries.join('\n').slice(0, 2_000), searches: item.wordings,
-      answer: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt,
+      answer: text, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt,
     };
   });
+}
+
+/** Water-fill the budget: short passages release their unused share to the longer ones. */
+function textBudgets(lengths: readonly number[], budget: number): number[] {
+  const out = lengths.map(() => 0);
+  let remaining = budget;
+  while (remaining > 0) {
+    const pending = lengths.flatMap((length, i) => length > out[i]! ? [i] : []);
+    if (!pending.length) break;
+    const share = Math.max(1, Math.floor(remaining / pending.length));
+    for (const i of pending) {
+      const take = Math.min(share, lengths[i]! - out[i]!, remaining);
+      out[i]! += take;
+      remaining -= take;
+    }
+  }
+  return out;
+}
+
+function clipPassages(passages: readonly string[], budget: number): string {
+  const kept = passages.filter(Boolean).slice(0, Math.floor((budget + 2) / 3));
+  const sizes = textBudgets(kept.map((p) => p.length), Math.max(0, budget - Math.max(0, kept.length - 1) * 2));
+  return kept.map((p, i) => clipText(p, sizes[i]!)).join('\n\n');
 }
 
 /* ---------- A minimal MCP stdio client (newline-delimited JSON-RPC 2.0) ---------- */
@@ -847,8 +888,9 @@ export function withAnswer(section: WorkIqSectionAnswer, result: Json | WorkIqEr
   if (!text) return section;
   const payload = retrievalPayload(result as Json);
   const head = lang === 'ja' ? 'Microsoft 365 Copilot の回答（Work IQ ask。根拠のリンクは引用に記録）:' : 'Microsoft 365 Copilot answer (Work IQ ask; the links behind it are in the citations):';
-  const body = clipText(`${head}\n${text}`, Math.min(ANSWER_MAX_CHARS, maxChars));
   const base = 'error' in section ? { key: section.key, question: '', answer: '', citations: [] as WorkIqCitation[], sensitivity: null, fetchedAt } : section;
+  const answerBudget = Math.min(maxChars, Math.max(ANSWER_MAX_CHARS, maxChars - base.answer.length - (base.answer ? 2 : 0)));
+  const body = clipText(`${head}\n${text}`, answerBudget);
   const rest = clipText(base.answer, Math.max(0, maxChars - body.length - 2));
   const citations = [...base.citations];
   for (const h of Array.isArray(payload?.retrievalHits) ? payload.retrievalHits.filter(isObj) : []) {

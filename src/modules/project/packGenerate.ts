@@ -15,6 +15,7 @@ import { placeSitesByCity } from './gazetteer.ts';
 import { readiness, readinessScore, requirementOf, type GenStageKey, type ReadinessItem, type ReadinessKey } from './analysisReadiness.ts';
 import { alignmentSnapshot, type Alignment } from './companyAlignment.ts';
 import { categoriesOf } from './analysis.ts';
+import { analyzePackPriority, type PriorityAnalysis } from './priorityAnalysis.ts';
 import { AnalysisDataSchema, METHODS, newId, type AnalysisData, type AnalysisItem, type MethodId } from './model.ts';
 import { methodKey } from './analysisText.ts';
 import { translate } from '../../i18n/core.ts';
@@ -192,7 +193,7 @@ export interface GenDeps {
   model?: string;
 }
 
-export type StepId = 'collect' | 'foundation' | 'business' | 'verify' | 'analysis' | 'finalize';
+export type StepId = 'collect' | 'foundation' | 'business' | 'verify' | 'analysis' | 'priority' | 'finalize';
 /** A model call: the two stages, their re-runs after Work IQ follow-up rounds (foundation-2, -3 …), and the fix rounds. */
 export type GenStage = 'foundation' | 'business' | 'analysis' | `foundation-${number}` | `business-${number}` | `fix-${number}`;
 export type StepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed';
@@ -215,7 +216,7 @@ export interface ProgressEvent {
 }
 
 const STEP_SPAN: Record<StepId, [number, number]> = {
-  collect: [0, 0.1], foundation: [0.1, 0.45], business: [0.45, 0.8], verify: [0.8, 0.9], analysis: [0.9, 0.97], finalize: [0.97, 1],
+  collect: [0, 0.1], foundation: [0.1, 0.45], business: [0.45, 0.8], verify: [0.8, 0.9], analysis: [0.9, 0.95], priority: [0.95, 0.97], finalize: [0.97, 1],
 };
 
 export interface RetrievedItem {
@@ -283,6 +284,7 @@ export interface GenResult {
   pack: Record<string, unknown>;
   verify: VerifyResult;
   analysis: AnalysisData;
+  priority: PriorityAnalysis;
   summary: PackSummary;
   report: GenerationReport;
 }
@@ -401,6 +403,20 @@ export function materialSources(input: PackGenInput, pages: SitePageLike[], news
       body: m.text,
     });
   });
+  // The purpose text is the user's own statement of the problem; without a citable source its issues and causes had no sourceIds and were dropped.
+  const brief = [input.purpose, input.focus].map((v) => v.trim()).filter(Boolean);
+  if (brief.length) {
+    out.push({
+      item: { sourceId: 'source-brief-1', kind: 'note', title: 'project brief', locator: 'project brief', fetchedAt: now.toISOString() },
+      entity: {
+        id: 'source-brief-1', kind: 'source', name: lt(input.lang === 'ja' ? 'Project の目的（利用者の入力）' : 'Project purpose (user input)'),
+        description: lt(input.lang === 'ja' ? '利用者が Project パック作成時に入力した目的・重点。内容は要確認' : 'Purpose and focus the user entered when creating the pack; review its contents'),
+        world: 'digital', type: 'data', classification: 'internal', author: 'human', sourceIds: [],
+        publisher: lt(input.companyName.trim()), locator: 'project brief', accessedDate: today,
+      },
+      body: `${input.lang === 'ja' ? '利用者が入力した目的・重点' : 'Purpose and focus entered by the user'}:\n${brief.join('\n')}`,
+    });
+  }
   if (input.researchNote.trim()) {
     out.push({
       item: { sourceId: 'source-note-1', kind: 'note', title: 'research note', locator: 'research note', fetchedAt: now.toISOString() },
@@ -560,6 +576,7 @@ function rules(lang: Lang): string {
       '- source エンティティと extensions.collection は作らない（アプリが資料から作る）。sourceIds には資料一覧の id だけを書く。',
       '- 資料に書かれていない値・URL・人物・日付は作らない。根拠がない必須項目があるエンティティは出さない。',
       '- 企業分析は利用者が入力した要約で、原資料そのものではない。会社が表明した目標と推定を区別し、Project との整合を強制しない。数値は出典抜粋と照合し、人が確認する。',
+      '- 目的・重点（source-brief-1）に利用者が書いた困りごと・現状の問題・その理由は、課題（issue）と原因（cause）として必ず出し、sourceIds に source-brief-1 を書く。例: 「手間がかかりすぎる」→課題、「情報共有が不足」→原因。文に書かれた事実の範囲で、数値や固有名は補わない。',
       '- 中心は対象の Project とその目的・業務課題。課題・原因・施策・KPI・グラフのノードは目的に関係するものを優先し、ニュース・公開Web（source-news-* / source-web-*）は周辺の文脈として少しだけ使い、主役にしない。',
       '- ニュースの見出し（source-news-*）は出来事・課題・原因の根拠にだけ使い、顧客・仕入先の取引関係や拠点・製品の値の根拠にしない。目的と関係しない出来事（障害・株価・人事など）をニュースだけを根拠に課題にしない。',
       '- 業種を製造業と決めつけない。営業・サービス・管理の組織なら工場・生産ライン・物流の用語を使わず、その組織の言葉（顧客、案件、提案、イベント、レポート等）で書く。',
@@ -579,6 +596,7 @@ function rules(lang: Lang): string {
       '- Do not create source entities or extensions.collection (the app makes them from the material). sourceIds may only hold ids from the material list.',
       '- Never invent values, URLs, people or dates the material does not state. Leave out entities whose required fields have no basis.',
       '- The company analysis is a user-supplied summary, not the original source. Separate stated objectives from inference, do not force project alignment, and have a person check numbers against source excerpts.',
+      '- Problems, current-state pain points and their reasons that the user wrote in the purpose or focus (source-brief-1) must be output as issue and cause entities with sourceIds ["source-brief-1"]. E.g. "too much effort per engagement" → issue; "insufficient information sharing" → cause. Stay within what the text states; add no numbers or names.',
       '- The project, its purpose and its business problem come first. Issues, causes, solutions, KPIs and graph nodes should serve that purpose; news and public web (source-news-*, source-web-*) are light context only and must not dominate.',
       '- News headlines (source-news-*) may support events, issues and causes only; never customer or supplier relationships, or site and product values. Never turn an event unrelated to the purpose (outages, share prices, appointments…) into an issue on news alone.',
       '- Do not assume manufacturing. For a sales, service or administrative organisation, avoid plant, production-line and logistics terms and use its own (customers, engagements, proposals, events, reports…).',
@@ -1602,6 +1620,11 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const analysis = analysisDataFrom(analysisAnswer, now().toISOString(), costJpy);
   emit('analysis', 'done');
 
+  // Rule-based (no model call): rank the issues the run produced by impact × feasibility and how well each is evidenced.
+  emit('priority', 'running');
+  const priority = analyzePackPriority(Array.isArray(finalPack.entities) ? finalPack.entities : []);
+  emit('priority', 'done');
+
   /* 6. Collection report, number check, generation record */
   emit('finalize', 'running');
   const ext = { ...((finalPack.extensions as Record<string, unknown>) ?? {}) };
@@ -1637,13 +1660,14 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     readiness: readiness(finalPack),
   };
   ext.generation = report;
+  ext.priority = structuredClone(priority);
   const final = check(finalPack, now());
   if (!final.verify.ok) {
     const first = blockingErrors(final.verify)[0];
     throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid', costJpy);
   }
   emit('finalize', 'done');
-  return { pack: final.pack, verify: final.verify, analysis, summary: summarize(final.pack), report };
+  return { pack: final.pack, verify: final.verify, analysis, priority, summary: summarize(final.pack), report };
 }
 
 /** Upper bound of the work one run sends, for the confirmation before the run. */

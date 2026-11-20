@@ -1,4 +1,4 @@
-import type { EntityOf } from '../../data/schema.ts';
+import type { Entity, EntityOf } from '../../data/schema.ts';
 import { isRuleKind, isVoiceKind, type EvidenceKind } from '../../data/extensionSchemas.ts';
 import { makeFormatters, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { personaLabel } from '../../state/personas.ts';
@@ -26,7 +26,7 @@ const SYSTEM_TAIL = ['constraints', 'acceptance', 'benefits', 'risks', 'rtm'];
 
 export const SECTIONS: Record<DeliverableKind, string[]> = {
   requirements: [...SYSTEM_HEAD, 'functionalReq', 'nonFunctionalReq', 'dataReq', ...SYSTEM_TAIL],
-  promptSpec: [...SYSTEM_HEAD, 'promptElements', 'promptContext', 'reviewProcedure', 'promptEval', 'promptVersion', ...SYSTEM_TAIL],
+  promptSpec: [...SYSTEM_HEAD, 'promptElements', 'copilotPrompt', 'copilotAttachments', 'promptContext', 'reviewProcedure', 'promptEval', 'promptVersion', ...SYSTEM_TAIL],
   agentSpec: [
     ...SYSTEM_HEAD, 'functionalReq', 'roleSplit', 'uncertainty', 'fallback', 'dataReq', 'dataSupply', 'evaluation', 'monitoring', 'logging', 'nonFunctionalReq',
     ...SYSTEM_TAIL,
@@ -170,6 +170,126 @@ export function sectionGuide(id: string, lang: Lang): string[] {
   }
 }
 
+/** The data dictionary entries a solution names (all of them when the dictionary is small). */
+function relevantCatalog(s: EntityOf<'solution'>, ucs: DocContext['useCases'], c: DocContext, lang: Lang): CatalogItem[] {
+  const catalog = c.catalog?.length ? c.catalog : catalogOf(c.pack);
+  const dataNeeds = c.deliverables.docs.solution?.dataNeeds?.text.trim() ?? '';
+  const pool = [dataNeeds, loc(s.description, lang), ...ucs.flatMap((u) => [loc(u.summary, lang), ...u.steps.map((st) => loc(st.description, lang))])].join('\n').toLowerCase();
+  return catalog.filter((it) => pool.includes(it.name.toLowerCase())).concat(catalog.length <= 8 ? catalog.filter((it) => !pool.includes(it.name.toLowerCase())) : []).slice(0, 20);
+}
+
+/** A file the person attaches in Microsoft 365 Copilot, built from the project data (never written by the model). */
+export interface AttachmentCandidate {
+  id: string;
+  file: string;
+  description: string;
+  content: string;
+}
+
+const csvCell = (v: string | number) => {
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const csv = (rows: (string | number)[][]) => rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+
+/**
+ * Attachments for a prompt run in Microsoft 365 Copilot: the linked KPIs, issues and causes, use cases, data dictionary,
+ * glossary and evidence. `show` hides what may not leave the company (external audience); project-only data (use cases,
+ * evidence) is left out then.
+ */
+export function attachmentCandidates(
+  s: EntityOf<'solution'>, ts: ThreadSolution, c: DocContext, lang: Lang, show: (e: Entity) => boolean = () => true, internal = true,
+): AttachmentCandidate[] {
+  const L = (b: Bi) => b[lang];
+  const visible = (id: string) => {
+    const e = c.pack.byId.get(id);
+    return e && show(e) ? e : undefined;
+  };
+  const out: AttachmentCandidate[] = [];
+  const kpis = ts.kpiIds.map((id) => c.kpi.kpis.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k && (internal || !!visible(k.id)));
+  if (kpis.length) {
+    out.push({
+      id: 'kpis', file: 'kpi.csv',
+      description: L({ ja: `KPI の基準値・現在値・目標値・期限（${kpis.length} 件）`, en: `KPI baseline, current, target and deadline (${kpis.length})` }),
+      content: csv([
+        lang === 'ja' ? ['KPI', '単位', '基準値', '現在値', '目標値', '期限'] : ['KPI', 'Unit', 'Baseline', 'Current', 'Target', 'Deadline'],
+        ...kpis.map((k) => [loc(k.name, lang), loc(k.unit, lang), k.baseline, k.current, k.target, k.deadline]),
+      ]),
+    });
+  }
+  const issues = s.issueIds.map(visible).filter((e): e is EntityOf<'issue'> => e?.kind === 'issue');
+  if (issues.length) {
+    const name = (id: string) => {
+      const e = visible(id);
+      return e && 'name' in e ? loc(e.name as Localizable, lang) : '';
+    };
+    out.push({
+      id: 'issues', file: 'issues.md',
+      description: L({ ja: `課題・原因・出典（${issues.length} 件）`, en: `Issues, causes and sources (${issues.length})` }),
+      content: [
+        L({ ja: '# 課題と原因', en: '# Issues and causes' }),
+        ...issues.flatMap((i) => {
+          const causes = i.causeIds.map(visible).filter((e): e is EntityOf<'cause'> => e?.kind === 'cause');
+          const sources = i.sourceIds.map(name).filter(Boolean);
+          return [
+            '', `## ${loc(i.name, lang)}`, '', loc(i.description, lang),
+            ...(causes.length ? ['', L({ ja: '原因:', en: 'Causes:' }), ...causes.map((x) => `- ${loc(x.name, lang)}: ${loc(x.description, lang)}`)] : []),
+            ...(sources.length ? ['', `${L({ ja: '出典', en: 'Sources' })}: ${sources.join(', ')}`] : []),
+          ];
+        }),
+      ].join('\n'),
+    });
+  }
+  const ucs = internal ? c.useCases.filter((u) => ts.useCaseIds.includes(u.id)) : [];
+  if (ucs.length) {
+    out.push({
+      id: 'usecases', file: 'usecases.md',
+      description: L({ ja: `ユースケースと手順（${ucs.length} 件）`, en: `Use cases and steps (${ucs.length})` }),
+      content: [
+        L({ ja: '# ユースケース', en: '# Use cases' }),
+        ...ucs.flatMap((u) => ['', `## ${loc(u.name, lang)}`, '', loc(u.summary, lang), '', ...u.steps.map((st, n) => `${n + 1}. ${loc(st.title, lang)}${loc(st.description, lang) ? ` — ${loc(st.description, lang)}` : ''}`)]),
+      ].join('\n'),
+    });
+  }
+  const catalog = relevantCatalog(s, internal ? c.useCases.filter((u) => ts.useCaseIds.includes(u.id)) : [], c, lang);
+  if (catalog.length) {
+    out.push({
+      id: 'catalog', file: 'data-dictionary.csv',
+      description: L({ ja: `データ辞書（${catalog.length} 件）`, en: `Data dictionary (${catalog.length})` }),
+      content: csv([
+        [L({ ja: '名前', en: 'Name' }), L({ ja: '説明', en: 'Description' }), ...DATA_ATTRS.map((a) => L(a.label))],
+        ...catalog.map((it) => [it.name, it.description ?? '', ...DATA_ATTRS.map((a) => it[a.key] ?? '')]),
+      ]),
+    });
+  }
+  const terms = glossaryOf(c.pack, lang);
+  if (terms.length) {
+    out.push({
+      id: 'glossary', file: 'glossary.csv',
+      description: L({ ja: `用語集（${terms.length} 語）`, en: `Glossary (${terms.length} terms)` }),
+      content: csv([[L({ ja: '用語', en: 'Term' }), L({ ja: '定義', en: 'Definition' })], ...terms.map((g) => [g.term, g.definition])]),
+    });
+  }
+  const evidence = internal ? evidenceViews(c.pack, c.strategy, lang).filter((e) => isRuleKind(e.kind) || isVoiceKind(e.kind) || ['law', 'standard', 'policy', 'aiPolicy'].includes(e.kind)) : [];
+  if (evidence.length) {
+    out.push({
+      id: 'evidence', file: 'evidence.md',
+      description: L({ ja: `規程・利用者の声などの根拠（${evidence.length} 件）`, en: `Rules, user voices and other evidence (${evidence.length})` }),
+      content: [
+        L({ ja: '# 根拠', en: '# Evidence' }),
+        ...evidence.flatMap((e) => ['', `## ${e.title}`, '', e.summary, ...(e.sources.length ? ['', `${L({ ja: '出典', en: 'Sources' })}: ${e.sources.join(', ')}`] : [])]),
+      ].join('\n'),
+    });
+  }
+  return out;
+}
+
+/** The attachments a "copilotAttachments" section names (one file name per line; deleting a line drops the file). */
+export function chosenAttachments(sectionText: string, candidates: AttachmentCandidate[]): AttachmentCandidate[] {
+  return candidates.filter((a) => sectionText.includes(a.file));
+}
+export const attachmentLines = (list: AttachmentCandidate[]) => bullets(list.map((a) => `${a.file} — ${a.description}`));
+
 export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, thread: StrategyThread, c: DocContext, lang: Lang): SolutionDoc {
   const L = (b: Bi) => b[lang];
   const fill = (b: Bi) => `${TO_FILL[lang]} ${L(b)}`;
@@ -187,7 +307,6 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
   const system = isSystemType(ts.type);
   const evidence = evidenceViews(c.pack, c.strategy, lang);
   const systems = systemsOf(c.pack);
-  const catalog = c.catalog?.length ? c.catalog : catalogOf(c.pack);
   const terms = glossaryOf(c.pack, lang);
   const items: ReqItem[] = [];
   const addItem = (item: ReqItem) => items.push(item);
@@ -318,9 +437,8 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
     uncovered.length ? bullets([fill({ ja: `${uncovered.map((cat) => cat.label.ja).join('・')}の要求（数値で）`, en: `${uncovered.map((cat) => cat.label.en).join(', ')} requirements (with numbers)` })]) : '',
   ].filter(Boolean).join('\n');
 
-  const pool = [doc('solution', 'dataNeeds'), loc(s.description, lang), ...ucs.flatMap((u) => [loc(u.summary, lang), ...u.steps.map((st) => loc(st.description, lang))])].join('\n').toLowerCase();
-  const relevant = catalog.filter((it) => pool.includes(it.name.toLowerCase())).concat(catalog.length <= 8 ? catalog.filter((it) => !pool.includes(it.name.toLowerCase())) : []).slice(0, 20);
-  const attrText = (it: (typeof catalog)[number]) => DATA_ATTRS.filter((a) => it[a.key]).map((a) => `${L(a.label)}: ${it[a.key]}`);
+  const relevant = relevantCatalog(s, ucs, c, lang);
+  const attrText = (it: CatalogItem) => DATA_ATTRS.filter((a) => it[a.key]).map((a) => `${L(a.label)}: ${it[a.key]}`);
   const dataLines = relevant.map((it) => {
     const id = reqId('DR', it.id ?? slug(it.name));
     const attrs = attrText(it);
@@ -408,6 +526,8 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
       return known ? `${L(p.label)}: ${known}` : fill({ ja: `${p.label.ja}: ${p.hint.ja}`, en: `${p.label.en}: ${p.hint.en}` });
     })),
     promptContext: bullets([...relevant.map((it) => `${it.name}${it.description ? `: ${it.description}` : ''}`)]) || fill({ ja: 'AI に参照させるデータ・文書とその最新性', en: 'the data and documents the AI may use, and how current they are' }),
+    copilotPrompt: fill({ ja: 'Microsoft 365 Copilot に貼り付けるプロンプトの全文（役割・添付ファイル名を挙げた入力・制約・出力形式・評価基準・確認事項・根拠）', en: 'the full prompt pasted into Microsoft 365 Copilot (role, input naming the attached files, constraints, output format, evaluation criteria, confirmations, grounds)' }),
+    copilotAttachments: attachmentLines(attachmentCandidates(s, ts, c, lang)) || fill({ ja: '添付するファイル（KPI・課題・ユースケース・データ辞書などを登録すると候補が出ます）', en: 'files to attach (candidates appear once KPIs, issues, use cases or a data dictionary exist)' }),
     reviewProcedure: fillAll([
       { ja: '出力を確認する人と手順、確認なしに使ってよい範囲', en: 'who reviews the output, how, and what may be used without review' },
       { ja: '利用してはいけない場面・入力してはいけない情報', en: 'situations and information the prompt must not be used for' },

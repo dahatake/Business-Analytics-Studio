@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody, Select, Textarea,
 } from '@fluentui/react-components';
@@ -9,9 +9,13 @@ import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
 import { commitPackChange, newEntityId, referencesTo, usePackVersion } from '../../state/packEdits.ts';
 import { SharedDataInUseError } from '../../data/packStore.ts';
-import { useProjects } from '../../state/projects.ts';
+import { useActiveProject, useProjects } from '../../state/projects.ts';
 import { isHidden } from '../cardSpecs.ts';
 import { ensureSource, hashOfSource, itemOfSource, type AttachmentItem } from '../../state/attachments.ts';
+import { askWorkIqSections, type WorkIqProvider } from '../../modules/ai/relayClient.ts';
+import { useAiSettings, workIqReady } from '../../modules/ai/settingsStore.ts';
+import { FormDraftReview } from '../../modules/project/FormDraftReview.tsx';
+import { requestFormDraft, type EntityDraftContext, type EntityDraftField, type FormDraftRequest } from '../../modules/project/formDraft.ts';
 import { AttachmentField } from './AttachmentField.tsx';
 import {
   blankEntity, FIELDS, fromForm, isEditableKind, setLText, toForm, type EditableKind, type FieldErrors, type FieldSpec, type FormState,
@@ -49,6 +53,11 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
   const [busy, setBusy] = useState(false);
   const [nested, setNested] = useState<{ kind: EditableKind; field: FieldSpec } | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const { project, company } = useActiveProject();
+  const ai = useAiSettings();
+  const workIqOk = workIqReady(ai);
+  const [useWorkIq, setUseWorkIq] = useState(project?.brief?.useWorkIq === true);
+  const [workIqNote, setWorkIqNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!kind) return;
@@ -239,6 +248,62 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
   };
 
   const kindLabel = kind ? t(`kind.${kind}`) : '';
+
+  const draftOptions = (k: EntityKind) => entitiesOf(k)
+    .filter((e) => e.id !== id && !isHidden(e, audience))
+    .slice(0, 60)
+    .map((e) => ({ value: e.id, label: tx(e.name) }));
+
+  /** Every input the model may fill, with the only values it may choose for choice fields. */
+  const draftFields = (): EntityDraftField[] => {
+    if (!kind) return [];
+    const text = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '');
+    const fields: EntityDraftField[] = [
+      { key: 'name', label: t('field.name'), type: 'text', required: true, current: text('name') },
+      { key: 'description', label: t('entry.field.description'), type: 'longtext', current: text('description') },
+    ];
+    for (const f of FIELDS[kind]) {
+      const base = { key: f.key, label: t(f.label), current: form[f.key] ?? (f.type === 'refs' ? [] : '') };
+      if (f.type === 'ltext') fields.push({ ...base, type: 'text', required: f.required });
+      else if (f.type === 'number') fields.push({ ...base, type: 'number', min: f.min, max: f.max });
+      else if (f.type === 'date' || f.type === 'list') fields.push({ ...base, type: f.type });
+      else if (f.type === 'enum') fields.push({ ...base, type: 'enum', options: f.options.map((o) => ({ value: o.value, label: t(o.label) })) });
+      else if (f.type === 'ref') fields.push({ ...base, type: 'ref', options: draftOptions(f.kind) });
+      else if (f.type === 'region') fields.push({ ...base, type: 'ref', options: loaded.pack.regions.map((r) => ({ value: r.id, label: tx(r.name) })) });
+      else if (f.kind !== 'source') fields.push({ ...base, type: 'refs', required: !!f.min, options: draftOptions(f.kind) });
+    }
+    return fields;
+  };
+
+  const draftRequest: FormDraftRequest<'entity'> = async () => {
+    setWorkIqNote(null);
+    const evidence: { text: string; source: string }[] = [];
+    if (useWorkIq && workIqOk && (ai.provider === 'foundry' || ai.provider === 'copilotSdk')) {
+      try {
+        const sections = await askWorkIqSections({
+          company: company?.name ?? '', project: project?.name ?? '', purpose: project?.brief?.purpose ?? '', focus: project?.brief?.focus ?? '',
+          asOf: project?.brief?.asOf ?? new Date().toISOString().slice(0, 10), lang, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+          provider: ai.provider as WorkIqProvider, aspects: [], topics: [[kindLabel, form.name, form.description].filter((x) => typeof x === 'string' && x).join(' ')],
+        });
+        for (const s of sections) if ('answer' in s && s.answer.trim()) evidence.push({ text: s.answer.slice(0, 1500), source: s.citations.slice(0, 3).map((c) => c.title).join(', ') || 'Work IQ' });
+        if (!evidence.length) setWorkIqNote(t('entry.draft.workIqEmpty'));
+      } catch {
+        setWorkIqNote(t('entry.draft.workIqFailed'));
+      }
+    }
+    const context: EntityDraftContext = {
+      kind: kindLabel, company: company?.name ?? '', project: project?.name ?? '', purpose: project?.brief?.purpose ?? '', focus: project?.brief?.focus ?? '',
+      fields: draftFields(), ...(evidence.length ? { evidence } : {}),
+    };
+    return requestFormDraft('entity', context, lang);
+  };
+
+  const draftValueLabel = (key: string, value: string | string[]) => {
+    const f = draftFields().find((x) => x.key === key);
+    const name = (v: string) => f?.options?.find((o) => o.value === v)?.label ?? v;
+    return Array.isArray(value) ? value.map(name).join(t('ai.listSep')) : name(value);
+  };
+
   const title = existing ? t('entry.titleEdit', { kind: kindLabel, name: tx(existing.name) }) : t('entry.titleNew', { kind: kindLabel });
   const where = useMemo(() => (packOrigin.kind === 'imported' ? 'entry.where.imported' : 'entry.where.overlay'), []);
 
@@ -250,10 +315,35 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
             <DialogTitle>{title}</DialogTitle>
             <DialogContent className="entry-form">
               <p className="muted">{t(where)}</p>
+              {kind && (
+                <div className="entry-wide entry-draft">
+                  {workIqOk && (
+                    <Checkbox label={t('entry.draft.useWorkIq')} checked={useWorkIq} onChange={(_, d) => setUseWorkIq(d.checked === true)} data-testid="entry-draft-workiq" />
+                  )}
+                  {workIqNote && <p className="muted" role="status" data-testid="entry-draft-workiq-note">{workIqNote}</p>}
+                  <FormDraftReview
+                    kind="entity"
+                    testId="entry-draft"
+                    baseline={`${kind}:${id ?? ''}`}
+                    request={draftRequest}
+                    preview={(d) => (
+                      <dl className="dlv-form-draft-fields">
+                        {Object.entries(d.values).map(([key, value]) => (
+                          <Fragment key={key}>
+                            <dt>{draftFields().find((x) => x.key === key)?.label ?? key}</dt>
+                            <dd>{draftValueLabel(key, value)}</dd>
+                          </Fragment>
+                        ))}
+                      </dl>
+                    )}
+                    onApprove={(d) => { for (const [key, value] of Object.entries(d.values)) set(key, value); }}
+                  />
+                </div>
+              )}
               <Field label={t('field.name')} required validationState={vstate('name')} validationMessage={errMsg('name')}>
                 <Input value={String(form.name ?? '')} onChange={(_, d) => set('name', d.value)} data-testid="entry-field-name" />
               </Field>
-              <Field label={t('entry.field.description')} hint={t('entry.descriptionHint')}>
+              <Field className="entry-wide" label={t('entry.field.description')} hint={t('entry.descriptionHint')}>
                 <Textarea value={String(form.description ?? '')} onChange={(_, d) => set('description', d.value)} resize="vertical" rows={2} data-testid="entry-field-description" />
               </Field>
               {kind && FIELDS[kind].map(renderField)}

@@ -4,7 +4,7 @@ import { AiLiveError, preflight, type Preflight } from '../../ai/client.ts';
 import { PER_USE_LIMITS, type AiUse } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
-import { currentScope } from '../../state/projects.ts';
+import { currentScope, useProjects } from '../../state/projects.ts';
 import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { reasonKey } from '../ai/AiCommon.tsx';
@@ -12,7 +12,7 @@ import { useAiSettings } from '../ai/settingsStore.ts';
 import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob } from './batchDraft.ts';
 import { useCheckContext } from './deliverablesUi.tsx';
 import { useOverview } from './overviewModel.ts';
-import { useProjTransient } from './stores.ts';
+import { useProjTransient, useProjUi } from './stores.ts';
 
 type JobStatus = 'pending' | 'working' | 'waiting' | 'done' | 'failed';
 type JobStatuses = Record<string, JobStatus>;
@@ -38,10 +38,15 @@ export function BatchDraftDialog() {
   const running = useRef(false);
   const controller = useRef<AbortController | null>(null);
 
-  useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => () => {
+    controller.current?.abort();
+    const target = useProjects.getState().target;
+    if (target.kind === 'project') useProjUi.getState().unqueueAutoDraft(target.projectId);
+  }, []);
 
   const nameOf = (job: BatchJob): string => {
     if (job.kind === 'strategy') return t('dlv.batch.strategy');
+    if (job.kind === 'solution') return t('dlv.batch.solution', { name: job.name });
     return t(job.kind === 'fields' ? 'dlv.batch.fields' : 'dlv.batch.brief', { step: t(`proj.step.${job.step}`) });
   };
   const setStatus = (job: BatchJob, status: JobStatus) => setStatuses((current) => ({ ...current, [batchJobId(job)]: status }));
@@ -140,7 +145,7 @@ export function BatchDraftDialog() {
         <DialogSurface className="dlv-draft-surface" data-testid="dlv-batch-dialog">
           <DialogBody>
             <DialogTitle>{t('dlv.batch.title')}</DialogTitle>
-            <DialogContent>
+            <DialogContent tabIndex={0}>
               <p>{t('dlv.batch.intro', { n: jobs.length })}</p>
               <p>{t('dlv.batch.note')}</p>
               <p className="muted">{t('dlv.batch.limits')}</p>
@@ -162,6 +167,7 @@ export function BatchDraftDialog() {
                       {!busy && status === 'done' && job.kind === 'fields' && <Button size="small" onClick={() => review(job)}>{t('dlv.batch.review')}</Button>}
                       {!busy && status === 'done' && job.kind === 'brief' && <a href={hrefFor('/step', { step: job.step })} onClick={close}>{t('dlv.batch.briefLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'strategy' && <a href={hrefFor('/', { draft: 'shared' })} onClick={close}>{t('dlv.batch.strategyLink')}</a>}
+                      {!busy && status === 'done' && job.kind === 'solution' && <a href={`${hrefFor('/deliverables', { step: 'deliverable' })}`} onClick={close}>{t('dlv.batch.solutionLink')}</a>}
                     </li>
                   );
                 })}

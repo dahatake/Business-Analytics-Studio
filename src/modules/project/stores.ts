@@ -13,6 +13,7 @@ import { emptyDeliverables, type DeliverableData } from './deliverables.ts';
 import { emptyStrategy, type StrategyData } from './strategy.ts';
 import { demoValue, emptyValue, type ValueData } from './valueModel.ts';
 import type { DecisionInputs } from './decisionSupport.ts';
+import type { SavedSolutionDraft } from './solutionDraft.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
 import type { Lang } from '../../i18n/core.ts';
 import { useUseCases, type UseCase } from '../usecases/store.ts';
@@ -52,6 +53,8 @@ export interface SavedFieldDraft {
   at: string;
 }
 export const useFieldDrafts = createScopedStore<Record<string, SavedFieldDraft>>('proj.fieldDrafts', () => ({}));
+/** Per audience and solution: Copilot's proposed type and whole-document draft, kept until a person approves or discards it. */
+export const useSolutionDrafts = createScopedStore<Record<string, SavedSolutionDraft>>('proj.solutionDrafts', () => ({}));
 /** Solution types, KPI contribution estimates, deliverable section edits and the KPI/OKR definition status. */
 export const useStrategy = createScopedStore<StrategyData>('proj.strategy', () => emptyStrategy());
 /** FR-327: benefit lines by value driver, interdependencies and the valuation settings. The demo starts from a worked example. */
@@ -70,6 +73,10 @@ interface ProjUiState {
   todoCollapsed: boolean | null;
   /** The expected-outcomes card row under the top bar is unfolded. */
   outcomesOpen: boolean;
+  /** Projects whose freshly created pack still awaits the all-items AI draft; the batch dialog opens once for each. */
+  autoDraftProjects: string[];
+  queueAutoDraft: (projectId: string) => void;
+  unqueueAutoDraft: (projectId: string) => void;
   setEditor: (v: string) => void;
   setEditMode: (v: boolean) => void;
   setLens: (v: Lens) => void;
@@ -89,6 +96,9 @@ export const useProjUi = create<ProjUiState>()(
       firstRunDone: false,
       todoCollapsed: null,
       outcomesOpen: false,
+      autoDraftProjects: [],
+      queueAutoDraft: (projectId) => set((s) => ({ autoDraftProjects: s.autoDraftProjects.includes(projectId) ? s.autoDraftProjects : [...s.autoDraftProjects, projectId] })),
+      unqueueAutoDraft: (projectId) => set((s) => ({ autoDraftProjects: s.autoDraftProjects.filter((id) => id !== projectId) })),
       setEditor: (editor) => set({ editor }),
       setEditMode: (editMode) => set({ editMode }),
       setLens: (lens) => set({ lens }),

@@ -218,9 +218,14 @@ describe('FR-311 pack generation (D-12)', () => {
     const d = deps([{ ...stageA, entities: [base('cause-a', 'cause', 'real', 'event', ['source-doc-1'])] }, { entities: [] }]);
     const r = await generatePack(input({ officialUrl: '', useNews: false }), d, () => {}, new AbortController().signal);
     expect(CollectionReport.parse((r.pack.extensions as Record<string, unknown>).collection).webSearch).toBe('notRequested');
-    expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(['source-doc-1', 'cause-a']);
+    expect((r.pack.entities as { id: string }[]).map((e) => e.id)).    toEqual(['source-doc-1', 'source-brief-1', 'cause-a']);
   });
 
+      it('keeps an issue that cites only the purpose the user typed', async () => {
+        const issue = base('issue-effort', 'issue', 'real', 'event', ['source-brief-1'], { impact: 4, feasibility: 3, causeIds: [], kpiIds: [] });
+        const r = await generatePack(input({ officialUrl: '', useNews: false }), deps([{ ...stageA, entities: [] }, { entities: [issue] }]), () => {}, new AbortController().signal);
+        expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toContain('issue-effort');
+      });
   it('uses a versioned company summary separately from project retrieval and preserves an immutable snapshot', async () => {
     const queries: WorkIqQuery[] = [];
     const anchor = structuredClone(companyAnchor);

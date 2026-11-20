@@ -14,8 +14,9 @@ import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { overviewBaseline, stepBriefContext, useOverview } from '../src/modules/project/overviewModel.ts';
 import { buildStepBrief, useStepBriefs } from '../src/modules/project/stepBrief.ts';
 import { stepDashboard } from '../src/modules/project/stepDashboard.ts';
-import { useDeliverables, useFieldDrafts } from '../src/modules/project/stores.ts';
+import { useDeliverables, useFieldDrafts, useSolutionDrafts, useStrategy } from '../src/modules/project/stores.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
+import { mockSolutionDraft } from '../src/modules/project/solutionDraft.ts';
 
 function context(data = samplePack): AppCheckContext {
   const pack = loadPack(data);
@@ -31,6 +32,9 @@ const taskText = [
 ].join('\n');
 
 function response(call: LiveCall, ctx: AppCheckContext): string {
+  if (call.prompt.startsWith('[bas-proj:solution:')) {
+    return JSON.stringify(mockSolutionDraft(JSON.parse(call.prompt.slice(call.prompt.indexOf('CONTEXT: ') + 9)), 'ja'));
+  }
   if (call.use === 'deliverableDraft') {
     const step = /\[bas-proj:deliverable:([a-z]+)\]/.exec(call.prompt)?.[1] as ImprovementStep;
     return [
@@ -56,6 +60,7 @@ afterEach(() => {
   writeLedger([]);
   useDeliverables.getState().reset();
   useFieldDrafts.getState().reset();
+  useSolutionDrafts.getState().reset();
   useStepBriefs.getState().reset();
   useOverview.getState().reset();
 });
@@ -71,10 +76,12 @@ describe('all-step drafts', () => {
     useDeliverables.getState().set(data);
     const ctx = context();
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value);
-    expect(jobs).toHaveLength(11);
+    const solutions = ctx.pack.pack.entities.filter((e) => e.kind === 'solution').map((e) => e.id);
+    expect(jobs).toHaveLength(11 + solutions.length);
     expect(jobs.filter((job) => job.kind === 'fields').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.filter((job) => job.kind === 'brief').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
-    expect(jobs.at(-1)?.kind).toBe('strategy');
+    expect(jobs.at(10)?.kind).toBe('strategy');
+    expect(jobs.slice(11).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
 
     setRuntimeSettingsProvider(() => ({ provider, liveEnabled: true, sendConsent: true, configured: true }));
     const calls: LiveCall[] = [];
@@ -89,7 +96,10 @@ describe('all-step drafts', () => {
       saveBatchResult(job, result, ctx, 'internal', provider);
     }
 
-    expect(calls.map((call) => call.provider)).toEqual(Array(11).fill(provider));
+    expect(calls.map((call) => call.provider)).toEqual(Array(11 + solutions.length).fill(provider));
+    const solutionDrafts = useSolutionDrafts.getState().value;
+    for (const id of solutions) expect(solutionDrafts[`internal:${id}`]).toMatchObject({ mock: false, lang: 'ja' });
+    expect(useStrategy.getState().value).toEqual(emptyStrategy()); // drafts only: the type and the documents wait for approval
     const saved = useDeliverables.getState().value;
     expect(saved.docs.asis?.problem).toEqual(field);
     expect(saved.signOffs['asis-field']).toEqual(signOff);
@@ -122,6 +132,7 @@ describe('all-step drafts', () => {
     ctx.objectives = [{ id: 'private-objective', text: '秘密目標' }];
     ctx.deliverables = setField(ctx.deliverables, 'asis', 'problem', { text: '秘密の文章', author: 'human', updatedAt: '2026-11-09' });
     const jobs = createBatchPlan(ctx, 'ja', 'external', 'demo', { objectiveIssues: [] });
+    expect(jobs.some((job) => job.kind === 'solution' && job.solutionId === 'sol-knowledge-copilot')).toBe(false);
     const sent = jobs.map((job) => `${job.request.prompt}\n${toPromptContext(selectOutbound(job.request.entities ?? [], ctx.pack.byId), 'ja')}`).join('\n');
     for (const secret of ['秘密指標名', 'private metric name', '987654321', '非公開資料由来の指標', 'private-source metric', '876543219', '秘密目標', '秘密の文章', 'src-interview', 'cause-tacit-knowledge', 'person-suzuki-fumiko']) {
       expect(sent).not.toContain(secret);

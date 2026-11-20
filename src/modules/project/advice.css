@@ -14,3 +14,12 @@
 @media (forced-colors: active) {
   .step-advice-item { border: 1px solid CanvasText; border-inline-start-width: 4px; }
 }
+.prio-block { display: grid; gap: var(--spacingVerticalXS); margin-block-end: var(--spacingVerticalM); }
+.prio-label { margin: 0; font-size: var(--fontSizeBase300); font-weight: var(--fontWeightSemibold); color: var(--colorNeutralForeground2); }
+.prio-summary { margin: 0; font-size: var(--fontSizeBase400); }
+.prio-candidates, .prio-methods, .prio-sources { margin: 0; padding-inline-start: var(--spacingHorizontalXL); display: grid; gap: var(--spacingVerticalXS); }
+.prio-candidates li { display: flex; flex-wrap: wrap; gap: var(--spacingHorizontalS); align-items: center; }
+.prio-sources { list-style: none; padding-inline-start: 0; }
+.prio-methods summary { cursor: pointer; }
+.step-advice-item[data-tone='focus'] { border-inline-start-color: var(--colorPaletteRedBorder2); }
+.step-advice-item[data-tone='caution'] { border-inline-start-color: var(--colorPaletteYellowBorder2); }

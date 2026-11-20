@@ -15,6 +15,7 @@ import { inputKey, type CheckContext, type TodoResult } from './deliverables.ts'
 import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { QualifyCell } from './IssueQualification.tsx';
 import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
+import { PriorityBriefPanel } from './PriorityBrief.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
 import { HandoffPanel } from './HandoffPanel.tsx';
 import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
@@ -680,6 +681,7 @@ export function StepDashboardScreen() {
       <StrategyOverview ctx={ctx} step={step} />
       <StepBriefPanel d={d} ctx={ctx} audience={audience} />
       <Summary d={d} />
+      <PriorityBriefPanel step={step} ctx={ctx} />
       <DiscoveryAdvicePanel step={step} ctx={ctx} />
       <HandoffPanel ctx={ctx} step={step} />
       <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">

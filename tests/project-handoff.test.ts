@@ -9,7 +9,7 @@ import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { applyDraft, DeliverableDataSchema, emptyDeliverables, setQualification, STEP_DEFS, type CheckContext, type DeliverableData } from '../src/modules/project/deliverables.ts';
 import { buildDraft } from '../src/modules/project/deliverableDraft.ts';
 import { clearHandoff, confirmHandoff, handoffView, handoffViews, inheritedItems, inputLabels } from '../src/modules/project/handoff.ts';
-import { FORM_DRAFT_SCHEMAS, mockFormDraft, parseFormDraft, requestFormDraft } from '../src/modules/project/formDraft.ts';
+import { FORM_DRAFT_SCHEMAS, mockFormDraft, parseFormDraft, requestFormDraft, sanitizeEntityDraft, type EntityDraftContext } from '../src/modules/project/formDraft.ts';
 import { setRuntimeSettingsProvider } from '../src/ai/client.ts';
 
 const pack = loadPack(samplePack);
@@ -132,5 +132,23 @@ describe('Copilot form drafts', () => {
     const c = mockFormDraft('contribution', { solution: 'Planner', kpi, lever: '' }, 'en');
     expect(c.effectPerUnit.low).toBeLessThanOrEqual(c.effectPerUnit.mode);
     expect(c.amount.mode * c.effectPerUnit.mode).toBeCloseTo(kpi.target - kpi.current);
+  });
+
+  it('entry-form drafts keep only values the form can accept', () => {
+    const context: EntityDraftContext = {
+      kind: 'Issue', company: 'A', project: 'P', purpose: '', focus: '',
+      fields: [
+        { key: 'name', label: 'Name', type: 'text', required: true, current: '' },
+        { key: 'impact', label: 'Impact', type: 'enum', options: [{ value: '1', label: '1' }, { value: '5', label: '5' }], current: '3' },
+        { key: 'target', label: 'Target', type: 'number', min: 0, max: 10, current: '' },
+        { key: 'due', label: 'Due', type: 'date', current: '' },
+        { key: 'kpiIds', label: 'KPIs', type: 'refs', options: [{ value: 'kpi-1', label: 'K' }], current: [] },
+      ],
+    };
+    const values = { name: ' Late ', impact: '9', target: '99', due: '2027-02-30', kpiIds: ['kpi-1', 'made-up'], unknown: 'x' };
+    expect(sanitizeEntityDraft(context, { values })).toEqual({ values: { name: 'Late', kpiIds: ['kpi-1'] } });
+    expect(sanitizeEntityDraft(context, { values: { impact: '5', target: '7' } })).toEqual({ values: { impact: '5', target: '7' } });
+    expect(sanitizeEntityDraft(context, { values: { unknown: 'x' } })).toBeNull();
+    expect(FORM_DRAFT_SCHEMAS.entity.safeParse(mockFormDraft('entity', context, 'en')).success).toBe(true);
   });
 });

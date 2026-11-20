@@ -26,6 +26,23 @@ async function nav(page: Page, route: string) {
 }
 
 test.describe('data entry', () => {
+  test('entry dialog is wide and a Copilot draft only fills the form until it is saved', async ({ page }) => {
+    await open(page, '/workspace', { lang: 'en' });
+    await page.getByTestId('entry-bar-summary').getByTestId('entry-add-issue').click();
+    const dialog = page.getByTestId('entry-dialog');
+    await expect(dialog).toBeVisible();
+    const width = (await dialog.boundingBox())!.width;
+    expect(width).toBeGreaterThan(1600 * 0.7);
+    expect(width).toBeLessThanOrEqual(1600 * 0.8 + 1);
+
+    await dialog.getByTestId('entry-draft-create').click();
+    await expect(dialog.getByTestId('entry-draft-preview')).toBeVisible();
+    await expect(dialog.getByTestId('entry-field-name')).toHaveValue('');
+    await dialog.getByTestId('entry-draft-approve').click();
+    await expect(dialog.getByTestId('entry-field-name')).not.toHaveValue('');
+    await expect(dialog).toBeVisible();
+  });
+
   test('workspace: add, edit and delete an issue; it is kept after a reload', async ({ page }) => {
     await open(page, '/workspace', { lang: 'en' });
     const bar = page.getByTestId('entry-bar-summary');

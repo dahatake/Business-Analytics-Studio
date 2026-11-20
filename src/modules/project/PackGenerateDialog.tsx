@@ -24,7 +24,7 @@ import { TokenTable, yenFine } from '../ai/AiCommon.tsx';
 import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect, type WorkIqProvider } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
-import { saveAnalysisForProject } from './stores.ts';
+import { saveAnalysisForProject, useProjUi } from './stores.ts';
 import {
   DEFAULT_WORKIQ_ROUNDS, generatePack, materialSources, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt,
   type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
@@ -37,7 +37,7 @@ export type PackGenTarget =
   | { kind: 'project'; projectId: string }
   | { kind: 'new'; companyName: string; projectName: string };
 
-const STEPS: StepId[] = ['collect', 'foundation', 'business', 'verify', 'analysis', 'finalize'];
+const STEPS: StepId[] = ['collect', 'foundation', 'business', 'verify', 'analysis', 'priority', 'finalize'];
 /** PARAM-142 applies to each attached file, as for imports. */
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -384,6 +384,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     if (savedProject?.alignments?.length) {
       useProjects.getState().setProjectAlignments(projectId, invalidateProjectEvidence(savedProject.alignments, anchorLoad.value?.anchor ?? null));
     }
+    useProjUi.getState().queueAutoDraft(projectId);
     setPhase({ kind: 'saved', result, projectId });
   };
 
@@ -669,6 +670,8 @@ function SavedSummary({ result }: { result: GenResult }) {
         <dd>{t('proj.gen.sum.sourcesValue', { web: report.retrieved.filter((r) => r.kind === 'web' || r.kind === 'news').length, other: report.retrieved.filter((r) => r.kind === 'material' || r.kind === 'note' || r.kind === 'workiq').length })}</dd>
         <dt>{t('proj.gen.sum.checks')}</dt>
         <dd data-testid="gen-checks">{t('proj.gen.sum.checksValue', { rounds: report.fixRounds, removed: report.removed.length, dropped: report.droppedSources.length })}</dd>
+        <dt>{t('proj.gen.sum.priority')}</dt>
+        <dd data-testid="gen-priority">{t('proj.gen.sum.priorityValue', { n: result.priority.stats.n, quick: result.priority.stats.quickWin, big: result.priority.stats.bigBet, unproven: result.priority.stats.unproven })}</dd>
         <dt>{t('proj.gen.sum.cost')}</dt>
         <dd data-testid="gen-cost">{t('proj.gen.sum.costValue', { cost: report.costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, report.costJpy), calls: report.calls.length })}</dd>
       </dl>
@@ -704,6 +707,7 @@ function SavedSummary({ result }: { result: GenResult }) {
       )}
       {report.retrievalErrors.some((e) => e.what === 'workiq') && <p className="muted" data-testid="gen-sum-workiq-failed">{t('proj.gen.sum.workIqFailed', { error: report.retrievalErrors.filter((e) => e.what === 'workiq').map((e) => e.error).join(' / ') })}</p>}
       {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}
+      <p className="muted" data-testid="gen-auto-draft-hint">{t('proj.gen.sum.autoDraft')}</p>
       <p className="muted">{t('proj.gen.sum.next')}</p>
       <p className="muted" data-testid="gen-kpi-drafts-hint">{t('proj.gen.sum.kpiDrafts')}</p>
     </div>

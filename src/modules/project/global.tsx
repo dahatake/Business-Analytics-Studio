@@ -11,7 +11,9 @@ import { ExportDialog } from './ExportDialog.tsx';
 import { DraftDialog, StepTodoBand, useCheckContext } from './deliverablesUi.tsx';
 import { evaluateStep, progressOf } from './deliverables.ts';
 import { handoffViews } from './handoff.ts';
-import { useProjTransient } from './stores.ts';
+import { importedPackMeta } from '../../data/packStore.ts';
+import { loaded } from '../../data/pack.ts';
+import { useProjTransient, useProjUi } from './stores.ts';
 import './project.css';
 
 export { StepTodoBand as StepBand };
@@ -141,6 +143,17 @@ export function Overlay() {
   const openExport = useProjTransient((s) => s.openExport);
   const batchOpen = useProjTransient((s) => s.batchDraftOpen);
   const resolutionTodoId = useProjTransient((s) => s.resolutionTodoId);
+  const target = useProjects((s) => s.target);
+  const queued = useProjUi((s) => s.autoDraftProjects);
+  const openBatchDraft = useProjTransient((s) => s.openBatchDraft);
+  useEffect(() => {
+    // A new pack is not finished until every data item has an AI draft to approve; the dialog still asks before anything is sent.
+    // Only once that pack is the loaded one: the page restarts to load it, and a dialog opened before that would be lost.
+    if (target.kind !== 'project' || !queued.includes(target.projectId)) return;
+    const meta = importedPackMeta(target.projectId);
+    if (!meta || String(loaded.pack.packId) !== meta.packId) return;
+    openBatchDraft();
+  }, [target, queued, openBatchDraft]);
   useEffect(() => {
     // FR-052: Ctrl+Shift+E opens the full export from anywhere.
     const onKey = (e: globalThis.KeyboardEvent) => {

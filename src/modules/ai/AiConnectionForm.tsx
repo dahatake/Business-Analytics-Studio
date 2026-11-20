@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode, type WorkIqProvider } from './relayClient.ts';
 import { connectionTestPreflight, isConfigured, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { EntraConnection } from './EntraConnection.tsx';
+import { DecisionSettings } from './DecisionSettings.tsx';
 import { workIqRequiredFor } from '../../ai/policy.ts';
 import { DEFAULT_FOUNDRY_API_VERSION, foundryChatUrl, isFoundryV1, parseFoundryConnection, parseFoundryEndpoint } from '../../ai/foundry.ts';
 import './ai.css';
@@ -204,7 +205,8 @@ export function FoundryFields() {
   const endpoint = parseFoundryEndpoint(s.endpoint, true);
   const v1 = endpoint.ok && isFoundryV1(endpoint.value);
   return (
-    <>
+    <div className="ai-stack" data-testid="ai-foundry">
+      <p className="muted">{t('ai.foundry.resourceHint')}</p>
       {s.authMethod === 'apiKey' && (
         <>
           <Field label={t('ai.settings.endpoint')} hint={t('ai.settings.endpointHint')}>
@@ -225,6 +227,9 @@ export function FoundryFields() {
       </RadioGroup>
       {s.authMethod === 'entraId' ? <EntraConnection /> : <KeyField name="foundryKey" label={t('ai.key.foundry')} testId="ai-foundry-key" />}
       <ConnectionActions />
+      {s.relayReachable && s.connectionVerifiedAt ? (
+        <DecisionSettings />
+      ) : <p className="muted" data-testid="ai-foundry-services-locked">{t('ai.foundry.servicesLocked')}</p>}
       <p className="ai-status" data-testid="ai-key-protection">
         <span>{t('ai.keyProtection.label')}</span>
         <Badge appearance="tint" color={s.keyProtection === 'dpapi' ? 'success' : 'informative'} data-protection={s.keyProtection ?? 'unknown'}>
@@ -232,7 +237,7 @@ export function FoundryFields() {
         </Badge>
       </p>
       <WorkIqSettings />
-    </>
+    </div>
   );
 }
 

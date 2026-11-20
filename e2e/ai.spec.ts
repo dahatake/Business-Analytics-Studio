@@ -273,12 +273,12 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     }
   });
 
-  test('Decision reuses the chat connection: no second resource picker, sign-in or key', async ({ page }) => {
+  test('Decision is a model picker only: selection saves without test consent, survives reload and can be disabled', async ({ page }) => {
     const tenantId = '11111111-2222-3333-4444-555555555555';
     const endpoint = 'https://decision-resource.services.ai.azure.com';
-    const resourceId = '/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/decision-resource';
     let decision: Record<string, unknown> | null = null;
     let entraMode = false;
+    let rejectSelection = false;
     const saves: Record<string, unknown>[] = [];
     await page.route('**/relay/status', (route) => route.fulfill({ json: {
       secrets: { foundryKey: !entraMode },
@@ -290,54 +290,49 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       entra: { signedIn: entraMode, account: entraMode ? 'user@example.test' : null, tenantId, signIn: { status: entraMode ? 'signedIn' : 'idle' } },
     } }));
     await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId, name: 'Directory', signedIn: true }] } }));
-    await page.route('**/relay/entra/instances', (route) => route.fulfill({ json: { instances: [{
-      id: resourceId, name: 'decision-resource', kind: 'AIServices', location: 'japaneast', resourceGroup: 'rg',
-      subscriptionId: tenantId, subscriptionName: 'Subscription', tenantId,
-      endpoint: 'https://decision-resource.openai.azure.com/openai/v1', keyAuthDisabled: false,
-    }] } }));
-    await page.route('**/relay/entra/inspect', (route) => {
-      const body = route.request().postDataJSON() as Record<string, unknown>;
-      return route.fulfill({ json: {
-        deployments: body.kind === 'decision'
-          ? [{ name: 'decision-1-1', model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' }]
-          : [{ name: 'chat', model: 'gpt-chat-latest', version: '1', sku: 'GlobalStandard' }],
-        access: { canCall: true, canAssign: false },
-      } });
-    });
-    await page.route('**/relay/decision', (route) => {
-      if (route.request().method() === 'DELETE') {
-        decision = null;
-        return route.fulfill({ json: { decision } });
-      }
+    await page.route('**/relay/foundry/services', (route) => route.fulfill({ json: {
+      speech: 'available', vision: 'available', decision: 'available',
+      deployments: ['decision-1-1', 'decision-other'].map((name) => ({ name, model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' })),
+    } }));
+    await page.route('**/relay/decision/model', (route) => {
       const input = route.request().postDataJSON() as Record<string, unknown>;
       saves.push(input);
-      decision = { ...input, verifiedAt: '2026-11-19T00:00:00.000Z' };
+      if (rejectSelection) return route.fulfill({ status: 403, json: { error: 'resourceUnavailable' } });
+      decision = input.deployment === null ? null : { ...input, endpoint, ...(entraMode ? { auth: 'entraId', tenantId } : {}), verifiedAt: '2026-11-19T00:00:00.000Z' };
       return route.fulfill({ json: { decision } });
     });
     await openAiSettings(page, { lang: 'en' });
-    const panel = page.getByTestId('ai-decision');
-    await expect(panel.getByTestId('ai-decision-shared')).toBeVisible();
-    await expect(panel.getByTestId('ai-decision-key')).toHaveCount(0);
-    await expect(panel.getByTestId('ai-decision-endpoint')).toHaveCount(0);
-    await expect(panel.getByTestId('ai-entra')).toHaveCount(0);
-    await expect(panel.getByTestId('ai-decision-destination')).toContainText(`${endpoint}/providers/microsoft/v1/systemone`);
-    await panel.getByTestId('ai-decision-consent').check();
-    await panel.getByTestId('ai-decision-test').click();
-    await expect(panel.getByTestId('ai-decision-msg')).toBeVisible();
-    expect(saves[0]).toEqual({ endpoint, deployment: 'decision-1-1' });
+    const panel = page.getByTestId('ai-foundry-models');
+    const picker = panel.getByTestId('ai-decision-deployment');
+    await expect(picker).toBeEnabled();
+    await expect(panel.locator('select')).toHaveCount(1);
+    await expect(panel.locator('button, input')).toHaveCount(0);
+    await expect(panel.getByTestId('ai-foundry-admin')).toHaveCount(0);
+    await picker.selectOption('decision-1-1');
+    await expect(picker).toHaveValue('decision-1-1');
+    expect(saves[0]).toEqual({ deployment: 'decision-1-1' });
+    rejectSelection = true;
+    await picker.selectOption('decision-other');
+    await expect(panel).toContainText('Ask your administrator to set it up in Azure');
+    await expect(picker).toHaveValue('decision-1-1');
+    rejectSelection = false;
 
     entraMode = true;
     await page.reload();
     await page.getByTestId('nav-ai-settings').click();
-    await expect(panel.getByTestId('ai-entra')).toHaveCount(0);
-    await expect(panel.getByTestId('ai-decision-deployment')).toHaveValue('decision-1-1');
-    await expect(panel.getByTestId('ai-decision-consent')).not.toBeChecked();
-    await panel.getByTestId('ai-decision-destination').scrollIntoViewIfNeeded();
-    expect(await scan(page, ['[data-testid="ai-decision"]'])).toEqual([]);
-    await panel.getByTestId('ai-decision-consent').check();
-    await panel.getByTestId('ai-decision-test').click();
-    await expect.poll(() => saves.length).toBe(2);
-    expect(saves[1]).toEqual({ endpoint, deployment: 'decision-1-1', auth: 'entraId', tenantId });
+    await expect(picker).toBeEnabled();
+    await expect(picker).toHaveValue('');
+    await picker.selectOption('decision-1-1');
+    await expect(picker).toHaveValue('decision-1-1');
+    await page.reload();
+    await page.getByTestId('nav-ai-settings').click();
+    await expect(picker).toHaveValue('decision-1-1');
+    await picker.selectOption('');
+    await expect(picker).toHaveValue('');
+    await expect(picker).toBeEnabled();
+    expect(saves).toEqual([{ deployment: 'decision-1-1' }, { deployment: 'decision-other' }, { deployment: 'decision-1-1' }, { deployment: null }]);
+    await panel.scrollIntoViewIfNeeded();
+    expect(await scan(page, ['[data-testid="ai-foundry-models"]'])).toEqual([]);
   });
 
   test('selects a directory and signs in before showing its Foundry resources', async ({ page }) => {
@@ -391,133 +386,100 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     expect(requests).toContain(guest);
   });
 
-  test('Speech and Vision use the Foundry connection: nothing to enter, test on the Foundry resource, and check the role (FR-328)', async ({ page }) => {
-    const home = '25f92969-0cc7-4a5c-a2f9-6f9ce699cc6a';
-    const resourceId = '/subscriptions/d8352616-ed51-492b-929b-5e266d38aedd/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/bas-foundry';
-    let connection: Record<string, unknown> | null = null;
-    let media: Record<string, unknown> = { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null };
-    const tested: unknown[] = [];
-    let canCall = false;
-    await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: false }, connection, connectionVerifiedAt: connection ? '2026-11-17T00:00:00.000Z' : null,
-      entra: { signedIn: true, account: 'user@example.com', tenantId: home, signIn: { status: 'idle' } }, media,
-    } }));
-    await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId: home, name: 'Home', signedIn: true }] } }));
-    await page.route('**/relay/entra/instances', (route) => route.fulfill({ json: { instances: [] } }));
-    await page.route('**/relay/media/speech', (route) => {
-      tested.push(route.request().postDataJSON());
-      media = { ...media, speech: '2026-11-17T00:00:00.000Z' };
-      return route.fulfill({ json: { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'entraId', verifiedAt: '2026-11-17T00:00:00.000Z' } });
+  for (const lang of ['ja', 'en'] as const) {
+    test(`Foundry shows concise administrator guidance for unavailable services, not network failures (${lang})`, async ({ page }) => {
+      let state: 'unavailable' | 'unknown' | 'partial' = 'unavailable';
+      await page.route('**/relay/status', (route) => route.fulfill({ json: {
+        secrets: { foundryKey: true },
+        connection: { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'chat', apiVersion: '2024-10-21' },
+        connectionVerifiedAt: '2026-11-20T00:00:00Z',
+      } }));
+      await page.route('**/relay/foundry/services', (route) => route.fulfill({ json: {
+        speech: state === 'partial' ? 'available' : state,
+        vision: state === 'partial' ? 'unavailable' : state,
+        decision: state === 'partial' ? 'available' : state,
+        deployments: state === 'partial' ? [{ name: 'decision-current', model: 'Microsoft-Decision-1.1', version: '1', sku: 'Standard' }] : [],
+      } }));
+      await openAiSettings(page, { lang });
+      const notice = page.getByTestId('ai-foundry-admin');
+      await expect(notice).toContainText(lang === 'ja' ? '管理者に Azure 側のセットアップを依頼' : 'Ask your administrator to set it up in Azure');
+      for (const name of ['AI Speech', 'AI Vision', 'Decision']) await expect(notice).toContainText(name);
+      await expect(page.getByTestId('ai-decision-deployment')).toBeDisabled();
+      await expect(page.getByTestId('ai-foundry-models').locator('button, input')).toHaveCount(0);
+      await notice.scrollIntoViewIfNeeded();
+      expect(await scan(page, ['[data-testid="ai-foundry-models"]'])).toEqual([]);
+
+      state = 'unknown';
+      await page.reload();
+      await page.getByTestId('nav-ai-settings').click();
+      await expect(page.getByTestId('ai-foundry-check-failed')).toContainText(lang === 'ja' ? 'リソースがないと判定したものではありません' : 'does not mean the resources are missing');
+      await expect(notice).toHaveCount(0);
+      state = 'partial';
+      await page.reload();
+      await page.getByTestId('nav-ai-settings').click();
+      await expect(notice).toContainText('AI Vision');
+      await expect(notice).not.toContainText('AI Speech');
+      await expect(notice).not.toContainText('Decision');
+      await expect(page.getByTestId('ai-decision-deployment')).toBeEnabled();
     });
-    await page.route('**/relay/media/vision', (route) => route.fulfill({ status: 502, json: { error: 'forbidden', providerStatus: 403 } }));
-    await page.route('**/relay/media/vision/*', (route) => {
-      if (route.request().url().endsWith('/role')) canCall = true;
-      return route.fulfill({ json: { resource: { id: resourceId, name: 'bas-foundry', kind: 'AIServices' }, access: { canCall, canAssign: true } } });
+
+    test(`Foundry is the only service settings area after connection succeeds (${lang})`, async ({ page }) => {
+      const connection = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2024-10-21' };
+      let verified = false;
+      const serviceCalls: string[] = [];
+      await page.route('**/relay/foundry/services', (route) => route.fulfill({ json: {
+        speech: 'available', vision: 'available', decision: 'available',
+        deployments: [{ name: 'decision-1-1', model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' }],
+      } }));
+      await page.route('**/relay/status', (route) => route.fulfill({ json: {
+        secrets: { foundryKey: true }, connection: verified ? connection : null,
+        connectionVerifiedAt: verified ? '2026-11-20T00:00:00.000Z' : null,
+        media: verified ? { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'apiKey', unavailable: null, speech: null, vision: null } : null,
+        entra: null,
+      } }));
+      await page.route('**/relay/connection', (route) => {
+        if (route.request().method() === 'DELETE') {
+          verified = false;
+          return route.fulfill({ json: { connection: null } });
+        }
+        verified = true;
+        return route.fulfill({ json: { connection, verifiedAt: '2026-11-20T00:00:00.000Z' } });
+      });
+      await page.route(/\/relay\/(?:media\/(?:speech|vision)|decision|speech\/(?:route|separate))$/, (route) => {
+        serviceCalls.push(route.request().url());
+        return route.fulfill({ status: 500, json: { error: 'unexpectedServiceCall' } });
+      });
+      const dialog = await openAiSettings(page, { lang });
+      const services = dialog.getByTestId('ai-foundry').getByTestId('ai-foundry-models');
+      await expect(services).toHaveCount(0);
+      await expect(dialog.getByTestId('ai-foundry-services-locked')).toBeVisible();
+      await page.getByTestId('ai-endpoint').fill(connection.endpoint);
+      await page.getByTestId('ai-deployment').fill(connection.deployment);
+      await page.getByTestId('ai-connection-consent').check();
+      await page.getByTestId('ai-connection-save').click();
+      await expect(services).toBeVisible();
+      await expect(services.getByTestId('ai-decision-deployment')).toBeEnabled();
+      await expect(services.locator('select')).toHaveCount(1);
+      await expect(services.locator('button, input')).toHaveCount(0);
+      for (const id of ['ai-speech-connection', 'ai-vision-connection', 'ai-speech', 'ai-media', 'ai-decision-panel', 'ai-speech-route-choice', 'ai-speech-separate']) {
+        await expect(dialog.getByTestId(id)).toHaveCount(0);
+      }
+      await page.reload();
+      await page.getByTestId('nav-ai-settings').click();
+      await expect(services.getByTestId('ai-decision-deployment')).toBeEnabled();
+      await services.scrollIntoViewIfNeeded();
+      expect(await scan(page, ['[data-testid="ai-foundry-models"]'])).toEqual([]);
+      await page.getByTestId('ai-provider-copilot').check();
+      await expect(dialog.getByTestId('ai-foundry-models')).toHaveCount(0);
+      await expect(dialog.getByTestId('ai-decision')).toHaveCount(0);
+      await page.getByTestId('ai-provider-foundry').check();
+      await expect(services).toBeVisible();
+      await page.getByTestId('ai-connection-delete').click();
+      await expect(services).toHaveCount(0);
+      await expect(dialog.getByTestId('ai-foundry-services-locked')).toBeVisible();
+      expect(serviceCalls).toEqual([]);
     });
-    await openAiSettings(page, { lang: 'en' });
-
-    // Without a Foundry connection there is nothing to configure here, and the test names why.
-    for (const id of ['ai-speech-auth-entra', 'ai-speech-key', 'ai-speech-region', 'ai-vision-endpoint', 'ai-vision-key']) await expect(page.getByTestId(id)).toHaveCount(0);
-    await expect(page.getByTestId('ai-speech-unavailable')).toContainText('Verify and save the Microsoft Foundry connection first');
-    await page.getByTestId('ai-speech-test').click();
-    await expect(page.getByTestId('ai-speech-blockers')).toContainText('Agree to send the test request');
-    expect(tested).toHaveLength(0);
-
-    connection = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2024-10-21', auth: 'entraId', tenantId: home };
-    media = { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'entraId', unavailable: null, speech: null, vision: null };
-    await page.reload();
-    await page.getByTestId('nav-ai-settings').click();
-    await expect(page.getByTestId('ai-speech-endpoint')).toHaveText('https://bas-foundry.cognitiveservices.azure.com');
-    await expect(page.getByTestId('ai-speech-auth')).toHaveText('Microsoft Entra ID');
-    await expect(page.getByTestId('ai-speech-destination')).toContainText('https://bas-foundry.cognitiveservices.azure.com/tts/cognitiveservices/voices/list');
-    await expect(page.getByTestId('ai-vision-destination')).toContainText('/computervision/imageanalysis:analyze');
-    await page.getByTestId('ai-speech-consent').check();
-    await page.getByTestId('ai-speech-test').click();
-    await expect(page.getByTestId('ai-speech-verified')).toHaveText('Verified and saved');
-    expect(tested).toEqual([{}]);
-
-    // A 403 points to the role; the role is checked and granted on the connected Foundry resource.
-    await page.getByTestId('ai-vision-consent').check();
-    await page.getByTestId('ai-vision-test').click();
-    await expect(page.getByTestId('ai-vision-msg')).toContainText('HTTP 403');
-    await expect(page.getByTestId('ai-vision-hint')).toContainText('Azure OpenAI resources do not offer Vision');
-    await page.getByTestId('ai-vision-access-check').click();
-    await expect(page.getByTestId('ai-vision-access-result')).toContainText('bas-foundry (AIServices)');
-    await expect(page.getByTestId('ai-vision-access-badge')).toHaveText('Cannot call the service');
-    await page.getByTestId('ai-vision-access-assign').click();
-    await expect(page.getByTestId('ai-vision-access-badge')).toHaveText('Can call the service');
-    const violations = await scan(page, ['[data-testid="ai-speech-connection"]', '[data-testid="ai-vision-connection"]']);
-    expect(violations).toEqual([]);
-  });
-
-  test('Speech can be set up separately only after Foundry and Speech on it are verified; saved only when its test passes (FR-329)', async ({ page }) => {
-    const connection = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2024-10-21', auth: 'apiKey' };
-    let media: Record<string, unknown> = { endpoint: 'https://bas-foundry.cognitiveservices.azure.com', auth: 'apiKey', unavailable: null, speech: null, vision: null };
-    let speechConnection: Record<string, unknown> = { route: 'foundry', eligible: false, separate: null };
-    const saves: unknown[] = [];
-    const routes: unknown[] = [];
-    await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-19T00:00:00.000Z', entra: null, media, speechConnection,
-    } }));
-    await page.route('**/relay/speech/separate', (route) => {
-      const body = route.request().postDataJSON();
-      saves.push(body);
-      if (saves.length === 1) return route.fulfill({ status: 502, json: { error: 'unauthorized', providerStatus: 401 } });
-      speechConnection = { route: 'separate', eligible: true, separate: { auth: 'apiKey', endpoint: null, region: 'japaneast', verifiedAt: '2026-11-19T01:00:00.000Z' } };
-      return route.fulfill({ json: speechConnection });
-    });
-    await page.route('**/relay/speech/route', (route) => {
-      routes.push(route.request().postDataJSON());
-      speechConnection = { ...speechConnection, route: 'foundry' };
-      return route.fulfill({ json: speechConnection });
-    });
-    await openAiSettings(page, { lang: 'en' });
-
-    // Until Speech on Foundry is verified there is no choice to make, only the reason.
-    await expect(page.getByTestId('ai-speech-route-locked')).toContainText('Once the Microsoft Foundry connection and the Speech connection test above succeed');
-    await expect(page.getByTestId('ai-speech-route-choice')).toHaveCount(0);
-
-    media = { ...media, speech: '2026-11-19T00:00:00.000Z' };
-    speechConnection = { ...speechConnection, eligible: true };
-    await page.reload();
-    await page.getByTestId('nav-ai-settings').click();
-    await expect(page.getByTestId('ai-speech-route-locked')).toHaveCount(0);
-    await expect(page.getByTestId('ai-speech-route-foundry')).toBeChecked();
-    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Use the Microsoft Foundry connection (default)');
-
-    // Choosing "separately" only opens the form; the route does not change before a test passes.
-    await page.getByTestId('ai-speech-route-separate').check();
-    await expect(page.getByTestId('ai-speech-separate')).toBeVisible();
-    await expect(page.getByTestId('ai-speech-separate-auth-entraId')).toBeDisabled();
-    expect(routes).toEqual([]);
-    await page.getByTestId('ai-speech-separate-test').click();
-    await expect(page.getByTestId('ai-speech-separate-blockers')).toContainText('Enter the API key of the separate Speech resource.');
-    await expect(page.getByTestId('ai-speech-separate-blockers')).toContainText('Agree to send the test request.');
-    expect(saves).toEqual([]);
-
-    await page.getByTestId('ai-speech-separate-region').fill('japaneast');
-    await page.getByTestId('ai-speech-separate-key').fill('e2e-separate-speech-key');
-    await expect(page.getByTestId('ai-speech-separate-destination')).toContainText('https://japaneast.tts.speech.microsoft.com/cognitiveservices/voices/list');
-    await page.getByTestId('ai-speech-separate-consent').check();
-    await page.getByTestId('ai-speech-separate-test').click();
-    await expect(page.getByTestId('ai-speech-route-msg')).toContainText('Authentication failed (401)');
-    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Use the Microsoft Foundry connection (default)');
-
-    await page.getByTestId('ai-speech-separate-consent').check();
-    await page.getByTestId('ai-speech-separate-test').click();
-    await expect(page.getByTestId('ai-speech-route-msg')).toContainText('The connection was verified and saved');
-    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Set up the Speech connection separately');
-    await expect(page.getByTestId('ai-speech-separate-verified')).toHaveText('Verified and saved');
-    await expect(page.getByTestId('ai-speech-separate-key')).toHaveValue('');
-    expect(saves).toEqual([{ auth: 'apiKey', region: 'japaneast', key: 'e2e-separate-speech-key' }, { auth: 'apiKey', region: 'japaneast', key: 'e2e-separate-speech-key' }]);
-    await page.evaluate(() => window.scrollTo(0, 0));
-    expect(await scan(page, ['[data-testid="ai-speech-route"]'])).toEqual([]);
-
-    // Going back to the Foundry connection is always one choice away.
-    await page.getByTestId('ai-speech-route-foundry').check();
-    await expect(page.getByTestId('ai-speech-route-badge')).toHaveText('Use the Microsoft Foundry connection (default)');
-    expect(routes).toEqual([{ route: 'foundry' }]);
-  });
+  }
 
   test('the relay refuses writes without its header and rejects AI requests without a connection', async ({ page }) => {
     await openAiSettings(page, { lang: 'en' });

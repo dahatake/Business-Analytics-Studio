@@ -10,9 +10,6 @@ import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
-import { DecisionSettings } from './DecisionSettings.tsx';
-import { MediaConnectionForm } from './MediaConnectionForm.tsx';
-import { SpeechRouteChoice } from './SpeechRouteChoice.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
@@ -110,7 +107,7 @@ function LedgerPrune({ onChange }: { onChange: () => void }) {
 }
 
 /**
- * The one AI settings view: connection, broad send consent, live switch, usage, prices, speech and media.
+ * The one AI settings view: Foundry services, broad send consent, live switch, usage and prices.
  * It is shown only inside AiSettingsDialog, so every condition of liveReady() is visible wherever settings are opened.
  */
 export function AiSettingsContent() {
@@ -187,30 +184,6 @@ export function AiSettingsContent() {
         </Panel>
       </div>
 
-      <div className="grid-2">
-        <Panel title={t('ai.speech.title')} testId="ai-speech">
-          <div className="ai-stack">
-            <p className="muted">{t('ai.speech.lead')}</p>
-            <MediaConnectionForm service="speech" />
-            <SpeechRouteChoice />
-          </div>
-        </Panel>
-
-        <Panel title={t('ai.media.title')} testId="ai-media">
-          <div className="ai-stack">
-            <h3 className="ai-label">{t('ai.media.visionTitle')}</h3>
-            <p className="muted">{t('ai.media.visionLead')}</p>
-            <MediaConnectionForm service="vision" />
-            <Switch checked={false} disabled label={t('ai.media.speech')} />
-            <Switch checked={false} disabled label={t('ai.media.vision')} />
-            <p className="muted" data-testid="ai-media-blocked">{t('ai.media.blocked')}</p>
-          </div>
-        </Panel>
-      </div>
-
-      <Panel title={t('ai.decision.title')} testId="ai-decision-panel">
-        <DecisionSettings />
-      </Panel>
     </>
   );
 }

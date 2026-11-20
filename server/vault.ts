@@ -6,16 +6,15 @@ import { replaceFileSync } from './files.ts';
 
 /** Secrets the user enters through the relay (C-01 exception, NFR-SEC-001/005/012). Anything else is rejected. */
 export const SECRET_NAMES = ['foundryKey'] as const;
-/** Speech / Vision keys of FR-324's first version; Speech and Vision now use the Foundry key (FR-328), so these are deleted. */
-export const LEGACY_SECRET_NAMES = ['speechKey', 'visionKey'] as const;
+/** Retired standalone Speech / Vision credentials; these services now use the Foundry connection. */
+export const LEGACY_SECRET_NAMES = ['speechKey', 'visionKey', 'speechSeparateKey'] as const;
 export type UserSecretName = (typeof SECRET_NAMES)[number];
 /**
  * Secrets only the relay itself writes (D-14: the Work IQ refresh token, the key that seals a CLI verification; the
  * MSAL token cache of the Entra ID sign-in and the key that seals an Entra connection test for Foundry, Speech and
- * Vision — signing out deletes it, which drops every Entra check; the key of a separate Speech resource, FR-329, saved
- * only after its connection test succeeds); never accepted over HTTP.
+ * Vision — signing out deletes it, which drops every Entra check); never accepted over HTTP.
  */
-export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey', 'speechSeparateKey', 'decisionKey'] as const;
+export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey', 'decisionKey'] as const;
 export type SecretName = UserSecretName | (typeof INTERNAL_SECRET_NAMES)[number];
 export const MAX_SECRET_LENGTH = 4096;
 /** Refresh tokens issued by Microsoft Entra can be longer than an API key. */

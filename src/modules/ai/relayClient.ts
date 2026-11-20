@@ -1,7 +1,7 @@
 import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
 import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
-import { MEDIA_TEST_TIMEOUT_MS, SPEECH_INPUT_ERRORS, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
+import { FoundryServices, MEDIA_TEST_TIMEOUT_MS, type FoundryServicesInfo, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
 import { DECISION_INPUT_ERRORS, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, validateDecisionConnection, type DecisionConnection, type DecisionRequest, type DecisionResult } from '../../ai/decision.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
@@ -39,13 +39,13 @@ export interface RelayStatus {
   decision: DecisionStatus | null;
 }
 
-export type DecisionStatus = DecisionConnection & { verifiedAt: string | null };
+export type DecisionStatus = DecisionConnection & { verifiedAt: string | null; accessError?: 'resourceUnavailable' };
 
 function asDecision(v: unknown): DecisionStatus | null {
   if (!v || typeof v !== 'object') return null;
   const d = v as Record<string, unknown>;
   const parsed = validateDecisionConnection({ endpoint: d.endpoint, deployment: d.deployment, auth: d.auth, tenantId: d.tenantId }, true);
-  return parsed.ok ? { ...parsed.value, verifiedAt: str(d.verifiedAt) } : null;
+  return parsed.ok ? { ...parsed.value, verifiedAt: str(d.verifiedAt), ...(d.accessError === 'resourceUnavailable' ? { accessError: d.accessError } : {}) } : null;
 }
 
 /**
@@ -588,41 +588,9 @@ export async function mediaAccess(service: MediaService, action: 'access' | 'rol
   return (await res.json()) as MediaAccess;
 }
 
-/* ---------- FR-329: Speech on a separate Azure AI Speech resource ---------- */
-
-export const SPEECH_SEPARATE_ERRORS = [...SPEECH_INPUT_ERRORS, ...MEDIA_TEST_ERRORS, 'notEligible', 'notEntra', 'separateNotVerified'] as const;
-export type SpeechSeparateError = (typeof SPEECH_SEPARATE_ERRORS)[number] | 'failed';
-export type SpeechSeparateResult = { ok: true; status: SpeechConnectionStatus } | { ok: false; error: SpeechSeparateError; providerStatus?: number };
-export interface SeparateSpeechInput { auth: 'apiKey' | 'entraId'; endpoint?: string; region?: string; key?: string }
-
-async function speechCall(url: string, init: RequestInit): Promise<SpeechSeparateResult> {
-  try {
-    const res = await relayFetch(url, init);
-    const body = (await res.json()) as { error?: string; providerStatus?: number };
-    if (res.ok) return { ok: true, status: asSpeechConnection(body) };
-    return { ok: false, error: SPEECH_SEPARATE_ERRORS.find((k) => k === body.error) ?? 'failed', ...(typeof body.providerStatus === 'number' ? { providerStatus: body.providerStatus } : {}) };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'failed' };
-  }
-}
-
-/** Tests the separate resource; only a passing test saves it (and its key, in the vault) and switches Speech to it. */
-export function saveSeparateSpeech(input: SeparateSpeechInput): Promise<SpeechSeparateResult> {
-  return speechCall('/relay/speech/separate', { ...jsonInit('PUT', input), signal: AbortSignal.timeout(MEDIA_TEST_TIMEOUT_MS + 15_000) });
-}
-
-export function setSpeechRoute(route: SpeechRoute): Promise<SpeechSeparateResult> {
-  return speechCall('/relay/speech/route', { ...jsonInit('PUT', { route }), signal: AbortSignal.timeout(15_000) });
-}
-
-/** Deletes the separate connection and its key; Speech goes back to the Foundry connection. */
-export function deleteSeparateSpeech(): Promise<SpeechSeparateResult> {
-  return speechCall('/relay/speech/separate', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
-}
-
 /* ---------- D-37: Microsoft Foundry Decision model ---------- */
 
-export const DECISION_SAVE_ERRORS = [...DECISION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon', 'notSignedIn', 'interactionRequired', 'signInPending', 'signInFailed', 'authFailed', 'accountChanged'] as const;
+export const DECISION_SAVE_ERRORS = [...DECISION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon', 'notSignedIn', 'interactionRequired', 'signInPending', 'signInFailed', 'authFailed', 'accountChanged', 'noConnection', 'connectionChanged', 'resourceUnavailable', 'inspectionFailed'] as const;
 export type DecisionSaveError = (typeof DECISION_SAVE_ERRORS)[number] | 'failed';
 export type DecisionSaveResult = { ok: true; decision: DecisionStatus | null; usage?: { inputTokens: number; outputTokens: number } } | { ok: false; error: DecisionSaveError; providerStatus?: number };
 export type DecisionInput = DecisionConnection & { key?: string };
@@ -649,6 +617,19 @@ export function saveDecisionConnection(input: DecisionInput): Promise<DecisionSa
 
 export function deleteDecisionConnection(): Promise<DecisionSaveResult> {
   return decisionCall('/relay/decision', { method: 'DELETE', signal: AbortSignal.timeout(15_000) });
+}
+
+export async function inspectFoundryServices(signal?: AbortSignal): Promise<FoundryServicesInfo> {
+  const res = await relayFetch('/relay/foundry/services', { ...jsonInit('POST', {}), signal });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const parsed = FoundryServices.safeParse(await res.json());
+  if (!parsed.success) throw new RelayError(502, 'badRelayAnswer');
+  return parsed.data;
+}
+
+/** Saves the selected deployment using read-only resource checks, without a synthetic inference request. */
+export function selectDecisionModel(deployment: string | null): Promise<DecisionSaveResult> {
+  return decisionCall('/relay/decision/model', { ...jsonInit('PUT', { deployment }), signal: AbortSignal.timeout(95_000) });
 }
 
 /** One Decision request through the relay. Throws RelayError with the relay's code on any failure. */

@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeLedger } from '../src/ai/client.ts';
 import { AiReadiness, ConnectionActions, FoundryFields, PriceFields } from '../src/modules/ai/AiConnectionForm.tsx';
+import { DecisionSettings } from '../src/modules/ai/DecisionSettings.tsx';
 import { LiveNotice, TokenTable } from '../src/modules/ai/AiCommon.tsx';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import type { ConnectionSaveResult } from '../src/modules/ai/relayClient.ts';
@@ -35,6 +36,30 @@ afterEach(() => {
   useAiSettings.setState(initial);
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe('concise Foundry service selection', () => {
+  it('ignores a late resource check after the common connection changes', async () => {
+    let finishOld: ((response: Response) => void) | undefined;
+    let checks = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/relay/session')) return new Response('{"token":"test-token"}');
+      checks++;
+      if (checks === 1) return new Promise<Response>((resolve) => { finishOld = resolve; });
+      return new Response(JSON.stringify({
+        speech: 'available', vision: 'available', decision: 'available',
+        deployments: [{ name: 'fresh-decision', model: 'Microsoft-Decision-1.1', version: '1', sku: 'Standard' }],
+      }));
+    }));
+    render(<DecisionSettings />);
+    await waitFor(() => expect(finishOld).toBeDefined());
+    act(() => useAiSettings.setState({ relayConnection: { ...connection, endpoint: 'https://new-resource.openai.azure.com' } }));
+    await screen.findByText('fresh-decision (Microsoft-Decision-1.1)');
+    await act(async () => finishOld!(new Response('{"speech":"unavailable","vision":"unavailable","decision":"unavailable","deployments":[]}')));
+    expect(screen.queryByTestId('ai-foundry-admin')).toBeNull();
+    expect(screen.getByTestId<HTMLSelectElement>('ai-decision-deployment').disabled).toBe(false);
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+  });
 });
 
 describe('connection test action', () => {

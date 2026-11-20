@@ -1351,6 +1351,8 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   let pages: SitePageLike[] = [];
   let news: NewsLike[] = [];
   let newsFetchedAt = startedAt;
+  // The site, news and Work IQ reads are independent: they run together and are awaited once before the material is built.
+  const siteTask = (async () => {
   if (input.officialUrl.trim() && deps.fetchSite) {
     try {
       const r = await deps.fetchSite(input.officialUrl.trim(), signal, purposeTerms(input));
@@ -1361,8 +1363,10 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       retrievalErrors.push({ what: 'site', url: input.officialUrl.trim(), error: (err as { code?: string }).code ?? (err as Error).message });
     }
   }
+  })();
   emit('collect', 'running', 0.6);
   const offPurposeNews: { title: string; url: string }[] = [];
+  const newsTask = (async () => {
   if (input.useNews && deps.fetchNews) {
     try {
       const topic = input.publicWebTopic?.trim() || undefined;
@@ -1378,6 +1382,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       retrievalErrors.push({ what: 'news', error: (err as { code?: string }).code ?? (err as Error).message });
     }
   }
+  })();
   // D-14: a Work IQ failure (not signed in, no licence, timeout) never stops the run; it is recorded like a failed page.
   let workiq: WorkIqLike | WorkIqSectionLike[] | null = null;
   const workIqBase = {
@@ -1391,6 +1396,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   /** The planned fan-out failed in a way a later search will fail too (sign-in, permission, EULA, CLI, relay refusal). */
   let workIqBlocked = false;
   const givenUnit = userOrgUnit(input);
+  const workIqTask = (async () => {
   if (input.useWorkIq && deps.fetchWorkIq) {
     emit('collect', 'running', 0.8);
     // Planned fan-out (docs/workiq-agentic-retrieval-study.md): the section searches, every readiness ladder wording and
@@ -1413,6 +1419,8 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       }
     }
   }
+  })();
+  await Promise.all([siteTask, newsTask, workIqTask]);
   const entries = materialSources(input, pages, news, newsFetchedAt, now(), workiq);
   emit('collect', 'done');
 

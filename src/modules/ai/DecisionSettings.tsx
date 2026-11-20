@@ -1,159 +1,77 @@
-import { useEffect, useState } from 'react';
-import { Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
-import { Delete20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { useEffect, useRef, useState } from 'react';
+import { Field, MessageBar, MessageBarBody, Select } from '@fluentui/react-components';
 import { useI18n } from '../../i18n/index.ts';
-import { DECISION_MODEL, DECISION_PRICE, decisionEndpointFromChat, decisionUrl, validateDecisionConnection } from '../../ai/decision.ts';
-import { inspectEntraInstance, listEntraInstances, type DecisionInput, type DecisionSaveError, type FoundryInstanceDetail } from './relayClient.ts';
-import { isDecisionReady, useAiSettings } from './settingsStore.ts';
-import './ai.css';
+import { decisionUsesFoundry } from '../../ai/decision.ts';
+import type { FoundryServicesInfo } from '../../ai/mediaConnection.ts';
+import { inspectFoundryServices } from './relayClient.ts';
+import { useAiSettings } from './settingsStore.ts';
 
-/** Codes with Decision-specific wording; the rest reuse the Foundry connection messages. */
-const OWN_ERRORS = ['invalidBody', 'invalidEndpoint', 'invalidKey', 'keyMissing', 'unauthorized', 'deploymentNotFound', 'invalidApiRequest', 'badProviderResponse'] as const;
-type OwnError = (typeof OWN_ERRORS)[number];
-const isOwn = (code: string): code is OwnError => (OWN_ERRORS as readonly string[]).includes(code);
-type Message = { kind: 'saved' | 'deleted' } | { kind: 'error'; code: DecisionSaveError; providerStatus?: number };
-
-/**
- * D-37: the optional Microsoft Foundry Decision connection. It runs on the Foundry resource, sign-in and key of the chat
- * connection above — nothing is chosen or authenticated twice — and only asks for the Decision deployment name. It is saved
- * only after a synthetic test request succeeds in the relay. When unset, KPI/OKR drafting works as before.
- */
 export function DecisionSettings() {
   const { t } = useI18n();
   const s = useAiSettings();
-  const saved = s.decision;
-  const chat = s.relayConnection;
-  const auth = chat?.auth === 'entraId' ? 'entraId' : 'apiKey';
-  const tenantId = chat?.tenantId ?? '';
-  const endpoint = decisionEndpointFromChat(chat?.endpoint) ?? '';
-  const [deployment, setDeployment] = useState(saved?.deployment ?? 'decision-1-1');
-  const [deployments, setDeployments] = useState<FoundryInstanceDetail['deployments']>([]);
-  const [consent, setConsent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<Message | null>(null);
-  const [validationRequested, setValidationRequested] = useState(false);
-  const signedIn = s.entra?.signedIn === true;
+  const [services, setServices] = useState<FoundryServicesInfo | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<'admin' | 'check' | 'save' | null>(null);
+  const request = useRef(0);
+  const connection = s.relayConnection;
+  const endpoint = connection?.endpoint;
+  const auth = connection?.auth;
+  const tenantId = connection?.tenantId;
+  const selected = s.decision?.verifiedAt && decisionUsesFoundry(s.decision, connection) ? s.decision.deployment : '';
 
   useEffect(() => {
-    if (saved) setDeployment(saved.deployment);
-  }, [saved?.deployment]);
+    const controller = new AbortController();
+    const current = ++request.current;
+    setChecking(true);
+    setServices(null);
+    setError(null);
+    setSaving(false);
+    void inspectFoundryServices(AbortSignal.any([controller.signal, AbortSignal.timeout(95_000)])).then((result) => {
+      if (current === request.current) setServices(result);
+    }, () => {
+      if (current === request.current) setError('check');
+    }).finally(() => {
+      if (current === request.current) setChecking(false);
+    });
+    return () => { controller.abort(); request.current += 1; };
+  }, [endpoint, auth, tenantId, s.connectionVerifiedAt, s.entra?.account]);
 
-  useEffect(() => {
-    setConsent(false);
-  }, [endpoint, deployment, auth, tenantId]);
-
-  // The deployments of the chat connection's resource, so the Decision one can be picked rather than typed.
-  useEffect(() => {
-    setDeployments([]);
-    if (auth !== 'entraId' || !signedIn || !endpoint || !tenantId) return;
-    let active = true;
-    const signal = AbortSignal.timeout(90_000);
-    void (async () => {
-      const host = new URL(endpoint).hostname.split('.')[0];
-      const instance = (await listEntraInstances(tenantId, signal)).find((i) => i.endpoint !== null && new URL(i.endpoint).hostname.split('.')[0] === host);
-      if (!instance) return;
-      const detail = await inspectEntraInstance(instance.id, instance.tenantId, signal, 'decision');
-      if (!active) return;
-      setDeployments(detail.deployments);
-      setDeployment((current) => detail.deployments.some((d) => d.name === current) ? current : (detail.deployments[0]?.name ?? current));
-    })().catch(() => undefined);
-    return () => { active = false; };
-  }, [auth, signedIn, endpoint, tenantId]);
-
-  if (!s.relayReachable) return <p className="muted" data-testid="ai-decision-unreachable">{t('ai.decision.needsRelay')}</p>;
-
-  const draft: DecisionInput = auth === 'entraId' ? { endpoint, deployment: deployment.trim(), auth, tenantId } : { endpoint, deployment: deployment.trim() };
-  const checked = validateDecisionConnection(draft);
-  const blockers = [
-    !endpoint ? t('ai.decision.needsChat') : null,
-    endpoint && !checked.ok ? t(isOwn(checked.error) ? `ai.decision.err.${checked.error}` : `ai.conn.msg.${checked.error}`) : null,
-    endpoint && auth === 'entraId' && !signedIn ? t('ai.conn.msg.notSignedIn') : null,
-    endpoint && auth === 'apiKey' && !s.foundryKeySaved ? t('ai.decision.err.keyMissing') : null,
-    !consent ? t('ai.decision.consentRequired') : null,
-  ].filter((reason) => reason !== null);
-  const showBlockers = validationRequested && blockers.length > 0;
-  const ready = isDecisionReady(s);
-
-  const testAndSave = async () => {
-    setMessage(null);
-    setValidationRequested(true);
-    if (blockers.length > 0 || busy) return;
-    setValidationRequested(false);
-    setBusy(true);
+  const choose = async (value: string) => {
+    if (saving) return;
+    const current = request.current;
+    setSaving(true);
+    setError(null);
     try {
-      const r = await s.saveDecision(draft);
-      setMessage(r.ok ? { kind: 'saved' } : { kind: 'error', code: r.error, ...(r.providerStatus ? { providerStatus: r.providerStatus } : {}) });
+      const result = await s.selectDecisionModel(value || null);
+      if (current !== request.current) return;
+      if (!result.ok) setError(result.error === 'resourceUnavailable' ? 'admin' : result.error === 'inspectionFailed' ? 'check' : 'save');
+    } catch {
+      if (current === request.current) setError('save');
     } finally {
-      setConsent(false);
-      setBusy(false);
+      if (current === request.current) setSaving(false);
     }
   };
-  const remove = async () => {
-    if (busy) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const r = await s.deleteDecision();
-      setMessage(r.ok ? { kind: 'deleted' } : { kind: 'error', code: r.error });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const errorText = (code: DecisionSaveError) => code === 'signInPending' || code === 'signInFailed'
-    ? t(`ai.entra.err.${code}`) : t(isOwn(code) ? `ai.decision.err.${code}` : `ai.conn.msg.${code}`);
+  const unavailable = (['speech', 'vision', 'decision'] as const).filter((service) => services?.[service] === 'unavailable'
+    || service === 'decision' && s.decision?.accessError === 'resourceUnavailable' && decisionUsesFoundry(s.decision, connection));
+  const unknown = services ? (['speech', 'vision', 'decision'] as const).filter((service) => services[service] === 'unknown') : [];
+  const names = (items: readonly ('speech' | 'vision' | 'decision')[]) => items.map((item) => t(`ai.foundry.service.${item}`)).join(t('ai.listSep'));
 
   return (
-    <div className="ai-stack" data-testid="ai-decision">
-      <p className="muted">{t('ai.decision.lead', { model: DECISION_MODEL })}</p>
-      <p className="muted" data-testid="ai-decision-price">{t('ai.decision.price', { price: DECISION_PRICE.jpyPerMTokens })}</p>
-      <p className="ai-status" data-testid="ai-decision-state">
-        <span>{t('ai.decision.state')}</span>
-        <Badge appearance="tint" color={ready ? 'success' : saved?.verifiedAt ? 'warning' : 'informative'} data-testid="ai-decision-badge">
-          {t(ready ? 'ai.decision.ready' : saved?.verifiedAt ? 'ai.decision.waitingLive' : 'ai.decision.off')}
-        </Badge>
-      </p>
-      {saved && <p className="muted" data-testid="ai-decision-saved">{`${saved.endpoint} / ${saved.deployment}`}</p>}
-      <p className="muted" data-testid="ai-decision-shared">{t(endpoint ? 'ai.decision.shared' : 'ai.decision.needsChat')}</p>
-      {endpoint && (
-        <Field label={t('ai.decision.deployment')}>
-          {deployments.length > 0 ? (
-            <Select value={deployment} onChange={(_, d) => setDeployment(d.value)} disabled={busy} data-testid="ai-decision-deployment">
-              {!deployments.some((x) => x.name === deployment) && <option value={deployment}>{deployment}</option>}
-              {deployments.map((x) => <option key={x.name} value={x.name}>{`${x.name} (${x.model}${x.version ? ` ${x.version}` : ''}, ${x.sku})`}</option>)}
-            </Select>
-          ) : (
-            <Input value={deployment} onChange={(_, d) => setDeployment(d.value)} disabled={busy} data-testid="ai-decision-deployment" />
-          )}
-        </Field>
-      )}
-      {checked.ok && <p className="muted" data-testid="ai-decision-destination">{t('ai.mediaConn.destination', { url: decisionUrl(checked.value) })}</p>}
-      {endpoint && auth === 'entraId' && <p className="muted">{t('ai.decision.entraAccess')}</p>}
-      <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={busy} label={t('ai.decision.consent')} data-testid="ai-decision-consent" />
-      {showBlockers && (
-        <MessageBar intent="error" data-testid="ai-decision-blockers">
-          <MessageBarBody>
-            <p>{t('ai.conn.checkBeforeTest')}</p>
-            <ul>{blockers.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-          </MessageBarBody>
-        </MessageBar>
-      )}
-      <div className="ai-row">
-        <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void testAndSave()} disabled={busy} data-testid="ai-decision-test">
-          {t(busy ? 'ai.mediaConn.testing' : 'ai.decision.testAndSave')}
-        </Button>
-        <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={busy || !saved} data-testid="ai-decision-delete">
-          {t('ai.decision.delete')}
-        </Button>
-      </div>
-      {message && (
-        <MessageBar intent={message.kind === 'error' ? 'error' : 'success'} data-testid="ai-decision-msg">
-          <MessageBarBody>
-            {message.kind === 'error'
-              ? <>{errorText(message.code)}{message.providerStatus !== undefined && ` (HTTP ${message.providerStatus})`}</>
-              : t(`ai.decision.msg.${message.kind}`)}
-          </MessageBarBody>
-        </MessageBar>
-      )}
+    <div className="ai-stack" data-testid="ai-foundry-models">
+      <Field
+        label={t('ai.decision.model')}
+        validationState={error ? 'error' : 'none'}
+        validationMessage={error ? t(`ai.foundry.modelError.${error}`) : checking ? t('ai.foundry.checking') : saving ? t('ai.foundry.saving') : undefined}
+      >
+        <Select value={selected} onChange={(_, d) => void choose(d.value)} disabled={checking || saving || services?.decision !== 'available' && !selected} data-testid="ai-decision-deployment">
+          <option value="">{t('ai.decision.none')}</option>
+          {selected && !services?.deployments.some((d) => d.name === selected) && <option value={selected} disabled>{selected}</option>}
+          {services?.deployments.map((d) => <option key={d.name} value={d.name}>{`${d.name} (${d.model})`}</option>)}
+        </Select>
+      </Field>
+      {unavailable.length > 0 && <MessageBar intent="warning" data-testid="ai-foundry-admin"><MessageBarBody>{t('ai.foundry.adminSetup', { services: names(unavailable) })}</MessageBarBody></MessageBar>}
+      {unknown.length > 0 && <MessageBar intent="warning" data-testid="ai-foundry-check-failed"><MessageBarBody>{t('ai.foundry.checkFailed', { services: names(unknown) })}</MessageBarBody></MessageBar>}
     </div>
   );
 }

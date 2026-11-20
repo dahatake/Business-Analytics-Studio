@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { InteractionRequiredAuthError, PublicClientApplication, type AccountInfo, type ICachePlugin } from '@azure/msal-node';
+import { z } from 'zod';
 import type { SecretVault } from './vault.ts';
 import { ENTRA_HOST } from './workiq.ts';
 
@@ -287,6 +288,32 @@ export interface FoundryDeploymentInfo {
   sku: string;
 }
 
+const DeploymentList = z.object({
+  value: z.array(z.object({
+    name: z.string(),
+    sku: z.object({ name: z.string().optional() }).optional(),
+    properties: z.object({
+      provisioningState: z.string(),
+      model: z.object({ name: z.string(), version: z.string().optional() }),
+      capabilities: z.record(z.string(), z.unknown()).optional(),
+    }),
+  })),
+  nextLink: z.string().nullable().optional(),
+});
+
+export function parseFoundryDeployments(raw: unknown, kind: 'chat' | 'decision'): FoundryDeploymentInfo[] | null {
+  const parsed = DeploymentList.safeParse(raw);
+  if (!parsed.success || parsed.data.nextLink) return null;
+  return parsed.data.value
+    .filter((d) => d.properties.provisioningState.toLowerCase() === 'succeeded')
+    .filter((d) => kind === 'decision'
+      ? /^microsoft-decision-/i.test(d.properties.model.name)
+      : !/^microsoft-decision-/i.test(d.properties.model.name) && (d.properties.capabilities?.chatCompletion === 'true'
+        || d.properties.capabilities?.chatCompletion === undefined && d.properties.capabilities?.embeddings !== 'true'))
+    .filter((d) => /^[A-Za-z0-9._-]{1,64}$/.test(d.name))
+    .map((d) => ({ name: d.name, model: d.properties.model.name, version: d.properties.model.version ?? '', sku: d.sku?.name ?? '' }));
+}
+
 export interface FoundryAccess {
   /** The user holds the chat-completions data action on this resource. */
   canCall: boolean;
@@ -468,31 +495,35 @@ export async function inspectMediaResource(deps: ArmDeps, resourceId: string, te
   const permissions = await resourcePermissions(deps, resourceId, tenantId);
   if (permissions.status === 401 || permissions.status === 403) throw new EntraError('armForbidden');
   if (permissions.status !== 200) throw new EntraError('armError');
-  const perms = permissions.body?.value ?? [];
+  if (!Array.isArray(permissions.body?.value)) throw new EntraError('armError');
+  const perms = permissions.body.value;
   return { deployments: [], access: { canCall: permitted(perms, SERVICES[service].dataAction, true), canAssign: permitted(perms, ROLE_WRITE_ACTION, false) } };
 }
 
 /** Chat deployments of one resource and whether the user may call it or grant themselves the role. */
-export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, tenantId: string, kind: 'chat' | 'decision' = 'chat'): Promise<{ deployments: FoundryDeploymentInfo[]; access: FoundryAccess }> {
+export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, tenantId: string, kind: 'chat' | 'decision' = 'chat'): Promise<{ deployments: FoundryDeploymentInfo[]; access: FoundryAccess; decisionAccess?: 'available' | 'unavailable' | 'unknown' }> {
   if (!isFoundryResourceId(resourceId)) throw new EntraError('invalidResource');
   if (!isTenantId(tenantId)) throw new EntraError('invalidTenant');
   const [deployments, permissions] = await Promise.all([
-    arm<{ value?: { name?: unknown; sku?: { name?: unknown }; properties?: { model?: { name?: unknown; version?: unknown }; provisioningState?: unknown; capabilities?: Record<string, unknown> } }[] }>(
+    arm<unknown>(
       deps, tenantId, `${resourceId}/deployments?api-version=2024-10-01`),
     resourcePermissions(deps, resourceId, tenantId),
   ]);
   if (deployments.status === 403 || deployments.status === 401) throw new EntraError('armForbidden');
   if (deployments.status !== 200) throw new EntraError('armError');
-  const list = (deployments.body?.value ?? [])
-    .filter((d) => str(d.properties?.provisioningState).toLowerCase() === 'succeeded')
-    // Embeddings, audio and image deployments cannot answer chat completions.
-    .filter((d) => kind === 'decision'
-      ? /^microsoft-decision-/i.test(str(d.properties?.model?.name))
-      : !/^microsoft-decision-/i.test(str(d.properties?.model?.name)) && (d.properties?.capabilities?.chatCompletion === 'true' || d.properties?.capabilities?.chatCompletion === undefined && d.properties?.capabilities?.embeddings !== 'true'))
-    .map((d) => ({ name: str(d.name), model: str(d.properties?.model?.name), version: str(d.properties?.model?.version), sku: str(d.sku?.name) }))
-    .filter((d) => /^[A-Za-z0-9._-]{1,64}$/.test(d.name));
+  const list = parseFoundryDeployments(deployments.body, kind);
+  if (!list) throw new EntraError('armError');
+  if (kind === 'decision' && (permissions.status === 401 || permissions.status === 403)) throw new EntraError('armForbidden');
+  if (kind === 'decision' && (permissions.status !== 200 || !Array.isArray(permissions.body?.value))) throw new EntraError('armError');
   const perms = permissions.status === 200 ? permissions.body?.value ?? [] : [];
-  return { deployments: list, access: { canCall: permitted(perms, CHAT_DATA_ACTION, true), canAssign: permitted(perms, ROLE_WRITE_ACTION, false) } };
+  const result = { deployments: list, access: { canCall: permitted(perms, CHAT_DATA_ACTION, true), canAssign: permitted(perms, ROLE_WRITE_ACTION, false) } };
+  if (kind !== 'decision') return result;
+  // Learn documents MaaS/* for Foundry model inference. Do not equate the OpenAI chat role with Decision access.
+  const family = 'Microsoft.CognitiveServices/accounts/MaaS/*';
+  const fullAccess = perms.some((p) => permitted([p], family, true) && !p.notDataActions?.length);
+  const partialAccess = perms.some((p) => !p.notDataActions?.some((action) => actionMatches(action, family))
+    && (permitted([p], family, true) || p.dataActions?.some((action) => action.toLowerCase().startsWith('microsoft.cognitiveservices/accounts/maas/'))));
+  return { ...result, decisionAccess: fullAccess ? 'available' : partialAccess ? 'unknown' : 'unavailable' };
 }
 
 /**

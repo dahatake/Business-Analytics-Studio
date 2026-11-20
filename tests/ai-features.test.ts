@@ -462,13 +462,13 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(isMediaConfigured({ media: { ...media, endpoint: null, auth: null, unavailable: 'noConnection' }, entra: { signedIn: true } as never }, 'speech')).toBe(false);
   });
 
-  it('treats Speech as ready by the chosen route: Foundry check, or the separate resource check without falling back (FR-329)', () => {
+  it('uses only the Foundry Speech verification even if an old relay reports a separate route', () => {
     const media = { endpoint: 'https://bas.cognitiveservices.azure.com', auth: 'apiKey' as const, unavailable: null, verifiedAt: { speech: '2026-11-11T00:00:00Z', vision: null } };
     const separate = { auth: 'apiKey' as const, endpoint: null, region: 'japaneast', verifiedAt: '2026-11-19T00:00:00Z' };
     expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'foundry', eligible: true, separate } })).toBe(true);
     expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(true);
-    expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'separate', eligible: true, separate: { ...separate, verifiedAt: null } } })).toBe(false);
-    expect(isSpeechReady({ media, entra: { signedIn: false } as never, speechConnection: { route: 'separate', eligible: true, separate: { ...separate, auth: 'entraId', endpoint: 'https://my-speech.cognitiveservices.azure.com', region: null } } })).toBe(false);
+    expect(isSpeechReady({ media: { ...media, verifiedAt: { speech: null, vision: null } }, entra: null, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(false);
+    expect(isSpeechReady({ media: { ...media, auth: 'entraId' }, entra: { signedIn: false } as never, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(false);
   });  it('accepts only whole JPY ≥ 0 as the budget', () => {
     expect(parseBudget('100000')).toBe(100_000);
     expect(parseBudget('0')).toBe(0);

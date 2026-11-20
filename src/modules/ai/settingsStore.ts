@@ -7,14 +7,14 @@ import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSet
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
 import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
 import {
-  clearMediaCheck, deleteCopilotSettings, deleteDecisionConnection, deleteRelayConnection, deleteSecret, deleteSeparateSpeech, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, NO_SPEECH_CONNECTION,
-  saveCopilotModel, saveDecisionConnection, saveRelayConnection, saveSecret, saveSeparateSpeech, setSpeechRoute,
+  clearMediaCheck, deleteCopilotSettings, deleteDecisionConnection, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, NO_SPEECH_CONNECTION,
+  saveCopilotModel, saveDecisionConnection, saveRelayConnection, saveSecret, selectDecisionModel,
   type DecisionInput, type DecisionSaveResult, type DecisionStatus,
   saveWorkIqSettings, testMediaConnection, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaStatus, type MediaTestResult, type RelayConnectionInfo, type SecretName,
-  type SeparateSpeechInput, type SpeechConnectionStatus, type SpeechSeparateResult, type WorkIqSettingsInput, type WorkIqStatus,
+  type SpeechConnectionStatus, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
-import type { MediaService, SpeechRoute } from '../../ai/mediaConnection.ts';
-import { DECISION_TEST_USE, decisionCostJpy } from '../../ai/decision.ts';
+import type { MediaService } from '../../ai/mediaConnection.ts';
+import { DECISION_TEST_USE, decisionCostJpy, decisionUsesFoundry } from '../../ai/decision.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
@@ -54,12 +54,13 @@ export interface AiSettingsState {
   foundryKeySaved: boolean;
   /** FR-324/FR-328: Speech / Vision through the relay's Foundry connection. */
   media: MediaStatus;
-  /** FR-329: the Speech route (Foundry connection or a separate Speech resource) held by the relay. */
+  /** Compatibility status for the retired separate Speech route. */
   speechConnection: SpeechConnectionStatus;
   /** D-37: Microsoft Foundry Decision connection held by the relay (never the key). */
   decision: DecisionStatus | null;
   saveDecision: (input: DecisionInput) => Promise<DecisionSaveResult>;
   deleteDecision: () => Promise<DecisionSaveResult>;
+  selectDecisionModel: (deployment: string | null) => Promise<DecisionSaveResult>;
   relayConnection: RelayConnectionInfo | null;
   connectionVerifiedAt: string | null;
   keyProtection: KeyProtection | null;
@@ -75,9 +76,6 @@ export interface AiSettingsState {
   /** Tests Speech / Vision on the Foundry resource through the relay, which seals the result to the Foundry connection. */
   testMedia: (service: MediaService) => Promise<MediaTestResult>;
   clearMedia: (service: MediaService) => Promise<boolean>;
-  saveSeparateSpeech: (input: SeparateSpeechInput) => Promise<SpeechSeparateResult>;
-  setSpeechRoute: (route: SpeechRoute) => Promise<SpeechSeparateResult>;
-  deleteSeparateSpeech: () => Promise<SpeechSeparateResult>;
   refreshRelay: () => Promise<void>;
   saveWorkIq: (input: WorkIqSettingsInput) => Promise<{ ok: boolean; error?: string }>;
   deleteWorkIq: () => Promise<boolean>;
@@ -128,6 +126,11 @@ export const useAiSettings = create<AiSettingsState>()(
         await get().refreshRelay();
         return r;
       },
+      selectDecisionModel: async (deployment) => {
+        const r = await selectDecisionModel(deployment);
+        await get().refreshRelay();
+        return r;
+      },
       relayConnection: null,
       connectionVerifiedAt: null,
       keyProtection: null,
@@ -149,21 +152,6 @@ export const useAiSettings = create<AiSettingsState>()(
         const ok = await clearMediaCheck(service);
         await get().refreshRelay();
         return ok;
-      },
-      saveSeparateSpeech: async (input) => {
-        const r = await saveSeparateSpeech(input);
-        await get().refreshRelay();
-        return r;
-      },
-      setSpeechRoute: async (route) => {
-        const r = await setSpeechRoute(route);
-        await get().refreshRelay();
-        return r;
-      },
-      deleteSeparateSpeech: async () => {
-        const r = await deleteSeparateSpeech();
-        await get().refreshRelay();
-        return r;
       },
       refreshRelay: async () => {
         const s = await fetchRelayStatus();
@@ -339,15 +327,13 @@ export function isMediaConfigured(s: Pick<AiSettingsState, 'media' | 'entra'>, s
   return s.media.auth === 'entraId' ? s.entra?.signedIn === true : true;
 }
 
-/** FR-329: Speech is usable on the chosen route: the Foundry connection's check, or the separate resource's check. */
+/** Only the shared Foundry check can enable Speech, including when an older relay reports a separate route. */
 export function isSpeechReady(s: Pick<AiSettingsState, 'media' | 'entra' | 'speechConnection'>): boolean {
-  if (s.speechConnection.route === 'foundry') return isMediaConfigured(s, 'speech');
-  const sep = s.speechConnection.separate;
-  if (!sep?.verifiedAt) return false;
-  return sep.auth === 'entraId' ? s.entra?.signedIn === true : true;
+  return isMediaConfigured(s, 'speech');
 }
 
 /** D-37: the Decision pre-screen runs only with a still-valid relay check and the same send consent and live switch as chat. */
-export function isDecisionReady(s: Pick<AiSettingsState, 'decision' | 'liveEnabled' | 'sendConsent' | 'relayReachable'>): boolean {
-  return s.relayReachable && s.liveEnabled && s.sendConsent && !!s.decision?.verifiedAt;
+export function isDecisionReady(s: Pick<AiSettingsState, 'decision' | 'liveEnabled' | 'sendConsent' | 'relayReachable' | 'relayConnection' | 'connectionVerifiedAt'>): boolean {
+  return s.relayReachable && s.liveEnabled && s.sendConsent && !!s.connectionVerifiedAt
+    && !!s.decision?.verifiedAt && decisionUsesFoundry(s.decision, s.relayConnection);
 }

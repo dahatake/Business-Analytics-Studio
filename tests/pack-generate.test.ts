@@ -252,6 +252,18 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(JSON.stringify(r.pack.extensions)).toContain('Reduce delivery delays');
   });
 
+  it('reads the site and the news at the same time', async () => {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const base = deps([{ ...stageA, entities: [] }, { entities: [] }]);
+    const d = deps([{ ...stageA, entities: [] }, { entities: [] }], {
+      fetchSite: async (...a) => { await wait(300); return base.fetchSite!(...a); },
+      fetchNews: async (...a) => { await wait(300); return base.fetchNews!(...a); },
+    });
+    const t0 = Date.now();
+    await generatePack(input(), d, () => {}, new AbortController().signal).catch(() => undefined);
+    expect(Date.now() - t0).toBeLessThan(550);
+  });
+
   it('never sends a project web topic without confirmation and sends the confirmed topic separately', async () => {
     const searches: string[] = [];
     const d = deps([{ ...stageA, entities: [] }, { entities: [] }], {

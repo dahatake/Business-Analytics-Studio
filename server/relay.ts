@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { replaceFileSync } from './files.ts';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
@@ -17,13 +18,12 @@ import {
 } from './workiq.ts';
 import { WorkIqCliService } from './workiqCli.ts';
 import {
-  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, saveEntraState,
+  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, parseFoundryDeployments, saveEntraState,
   type EntraErrorCode, type EntraTokens,
 } from './entra.ts';
 import {
-  MEDIA_FILE, MEDIA_SERVICES, NO_SAVED_SPEECH, SPEECH_FILE, foundryMediaEndpoint, foundrySubdomain, isMediaService, mediaSignature, mediaTestUrl, parseSavedMedia, parseSavedSpeech,
-  separateSpeechSignature, separateSpeechTestUrl, testMedia, testMediaAt, validateSeparateSpeech,
-  type MediaCredential, type MediaService, type MediaSource, type MediaUnavailable, type SavedMediaCheck, type SavedSpeech,
+  MEDIA_FILE, MEDIA_SERVICES, SPEECH_FILE, foundryMediaEndpoint, foundrySubdomain, inspectMediaAccess, isMediaService, mediaSignature, mediaTestUrl, parseSavedMedia, testMedia,
+  type MediaCredential, type MediaService, type MediaSource, type MediaUnavailable, type SavedMediaCheck,
 } from './media.ts';
 import { reserveStory, storyQuote, StoryBudgetError } from './storyBudget.ts';
 import { STORY_SYSTEM_PROMPT, StoryOutput } from '../src/ai/storyOutput.ts';
@@ -32,9 +32,10 @@ import {
   foundryChatUrl, isFoundryV1, parseFoundryConnection, type ConnectionInputError, type FoundryConnection, type FoundryError,
 } from '../src/ai/foundry.ts';
 import {
-  DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, decisionUrl, parseDecisionAnswers, validateDecisionConnection, validateDecisionRequest,
+  DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, decisionEndpointFromChat, decisionUrl, decisionUsesFoundry, parseDecisionAnswers, validateDecisionConnection, validateDecisionRequest,
   type DecisionConnection, type DecisionResult,
 } from '../src/ai/decision.ts';
+import { FoundryServices, type FoundryServicesInfo } from '../src/ai/mediaConnection.ts';
 
 /** Largest request body the relay reads: a pack-generation prompt with attached material (MAX_AI_CHARS_BY_USE), UTF-8 and JSON-escaped, plus base64 media files. */
 export const MAX_BODY_BYTES = 1024 * 1024 + Math.ceil(MAX_REQUEST_MEDIA_BYTES / 3) * 4 + 64 * 1024;
@@ -296,32 +297,10 @@ function mediaVerifiedAt(service: MediaService, check: SavedMediaCheck | undefin
 
 /* FR-329: Speech on a separate resource, offered once the Foundry connection and Speech on it are verified. */
 
-export function loadSpeech(dir: string): SavedSpeech {
-  const path = join(dir, SPEECH_FILE);
-  if (!existsSync(path)) return NO_SAVED_SPEECH;
-  try {
-    return parseSavedSpeech(JSON.parse(readFileSync(path, 'utf8')));
-  } catch {
-    return NO_SAVED_SPEECH;
-  }
-}
-
-/** The separate check holds only while its key (or, for Entra ID, the Foundry tenant and signed-in account) is unchanged. */
-function separateVerifiedAt(s: SavedSpeech, foundry: RelayConnection | null, vault: SecretVault, entra: EntraTokens): string | null {
-  if (!s.connection || !s.verifiedAt || !s.verification) return null;
-  if (s.connection.auth === 'entraId') {
-    const key = vault.get('foundryEntraKey');
-    const account = entra.account();
-    if (!key || !account || foundry?.auth !== 'entraId' || foundry.tenantId !== s.tenantId) return null;
-    return tokenMatches(s.verification, separateSpeechSignature(s.connection, s.tenantId, s.verifiedAt, key, account.username)) ? s.verifiedAt : null;
-  }
-  const key = vault.get('speechSeparateKey');
-  return key && tokenMatches(s.verification, separateSpeechSignature(s.connection, null, s.verifiedAt, key)) ? s.verifiedAt : null;
-}
 /* D-37: Microsoft Foundry Decision uses a key or the shared Entra sign-in; credentials remain in the vault. */
 
 const DECISION_FILE = 'decision.json';
-type SavedDecision = DecisionConnection & { verifiedAt: string; verification: string };
+type SavedDecision = DecisionConnection & { verifiedAt: string; verification: string; accessError?: 'resourceUnavailable' };
 
 export function loadDecision(dir: string, config: RelayConfig = STRICT_RELAY_CONFIG): SavedDecision | null {
   const path = join(dir, DECISION_FILE);
@@ -330,7 +309,7 @@ export function loadDecision(dir: string, config: RelayConfig = STRICT_RELAY_CON
     const saved = JSON.parse(readFileSync(path, 'utf8')) as Partial<SavedDecision>;
     const r = validateDecisionConnection({ endpoint: saved.endpoint, deployment: saved.deployment, auth: saved.auth, tenantId: saved.tenantId }, config.testOutbound);
     if (!r.ok || typeof saved.verifiedAt !== 'string' || typeof saved.verification !== 'string') return null;
-    return { ...r.value, verifiedAt: saved.verifiedAt, verification: saved.verification };
+    return { ...r.value, verifiedAt: saved.verifiedAt, verification: saved.verification, ...(saved.accessError === 'resourceUnavailable' ? { accessError: saved.accessError } : {}) };
   } catch {
     return null;
   }
@@ -341,11 +320,14 @@ const decisionSignature = (c: DecisionConnection, at: string, key: string, accou
     'decision', c.endpoint, c.deployment, at, ...(c.auth === 'entraId' ? ['entraId', c.tenantId, account?.tenantId ?? '', account?.username ?? ''] : []),
   ])).digest('hex');
 
-function decisionVerifiedAt(s: SavedDecision | null, vault: SecretVault, entra: EntraTokens): string | null {
-  if (!s || !Number.isFinite(Date.parse(s.verifiedAt))) return null;
+function decisionVerifiedAt(s: SavedDecision | null, vault: SecretVault, entra: EntraTokens, config: RelayConfig): string | null {
+  if (!s || s.accessError || !Number.isFinite(Date.parse(s.verifiedAt))) return null;
+  const foundry = loadConnection(vault.dir, config);
+  if (!decisionUsesFoundry(s, foundry) || !verifiedAt(foundry, vault, entra)) return null;
   const account = s.auth === 'entraId' ? entra.account() : null;
   if (s.auth === 'entraId' && !account) return null;
   const key = vault.get(s.auth === 'entraId' ? 'foundryEntraKey' : 'decisionKey');
+  if (s.auth !== 'entraId' && key !== vault.get('foundryKey')) return null;
   return key && tokenMatches(s.verification, decisionSignature(s, s.verifiedAt, key, account)) ? s.verifiedAt : null;
 }
 
@@ -634,6 +616,15 @@ function providerRetryAfter(headers: Headers): number | undefined {
   return valid.length ? Math.ceil(Math.min(Math.max(...valid), maxDelay)) : undefined;
 }
 
+/*
+ * Node's default fetch gives up after 300 s without response headers, but a non-streaming pack build (up to 32k output
+ * tokens) can legitimately take longer: the dialog then showed "relay 502 networkError" after two 5-minute tries with
+ * 0 tokens. Model calls disable undici's own timers; the call's AbortController (call.timeoutMs) remains the only limit.
+ */
+const modelAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+const modelFetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+  undiciFetch(input as never, { ...init, dispatcher: modelAgent } as never)) as unknown as typeof fetch;
+
 function networkError(error: unknown): FoundryError {
   const e = error as { code?: string; cause?: { code?: string } } | null;
   const code = e?.cause?.code ?? e?.code;
@@ -822,27 +813,116 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       ...Object.fromEntries(MEDIA_SERVICES.map((s) => [s, mediaVerifiedAt(s, saved[s], src.value, vault, entra)])),
     };
   };
-  /** FR-329: the choice is offered only once the Foundry connection and Speech on it are verified; the saved route is reported as is. */
-  const speechEligible = () => verifiedAt(connection(), vault, entra) !== null && typeof mediaStatus().speech === 'string';
-  const speechStatus = () => {
-    const s = loadSpeech(vault.dir);
-    return {
-      route: s.route, eligible: speechEligible(),
-      separate: s.connection
-        ? { auth: s.connection.auth, endpoint: s.connection.endpoint, region: s.connection.region, verifiedAt: separateVerifiedAt(s, connection(), vault, entra) }
-        : null,
-    };
-  };
+  // Keep the status shape for older clients, but never activate a retired separate Speech connection.
+  const speechStatus = () => ({ route: 'foundry', eligible: false, separate: null });
 
   /** FR-325 / D-37: the verification is bound to the key or the Entra account and tenant. */
   const decisionStatus = () => {
     const d = loadDecision(vault.dir, config);
-    return d ? { endpoint: d.endpoint, deployment: d.deployment, ...(d.auth === 'entraId' ? { auth: d.auth, tenantId: d.tenantId } : {}), verifiedAt: decisionVerifiedAt(d, vault, entra) } : null;
+    return d ? { endpoint: d.endpoint, deployment: d.deployment, ...(d.auth === 'entraId' ? { auth: d.auth, tenantId: d.tenantId } : {}), ...(d.accessError ? { accessError: d.accessError } : {}), verifiedAt: decisionVerifiedAt(d, vault, entra, config) } : null;
   };
+
+  const inspectServices = async (conn: RelayConnection): Promise<FoundryServicesInfo> => {
+    const unknown: FoundryServicesInfo = { speech: 'unknown', vision: 'unknown', decision: 'unknown', deployments: [] };
+    const sub = foundrySubdomain(conn.endpoint);
+    if (!sub) return unknown;
+    if (conn.auth === 'entraId' && conn.tenantId) {
+      if (!entraOutboundAllowed(config)) return unknown;
+      const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
+      try {
+        const resource = (await listFoundryInstancesForTenant(deps, conn.tenantId)).find((r) => r.endpoint && foundrySubdomain(r.endpoint) === sub);
+        if (!resource) return { ...unknown, speech: 'unavailable', vision: 'unavailable', decision: 'unavailable' };
+        const media = async (service: MediaService) => {
+          try {
+            return (await inspectMediaResource(deps, resource.id, conn.tenantId!, service)).access.canCall ? 'available' as const : 'unavailable' as const;
+          } catch (error) {
+            if (!(error instanceof EntraError)) throw error;
+            return error.code === 'armForbidden' ? 'unavailable' as const : 'unknown' as const;
+          }
+        };
+        const decision = async (): Promise<Pick<FoundryServicesInfo, 'decision' | 'deployments'>> => {
+          try {
+            // Metadata and documented model permissions are not a guarantee of inference/network availability.
+            const detail = await inspectFoundryInstance(deps, resource.id, conn.tenantId!, 'decision');
+            return { decision: detail.deployments.length ? detail.decisionAccess ?? 'unknown' : 'unavailable', deployments: detail.deployments };
+          } catch (error) {
+            if (!(error instanceof EntraError)) throw error;
+            return { decision: error.code === 'armForbidden' ? 'unavailable' : 'unknown', deployments: [] };
+          }
+        };
+        const [speech, vision, result] = await Promise.all([media('speech'), media('vision'), decision()]);
+        return { speech, vision, ...result };
+      } catch (error) {
+        if (!(error instanceof EntraError)) throw error;
+        return error.code === 'armForbidden' ? { ...unknown, speech: 'unavailable', vision: 'unavailable', decision: 'unavailable' } : unknown;
+      }
+    }
+    const key = vault.get('foundryKey');
+    if (!key) return { ...unknown, speech: 'unavailable', vision: 'unavailable', decision: 'unavailable' };
+    const mediaEndpoint = foundryMediaEndpoint(conn.endpoint)!;
+    const deploymentsUrl = `https://${sub}.services.ai.azure.com/openai/deployments?api-version=2024-10-21`;
+    const doFetch = ctx.fetch ?? fetch;
+    const media = (service: MediaService) => endpointHostAllowed(new URL(mediaEndpoint), config)
+      ? inspectMediaAccess(service, mediaEndpoint, { kind: 'key', key }, doFetch, ctx.signal) : Promise.resolve('unknown' as const);
+    const decision = async (): Promise<Pick<FoundryServicesInfo, 'decision' | 'deployments'>> => {
+      if (!endpointHostAllowed(new URL(deploymentsUrl), config)) return { decision: 'unknown', deployments: [] };
+      try {
+        const timeout = AbortSignal.timeout(30_000);
+        const res = await doFetch(deploymentsUrl, { method: 'GET', headers: { 'api-key': key }, redirect: 'error', signal: ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout });
+        if ([401, 403, 404].includes(res.status)) return { decision: 'unavailable', deployments: [] };
+        if (!res.ok) return { decision: 'unknown', deployments: [] };
+        const deployments = parseFoundryDeployments(await res.json(), 'decision');
+        if (!deployments) return { decision: 'unknown', deployments: [] };
+        return { decision: deployments.length ? 'available' : 'unavailable', deployments };
+      } catch {
+        return { decision: 'unknown', deployments: [] };
+      }
+    };
+    const [speech, vision, result] = await Promise.all([media('speech'), media('vision'), decision()]);
+    return { speech, vision, ...result };
+  };
+
+  if (path === '/relay/foundry/services' || path === '/relay/decision/model') {
+    const selecting = path === '/relay/decision/model';
+    if (method !== (selecting ? 'PUT' : 'POST')) return json(405, { error: 'methodNotAllowed' });
+    const body = parseBody(req.body);
+    if (!body || (selecting ? Object.keys(body).length !== 1 || !('deployment' in body) : Object.keys(body).length !== 0)) return json(400, { error: 'invalidBody' });
+    if (selecting && body.deployment === null) {
+      rmSync(join(vault.dir, DECISION_FILE), { force: true });
+      vault.delete('decisionKey');
+      return json(200, { decision: null });
+    }
+    const conn = connection();
+    if (!conn || !verifiedAt(conn, vault, entra)) return json(409, { error: 'noConnection' });
+    const endpoint = decisionEndpointFromChat(conn.endpoint);
+    const deployment = body.deployment;
+    if (selecting && (!endpoint || typeof deployment !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(deployment))) return json(400, { error: 'invalidDeployment' });
+    const before = JSON.stringify(conn);
+    const account = entra.account();
+    const key = vault.get(conn.auth === 'entraId' ? 'foundryEntraKey' : 'foundryKey');
+    const services = FoundryServices.parse(await inspectServices(conn));
+    if (JSON.stringify(connection()) !== before || vault.get(conn.auth === 'entraId' ? 'foundryEntraKey' : 'foundryKey') !== key
+      || (conn.auth === 'entraId' && JSON.stringify(entra.account()) !== JSON.stringify(account))) return json(409, { error: 'connectionChanged' });
+    if (!selecting) return json(200, services);
+    if (typeof deployment !== 'string' || !endpoint) return json(400, { error: 'invalidDeployment' });
+    if (services.decision !== 'available' || !services.deployments.some((d) => d.name === deployment)) {
+      return json(services.decision === 'unknown' ? 502 : 403, { error: services.decision === 'unknown' ? 'inspectionFailed' : 'resourceUnavailable' });
+    }
+    if (!key) return json(409, { error: 'connectionChanged' });
+    const selected = { endpoint, deployment };
+    const value: DecisionConnection = conn.auth === 'entraId' && conn.tenantId
+      ? { ...selected, auth: 'entraId', tenantId: conn.tenantId } : selected;
+    const at = new Date((ctx.now ?? Date.now)()).toISOString();
+    if (conn.auth !== 'entraId') vault.set('decisionKey', key);
+    else vault.delete('decisionKey');
+    writeJsonAtomic(vault.dir, DECISION_FILE, { ...value, verifiedAt: at, verification: decisionSignature(value, at, key, account) });
+    return json(200, { decision: decisionStatus() });
+  }
 
   if (path === '/relay/status') {
     if (method !== 'GET') return json(405, { error: 'methodNotAllowed' });
     vault.purgeLegacy();
+    rmSync(join(vault.dir, SPEECH_FILE), { force: true });
     return json(200, {
       relay: 'ok', secrets: vault.status(), connection: publicConnection(connection()), connectionVerifiedAt: verifiedAt(connection(), vault, entra), configured: configured(), keyProtection: vault.keyProtection(),
       copilot: copilotSettings(), workiq: workiqStatus(), entra: entraStatus(), media: mediaStatus(), speechConnection: speechStatus(), decision: decisionStatus(),
@@ -1174,89 +1254,8 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     return json(200, { endpoint: source.endpoint, auth: source.auth, verifiedAt: at });
   }
 
-  if (path === '/relay/speech/route') {
-    if (method !== 'PUT') return json(405, { error: 'methodNotAllowed' });
-    const body = parseBody(req.body);
-    const route = body?.route;
-    if (!body || Object.keys(body).length !== 1 || (route !== 'foundry' && route !== 'separate')) return json(400, { error: 'invalidBody' });
-    const saved = loadSpeech(vault.dir);
-    if (route === 'separate') {
-      // Going back to the Foundry connection is always allowed; leaving it needs both checks to hold now.
-      if (!speechEligible()) return json(409, { error: 'notEligible' });
-      if (!separateVerifiedAt(saved, connection(), vault, entra)) return json(409, { error: 'separateNotVerified' });
-    }
-    writeJsonAtomic(vault.dir, SPEECH_FILE, { ...saved, route });
-    return json(200, speechStatus());
-  }
-
-  if (path === '/relay/speech/separate') {
-    if (method === 'DELETE') {
-      writeJsonAtomic(vault.dir, SPEECH_FILE, NO_SAVED_SPEECH);
-      vault.delete('speechSeparateKey');
-      return json(200, speechStatus());
-    }
-    if (method !== 'PUT') return json(405, { error: 'methodNotAllowed' });
-    const v = validateSeparateSpeech(parseBody(req.body));
-    if (!v.ok) return json(400, { error: v.error });
-    if (!speechEligible()) return json(409, { error: 'notEligible' });
-    const target = v.value;
-    const testUrl = separateSpeechTestUrl(target);
-    if (!endpointHostAllowed(new URL(testUrl), config)) return json(400, { error: 'hostNotAllowed' });
-    const foundry = connection();
-    let credential: MediaCredential;
-    let tenantId: string | null = null;
-    const account = target.auth === 'entraId' ? entra.account() : null;
-    if (target.auth === 'entraId') {
-      // Same sign-in and tenant as the Foundry connection; the token is for Cognitive Services, as for Foundry.
-      if (foundry?.auth !== 'entraId' || !foundry.tenantId) return json(400, { error: 'notEntra' });
-      if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
-      if (!account) return json(400, { error: 'notSignedIn' });
-      tenantId = foundry.tenantId;
-      try {
-        credential = { kind: 'bearer', token: (await entra.token(FOUNDRY_SCOPE, tenantId, ctx.signal)).token };
-      } catch (error) {
-        return entraFailure(error);
-      }
-    } else {
-      const key = v.key ?? vault.get('speechSeparateKey');
-      if (!key) return json(400, { error: 'keyMissing' });
-      credential = { kind: 'key', key };
-    }
-    const limitKey = 'speechSeparateTest';
-    const now = (ctx.now ?? Date.now)();
-    const last = ctx.lastCall?.get(limitKey);
-    if (last !== undefined && now - last < 5_000) return json(429, { error: 'tooSoon' });
-    ctx.lastCall?.set(limitKey, Infinity);
-    let result: Awaited<ReturnType<typeof testMediaAt>>;
-    try {
-      result = await testMediaAt('speech', testUrl, credential, ctx.fetch ?? fetch, ctx.signal);
-    } finally {
-      ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
-    }
-    // A failed test keeps the previous route, connection and key as they were.
-    if (!result.ok) return json(result.error === 'aborted' ? 499 : 502, { error: result.error, ...(result.providerStatus ? { providerStatus: result.providerStatus } : {}) });
-    const at = new Date((ctx.now ?? Date.now)()).toISOString();
-    let verification: string;
-    if (target.auth === 'entraId') {
-      const current = connection();
-      if (current?.auth !== 'entraId' || current.tenantId !== tenantId) return json(409, { error: 'connectionChanged' });
-      if (entra.account()?.username !== account!.username) return json(409, { error: 'accountChanged' });
-      let sealKey = vault.get('foundryEntraKey');
-      if (!sealKey) {
-        sealKey = randomBytes(32).toString('hex');
-        vault.set('foundryEntraKey', sealKey);
-      }
-      verification = separateSpeechSignature(target, tenantId, at, sealKey, account!.username);
-      vault.delete('speechSeparateKey');
-    } else {
-      const key = (credential as { kind: 'key'; key: string }).key;
-      if (v.key === null && vault.get('speechSeparateKey') !== key) return json(409, { error: 'keyChanged' });
-      vault.set('speechSeparateKey', key);
-      verification = separateSpeechSignature(target, null, at, key);
-    }
-    const saved: SavedSpeech = { route: 'separate', connection: target, tenantId, verifiedAt: at, verification };
-    writeJsonAtomic(vault.dir, SPEECH_FILE, saved);
-    return json(200, speechStatus());
+  if (path === '/relay/speech/route' || path === '/relay/speech/separate') {
+    return json(410, { error: 'separateSpeechRemoved' });
   }
 
   if (path === '/relay/decision') {
@@ -1279,7 +1278,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
       credential = c;
     } else {
       // One Foundry resource, one key: without its own key, Decision reuses the chat connection's.
-      const key = v.key ?? vault.get('decisionKey') ?? vault.get('foundryKey');
+      const key = v.key ?? vault.get('foundryKey');
       if (!key) return json(400, { error: 'keyMissing' });
       credential = { kind: 'key', key };
     }
@@ -1290,7 +1289,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     ctx.lastCall?.set(limitKey, Infinity);
     let result: DecisionOutcome;
     try {
-      result = await callDecision(v.value, credential, DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
+      result = await callDecision(v.value, credential, DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, config, ctx.fetch ?? modelFetch, ctx.signal);
     } finally {
       ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
     }
@@ -1318,7 +1317,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const r = validateDecisionRequest(parseBody(req.body));
     if (!r) return json(400, { error: 'invalidBody' });
     const saved = loadDecision(vault.dir, config);
-    if (!saved || !decisionVerifiedAt(saved, vault, entra)) return json(403, { allowed: false, reasons: ['notConfigured'] });
+    if (!saved || !decisionVerifiedAt(saved, vault, entra, config)) return json(403, { allowed: false, reasons: ['notConfigured'] });
     const credential = await credentialFor(saved, 'decisionKey');
     if (!('kind' in credential)) return credential;
     const limitKey = `decision:${r.use}`;
@@ -1327,7 +1326,11 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (last !== undefined && now - last < AI_LIMITS.minIntervalMs) return json(429, { error: 'tooSoon' });
     ctx.lastCall?.set(limitKey, Infinity);
     try {
-      const result = await callDecision(saved, credential, r, DECISION_TIMEOUT_MS, config, ctx.fetch ?? fetch, ctx.signal);
+      const result = await callDecision(saved, credential, r, DECISION_TIMEOUT_MS, config, ctx.fetch ?? modelFetch, ctx.signal);
+      if (!result.ok && [401, 403, 404].includes(Number(result.body.providerStatus))
+        && JSON.stringify(loadDecision(vault.dir, config)) === JSON.stringify(saved)) {
+        writeJsonAtomic(vault.dir, DECISION_FILE, { ...saved, accessError: 'resourceUnavailable' });
+      }
       return result.ok ? json(200, result.value) : json(result.status, result.body);
     } finally {
       ctx.lastCall?.set(limitKey, (ctx.now ?? Date.now)());
@@ -1359,7 +1362,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         result = await forward({
           use: 'connectionTest', provider: 'foundry', lang: 'en', prompt: CONNECTION_TEST_PROMPT, context: '',
           maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, timeoutMs: CONNECTION_TEST_TIMEOUT_MS, media: [],
-        }, r.value, credential, config, ctx.fetch ?? fetch, ctx.signal);
+        }, r.value, credential, config, ctx.fetch ?? modelFetch, ctx.signal);
       } finally {
         ctx.lastCall?.set('connectionTest', (ctx.now ?? Date.now)());
       }
@@ -1421,7 +1424,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         if (path === '/relay/story/estimate') return json(200, { maximumJpy, remainingJpy, source, expiresAt });
         const credential = await credentialFor(conn);
         if (!('kind' in credential)) return credential;
-        const result = await forward(call, conn, credential, config, ctx.fetch ?? fetch, ctx.signal);
+        const result = await forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal);
         if (result.status !== 200 || !('text' in result.body)) return result;
         let output: unknown;
         try { output = JSON.parse(result.body.text); } catch { return json(502, { error: 'badProviderResponse' }); }
@@ -1449,7 +1452,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (!conn) return json(403, { allowed: false, reasons: ['notConfigured'] });
     const credential = await credentialFor(conn);
     if (!('kind' in credential)) return credential;
-    return forward(call, conn, credential, config, ctx.fetch ?? fetch, ctx.signal);
+    return forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal);
   }
 
   return json(404, { error: 'notFound' });

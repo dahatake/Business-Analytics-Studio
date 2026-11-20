@@ -1,3 +1,5 @@
+import { foundrySubdomain } from './mediaConnection.ts';
+
 /**
  * D-37: Microsoft Foundry `Microsoft-Decision-1.1` for closed judgements (gates, filters, ranking) that the chat model used
  * to make inside generated text. Shared by the relay and the browser; nothing here sends data.
@@ -62,6 +64,19 @@ export function decisionEndpointFromChat(endpoint: unknown, allowTestHttp = fals
   try { url = new URL(endpoint.trim()); } catch { return null; }
   const name = /^([a-z0-9][a-z0-9-]{1,62})\.openai\.azure\.com$/.exec(url.hostname)?.[1];
   return parseDecisionEndpoint(name ? `https://${name}.services.ai.azure.com` : url.origin, allowTestHttp);
+}
+
+/** A legacy Decision connection must not keep sending to a resource or identity hidden by the unified settings. */
+export function decisionUsesFoundry(
+  decision: DecisionConnection,
+  foundry: { endpoint: string; auth?: 'apiKey' | 'entraId'; tenantId?: string | null } | null,
+): boolean {
+  if (!foundry || (decision.auth ?? 'apiKey') !== (foundry.auth ?? 'apiKey')) return false;
+  if (decision.auth === 'entraId' && decision.tenantId !== foundry.tenantId) return false;
+  const resource = foundrySubdomain(foundry.endpoint);
+  return resource !== null
+    ? resource === foundrySubdomain(decision.endpoint)
+    : decision.endpoint === decisionEndpointFromChat(foundry.endpoint, true);
 }
 
 /** Body of PUT /relay/decision: the key may be omitted to keep the saved one. */

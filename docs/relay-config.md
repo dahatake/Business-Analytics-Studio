@@ -174,41 +174,60 @@ For a new resource, prefer `disableLocalAuth: true` (keys off) with a custom sub
 
 ## Microsoft Foundry Decision
 
-FR-325 / D-37. In the existing **AI Settings** dialog, the **Microsoft Foundry Decision** section offers the same
-**API key** / **Microsoft Entra ID** choice as other Foundry models. Decision is a separate deployment selection, not
-a chat-completions model; selecting it does not change the chat connection.
+FR-325 / D-37, simplified on 2026-11-20. **AI Settings → Microsoft Foundry** has only a **Decision model** picker after
+the common Foundry connection is verified. Choose an existing deployment to save it immediately, or **Do not use** to
+remove it. There are no Decision endpoint/key fields, manual deployment-name input, test consent, test/save/delete
+buttons, prices or separate status panel. API key and Entra ID both reuse the common resource and authentication.
 
-- **API key:** enter the Foundry resource origin (`https://<subdomain>.services.ai.azure.com`), Decision deployment name
-  and resource key. An empty key keeps the existing Decision key only for an API-key connection.
-- **Microsoft Entra ID:** reuse the shared Foundry sign-in, choose a directory, resource and Decision deployment.
-  `POST /relay/entra/inspect { resourceId, tenantId, kind: 'decision' }` lists only succeeded `Microsoft-Decision-*`
-  deployments, including models that explicitly do not support chat completions. The picker derives the
-  `services.ai.azure.com` origin from the resource's custom subdomain. Decision deployments are excluded from the chat picker.
-- Give consent to the synthetic test, then **Test and save**. `PUT /relay/decision` accepts `{ endpoint, deployment,
-  key? }` (legacy API-key format) or `{ endpoint, deployment, auth: 'entraId', tenantId }` (no key).
-  Both test and screening call `/providers/microsoft/v1/systemone`; the latter uses the
-  `https://cognitiveservices.azure.com/.default` scope and sends only `Authorization: Bearer ...`, never `api-key`.
-  The chat-completions permission badge and OpenAI-role assignment do not apply to Decision: the synthetic test
-  verifies actual inference access. Permission failures are shown; no roles are assigned automatically.
+`POST /relay/foundry/services {}` performs read-only resource checks when the settings open:
 
-The relay saves only a successful test. A failed authentication change leaves the previous connection intact.
-`decision.json` contains no key or token. API-key checks retain their existing HMAC format; Entra checks bind the
+- **Entra ID:** find the saved resource in its tenant through Resource Graph; read the effective Speech/Vision data
+  actions and succeeded `Microsoft-Decision-*` deployments. For Decision, check the documented `MaaS/*` model
+  permissions, not the OpenAI chat role. Narrow/custom grants or exclusions that cannot establish this access remain
+  unknown rather than declaring them absent. These checks do not assign roles or guarantee inference/network success.
+- **API key:** read the free Speech voices list, Vision's `GET /vision/v3.2/models`, and
+  `GET https://<resource>.services.ai.azure.com/openai/deployments?api-version=2024-10-21`.
+  The Vision metadata check verifies resource access, not Image Analysis 4.0 regional support or OCR quality.
+- Results are `available`, `unavailable` or `unknown` independently for Speech, Vision and Decision, plus the Decision
+  deployment list. No image, business data, synthesized speech or inference question is sent. Outbound allowlists and
+  timeouts still apply; malformed/incomplete responses and network/server failures stay **unknown**, never "missing".
+- Missing resources, unreadable resources, missing service permissions and empty Decision deployment lists produce
+  one concise message naming the affected services and asking the administrator to set them up in Azure. Successful
+  checks add no explanatory panels. Temporary failures get a separate retry message.
+
+`PUT /relay/decision/model { deployment: "<name>" | null }` rechecks the read-only list and only saves a succeeded
+Decision deployment from the current resource. It rejects resource/account/key changes during the check and keeps
+the old selection on failure. `null` removes the selection and Decision key without any outbound call.
+There is **no paid synthetic inference test** on selection or opening settings. Actual Decision calls still require
+the app's send consent, live mode and budget. If inference subsequently returns 401/403/404, its saved status records
+`accessError: "resourceUnavailable"` and stops further calls until re-selection; settings shows the administrator
+message even when resource discovery still succeeds.
+
+`decision.json` contains no key or token. Its HMAC binds the selected deployment to the common key, or for Entra ID the
 resource endpoint, deployment, resource tenant and signed-in account (including its tenant), sealed with the shared
-vault-only `foundryEntraKey`. Sign-out removes that seal key, so signing back in still requires a new test.
+vault-only `foundryEntraKey`. `verifiedAt` now means the time of the selection's read-only check, not an inference test.
+Sign-out removes that seal key, so signing back in requires selecting the model again.
+The saved Decision connection is usable only while the common Foundry connection is verified and its resource,
+authentication and tenant still match; API-key connections must also use the current Foundry key. Old standalone
+Decision settings cannot silently use a different resource; select the model on the current common resource before use.
 Account changes or tampered settings invalidate verification. Expired-token and conditional-access errors are returned
 explicitly; an Entra connection never falls back to an API key. Both methods share the existing consent, live-mode and budget gates.
 
 When an outbound allowlist is configured, include the Decision resource host; Entra ID also needs the existing
 `login.microsoftonline.com` and `management.azure.com` entries.
+The older `PUT /relay/decision` synthetic-test API remains for compatibility, but no settings control uses it.
 See Microsoft's [Decision API authentication examples](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision#call-the-decision-api).
+Deployment-list API-key authentication is documented in [Foundry authentication](https://learn.microsoft.com/azure/foundry/concepts/authentication-authorization-foundry#authentication-methods).
+The model permission namespace is documented in [keyless Foundry authentication](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/configure-entra-id#required-azure-roles-and-permissions).
 
 ## Azure AI Speech and Azure AI Vision
 
-FR-328 (replaces FR-324's separate connections). AI Settings → **Speech settings** (Azure AI Speech) and **Real
-connections for speech and handwriting** (Azure AI Vision) use the saved Microsoft Foundry connection; they have no
-endpoint, region, key or resource of their own. A Foundry resource (kind `AIServices`) serves Azure OpenAI and the
+FR-328 (replaces FR-324's separate connections and FR-329's Speech override). In **AI Settings → Microsoft Foundry**,
+AI Speech and AI Vision have **no settings items**, test buttons, consent controls or role-assignment controls.
+Their resource/access checks run read-only with the Decision model picker described above; only failures are displayed.
+The common resource applies to chat and all three services, including Decision. A Foundry resource (kind `AIServices`) serves Azure OpenAI and the
 Foundry Tools, Speech and Vision included, with one key and one custom subdomain. The feature switches that would use
-them stay off until C-07 is resolved; testing already works.
+them stay off until C-07 is resolved. Removing the settings does not enable these features.
 
 - **Destination.** Derived from the Foundry endpoint's custom subdomain: `https://<name>.openai.azure.com`,
   `https://<name>.services.ai.azure.com` or `https://<name>.cognitiveservices.azure.com` all map to
@@ -218,12 +237,12 @@ them stay off until C-07 is resolved; testing already works.
 - **Authentication.** The same as Foundry: **API key** sends `Ocp-Apim-Subscription-Key` with the vault's `foundryKey`;
   **Microsoft Entra ID** sends `Authorization: Bearer <token for https://cognitiveservices.azure.com/.default>` of the
   signed-in account and the Foundry tenant. The Foundry role *Cognitive Services OpenAI User* does not cover Speech or
-  Vision. `POST /relay/media/<service>/access` (Entra ID only, empty body) finds the connected resource in the Foundry
+  Vision. The legacy `POST /relay/media/<service>/access` (Entra ID only, empty body) finds the connected resource in the Foundry
   tenant by its subdomain and reports the service's data-plane access; `POST /relay/media/<service>/role` assigns, on
   request only, *Cognitive Services Speech User* (`f2dc8367-1007-4938-bd23-fe263f013447`) for Speech or *Cognitive
   Services User* (`a97b65f3-24c7-4388-baec-2e87135dc908`) for Vision, which has no narrower built-in data-plane role
   (this role can also list keys; prefer `disableLocalAuth: true` on the resource).
-- **Test.** `PUT /relay/media/<service>` with an empty body checks `BAS_RELAY_OUTBOUND_HOSTS` (the derived host must be
+- **Legacy diagnostic API (not used by settings).** `PUT /relay/media/<service>` with an empty body checks `BAS_RELAY_OUTBOUND_HOSTS` (the derived host must be
   listed; for Entra ID also the Entra hosts), allows one test per service every 5 s, and calls the service: Speech
   `GET …/tts/cognitiveservices/voices/list` (free), Vision
   `POST …/computervision/imageanalysis:analyze?api-version=2024-02-01&features=read` with a blank 64×64 PNG (one billed
@@ -233,8 +252,9 @@ them stay off until C-07 is resolved; testing already works.
   signing out or switching account shows the service as unverified; `DELETE /relay/media/<service>` removes the check.
   `GET /relay/status` returns `media: { endpoint, auth, unavailable, speech, vision }` (`speech` / `vision` are the
   verification time or `null`) and never a key or a token.
-- **Upgrade.** `GET /relay/status` deletes FR-324's vault secrets `speechKey` and `visionKey`; the settings store
-  (version 6) drops the old Speech endpoint, region and drafts.
+- **Upgrade.** `GET /relay/status` deletes FR-324's vault secrets `speechKey` and `visionKey`, FR-329's `speechSeparateKey`,
+  and the retired `speech.json`. No old separate route is used or automatically verified. The settings store
+  (version 6) drops the old Speech endpoint, region and drafts. Opening settings starts only the read-only checks above.
 - **MAI models (D-31, checked 2026-11-19).** Not used. MAI-Voice-2.1 / MAI-Voice-2.1-Flash are preview voices served by
   the same Speech API (`<locale>-<name>:MAI-Voice-2.1` in SSML), and they have no `ja-JP` voice: the voices list of a
   Japan East Foundry resource returned 289 MAI voices in 26 locales and none in `ja-JP`. No MAI model reads text from
@@ -244,31 +264,11 @@ them stay off until C-07 is resolved; testing already works.
 
 ### Separate Azure AI Speech connection (FR-329)
 
-Speech uses the Foundry connection by default. Once both the Foundry connection and the Speech test on it are verified,
-**Speech settings** offers a second choice: **Set up the Speech connection separately** for another Azure AI Speech
-resource. Vision always stays on the Foundry connection. Until both checks hold, the screen shows the condition instead
-of the choice, and the relay refuses the separate route (`409 notEligible`) without calling Azure.
-
-- **Input.** API key: a custom subdomain (`https://<name>.cognitiveservices.azure.com`), a regional endpoint
-  (`https://<region>.api.cognitive.microsoft.com`) or only a region (`japaneast`), plus the key. Microsoft Entra ID: a
-  custom subdomain only (regional endpoints do not accept Entra ID tokens), and only when the Foundry connection uses
-  Entra ID; the relay uses the same sign-in and tenant (`400 notEntra` otherwise).
-- **Test and save.** `PUT /relay/speech/separate` with `{ auth, endpoint?, region?, key? }` checks the input, the
-  eligibility, `BAS_RELAY_OUTBOUND_HOSTS` (`hostNotAllowed`) and one test every 5 s (`429 tooSoon`). It then calls
-  the free voices list: `https://<name>.cognitiveservices.azure.com/tts/cognitiveservices/voices/list` or
-  `https://<region>.tts.speech.microsoft.com/cognitiveservices/voices/list`. Only when the test succeeds does it save
-  `speech.json`, switch Speech to the separate connection and, for API key, store the key in the vault as
-  `speechSeparateKey`. A blank key reuses the saved one. A failed or aborted test changes nothing, and the current
-  connection stays in use.
-- **Saved state.** `speech.json` holds the route, the endpoint or region, the auth method, the tenant and a signature
-  bound to the key (API key) or to the signed-in account and tenant (Entra ID, vault key `foundryEntraKey`). If the key
-  or the account changes, the separate connection shows as unverified; Speech does not silently fall back to Foundry.
-  `speechSeparateKey` is relay-only: `/relay/secrets/speechSeparateKey` answers 404, and no response returns the key.
-- **Switch and delete.** `PUT /relay/speech/route` with `{ route: 'foundry' | 'separate' }` returns to the Foundry
-  connection at any time. Switching to `separate` needs eligibility and a still-valid separate test
-  (`409 separateNotVerified`). `DELETE /relay/speech/separate` removes `speech.json`'s connection and the key.
-- **Status.** `GET /relay/status` adds `speechConnection: { route, eligible, separate: { auth, endpoint, region,
-  verifiedAt } | null }`.
+**Retired on 2026-11-20 by explicit user request.** Speech always uses the shared Foundry resource. The separate
+connection form, regional endpoint/key entry and route switch have been removed. The old `/relay/speech/route` and
+`/relay/speech/separate` endpoints return `410 separateSpeechRemoved` without contacting Azure.
+For older clients, status retains `speechConnection: { route: 'foundry', eligible: false, separate: null }`.
+The shared Speech test must succeed before the service is considered configured; migration never grants verification.
 
 ## Environment variables
 

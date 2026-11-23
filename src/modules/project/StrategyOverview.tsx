@@ -240,11 +240,12 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   const state = useOverview((s) => s.value);
   const set = useOverview((s) => s.set);
   const ctx = useMemo(() => overviewContext(raw, audience), [raw, audience]);
-  const axes = availableAxes(ctx);
-  const recommended = recommendedAxis(ctx);
+  const axes = useMemo(() => availableAxes(ctx), [ctx]);
+  const recommended = useMemo(() => recommendedAxis(ctx), [ctx]);
   const axis = state.axis && axes.includes(state.axis) ? state.axis : recommended;
   const descending = state.descending !== false;
-  const baseline = overviewBaseline(raw, state);
+  // Serializes the whole pack and project data: computed when they change, not on every render.
+  const baseline = useMemo(() => overviewBaseline(raw, state), [raw, state.objectiveIssues]);
   const draftKey = `${audience}:${step}`;
   const stepDraft = state.stepDrafts?.[draftKey];
   const sharedDraft = state.draft?.audience === audience ? state.draft : undefined;
@@ -368,6 +369,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     finally { if (alive.current) setBusy(false); }
   };
   const d = useMemo(() => stepDashboard(step, ctx), [step, ctx]);
+  const briefs = useMemo(() => (analysis ? IMPROVEMENT_STEPS.map((s) => buildStepBrief(stepDashboard(s, ctx), ctx, lang, audience)) : []), [analysis, ctx, lang, audience]);
   const limit = usePaybackLimit();
   const linked = new Set(map.links.flatMap((l) => [l.source, l.target]));
   const confirmed = map.nodes.filter((n) => n.draft !== 'new');
@@ -449,8 +451,8 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       </Panel>}
       {analysis && <Panel title={t('stg.analysis')} testId="executive-summary" className="span-full">
         <p className="muted">{t('stg.analysisHint')}</p>
-        {IMPROVEMENT_STEPS.map((s) => {
-          const dash = stepDashboard(s, ctx), brief = buildStepBrief(dash, ctx, lang, audience);
+        {IMPROVEMENT_STEPS.map((s, i) => {
+          const brief = briefs[i]!;
           return <details key={s} open={s === step}>
             <summary>{t(`proj.step.${s}`)} — {t(`proj.dash.brief.maturity.${brief.maturity}`)}</summary>
             <BriefBody content={brief} brief={brief} prefix={`strategy-brief-${s}`} />

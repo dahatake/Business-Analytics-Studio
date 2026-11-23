@@ -1,24 +1,11 @@
 import type { coreJa, MessageKey } from './ja.ts';
 import { modulesEn } from './modules/index.ts';
+import { startupEn } from './startup.ts';
 
 /** English UI strings. Typed against the Japanese key set: a missing or extra key is a compile error. */
 const coreEn: Record<keyof typeof coreJa, string> = {
   'app.title': 'Business Analytics Studio',
-  'startup.loading': 'Preparing the app…',
-  'device.loading': 'Loading data saved on this PC…',
-  'device.title': 'Editing stopped to protect your data',
-  'device.saved': 'Saved on this PC',
-  'device.saving': 'Saving on this PC…',
-  'device.error': 'Device data could not be loaded or saved. The app will not continue with empty data or claim a successful save. Check the server, disk space and permissions. Unsaved changes are included in the recovery copy.',
-  'device.conflict': 'Data conflicts with another window. Newer device data has not been overwritten. Download a recovery copy, then reload to review the saved data. Legacy browser data has not been deleted.',
-  'device.retry': 'Reload / retry',
-  'device.recovery': 'Download recovery copy',
-  'device.recoveryError': 'The recovery copy could not be created either. Keep this page open and check browser storage.',
-  'device.useDevice': 'Use device data and keep legacy data',
-  'device.moved': 'The data folder was changed in another window. Nothing was saved to the old folder. Reload to continue with the data in the new folder.',
-  'device.locationUnavailable': 'The chosen data folder cannot be found or holds no BAS data (for example, an external drive was removed or the folder was moved or deleted). The app has not continued with empty data or created new data. Restore the folder and reload, or go back to the default folder.',
-  'device.locationPath': 'Chosen data folder: {path}',
-  'device.useDefaultLocation': 'Go back to the default folder (the chosen folder is not deleted)',
+  ...startupEn,
   'topbar.commands': 'Commands',
   'retention.title': 'Data retention and deletion',
   'retention.why': 'Lists, per item, what is deleted, when, how long it is kept, and how budget accounting survives deletion (decision D-7).',

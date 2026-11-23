@@ -104,7 +104,17 @@ export type DeliverableData = z.infer<typeof DeliverableDataSchema>;
 export const emptyDeliverables = (): DeliverableData => ({ docs: {}, signOffs: {} });
 
 /** Stored values are read back defensively: a broken value never breaks the screen. */
+const normalized = new WeakMap<object, DeliverableData>();
+
+/** Validated and migrated deliverables; the same stored value is validated once (each keystroke used to parse it twice). */
 export function normalizeDeliverables(raw: unknown): DeliverableData {
+  if (typeof raw !== 'object' || raw === null) return parseDeliverables(raw);
+  let found = normalized.get(raw);
+  if (!found) normalized.set(raw, (found = parseDeliverables(raw)));
+  return found;
+}
+
+function parseDeliverables(raw: unknown): DeliverableData {
   const r = DeliverableDataSchema.safeParse(raw);
   return r.success ? migrateDocs(r.data) : emptyDeliverables();
 }
@@ -389,11 +399,19 @@ export interface ValueMismatch {
   kpis: { name: Localizable; baseline: number; current: number; target: number }[];
 }
 
+const mismatchCache = new WeakMap<CheckContext, { checked: number; mismatches: ValueMismatch[] }>();
+
 /**
  * Finds numbers in issue descriptions and discussion records that contradict every recorded value (baseline,
  * current, target) of the KPIs the text is about. The KPI is the record of truth: it has an owner, a source and a period.
  */
 export function valueMismatches(c: CheckContext): { checked: number; mismatches: ValueMismatch[] } {
+  let found = mismatchCache.get(c);
+  if (!found) mismatchCache.set(c, (found = findValueMismatches(c)));
+  return found;
+}
+
+function findValueMismatches(c: CheckContext): { checked: number; mismatches: ValueMismatch[] } {
   const project = new Map(c.kpi.kpis.map((k) => [k.id, k]));
   const valuesOf = (k: EntityOf<'kpi'>) => {
     const p = project.get(k.id);
@@ -878,15 +896,20 @@ export interface TodoResult {
   signOff?: SignOff;
 }
 
+const stepResults = new WeakMap<CheckContext, Partial<Record<ImprovementStep, TodoResult[]>>>();
+
+/** The step's criteria judged on the context (computed once per context and step: many views read the same results). */
 export function evaluateStep(step: ImprovementStep, c: CheckContext): TodoResult[] {
-  return STEP_DEFS[step].todos.map((todo) => {
+  let byStep = stepResults.get(c);
+  if (!byStep) stepResults.set(c, (byStep = {}));
+  return (byStep[step] ??= STEP_DEFS[step].todos.map((todo) => {
     if (todo.kind === 'manual') {
       const signOff = c.deliverables.signOffs[todo.id];
       return signOff ? { todo, done: true, signOff } : { todo, done: false };
     }
     const outcome = todo.check!(c);
     return { todo, done: outcome.ok, outcome };
-  });
+  }));
 }
 
 /** The first open exit criterion in the step's working order: what the user should do next. */

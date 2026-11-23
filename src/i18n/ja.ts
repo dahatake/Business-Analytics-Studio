@@ -1,23 +1,10 @@
 import { modulesJa } from './modules/index.ts';
+import { startupJa } from './startup.ts';
 
 /** Japanese UI strings of the core screens. Feature modules add their own prefixed dictionaries in ./modules. */
 export const coreJa = {
   'app.title': 'Business Analytics Studio',
-  'startup.loading': 'アプリを準備しています…',
-  'device.loading': 'このPCの保存データを読み込んでいます…',
-  'device.title': 'データ保護のため操作を停止しました',
-  'device.saved': 'このPCに保存済み',
-  'device.saving': 'このPCに保存中…',
-  'device.error': '端末への読み込み・保存に失敗しました。空のデータで作業を続けたり、保存成功として扱ったりはしません。サーバーと保存先の空き容量・権限を確認してください。未保存の内容は復旧用コピーに含まれます。',
-  'device.conflict': '別のウィンドウの保存データと競合しました。新しいデータを上書きしていません。復旧用コピーをダウンロードし、再読み込みして内容を確認してください。旧ブラウザーデータも削除していません。',
-  'device.retry': '再読み込み・再試行',
-  'device.recovery': '復旧用コピーをダウンロード',
-  'device.recoveryError': '復旧用コピーの作成にも失敗しました。この画面を閉じず、ブラウザーの保存領域を確認してください。',
-  'device.useDevice': '旧データを残して、このPCの保存データを使う',
-  'device.moved': 'データの保存先フォルダーが別のウィンドウで変更されました。古いフォルダーへは保存していません。再読み込みして、新しい保存先のデータで続けてください。',
-  'device.locationUnavailable': '設定したデータの保存先フォルダーが見つからないか、BAS のデータがありません（外付けドライブが外れた、フォルダーを移動・削除した、など）。空のデータで続けたり、新しく作ったりはしていません。フォルダーを元に戻して再読み込みするか、既定の保存先に戻してください。',
-  'device.locationPath': '設定している保存先: {path}',
-  'device.useDefaultLocation': '既定の保存先に戻す（設定中のフォルダーは削除しません）',
+  ...startupJa,
   'topbar.commands': 'ツールバー',
   'retention.title': 'データの保持と削除',
   'retention.why': '削除の対象・時点・保持期間と、削除後も予算の集計を保つ方法を、対象ごとに一覧にしています（決定 D-7）。',

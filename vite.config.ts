@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 import { handleApiRequest } from './src/api/handler.ts';
 import { relayDir, relayPlugin } from './server/relay.ts';
 import { cspPlugin } from './build/csp.ts';
+import { startupPreloadPlugin } from './build/startupPreload.ts';
 import { createDeviceService } from './scripts/lib/device.ts';
 
 function deviceStorage(): Plugin {
@@ -45,7 +46,7 @@ function localApi(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), localApi(), relayPlugin(), deviceStorage(), cspPlugin()],
+  plugins: [react(), localApi(), relayPlugin(), deviceStorage(), cspPlugin(), startupPreloadPlugin()],
   server: { host: '127.0.0.1', port: 5173 },
   test: {
     environment: 'jsdom',

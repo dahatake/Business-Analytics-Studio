@@ -20,7 +20,7 @@ Each feature module owns only its own files:
 
 Also owned by each module: `src/i18n/modules/<prefix>.ja.ts` / `.en.ts`, tests named `tests/<module>*.test.ts`, E2E specs named `e2e/<module>*.spec.ts`, and an optional stylesheet `src/modules/<module>/<module>.css` imported by the module's own files.
 
-Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/*`, `src/styles.css`, `src/i18n/{ja,en,core,index}.ts`, `src/i18n/modules/index.ts`, `src/state/*`, `src/ai/*`, `src/data/*`, `src/screens/*`, `src/ui/*`, `src/charts/*`, `package.json`, `vite.config.ts`, `playwright.config.ts`, other modules' files and tests.
+Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/*`, `src/styles.css`, `src/i18n/{ja,en,core,index,startup}.ts`, `src/i18n/modules/index.ts`, `src/state/*`, `src/ai/*`, `src/data/*`, `src/screens/*`, `src/ui/*`, `src/charts/*`, `package.json`, `vite.config.ts`, `playwright.config.ts`, other modules' files and tests.
 
 ## Global mounts
 
@@ -28,6 +28,7 @@ Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/
 
 ## Conventions that tests enforce
 
+- **Keep start-up and shared checks cheap.** `src/main.tsx` may import only `src/i18n/startup.ts` for text (the full dictionaries load with the app). Derived project data is cached per check context (`evaluateStep`, `stepDashboard`, `threadOf`, `valueMismatches`): build contexts with `useCheckContext()` and never mutate one after reading results from it. `useDeferredCheckContext()` is only for read-only status bands, never where a control shows the data.
 - **No hard-coded UI text.** Every visible string and accessible name goes through `t('<prefix>.key')` from `useI18n()`. `tests/i18n.test.ts` scans all `.tsx` files and fails on literal text between tags. Japanese and English dictionaries must have identical keys and matching `{placeholders}`, and English must contain no Japanese characters.
 - **Data text:** sample data is bilingual (`{ ja, en }`); user-typed text is stored as typed. Use `Localizable` and `loc()` from `src/state/text.ts`.
 - **Imports use explicit extensions** (`'./x.ts'`, `'./Y.tsx'`).

@@ -48,6 +48,14 @@ export function loadPack(raw: unknown): LoadedPack {
   return { pack: { ...shell, entities }, byId, edges, issues };
 }
 
+/** The same pack restricted to some of its (already validated) entities, without validating them again. */
+export function subsetPack(source: LoadedPack, entities: Entity[]): LoadedPack {
+  const issues: PackIssue[] = [];
+  const byId = new Map(entities.map((e) => [e.id, e] as const));
+  const edges = buildEdges(entities, source.pack.flows, byId, issues);
+  return { pack: { ...source.pack, entities }, byId, edges, issues };
+}
+
 function buildEdges(entities: Entity[], flows: CustomerPack['flows'], byId: Map<string, Entity>, issues: PackIssue[]): Edge[] {
   const edges: Edge[] = [];
   const add = (source: string, target: string, type: RelationType) => {

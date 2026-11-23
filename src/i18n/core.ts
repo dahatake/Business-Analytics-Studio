@@ -67,25 +67,26 @@ export function makeFormatters(lang: Lang) {
 
 function buildFormatters(lang: Lang) {
   const locale = lang === 'ja' ? 'ja-JP' : 'en-US';
-  const nf = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
-  const nf0 = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
-  const pf = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 });
-  const cf = new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
-  const df = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: 'numeric', timeZone: PARAMS.timeZone });
-  const mf = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', timeZone: PARAMS.timeZone });
-  const tf = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: PARAMS.timeZone, timeZoneName: 'short' });
-  const millions = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  // Each Intl formatter is built on first use: start-up screens need only a few, and building all of them costs ICU data loads.
+  const lazy = <F>(make: () => F) => { let f: F | undefined; return () => (f ??= make()); };
+  const nf = lazy(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }));
+  const nf0 = lazy(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }));
+  const pf = lazy(() => new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 }));
+  const cf = lazy(() => new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }));
+  const df = lazy(() => new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: 'numeric', timeZone: PARAMS.timeZone }));
+  const mf = lazy(() => new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', timeZone: PARAMS.timeZone }));
+  const tf = lazy(() => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: PARAMS.timeZone, timeZoneName: 'short' }));
   return {
     locale,
-    number: (v: number) => nf.format(v),
-    integer: (v: number) => nf0.format(v),
-    percent: (v: number) => pf.format(v),
-    yen: (v: number) => cf.format(v),
+    number: (v: number) => nf().format(v),
+    integer: (v: number) => nf0().format(v),
+    percent: (v: number) => pf().format(v),
+    yen: (v: number) => cf().format(v),
     /** Millions of yen: "186 百万円" / "¥186M". */
-    yenCompact: (v: number) => (lang === 'ja' ? `${millions.format(v / 1_000_000)} 百万円` : `¥${millions.format(v / 1_000_000)}M`),
-    date: (iso: string) => df.format(new Date(`${iso}T00:00:00+09:00`)),
-    month: (d: Date) => mf.format(d),
-    time: (d: Date) => tf.format(d),
+    yenCompact: (v: number) => (lang === 'ja' ? `${nf().format(v / 1_000_000)} 百万円` : `¥${nf().format(v / 1_000_000)}M`),
+    date: (iso: string) => df().format(new Date(`${iso}T00:00:00+09:00`)),
+    month: (d: Date) => mf().format(d),
+    time: (d: Date) => tf().format(d),
   };
 }
 export type Formatters = ReturnType<typeof buildFormatters>;

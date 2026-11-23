@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { entitiesOf, loadPack } from '../../data/pack.ts';
+import { entitiesOf, subsetPack } from '../../data/pack.ts';
 import { LText, type Entity, type EntityOf } from '../../data/schema.ts';
 import type { Lang } from '../../i18n/index.ts';
 import { createScopedStore, type ImprovementStep } from '../../state/projects.ts';
@@ -81,13 +81,16 @@ export interface StrategyMap { nodes: StrategyNode[]; links: StrategyLink[]; iss
 
 /** Audience filtering happens before both graph construction and AI context construction. */
 export function overviewContext(ctx: CheckContext, audience: Audience): CheckContext {
-  const entities = ctx.pack.pack.entities.filter((e) => !isHidden(e, audience) && (
+  const all = ctx.pack.pack.entities;
+  const entities = all.filter((e) => !isHidden(e, audience) && (
     audience === 'internal' || e.sourceIds.every((id) => {
       const source = ctx.pack.byId.get(id);
       return source !== undefined && !isHidden(source, audience);
     })
   ));
-  const pack = loadPack({ ...ctx.pack.pack, entities });
+  // Nothing hidden from the internal audience: the context itself, so its cached thread and step checks are reused.
+  if (audience === 'internal' && entities.length === all.length) return ctx;
+  const pack = subsetPack(ctx.pack, entities);
   const visible = new Set(entities.map((e) => e.id));
   return {
     ...ctx, pack,

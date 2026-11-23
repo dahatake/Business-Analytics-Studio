@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import {
   Button, Menu, MenuButton, MenuDivider, MenuGroup, MenuGroupHeader, MenuItem, MenuItemRadio, MenuList, MenuPopover, MenuTrigger,
 } from '@fluentui/react-components';
@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects } from '../../state/projects.ts';
 import { navigate, hrefFor } from '../../state/router.ts';
 import { ExportDialog } from './ExportDialog.tsx';
-import { DraftDialog, StepTodoBand, useCheckContext } from './deliverablesUi.tsx';
+import { DraftDialog, StepTodoBand, useDeferredCheckContext } from './deliverablesUi.tsx';
 import { evaluateStep, progressOf } from './deliverables.ts';
 import { handoffViews } from './handoff.ts';
 import { importedPackMeta } from '../../data/packStore.ts';
@@ -77,8 +77,8 @@ function Stepper() {
   const { t, lang } = useI18n();
   const { step } = useActiveProject();
   const setStep = useProjects((s) => s.setStep);
-  const ctx = useCheckContext();
-  const handoffs = handoffViews(ctx, lang);
+  const ctx = useDeferredCheckContext();
+  const handoffs = useMemo(() => handoffViews(ctx, lang), [ctx, lang]);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const current = IMPROVEMENT_STEPS.indexOf(step);
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {

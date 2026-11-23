@@ -1,14 +1,33 @@
 import { DeviceStorageError, changeDeviceLocation, getDeviceLocation, initializeDeviceStorage, recoveryDeviceData } from './data/deviceStorage.ts';
-import { isLang, translate, type Lang, type MessageKey } from './i18n/core.ts';
+import { translateStartup, type StartupKey } from './i18n/startup.ts';
 import { downloadBlob } from './modules/show/recorder.ts';
 import './styles.css';
 
+type Lang = 'ja' | 'en';
+const isLang = (v: unknown): v is Lang => v === 'ja' || v === 'en';
 let lang: Lang = navigator.language.startsWith('ja') ? 'ja' : 'en';
-const t = (key: MessageKey, vars?: Record<string, string>) => translate(lang, key, vars);
+const t = (key: StartupKey, vars?: Record<string, string>) => translateStartup(lang, key, vars);
 const root = document.getElementById('root')!;
 const splash = root.firstElementChild!.cloneNode(true);
 
-function showStartupStatus(key: MessageKey) {
+/**
+ * The production build lists the app's start-up chunks (build/startupPreload.ts). Once device storage is requested,
+ * the browser fetches and compiles them while it waits; modulepreload never runs a module, so stores still load after it.
+ */
+function preloadApp() {
+  const list = document.querySelector<HTMLMetaElement>('meta[name="bas-startup-modules"]');
+  if (!list) return;
+  list.remove();
+  for (const href of list.content.split(' ').filter(Boolean)) {
+    const link = document.createElement('link');
+    link.rel = 'modulepreload';
+    link.crossOrigin = '';
+    link.href = href;
+    document.head.append(link);
+  }
+}
+
+function showStartupStatus(key: StartupKey) {
   document.documentElement.lang = lang;
   root.querySelector('[data-testid="startup-status"]')!.textContent = t(key);
 }
@@ -17,7 +36,9 @@ async function start(useDeviceCopy = false) {
   if (!root.querySelector('[data-testid="startup-splash"]')) root.replaceChildren(splash.cloneNode(true));
   showStartupStatus('device.loading');
   try {
-    await initializeDeviceStorage(useDeviceCopy);
+    const deviceReady = initializeDeviceStorage(useDeviceCopy);
+    preloadApp();
+    await deviceReady;
     const { useSettings } = await import('./state/settings.ts');
     const { lang: savedLang, motion, showSplash } = useSettings.getState();
     if (isLang(savedLang)) lang = savedLang;
@@ -46,7 +67,7 @@ async function start(useDeviceCopy = false) {
       section.append(path);
       void getDeviceLocation().then((location) => { if (location.path) path.textContent = t('device.locationPath', { path: location.path }); }, () => {});
     }
-    const button = (key: MessageKey, action: () => void) => {
+    const button = (key: StartupKey, action: () => void) => {
       const el = document.createElement('button');
       el.type = 'button';
       el.textContent = t(key);

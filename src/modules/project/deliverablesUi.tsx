@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Badge, Button, Caption1, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar,
 } from '@fluentui/react-components';
@@ -7,7 +7,7 @@ import {
 } from '@fluentui/react-icons';
 import { AiLiveError, preflight, type AiResponse } from '../../ai/client.ts';
 import { PARAMS } from '../../config/params.ts';
-import { loaded } from '../../data/pack.ts';
+import { loaded, packOrigin } from '../../data/pack.ts';
 import { useI18n, type Lang, type MessageKey } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
@@ -26,7 +26,7 @@ import {
   applyDraft, evaluateStep, threadOf, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
   type AppCheckContext, type CheckContext, type CheckRef, type TodoResult,
 } from './deliverables.ts';
-import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useProjTransient, useProjUi, useScopeKpis, useStrategy, type SavedFieldDraft } from './stores.ts';
+import { kpisForScope, useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpis, useProjTransient, useProjUi, useStrategy, type SavedFieldDraft } from './stores.ts';
 import { gapCount, normalizeStrategy } from './strategy.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import './project.css';
@@ -36,10 +36,17 @@ export function todayIn(timeZone: string = PARAMS.timeZone, now = new Date()): s
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
+/**
+ * Every component that reads the check context in the same state gets the same object, so the per-context caches
+ * (threadOf, evaluateStep) compute the strategy thread and step checks once instead of once per component.
+ */
+let sharedCheckContext: { deps: readonly unknown[]; ctx: AppCheckContext } | undefined;
+
 export function useCheckContext(): AppCheckContext {
   const packVersion = usePackVersion((s) => s.version);
   const discussion = useDiscussion((s) => s.value);
-  const kpi = useScopeKpis();
+  const kpiValue = useKpis((s) => s.value);
+  const kpiScope = useKpis((s) => s.scope);
   const analysis = useAnalyses((s) => s.value);
   const useCases = useUseCases((s) => s.value);
   const raw = useDeliverables((s) => s.value);
@@ -48,17 +55,32 @@ export function useCheckContext(): AppCheckContext {
   const { project, company } = useActiveProject();
   const companyId = company?.id ?? '';
   const anchorVersion = company?.anchorRef?.version;
-  const objectives = useMemo(() => companyObjectives(companyId), [companyId, anchorVersion]);
   const alignments = project?.alignments;
   const storedCatalog = useCatalogImport((s) => s.value);
   const catalogScope = useCatalogImport((s) => s.scope);
-  const catalog = useMemo(() => catalogForScope(storedCatalog, catalogScope)?.items, [storedCatalog, catalogScope]);
-  return useMemo(() => ({
-    pack: loaded, discussion, kpi, analysis, useCases, deliverables: normalizeDeliverables(raw), today: isDemo ? PARAMS.asOfDate : todayIn(),
-    strategy: normalizeStrategy(rawStrategy), objectives,
-    projectObjectiveIds: [...new Set((alignments ?? []).filter((a) => a.kind !== 'unaligned').flatMap((a) => a.objectiveIds))],
-    ...(catalog?.length ? { catalog } : {}),
-  }), [discussion, kpi, analysis, useCases, raw, isDemo, rawStrategy, objectives, alignments, packVersion, catalog]);
+  const deps = [loaded, packOrigin, packVersion, discussion, kpiValue, kpiScope, analysis, useCases, raw, rawStrategy, isDemo, companyId, anchorVersion, alignments, storedCatalog, catalogScope];
+  return useMemo(() => {
+    const shared = sharedCheckContext;
+    if (shared && shared.deps.length === deps.length && shared.deps.every((d, i) => Object.is(d, deps[i]))) return shared.ctx;
+    const catalog = catalogForScope(storedCatalog, catalogScope)?.items;
+    const ctx: AppCheckContext = {
+      pack: loaded, discussion, kpi: kpisForScope(kpiValue, kpiScope), analysis, useCases, deliverables: normalizeDeliverables(raw), today: isDemo ? PARAMS.asOfDate : todayIn(),
+      strategy: normalizeStrategy(rawStrategy), objectives: companyObjectives(companyId),
+      projectObjectiveIds: [...new Set((alignments ?? []).filter((a) => a.kind !== 'unaligned').flatMap((a) => a.objectiveIds))],
+      ...(catalog?.length ? { catalog } : {}),
+    };
+    sharedCheckContext = { deps, ctx };
+    return ctx;
+  }, deps);
+}
+
+/**
+ * The check context for read-only status bands shown on every screen (the stepper and the expected outcomes). While someone types, the bands keep the
+ * last results and re-evaluate in an interruptible background render, so judging every step never delays a keystroke.
+ * Never use it where a control shows the data (inputs, sign-off checkboxes): it would show the old value after a change.
+ */
+export function useDeferredCheckContext(): AppCheckContext {
+  return useDeferredValue(useCheckContext());
 }
 
 /** The company's stated objectives (company anchor), the top of the company → OKR → KPI → solution chain. */

@@ -4,7 +4,7 @@ import { ChevronDown20Regular } from '@fluentui/react-icons';
 import { getEntity } from '../data/pack.ts';
 import type { EntityOf } from '../data/schema.ts';
 import { useI18n } from '../i18n/index.ts';
-import { useCheckContext } from '../modules/project/deliverablesUi.tsx';
+import { useDeferredCheckContext } from '../modules/project/deliverablesUi.tsx';
 import { expectedOutcomes, type ExpectedOutcomes, type KpiOutcome } from '../modules/project/expectedOutcomes.ts';
 import { useProjUi } from '../modules/project/stores.ts';
 import { useFeed } from '../state/feed.ts';
@@ -293,7 +293,7 @@ function StripCard({ item, index, change, gen }: { item: StripItem; index: numbe
 export function ExpectedOutcomesBar() {
   const { t, lang } = useI18n();
   const audience = useSettings((s) => s.audience);
-  const ctx = useCheckContext();
+  const ctx = useDeferredCheckContext();
   const open = useProjUi((s) => s.outcomesOpen);
   const setOpen = useProjUi((s) => s.setOutcomesOpen);
   const reduced = useReducedMotion();

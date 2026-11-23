@@ -572,7 +572,16 @@ function deliverable(c: CheckContext): { tiles: DashTile[]; detail: StepDetail }
 
 const BUILDERS: Record<ImprovementStep, (c: CheckContext) => { tiles: DashTile[]; detail: StepDetail }> = { asis, tobe, kpi, solution, deliverable };
 
+const dashboards = new WeakMap<CheckContext, Partial<Record<ImprovementStep, StepDashboard>>>();
+
+/** The step's dashboard on the context (computed once per context and step: the overview, band and screen share it). */
 export function stepDashboard(step: ImprovementStep, c: CheckContext): StepDashboard {
+  let byStep = dashboards.get(c);
+  if (!byStep) dashboards.set(c, (byStep = {}));
+  return (byStep[step] ??= buildStepDashboard(step, c));
+}
+
+function buildStepDashboard(step: ImprovementStep, c: CheckContext): StepDashboard {
   const results = evaluateStep(step, c);
   const { tiles, detail } = BUILDERS[step](c);
   const doc = docStatus(step, c);

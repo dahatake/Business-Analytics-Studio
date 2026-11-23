@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Field, Radio, RadioGroup, Select, Switch, Tab, TabList, Toolbar, ToolbarButton, ToolbarDivider, Tooltip } from '@fluentui/react-components';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Field, Radio, RadioGroup, Select, Spinner, Switch, Tab, TabList, Toolbar, ToolbarButton, ToolbarDivider, Tooltip } from '@fluentui/react-components';
 import {
   ArrowDown16Regular, ArrowLeft16Regular, ArrowRight16Regular, ArrowUp16Regular, FullScreenMaximize16Regular,
   FullScreenMinimize16Regular, ZoomFit16Regular, ZoomIn16Regular, ZoomOut16Regular,
@@ -20,7 +20,6 @@ import {
 import { buildScene, type GraphView, type SceneNode } from './scene.ts';
 import { FORMATS } from './layout.ts';
 import { Diagram2D } from './Diagram2D.tsx';
-import { Diagram3D } from './Diagram3D.tsx';
 import { InfoCard, type InfoCardData } from './InfoCard.tsx';
 import { SuitabilityPanel } from './SuitabilityPanel.tsx';
 import { ContextualScene } from '../threed/ContextualScene.tsx';
@@ -35,6 +34,10 @@ const TAB_LABELS: Record<Tabs, MessageKey> = {
 };
 const WORLDS: WorldFilter[] = ['both', 'real', 'digital'];
 const LEGEND_KINDS = ['site', 'person', 'customer', 'product', 'deal', 'deliverable', 'invoice', 'issue', 'cause', 'solution', 'kpi', 'initiative', 'supplier', 'source'] as const;
+
+// The 3D format pulls in three.js: loaded on demand, and in idle time once the screen is shown, so 2D opens without it.
+const loadDiagram3D = () => import('./Diagram3D.tsx');
+const Diagram3D = lazy(() => loadDiagram3D().then((m) => ({ default: m.Diagram3D })));
 
 const pick = <T extends string>(v: string | null, all: readonly T[], d: T): T => ((all as readonly string[]).includes(v ?? '') ? (v as T) : d);
 
@@ -68,6 +71,13 @@ export function GraphScreen() {
   const scene = useMemo(() => buildScene({
     data: loaded, ext, view, level, world, showTwins, selected, pinned: highlight ? [highlight] : [], visible, t, tx, fmtNumber: (n) => fmt.integer(n),
   }), [ext, view, level, world, showTwins, selected, highlight, visible, t, tx, fmt]);
+
+  useEffect(() => {
+    const idle = typeof requestIdleCallback === 'function' ? requestIdleCallback : (run: () => void) => window.setTimeout(run, 500);
+    const cancel = typeof cancelIdleCallback === 'function' ? cancelIdleCallback : window.clearTimeout;
+    const id = idle(() => { void loadDiagram3D().catch(() => undefined); });
+    return () => cancel(id);
+  }, []);
 
   // Reset the camera when the representation changes (semantic zoom changes meaning, not just scale).
   useEffect(() => {
@@ -240,7 +250,9 @@ export function GraphScreen() {
                   <span className="graph-zoom-readout" aria-live="polite">{t('graph.zoomReadout', { value: fmt.integer(Math.round(zoom * 100)) })}</span>
                 </Toolbar>
                 {format === '3d' ? (
-                  <Diagram3D scene={scene} zoom={zoom} pan={pan} onZoomStep={zoomStep} highlight={highlight} centreRequest={centreRequest} onCard={setCard} onSelect={select} />
+                  <Suspense fallback={<Spinner label={t('app.loading')} />}>
+                    <Diagram3D scene={scene} zoom={zoom} pan={pan} onZoomStep={zoomStep} highlight={highlight} centreRequest={centreRequest} onCard={setCard} onSelect={select} />
+                  </Suspense>
                 ) : (
                   <Diagram2D
                     scene={scene} format={format} zoom={zoom} pan={pan} onPan={setPan} onZoomStep={zoomStep} highlight={highlight}

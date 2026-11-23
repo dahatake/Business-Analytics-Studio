@@ -1,17 +1,8 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, open, scan, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 import { STEP_DEFS } from '../src/modules/project/deliverables.ts';
 
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const STEPS = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'] as const;
-
-async function scan(page: Page) {
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
 
 async function go(page: Page, route: string, lang: Lang = 'ja') {
   await page.setViewportSize({ width: 1280, height: 1000 });
@@ -88,17 +79,6 @@ test.describe('step dashboard', () => {
     await expect(page.getByTestId('step-dash-next')).toBeVisible();
     await expect(page.locator('.step-dash-tile[data-tone="ok"]:not([data-todo])')).toHaveCount(0);
     await expectTilesMatchBand(page);
-  });
-
-  test('English: the dashboard has no Japanese and passes axe', async ({ page }) => {
-    await go(page, '/step?step=kpi', 'en');
-    await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', 'kpi');
-    for (const step of STEPS) {
-      await page.getByTestId('proj-stepper').locator(`[data-step="${step}"]`).click();
-      await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', step);
-      expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
-    }
-    expect(await scan(page)).toEqual([]);
   });
 
   test('each step shows its decision chart, a data table alternative and a rule-based executive summary', async ({ page }) => {
@@ -250,17 +230,25 @@ test.describe('issue qualification (FR-347)', () => {
 });
 
 test.describe('Khalsa advice on every step screen (FR-351)', () => {
-  test('each step shows its advice on the dashboard and on the deliverable screen, with links and a next conversation', async ({ page }) => {
+  test('each step shows its advice and priority aids (FR-358) on the dashboard and on the deliverable screen', async ({ page }) => {
     await go(page, '/step?step=asis');
     for (const step of STEPS) {
       await page.goto(`/#/step?step=${step}`);
       const advice = page.getByTestId('step-advice');
       await expect(advice).toBeVisible();
       await expect(advice.getByTestId(`step-advice-ask.${step}`)).toBeVisible();
+      const panel = page.getByTestId('step-priority');
+      await expect(panel).toBeVisible();
+      await expect(panel.getByTestId('step-priority-summary')).not.toBeEmpty();
+      await expect(panel.getByTestId('step-priority-critique')).not.toBeEmpty();
+      expect(await panel.getByTestId('step-priority-sources').getByRole('link').count()).toBeGreaterThan(0);
       await page.goto(`/#/deliverables?step=${step}`);
       await expect(page.getByTestId('step-advice')).toBeVisible();
       await expect(page.getByTestId(`step-advice-ask.${step}`)).toBeVisible();
+      await expect(page.getByTestId('step-priority')).toBeVisible();
     }
+    await page.goto('/#/step?step=asis');
+    await expect(page.getByTestId('step-priority-candidates')).toBeVisible();
   });
 
   test('the advice follows the data: qualifying the issues removes the yellow light, and its link opens the work', async ({ page }) => {
@@ -288,37 +276,11 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
     await expect(page.getByTestId('step-advice-noPursued')).toBeVisible();
   });
 
-  test('the priority aids show a summary, critique, methods and source links on every step, and follow the data (FR-358)', async ({ page }) => {
-    await go(page, '/step?step=asis');
-    for (const step of STEPS) {
-      await page.goto(`/#/step?step=${step}`);
-      const panel = page.getByTestId('step-priority');
-      await expect(panel).toBeVisible();
-      await expect(panel.getByTestId('step-priority-summary')).not.toBeEmpty();
-      await expect(panel.getByTestId('step-priority-critique')).not.toBeEmpty();
-      expect(await panel.getByTestId('step-priority-sources').getByRole('link').count()).toBeGreaterThan(0);
-      await page.goto(`/#/deliverables?step=${step}`);
-      await expect(page.getByTestId('step-priority')).toBeVisible();
-    }
-    await page.goto('/#/step?step=asis');
-    await expect(page.getByTestId('step-priority-candidates')).toBeVisible();
-  });
-
-  test('the priority aids pass axe on every step in English and have no Japanese (FR-358)', async ({ page }) => {
+  test('the advice panel and the priority aids (FR-358) pass axe on every step in English and have no Japanese', async ({ page }) => {
     await go(page, '/step?step=asis', 'en');
     for (const step of STEPS) {
       await page.goto(`/#/step?step=${step}`);
       await expect(page.getByTestId('step-priority')).toContainText('Priority aids');
-      await page.evaluate(() => window.scrollTo(0, 0));
-      expect(await scan(page), step).toEqual([]);
-      expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
-    }
-  });
-
-  test('the advice panel passes axe on every step in English and has no Japanese', async ({ page }) => {
-    await go(page, '/step?step=asis', 'en');
-    for (const step of STEPS) {
-      await page.goto(`/#/step?step=${step}`);
       await expect(page.getByTestId('step-advice')).toBeVisible();
       await expect(page.getByTestId('step-advice')).toContainText('Advice based on Khalsa');
       await page.evaluate(() => window.scrollTo(0, 0));

@@ -1,6 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, setup, visibleTextExcludingOtherLang } from './helpers.ts';
+import { JAPANESE, scan, setup, visibleTextExcludingOtherLang } from './helpers.ts';
 
 /*
  * FR-311 (D-12): "Create Project pack with Copilot" on the launch screen and in project management, with the AI
@@ -8,16 +7,6 @@ import { JAPANESE, setup, visibleTextExcludingOtherLang } from './helpers.ts';
  * connection, so it lives in e2e/ai.spec.ts, whose tests run in order in one worker (the relay is shared by the server).
  */
 test.describe.configure({ mode: 'default' });
-
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
-
-async function scan(page: Page) {
-  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
 
 async function seed(page: Page, lang: 'ja' | 'en', withInputs = false) {
   await setup(page, { skipLaunch: false, lang });

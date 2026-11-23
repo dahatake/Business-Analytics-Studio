@@ -1,6 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, deviceSnapshot, open, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { JAPANESE, deviceSnapshot, open, scan, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 import { samplePack } from '../src/data/sample.ts';
 import { loadPack } from '../src/data/pack.ts';
 import { demoAnalyses } from '../src/modules/project/analysis.ts';
@@ -11,8 +10,6 @@ import { buildDraft, buildTaskDrafts, draftToText } from '../src/modules/project
 import { emptyDeliverables, setQualification, STEP_DEFS } from '../src/modules/project/deliverables.ts';
 import type { ImprovementStep } from '../src/state/projects.ts';
 import type { RepairOption } from '../src/modules/project/taskResolution.ts';
-
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 /** Demo deliverables with every issue qualified as "pursue" by the person (FR-347). */
 function qualifiedDemo() {
@@ -28,13 +25,6 @@ async function seedQualified(page: Page) {
   await seedDeviceData(page, { 'bas.scope.demo.proj.deliverables': JSON.stringify(qualifiedDemo()) });
   await page.reload();
   await expect(page.locator('main#main')).toBeVisible();
-}
-
-async function scan(page: Page) {
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
 }
 
 async function go(page: Page, route: string, lang: Lang = 'ja') {

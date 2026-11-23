@@ -1,22 +1,10 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { JAPANESE, open, setup, type Lang } from './helpers.ts';
+import { JAPANESE, open, scan, setup, type Lang } from './helpers.ts';
 import { contrastRatio, DARK_BG } from '../src/modules/ops/color.ts';
 import { startServer } from '../scripts/lib/serve.ts';
-
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
-
-async function scan(page: Page) {
-  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
 
 const brandVar = (page: Page, name: string) =>
   page.evaluate((n) => getComputedStyle(document.querySelector('.fui-FluentProvider')!).getPropertyValue(n).trim().toUpperCase(), name);
@@ -36,6 +24,9 @@ test.describe('ops: brand (FR-059〜FR-064)', () => {
     await open(page, '/brand', { lang: 'en' });
     await expect(page.getByTestId('brand-origin')).toHaveText('Default theme');
     await expect(page.getByTestId('template-version')).toHaveText(/^\d+\.\d+\.\d+/);
+    await expect(page.getByTestId('brand-presets').locator('tbody tr')).toHaveCount(6);
+    await expect(page.getByTestId('logo-placeholder')).toBeVisible();
+    await expect(page.locator('.ops-ramp li')).toHaveCount(16);
     const before = await brandVar(page, '--colorBrandBackground');
     await page.getByTestId('brand-primary-input').fill('#C239B3');
     await page.getByTestId('brand-apply').click();
@@ -74,13 +65,6 @@ test.describe('ops: brand (FR-059〜FR-064)', () => {
     await page.getByTestId('brand-primary-input').fill('blue');
     await expect(page.getByRole('alert').filter({ hasText: '#RRGGBB' })).toBeVisible();
     await expect(page.getByTestId('brand-apply')).toBeDisabled();
-  });
-
-  test('presets and logo placeholder are shown', async ({ page }) => {
-    await open(page, '/brand', { lang: 'en' });
-    await expect(page.getByTestId('brand-presets').locator('tbody tr')).toHaveCount(6);
-    await expect(page.getByTestId('logo-placeholder')).toBeVisible();
-    await expect(page.locator('.ops-ramp li')).toHaveCount(16);
   });
 });
 
@@ -164,13 +148,6 @@ test('FR-101: a pack built by the CLI is shown without rebuilding the app', asyn
 
 test.describe('ops: accessibility and language', () => {
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of ['/brand', '/integrations']) {
-      test(`axe ${lang} ${route}`, async ({ page }) => {
-        await open(page, route, { lang });
-        await page.waitForTimeout(500);
-        expect(await scan(page)).toEqual([]);
-      });
-    }
     test(`axe ${lang} with warning and settings open`, async ({ page }) => {
       await open(page, '/brand', { lang });
       await page.getByTestId('brand-primary-input').fill('#FFE600');

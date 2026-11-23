@@ -1,17 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, card, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
-
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
-
-async function scan(page: Page) {
-  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
+import { JAPANESE, card, open, scan, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 const stage = (page: Page) => page.getByTestId('graph-stage');
 
@@ -226,8 +214,9 @@ test.describe('Graph module (FR-235–FR-248)', () => {
   });
 
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of VIEW_ROUTES) {
-      test(`axe ${lang} ${route}`, async ({ page }) => {
+    test(`axe ${lang} on every graph view`, async ({ page }) => {
+      test.setTimeout(240_000);
+      for (const route of VIEW_ROUTES) {
         await open(page, route, { lang });
         await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
         if (!route.includes('criteria')) {
@@ -235,14 +224,14 @@ test.describe('Graph module (FR-235–FR-248)', () => {
           else await expect(page.locator('[data-node-id]').first()).toBeVisible();
         }
         await page.waitForTimeout(300);
-        expect(await scan(page)).toEqual([]);
+        expect(await scan(page), route).toEqual([]);
         if (lang === 'en') {
           const text = await visibleTextExcludingOtherLang(page, 'en');
           const leaked = text.split('\n').filter((l) => JAPANESE.test(l));
-          expect(leaked).toEqual([]);
+          expect(leaked, route).toEqual([]);
         }
-      });
-    }
+      }
+    });
   }
 
   test('axe with an edge card open', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { JAPANESE, ROUTES, open, visibleTextExcludingOtherLang } from './helpers.ts';
+import { open } from './helpers.ts';
 
 test.describe('F-3.5.2 language toggle', () => {
   test('switches instantly without reloading and keeps the choice', async ({ page }) => {
@@ -33,18 +33,7 @@ test.describe('F-3.5.2 language toggle', () => {
   });
 });
 
-test.describe('F-3.5.1 no untranslated strings', () => {
-  for (const route of ROUTES) {
-    test(`English has no Japanese text on ${route}`, async ({ page }) => {
-      await open(page, route, { lang: 'en' });
-      await page.waitForTimeout(400);
-      const text = await visibleTextExcludingOtherLang(page, 'en');
-      const leaks = text.split('\n').filter((line) => JAPANESE.test(line));
-      expect(leaks).toEqual([]);
-    });
-  }
-
-  test('Japanese mode shows Japanese UI and data', async ({ page }) => {
+test.describe('F-3.5.1 Japanese mode', () => {  test('Japanese mode shows Japanese UI and data', async ({ page }) => {
     await open(page, '/directory?tab=customers', { lang: 'ja' });
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('データの一覧');
     await expect(page.getByRole('link', { name: '桜モーターズ' })).toBeVisible();

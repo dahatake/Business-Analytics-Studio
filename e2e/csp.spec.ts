@@ -1,21 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { open, ROUTES } from './helpers.ts';
+import { cspViolations, open, ROUTES, watchViolations } from './helpers.ts';
 
 // Read the screen paths from the registry source (importing it would load React screens in Node).
 const registry = readFileSync('src/app/modules.ts', 'utf8');
 const SCREEN_PATHS = [...registry.matchAll(/\{ path: '([^']+)'/g)].map((m) => m[1]!);
-const ALL_ROUTES = [...new Set([...ROUTES, ...SCREEN_PATHS])];
-
-/** Records every CSP violation (including ones a library catches) before the app boots. */
-async function watchViolations(page: import('@playwright/test').Page) {
-  await page.addInitScript(() => {
-    (window as unknown as { __cspViolations: string[] }).__cspViolations = [];
-    document.addEventListener('securitypolicyviolation', (e) => {
-      (window as unknown as { __cspViolations: string[] }).__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`);
-    });
-  });
-}
+// Routes in ROUTES are checked for CSP violations by a11y.spec.ts, on the same page load as axe.
+const EXTRA_ROUTES = SCREEN_PATHS.filter((p) => !ROUTES.includes(p));
 
 test.describe('D-5 Content Security Policy', () => {
   test('the preview server sends the approved policy and the build carries it as a meta tag', async ({ page, request }) => {
@@ -29,14 +20,15 @@ test.describe('D-5 Content Security Policy', () => {
     await page.goto('/');
   });
 
-  for (const route of ALL_ROUTES) {
-    test(`no violations on ${route}`, async ({ page }) => {
-      await watchViolations(page);
+  test('no violations on the registered screens that a11y.spec.ts does not visit', async ({ page }) => {
+    test.setTimeout(180_000);
+    await watchViolations(page);
+    for (const route of EXTRA_ROUTES) {
       await open(page, route, { lang: 'en' });
       await page.waitForTimeout(800);
-      expect(await page.evaluate(() => (window as unknown as { __cspViolations: string[] }).__cspViolations)).toEqual([]);
-    });
-  }
+      expect(await cspViolations(page), route).toEqual([]);
+    }
+  });
 
   test('an injected inline script is blocked (the policy is enforced, not just declared)', async ({ page }) => {
     await watchViolations(page);

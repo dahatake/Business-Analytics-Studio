@@ -1,17 +1,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { JAPANESE, open, type Lang } from './helpers.ts';
+import { JAPANESE, open, scan, type Lang } from './helpers.ts';
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
-
-async function scan(page: Page) {
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
 
 /** Mark the first-run dialog as seen (once per test, so reloads keep the app's own state). */
 async function skipFirstRun(page: Page) {
@@ -579,13 +571,15 @@ test.describe('project module', () => {
   });
 
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of ['/home', '/projects', '/analysis', '/analysis?tab=kpi', '/discussion']) {
-      test(`axe ${lang} ${route}`, async ({ page }) => {
-        await go(page, route, lang);
+    test(`axe ${lang} on the project screens`, async ({ page }) => {
+      test.setTimeout(120_000);
+      await go(page, '/home', lang);
+      for (const route of ['/home', '/projects', '/analysis', '/analysis?tab=kpi', '/discussion']) {
+        await nav(page, route);
         await page.waitForTimeout(400);
-        expect(await scan(page)).toEqual([]);
-      });
-    }
+        expect(await scan(page), route).toEqual([]);
+      }
+    });
   }
 
   test('axe with the help panel open and with the person confirmation', async ({ page }) => {

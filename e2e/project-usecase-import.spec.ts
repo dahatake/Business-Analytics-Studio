@@ -1,21 +1,12 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { JAPANESE, open, seedDeviceData, type Lang } from './helpers.ts';
+import { JAPANESE, open, scan, seedDeviceData, type Lang } from './helpers.ts';
 
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const UC_KEY = 'bas.scope.demo.usecases';
 const NEW_ID = 'uc-e2e-new';
 const EDITED = 'Edited in the use case screen';
 
 interface UseCaseLike { id: string; name: unknown; [k: string]: unknown }
-
-async function scan(page: Page) {
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
 
 async function go(page: Page, route: string, lang: Lang) {
   await page.addInitScript(() => {

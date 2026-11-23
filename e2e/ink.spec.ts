@@ -1,17 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
-
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
-
-async function scan(page: Page) {
-  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
+import { JAPANESE, open, scan, seedDeviceData, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 const stage = (page: Page) => page.getByTestId('ink-stage');
 const strokeCount = async (page: Page) => Number(await stage(page).getAttribute('data-stroke-count'));
@@ -318,10 +306,14 @@ test.describe('Ink board (FR-086〜FR-099)', () => {
   });
 
   for (const lang of ['ja', 'en'] as Lang[]) {
-    test(`axe: /board has no violations (${lang})`, async ({ page }) => {
+    test(`axe and language: /board (${lang})`, async ({ page }) => {
       await openBoard(page, lang);
       await page.waitForTimeout(500);
       expect(await scan(page)).toEqual([]);
+      if (lang === 'en') {
+        const text = await visibleTextExcludingOtherLang(page, 'en');
+        expect(text.split('\n').filter((l) => JAPANESE.test(l))).toEqual([]);
+      }
     });
   }
 
@@ -333,13 +325,5 @@ test.describe('Ink board (FR-086〜FR-099)', () => {
     await page.getByTestId('ink-export').click();
     await expect(page.getByTestId('ink-export-preview')).toBeVisible();
     expect(await scan(page)).toEqual([]);
-  });
-
-  test('English board shows no Japanese text', async ({ page }) => {
-    await openBoard(page, 'en');
-    await page.waitForTimeout(300);
-    const text = await visibleTextExcludingOtherLang(page, 'en');
-    const leaks = text.split('\n').filter((l) => JAPANESE.test(l));
-    expect(leaks).toEqual([]);
   });
 });

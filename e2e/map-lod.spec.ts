@@ -19,9 +19,4 @@ test.describe('FR-035 map label LOD', () => {
     await expect(labels).toHaveCount(6);
     await expect(page.locator('.geo-map [data-entity-ref="site-yokohama-dc"]')).toHaveAttribute('aria-label', /Yokohama Distribution Center/);
   });
-
-  test('the selected site always shows its label', async ({ page }) => {
-    await open(page, '/map?sel=site-yokohama-dc', { lang: 'en' });
-    await expect(page.locator('.geo-map [data-label-for="site-yokohama-dc"]')).toBeVisible();
-  });
 });

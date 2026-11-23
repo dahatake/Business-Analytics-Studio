@@ -1,17 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, open, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
-
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
-
-async function scan(page: Page) {
-  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
-  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
-    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
-    .exclude('[data-tabster-dummy]')
-    .analyze();
-  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
-}
+import { JAPANESE, open, scan, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 const win = (page: Page, id: string) => page.locator(`[data-ws-win="${id}"]`);
 const handle = (page: Page, id: string) => page.getByTestId(`ws-handle-${id}`);
@@ -192,10 +180,14 @@ test.describe('Workspace', () => {
   });
 
   for (const lang of ['ja', 'en'] as Lang[]) {
-    test(`axe: /workspace in ${lang} has no violations`, async ({ page }) => {
+    test(`axe and language: /workspace in ${lang}`, async ({ page }) => {
       await openWs(page, lang);
       await page.waitForTimeout(500);
       expect(await scan(page)).toEqual([]);
+      if (lang === 'en') {
+        const text = await visibleTextExcludingOtherLang(page, 'en');
+        expect(text.split('\n').filter((l) => JAPANESE.test(l))).toEqual([]);
+      }
     });
   }
 
@@ -204,13 +196,5 @@ test.describe('Workspace', () => {
     await page.keyboard.press('Control+k');
     await expect(page.getByTestId('ws-palette')).toBeVisible();
     expect(await scan(page)).toEqual([]);
-  });
-
-  test('English mode has no Japanese characters', async ({ page }) => {
-    await openWs(page, 'en');
-    await page.waitForTimeout(300);
-    const text = await visibleTextExcludingOtherLang(page, 'en');
-    const leaked = text.split('\n').filter((l) => JAPANESE.test(l));
-    expect(leaked).toEqual([]);
   });
 });

@@ -1,6 +1,18 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import type { DeviceSnapshot } from '../scripts/lib/deviceProtocol.ts';
+
+const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+
+export async function scan(page: Page) {
+  // @axe-core/playwright is typed against a different playwright-core copy than @playwright/test (alpha); runtime objects are identical.
+  const result = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0]).withTags(TAGS)
+    // Fluent UI's focus manager (Tabster) injects aria-hidden focus-redirect sentinels at <body>; known axe false positive.
+    .exclude('[data-tabster-dummy]')
+    .analyze();
+  return result.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }));
+}
 
 export type Lang = 'ja' | 'en';
 
@@ -110,6 +122,19 @@ export async function visibleTextExcludingOtherLang(page: Page, pageLang: Lang):
     return out.join('\n');
   }, pageLang);
 }
+
+/** Records every CSP violation (including ones a library catches) before the app boots. */
+export async function watchViolations(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    (window as unknown as { __cspViolations: string[] }).__cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (e) => {
+      (window as unknown as { __cspViolations: string[] }).__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`);
+    });
+  });
+}
+
+export const cspViolations = (page: import('@playwright/test').Page) =>
+  page.evaluate(() => (window as unknown as { __cspViolations: string[] }).__cspViolations);
 
 export const JAPANESE = /[\u3040-\u30ff\u3400-\u9fff\uff01-\uff60]/;
 

@@ -62,7 +62,7 @@ async function enableDraftAi(page: Page) {
     secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
     connectionVerifiedAt: '2026-01-01T00:00:00Z',
   } }));
-  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
   await page.reload();
 }
 
@@ -211,7 +211,7 @@ test('Copilot drafts only open candidates, with its reasons and unverified numbe
       okrs: [{ kpiIds: ['okr.kpi:k-wins', 'okr.kpi:k-eng'], objective: 'パートナーと顧客接点を広げる', reason: '目的と一致' }],
     }), inputTokens: 100, outputTokens: 100 } });
   });
-  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
   await page.reload();
   // k-reach is already drafted, so it is not sent.
   await page.getByTestId('proj-adopt-select-k-reach').check();

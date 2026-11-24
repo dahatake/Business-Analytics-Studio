@@ -3,7 +3,7 @@ import type { Topology, GeometryCollection } from 'topojson-specification';
 import type { FeatureCollection, Geometry, Position } from 'geojson';
 import countriesTopo from 'world-atlas/countries-50m.json';
 import { entitiesOf, getEntity, loaded, type LoadedPack } from '../../data/pack.ts';
-import type { EntityOf } from '../../data/schema.ts';
+import { isLocated, type EntityOf } from '../../data/schema.ts';
 import type { MessageKey } from '../../i18n/core.ts';
 import { kpiProgress, kpiStatus, type KpiStatus } from '../../domain/kpi.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
@@ -244,11 +244,11 @@ export function worldOutline(): [number, number][][] {
 export function buildMapModel(data: LoadedPack = loaded, audience: Audience = 'internal'): MapScene {
   const rootId = 'map-root';
   const pos = new Map<string, Vec3>();
-  const sites = entitiesOf('site', data).filter((s) => !isHidden(s, audience));
+  const sites = entitiesOf('site', data).filter((s) => !isHidden(s, audience)).filter(isLocated);
   const frame = geoFrameFor(sites);
   const objects: SceneObject[] = [{ id: rootId, kind: 'country', label: { key: frame.world ? 'td.map.rootWorld' : 'td.map.root' }, level: 0, lod: 0, position: [0, 0, 0], size: 17 }];
   const xz = (lat: number, lon: number) => geoToXZ(lat, lon, frame);
-  const capMax = Math.max(1, ...sites.map((s) => s.capacityTPerMonth));
+  const capMax = Math.max(1, ...sites.map((s) => s.capacityTPerMonth ?? 0));
   for (const s of sites) {
     const [x, z] = xz(s.lat, s.lon);
     const h = siteHeight(s, capMax);
@@ -297,7 +297,7 @@ export function buildMapModel(data: LoadedPack = loaded, audience: Audience = 'i
 
 export function siteHeight(s: EntityOf<'site'>, capMax: number): number {
   if (s.role === 'office') return 1.6;
-  return s.role === 'hq' ? 2.6 : 1 + (s.capacityTPerMonth / capMax) * 5;
+  return s.role === 'hq' ? 2.6 : 1 + ((s.capacityTPerMonth ?? 0) / capMax) * 5;
 }
 
 // ---------------------------------------------------------------- KPI towers (§7 executive view)

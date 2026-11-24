@@ -53,8 +53,9 @@ export const Site = z.object({
   ...base, kind: z.literal('site'),
   /** office: a sales, service or administrative location (no production capacity; capacityTPerMonth is 0). */
   role: z.enum(['hq', 'plant', 'dc', 'office']),
-  lat: z.number(), lon: z.number(),
-  capacityTPerMonth: z.number().nonnegative(),
+  /** Optional: public sources often give no coordinates or capacity; an unknown value is left out, never guessed. */
+  lat: z.number().optional(), lon: z.number().optional(),
+  capacityTPerMonth: z.number().nonnegative().optional(),
 });
 export const Person = z.object({
   ...base, kind: z.literal('person'),
@@ -62,7 +63,7 @@ export const Person = z.object({
   /** Optional (FR-241): real people imported from customer files keep these personal attributes out unless the source states them. */
   ageBand: z.enum(['20s', '30s', '40s', '50s', '60s']).optional(),
   gender: z.enum(['female', 'male']).optional(),
-  siteId: z.string(),
+  siteId: z.string().optional(),
   portrait: PortraitSpec.optional(),
 });
 export const Customer = z.object({
@@ -74,8 +75,8 @@ export const Customer = z.object({
 export const Product = z.object({
   ...base, kind: z.literal('product'),
   category: LText,
-  siteId: z.string(),
-  unitPriceJpy: z.number().positive(),
+  siteId: z.string().optional(),
+  unitPriceJpy: z.number().positive().optional(),
   illustration: IllustrationSpec,
 });
 export const Deal = z.object({
@@ -113,8 +114,9 @@ export const Solution = z.object({
   issueIds: z.array(z.string()).min(1),
   kpiIds: z.array(z.string()),
   msProducts: z.array(z.string()),
-  costJpy: z.number().positive(),
-  annualBenefitJpy: z.number().positive(),
+  /** Optional: unknown until an internal document states it (a hypothesis until then). */
+  costJpy: z.number().positive().optional(),
+  annualBenefitJpy: z.number().positive().optional(),
 });
 export const Kpi = z.object({
   ...base, kind: z.literal('kpi'),
@@ -126,7 +128,9 @@ export const Kpi = z.object({
   /** ratio: a true zero exists and "x% of the way to target" is meaningful. interval: arbitrary zero / signed scale. */
   scale: z.enum(['ratio', 'interval']),
   period: LText,
-  ownerId: z.string(),
+  /** Person id when the owner is a known person; ownerRole when only the role is known. */
+  ownerId: z.string().optional(),
+  ownerRole: LText.optional(),
 });
 export const Initiative = z.object({
   ...base, kind: z.literal('initiative'),
@@ -135,7 +139,8 @@ export const Initiative = z.object({
   end: z.iso.date(),
   progress: z.number().min(0).max(1),
   dependsOn: z.array(z.string()),
-  ownerId: z.string(),
+  ownerId: z.string().optional(),
+  ownerRole: LText.optional(),
 });
 export const Supplier = z.object({ ...base, kind: z.literal('supplier'), regionId: z.string() });
 export const Source = z.object({
@@ -154,6 +159,15 @@ export const Entity = z.discriminatedUnion('kind', [
 ]);
 export type Entity = z.infer<typeof Entity>;
 export type EntityOf<K extends EntityKind> = Extract<Entity, { kind: K }>;
+
+/** A site with known coordinates; sites without them are listed but cannot be placed on a map. */
+export type LocatedSite = EntityOf<'site'> & { lat: number; lon: number };
+export const isLocated = (s: EntityOf<'site'>): s is LocatedSite => s.lat !== undefined && s.lon !== undefined;
+
+/** Cost and annual benefit of a solution when both are stated; null while either is unknown (a hypothesis). */
+export function solutionMoney(s: { costJpy?: number | undefined; annualBenefitJpy?: number | undefined }): { cost: number; benefit: number } | null {
+  return s.costJpy !== undefined && s.annualBenefitJpy !== undefined ? { cost: s.costJpy, benefit: s.annualBenefitJpy } : null;
+}
 
 export const Region = z.object({ id: z.string(), name: LText });
 export type Region = z.infer<typeof Region>;
@@ -204,3 +218,4 @@ export const CustomerPack = z.object({
   extensions: z.record(z.string(), z.unknown()).optional(),
 });
 export type CustomerPack = z.infer<typeof CustomerPack>;
+

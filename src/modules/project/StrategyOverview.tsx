@@ -15,7 +15,7 @@ import { useSettings } from '../../state/settings.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
 import { wrap } from '../../ui/textWrap.ts';
-import { reasonKey } from '../ai/AiCommon.tsx';
+import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { openAiSettings } from '../ai/uiStore.ts';
 import { ScrollRegion } from './common.tsx';
@@ -328,7 +328,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       if (!alive.current) return;
       if (JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]) !== previousDraft) throw new Error(t('stg.draftChanged'));
       const proposal = parseOverviewResponse(result.text, ctx, lang, step, audience);
-      set((v) => ({ ...v, stepDrafts: { ...v.stepDrafts, [draftKey]: { proposal, step, baseline, lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy } } }));
+      set((v) => ({ ...v, stepDrafts: { ...v.stepDrafts, [draftKey]: { proposal, step, baseline, lang, audience, at: new Date().toISOString(), provider, inputTokens: result.inputTokens, outputTokens: result.outputTokens } } }));
       setShowShared(false);
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
@@ -410,7 +410,6 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
           </ScrollRegion>
         </details>
         <p className="muted">{t('stg.liveHint')} <Link inline className="text-action" onClick={openAiSettings}>{t('ai.nav.settings')}</Link></p>
-        <p className="muted">{t('stg.budget')}</p>
         {error && <MessageBar intent="error" data-testid="strategy-error"><MessageBarBody>{t('stg.error', { message: error })}</MessageBarBody></MessageBar>}
         {saved && <p role="status" data-testid="strategy-saved">{t(saved === 'draft' ? 'stg.draftSaved' : 'stg.saved')}</p>}
         {objectiveDialog && company && <ObjectiveDialog key={objectiveDialog.draftId ?? ''} company={company} draft={objectiveDraft} onClose={closeObjective} />}
@@ -429,6 +428,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
         <p>{isStepDraft ? t('stg.stepDraft', { step: t(`proj.step.${step}`) }) : t('stg.sharedDraft')}</p>
         {stepDraft && sharedDraft && <Button size="small" onClick={() => setShowShared(isStepDraft)}>{t(isStepDraft ? 'stg.showShared' : 'stg.showStep')}</Button>}
         <p>{t('stg.at', { at: stamp(draft.at, fmt), provider: t(`ai.provider.${draft.provider}`) })}</p>
+        {draft.inputTokens !== undefined && <TokensInline usage={{ inputTokens: draft.inputTokens, outputTokens: draft.outputTokens ?? null }} testId="strategy-draft-tokens" />}
         {stale && <p role="alert" data-testid="strategy-stale">{t('stg.stale')}</p>}
         <DraftDiff draft={draft} ctx={ctx} stale={stale} />
         <div className="strategy-controls">

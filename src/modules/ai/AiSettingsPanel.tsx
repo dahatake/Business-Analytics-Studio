@@ -1,39 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, MessageBar, MessageBarBody,
-  ProgressBar, Switch,
+  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, Switch,
 } from '@fluentui/react-components';
-import { Delete20Regular } from '@fluentui/react-icons';
 import { readLedger } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
-import { AiReadiness, BudgetInput, CopilotSettings, FoundryFields, PriceFields, ProviderChoice } from './AiConnectionForm.tsx';
+import { AiReadiness, CopilotSettings, FoundryFields, ProviderChoice } from './AiConnectionForm.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
-import { deleteExpiredUsage, expiredUsageCount, usageSummary, type BudgetLevel } from './ledger.ts';
+import { dailyUsage } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
 import { closeAiSettings, openAiSettings, useAiSettingsDialog } from './uiStore.ts';
 import './mocks.ts';
 import './ai.css';
-
-function Meter({ label, ratio, level, testId }: { label: string; ratio: number; level: BudgetLevel; testId: string }) {
-  const { t } = useI18n();
-  // Tiny diagnostic costs must not serialize aria-valuenow in exponential notation.
-  const value = Math.round(Math.min(1, Math.max(0, ratio)) * 1_000_000) / 1_000_000;
-  return (
-    <Field
-      label={label}
-      validationState={level === 'ok' ? 'none' : level === 'warn' ? 'warning' : 'error'}
-      validationMessage={level === 'ok' ? undefined : t(`ai.level.${level}`)}
-      data-testid={testId}
-    >
-      <ProgressBar value={value} thickness="large" />
-    </Field>
-  );
-}
-
-
 
 /** D-6 / P-01: a legacy Foundry record is read only; moving it is an explicit action, and live stays off. */
 function LegacyPanel() {
@@ -70,53 +50,16 @@ function LegacyPanel() {
   );
 }
 
-/** D-7: deleting records older than 13 months only on an explicit, confirmed action. */
-function LedgerPrune({ onChange }: { onChange: () => void }) {
-  const { t } = useI18n();
-  const [confirming, setConfirming] = useState(false);
-  const [deleted, setDeleted] = useState<number | null>(null);
-  const count = expiredUsageCount();
-  const run = () => {
-    setDeleted(deleteExpiredUsage());
-    setConfirming(false);
-    onChange();
-  };
-  return (
-    <div className="ai-stack" data-testid="ai-ledger-prune">
-      <p data-testid="ai-ledger-expired">{t('ai.ledger.expired', { count })}</p>
-      <div>
-        <Button icon={<Delete20Regular />} disabled={count === 0} onClick={() => setConfirming(true)} data-testid="ai-ledger-prune-button">{t('ai.ledger.delete')}</Button>
-      </div>
-      {deleted !== null && <p role="status" className="muted">{t('ai.ledger.deleted', { count: deleted })}</p>}
-      <Dialog open={confirming} modalType="alert" onOpenChange={(_, d) => { if (!d.open) setConfirming(false); }}>
-        <DialogSurface data-testid="ai-ledger-prune-confirm">
-          <DialogBody>
-            <DialogTitle>{t('ai.ledger.confirmTitle')}</DialogTitle>
-            <DialogContent>
-              <p>{t('ai.ledger.confirmBody', { count })}</p>
-            </DialogContent>
-            <DialogActions>
-              <Button appearance="primary" onClick={run} data-testid="ai-ledger-prune-ok">{t('ai.ledger.delete')}</Button>
-              <Button onClick={() => setConfirming(false)}>{t('ai.dialog.cancel')}</Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
-    </div>
-  );
-}
-
 /**
- * The one AI settings view: Foundry services, broad send consent, live switch, usage and prices.
+ * The one AI settings view: Foundry services, broad send consent, live switch and the daily call count.
  * It is shown only inside AiSettingsDialog, so every condition of liveReady() is visible wherever settings are opened.
  */
 export function AiSettingsContent() {
-  const { t, fmt } = useI18n();
+  const { t } = useI18n();
   const s = useAiSettings();
   const refreshRelay = useAiSettings((x) => x.refreshRelay);
   const configured = isConfigured(s);
-  const [, setLedgerVersion] = useState(0);
-  const usage = usageSummary(readLedger(), new Date(), s.monthlyBudgetJpy);
+  const usage = dailyUsage(readLedger(), new Date());
   const live = liveReady(s);
 
   useEffect(() => {
@@ -167,21 +110,11 @@ export function AiSettingsContent() {
         <Panel title={t('ai.usage.title')} testId="ai-usage">
           <div className="ai-stack">
             <p data-testid="ai-usage-daily">{t('ai.usage.daily', { used: usage.todayCalls, limit: usage.dailyLimit })}</p>
-            <Meter label={t('ai.usage.month', { spent: fmt.yen(usage.monthSpentJpy), budget: fmt.yen(usage.monthBudgetJpy) })} ratio={usage.monthBudgetJpy > 0 ? usage.monthSpentJpy / usage.monthBudgetJpy : 1} level={usage.monthLevel} testId="ai-usage-month" />
-            <p className="muted">{t('ai.usage.thresholds')}</p>
-            {usage.monthUnpricedCalls !== undefined && <p className="muted" data-testid="ai-usage-unpriced">{t('ai.usage.unpriced', { count: usage.monthUnpricedCalls })}</p>}
-            <BudgetInput />
             <p className="muted">{t('ai.usage.mockFree')}</p>
             <p className="muted" data-testid="ai-usage-no-content">{t('ai.usage.noContent')}</p>
-            <LedgerPrune onChange={() => setLedgerVersion((v) => v + 1)} />
           </div>
         </Panel>
 
-        <Panel title={t('ai.cost.title')} testId="ai-prices">
-          <div className="ai-stack">
-            <PriceFields />
-          </div>
-        </Panel>
       </div>
 
     </>

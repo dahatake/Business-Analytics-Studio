@@ -25,7 +25,6 @@ import {
   MEDIA_FILE, MEDIA_SERVICES, SPEECH_FILE, foundryMediaEndpoint, foundrySubdomain, inspectMediaAccess, isMediaService, mediaSignature, mediaTestUrl, parseSavedMedia, testMedia,
   type MediaCredential, type MediaService, type MediaSource, type MediaUnavailable, type SavedMediaCheck,
 } from './media.ts';
-import { reserveStory, storyQuote, StoryBudgetError } from './storyBudget.ts';
 import { STORY_SYSTEM_PROMPT, StoryOutput } from '../src/ai/storyOutput.ts';
 import {
   CONNECTION_TEST_MAX_TOKENS, CONNECTION_TEST_PROMPT, CONNECTION_TEST_TIMEOUT_MS, DEFAULT_FOUNDRY_API_VERSION,
@@ -595,8 +594,13 @@ function validateAiCall(o: Record<string, unknown>, use: AiUse, provider: Provid
  * All calls try `max_completion_tokens`, as does the connection test. Pack generation also asks for JSON mode.
  * A deployment that rejects the modern body (HTTP 400, not billed) is retried once with the classic body.
  */
-interface FoundryResult { text: string; inputTokens: number; outputTokens: number }
+/** Tokens are what the provider reported; null when it reported none (never an app estimate). */
+interface FoundryResult { text: string; inputTokens: number | null; outputTokens: number | null }
 type FoundryResponse = { status: 200; body: FoundryResult } | { status: number; body: { error: FoundryError | 'outboundNotAllowed'; providerStatus?: number; retryAfterMs?: number } };
+
+function storyOutputValid(text: string): boolean {
+  try { return StoryOutput.safeParse(JSON.parse(text)).success; } catch { return false; }
+}
 
 function providerRetryAfter(headers: Headers): number | undefined {
   const values: number[] = [];
@@ -752,13 +756,14 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
     const text = Array.isArray(content)
       ? content.map((p) => (p && typeof p === 'object' && typeof (p as { text?: unknown }).text === 'string' ? (p as { text: string }).text : '')).join('')
       : content;
-    // Some deployments omit usage; fall back to a conservative length-based estimate so the call is still accounted for.
-    const inputTokens = data.usage?.prompt_tokens ?? (data.usage ? undefined : Math.ceil(`${call.prompt}${call.context}`.length));
-    const outputTokens = data.usage?.completion_tokens ?? (data.usage ? undefined : (typeof text === 'string' ? Math.ceil(text.length) : undefined));
-    if (typeof text !== 'string' || !text.trim() || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) || typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
+    // Some deployments omit usage or report it malformed: the call is then recorded with unknown tokens, not an estimate.
+    const reported = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+    const inputTokens = reported(data.usage?.prompt_tokens);
+    const outputTokens = reported(data.usage?.completion_tokens);
+    if (typeof text !== 'string' || !text.trim()) {
       const choice = (data.choices?.[0] ?? {}) as { finish_reason?: unknown; message?: { refusal?: unknown; reasoning_content?: unknown } };
       diag({
-        error: 'badProviderResponse', reason: typeof text !== 'string' ? 'contentNotText' : !text.trim() ? 'emptyContent' : 'invalidUsage', providerStatus: res.status,
+        error: 'badProviderResponse', reason: typeof text !== 'string' ? 'contentNotText' : 'emptyContent', providerStatus: res.status,
         finishReason: typeof choice.finish_reason === 'string' ? choice.finish_reason : null, choices: Array.isArray(data.choices) ? data.choices.length : null,
         contentType: Array.isArray(content) ? 'array' : typeof content, textChars: typeof text === 'string' ? text.length : null,
         hasRefusal: Boolean(choice.message?.refusal), hasReasoningContent: choice.message?.reasoning_content !== undefined,
@@ -1464,7 +1469,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     return json(405, { error: 'methodNotAllowed' });
   }
 
-  if (path === '/relay/ai' || path === '/relay/story/estimate') {
+  if (path === '/relay/ai') {
     if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
     const body = parseBody(req.body);
     if (!body) return json(400, { error: 'invalidBody' });
@@ -1478,35 +1483,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (reasons.length > 0) return json(403, { allowed: false, reasons });
     const call = validateAiCall(body, use, provider);
     if (!call) return json(400, { error: 'invalidRequest' });
-    if (path === '/relay/story/estimate' && use !== 'storyVideo') return json(400, { error: 'unknownUse' });
-    if (use === 'storyVideo') {
-      if (provider !== 'foundry' || call.media.length > 0) return json(400, { error: 'storyPricing' });
-      const conn = connection();
-      if (!conn) return json(403, { allowed: false, reasons: ['notConfigured'] });
-      if (!outboundAllowed(foundryChatUrl(conn), conn.endpoint, config)) return json(403, { error: 'outboundNotAllowed' });
-      if (ctx.signal?.aborted) return json(499, { error: 'aborted' });
-      try {
-        const now = (ctx.now ?? Date.now)();
-        const quote = path === '/relay/story/estimate'
-          ? storyQuote(vault.dir, conn, call.prompt, call.context, call.maxOutputTokens, now)
-          : reserveStory(vault.dir, conn, call.prompt, call.context, call.maxOutputTokens, now);
-        const { maximumJpy, remainingJpy, source, expiresAt } = quote;
-        if (path === '/relay/story/estimate') return json(200, { maximumJpy, remainingJpy, source, expiresAt });
-        const credential = await credentialFor(conn);
-        if (!('kind' in credential)) return credential;
-        const result = await forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal);
-        if (result.status !== 200 || !('text' in result.body)) return result;
-        let output: unknown;
-        try { output = JSON.parse(result.body.text); } catch { return json(502, { error: 'badProviderResponse' }); }
-        if (!StoryOutput.safeParse(output).success) return json(502, { error: 'badProviderResponse' });
-        const costJpy = (result.body.inputTokens * quote.pricing.inputPerM + result.body.outputTokens * quote.pricing.outputPerM) / 1_000_000;
-        if (costJpy > maximumJpy) return json(502, { error: 'storyCap' });
-        return json(200, { ...result.body, costJpy, reservedJpy: maximumJpy });
-      } catch (error) {
-        if (error instanceof StoryBudgetError) return json(409, { error: error.code });
-        throw error;
-      }
-    }
+    if (use === 'storyVideo' && (provider !== 'foundry' || call.media.length > 0)) return json(400, { error: 'invalidRequest' });
     const now = (ctx.now ?? Date.now)();
     const minInterval = PER_USE_LIMITS[call.use]?.minIntervalMs;
     const last = ctx.lastCall?.get(call.use);
@@ -1522,7 +1499,9 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (!conn) return json(403, { allowed: false, reasons: ['notConfigured'] });
     const credential = await credentialFor(conn);
     if (!('kind' in credential)) return credential;
-    return forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal, vault.dir);
+    const result = await forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal, vault.dir);
+    if (use === 'storyVideo' && result.status === 200 && 'text' in result.body && !storyOutputValid(result.body.text)) return json(502, { error: 'badProviderResponse' });
+    return result;
   }
 
   return json(404, { error: 'notFound' });

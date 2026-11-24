@@ -15,7 +15,7 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | Fetch Metadata | `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`. |
 | Per-launch token | 32 random bytes per server start, handed out by `POST /relay/session` (browsers always send `Origin` on POST) and required in `X-BAS-Relay` on every other route. Compared in constant time; kept in browser memory only. |
 | Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`), prompt + context ≤ 32 000 characters (200 000 for "packBuild"), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild"). |
-| C-03 | `/relay/ai` validates the request-use identifier and provider-specific technical limits, then re-checks the broad AI-settings consent, configured connection, live switch, and budget gates. There is no per-use approval table. A connection test remains a separate fixed synthetic request through `PUT /relay/connection`; it never includes customer or project data. |
+| C-03 | `/relay/ai` validates the request-use identifier and provider-specific technical limits, then re-checks the broad AI-settings consent, configured connection, live switch, and safety-limit gates (token caps, interval, daily calls; no monetary budget). There is no per-use approval table. A connection test remains a separate fixed synthetic request through `PUT /relay/connection`; it never includes customer or project data. |
 | Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. |
 | Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Work IQ (D-14: Microsoft Foundry, or GitHub Copilot when the user opts in) uses the fixed `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/{devicecode,token}` and `https://workiq.svc.cloud.microsoft/rest/conversations` endpoints. Redirects are not followed. |
 | Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status and an optional numeric retry delay are returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
@@ -29,10 +29,10 @@ Quota or capacity errors can persist even after a short connection test succeeds
 
 `PUT /relay/connection` accepts `{ endpoint, deployment, apiVersion }` and uses the **already saved API key** to send a
 fixed synthetic "Reply with OK only" prompt. No caller-supplied prompt, Project pack or project data is sent.
-The UI requires explicit confirmation of the displayed destination and unknown-charge notice, not unit-price entry.
-It checks the daily quota, interval and known-cost monthly budget, and records token usage under `connectionTest`.
-Foundry monetary costs are `null` (unknown), never zero/free. This also applies to uncertain failures that may have
-been billed; DNS/authentication rejections create no inference usage record. The relay enforces the outbound allowlist, a 30-second timeout, no redirects and a
+The UI requires explicit confirmation of the displayed destination, not unit-price entry.
+It checks the daily quota and interval, and records token usage under `connectionTest`. When the provider reports no
+usage, or the call may have consumed tokens before it failed, the record is the app's estimate and is marked
+`estimated`; it is never shown as a provider-reported figure. DNS/authentication rejections create no inference usage record. The relay enforces the outbound allowlist, a 30-second timeout, no redirects and a
 5-second interval (including concurrent tests). Output is capped at 256 tokens; a rejected modern request may be
 retried once with the legacy token parameter.
 
@@ -62,64 +62,37 @@ current key. The signature is never returned to the browser. `GET /relay/status`
 settings without valid verification remain visible but **unconfigured**, and changing the key invalidates verification.
 Verification survives relay restarts but is a historical check, not a guarantee of future reachability.
 
-Foundry manual token-price settings are removed, including persisted values migrated from older versions.
-Connection tests, explanations and pack generation do not require a price. Confirmation screens and saved generation
-reports distinguish unknown costs from free mock answers; usage summaries show the known-cost subtotal and the count
-of unpriced calls separately. The app cannot enforce a Foundry monetary billing cap without pricing; check Azure billing
-and configure Azure budget alerts. Token caps, per-use daily quotas, intervals, timeouts and consent still apply.
-A zero app budget blocks sends. Copilot also requires no unit price; its charges are unknown and cannot be capped by the app budget. Check GitHub billing and spending limits. Old Copilot price settings are removed on migration; historical ledger records remain.
-HTML stories are the exception: live generation requires deployment-bound server pricing and a durable reservation
-before sending (see below). The explicit local preview remains free and sends nothing.
+**Budget management was removed.** The app no longer has a monthly budget, warn/stop ratios, unit prices, JPY cost
+estimates, a cost ledger, retention/prune controls or story pricing. Old settings (`monthlyBudgetJpy`, prices) are
+dropped on migration, and old usage records that carry a `costJpy` field still load; the field is ignored.
+Charges are never calculated or capped by the app: check Azure billing (and configure Azure budget alerts) for Microsoft
+Foundry and GitHub billing for GitHub Copilot.
 
-### HTML story pricing and monthly allocation
+What remains are safety guards, not budgets: per-call input/output token caps, the minimum interval between calls and
+the per-use daily call count (`PER_USE_LIMITS`), plus consent and timeouts.
+
+### Token usage per job
+
+Every live call is logged in the browser (`bas.ai.ledger`) with its time, use, scope, stage, provider and tokens; the log
+holds no prompt or answer. Each job UI (Project pack generation, batch and step drafts, brief, strategy overview and so on)
+shows the input, output and total tokens of **that job only**:
+
+- Microsoft Foundry (including Azure AI / Azure OpenAI endpoints): `usage.prompt_tokens` / `completion_tokens` of the
+  chat-completions answer. If a deployment omits or garbles them, the relay returns `null` tokens (shown as **unknown**);
+  it does not estimate.
+- GitHub Copilot: the sum of the SDK's `assistant.usage` events. If any event lacks tokens, the job's tokens are unknown.
+- A cancelled or timed-out call that may have consumed tokens is logged with the app's estimate and marked **estimated**;
+  summaries label every line or total that includes one.
+
+### HTML stories
 
 The assistant's story section generates **one** JSON storyboard, including durations, through the common Foundry
-relay and one-time consent gate. There is no separate AI timing call or automatic generation retry. HTML playback,
-pause/resume, restart, reduced-motion rendering, and standalone HTML downloads need no Azure video, storage or hosting
-service. Model text is validated and escaped into a fixed player, embedded in a sandboxed iframe with no network access.
-Live failures are shown explicitly and do not silently substitute a mock.
-
-Before enabling live stories, an operator must verify the model behind the deployment (a deployment name alone does
-not identify its model) and place `story-pricing.json` in `BAS_RELAY_DIR`, next to the verified common connection:
-
-```json
-{
-  "endpoint": "https://YOUR-RESOURCE.openai.azure.com",
-  "deployment": "model-router",
-  "model": "model-router",
-  "inputPerM": 0,
-  "outputPerM": 0,
-  "source": "https://azure.microsoft.com/pricing/details/ai-foundry-models/model-router/",
-  "expiresAt": "2026-12-01T00:00:00Z"
-}
-```
-
-**The zero prices above are deliberately invalid placeholders, not usable rates.** Set positive finite JPY ceilings per
-million tokens from current official pricing for the actual deployment, including tax/exchange-rate allowance and,
-for model router, the routing input fee and the most expensive eligible underlying model. Use the resource endpoint
-saved by AI Settings (matched by HTTPS host, so `/openai/v1` may be included or omitted), the exact deployment name,
-and a future UTC expiry. `gpt-chat-latest`, numbered GPT chat-latest
-models, and `model-router` are accepted. Missing, invalid, expired or destination-mismatched rates prevent sending.
-This is operator configuration, not a restored manual token-price form in AI Settings.
-
-`POST /relay/story/estimate` takes the same validated story request as `/relay/ai` and returns the maximum reservation,
-remaining monthly allocation, official source and expiry, without contacting Foundry. The send path rechecks everything;
-the browser's quote is never trusted for authorization. Input reservation uses UTF-8 bytes plus 1,024 chat-envelope
-tokens, the complete 2,000-token output limit, and the 1.2 safety factor, rounded up to 0.01 JPY.
-
-The relay refuses a reservation over **1,000 JPY per story** or cumulative reservations over **10,000 JPY per JST calendar
-month**. Before sending, it atomically saves the full reservation to `story-budget.json`, under an exclusive directory
-lock. Separate browser tabs and relay processes sharing this directory cannot spend the same remaining allocation.
-Failures, cancellation, invalid output and timeouts retain the full reservation. The browser usage ledger records
-successful calls using token usage and the configured rate ceilings; this is an estimate, not the Azure invoice.
-Do not delete/reset the server allocation file to restore available budget. Corrupt accounting or an existing lock
-fails closed. After a process crash, inspect that no relay is writing before manually removing a stale
-`story-budget.lock` directory; never remove the accounting file.
-
-The allocation protects this story route in this relay directory, **not other applications, other machines or direct
-Azure calls**. It assumes the verified rate ceilings remain sufficient; model-router's routing pool can change even
-without a version-number change. Refresh prices/subsets before their assumptions change. Azure Cost Management budgets
-are alerts, not hard spending stops. No subscription-wide billing cap is promised.
+relay and one-time consent gate (Microsoft Foundry only, no attachments). There is no separate AI timing call or
+automatic generation retry. HTML playback, pause/resume, restart, reduced-motion rendering, and standalone HTML downloads
+need no Azure video, storage or hosting service. Model text is validated (an invalid storyboard is refused) and escaped
+into a fixed player, embedded in a sandboxed iframe with no network access. Live failures are shown explicitly and do not
+silently substitute a mock. There is no pricing file, reservation or monthly allocation; `story-pricing.json`,
+`story-budget.json` and `POST /relay/story/estimate` no longer exist. The story shows the tokens its call used.
 
 The requested subscription was confirmed through its explicit tenant and its existing `model-router` deployment was
 found in `eastus2`. Reuse is preferable to provisioning another resource. Do not silently replace an existing common
@@ -207,7 +180,7 @@ performs the same read-only checks when settings open and no matching result fro
 Decision deployment from the current resource. It rejects resource/account/key changes during the check and keeps
 the old selection on failure. `null` removes the selection and Decision key without any outbound call.
 There is **no paid synthetic inference test** on selection or opening settings. Actual Decision calls still require
-the app's send consent, live mode and budget. If inference subsequently returns 401/403/404, its saved status records
+the app's send consent, live mode and safety limits. If inference subsequently returns 401/403/404, its saved status records
 `accessError: "resourceUnavailable"` and stops further calls until re-selection; settings shows the administrator
 message even when resource discovery still succeeds.
 
@@ -219,7 +192,7 @@ The saved Decision connection is usable only while the common Foundry connection
 authentication and tenant still match; API-key connections must also use the current Foundry key. Old standalone
 Decision settings cannot silently use a different resource; select the model on the current common resource before use.
 Account changes or tampered settings invalidate verification. Expired-token and conditional-access errors are returned
-explicitly; an Entra connection never falls back to an API key. Both methods share the existing consent, live-mode and budget gates.
+explicitly; an Entra connection never falls back to an API key. Both methods share the existing consent, live-mode and safety-limit gates.
 
 When an outbound allowlist is configured, include the Decision resource host; Entra ID also needs the existing
 `login.microsoftonline.com` and `management.azure.com` entries.
@@ -326,8 +299,7 @@ material only.
 **GitHub Copilot** runs through `@github/copilot-sdk` in the relay process, signed in as the Copilot CLI user on this PC
 (`copilot` → `/login`). The relay never sees or stores a GitHub token. Each call creates a session with **no tools**
 (`availableTools: []`, every permission request rejected), the system prompt **replaced** by the pack builder's, the
-session store off and an empty working directory, and deletes the session afterwards. A cancel that arrives while the session is being created sends nothing. With `BAS_RELAY_OUTBOUND_HOSTS` set, both Copilot routes answer `403 outboundNotAllowed` unless the Copilot hosts are listed. Cost is reported as premium
-requests (the runtime's reported model cost, else the model multiplier), not a currency charge. Per-call `assistant.usage` input and output tokens are summed; if any usage event lacks valid counts, or no event arrives, both counts are `null` rather than a fabricated zero. See the [SDK usage documentation](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md).
+session store off and an empty working directory, and deletes the session afterwards. A cancel that arrives while the session is being created sends nothing. With `BAS_RELAY_OUTBOUND_HOSTS` set, both Copilot routes answer `403 outboundNotAllowed` unless the Copilot hosts are listed. No cost or premium-request figure is calculated or returned. Per-call `assistant.usage` input and output tokens are summed; if any usage event lacks valid counts, or no event arrives, both counts are `null` rather than a fabricated zero. See the [SDK usage documentation](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md).
 
 | Route | Body | Answer |
 |---|---|---|
@@ -441,9 +413,9 @@ The UI shows sign-in and retrieval verification separately. `workiqForbidden` po
 `workiqNoGrounding` to missing source evidence (including absent/unindexed accessible files), and timeout, busy and
 network failures remain explicit. Repeated tests have a five-second minimum interval.
 
-Work IQ charges are separate from LLM token accounting and are unknown, not zero. A zero app budget blocks UI
-diagnostics; otherwise BAS cannot enforce a yen-denominated Work IQ billing cap. For a JPY 10,000/month target,
-check both Azure/Foundry and Copilot Credits charges and configure billing controls/alerts before enabling paid use.
+Work IQ charges are separate from the LLM token summary and are unknown, not zero. BAS cannot enforce a yen-denominated
+Work IQ billing cap; check both Azure/Foundry and Copilot Credits charges and configure billing controls/alerts before
+enabling paid use.
 Budget alerts alone do not stop spending. App registration itself adds no Azure compute resource or inference charge.
 
 ## Azure deployment

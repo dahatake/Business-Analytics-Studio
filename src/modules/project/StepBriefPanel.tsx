@@ -173,7 +173,7 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
             <div className="step-brief-ai" data-testid="step-dash-brief-ai" data-mode={generated.mode} data-stale={stale} data-approved={!!generated.approval && !stale}>
               {generated.mode === 'mock'
                 ? <MockNotice reasons={generated.blockedReasons} />
-                : <LiveNotice costJpy={generated.costJpy ?? null} {...(generated.usage ? { usage: generated.usage } : {})} />}
+                : <LiveNotice {...(generated.usage ? { usage: generated.usage } : {})} />}
               <div className="step-brief-meta">
                 <Badge appearance="outline" color={generated.approval && !stale ? 'success' : 'warning'} data-testid="step-dash-brief-approval">
                   {t(generated.approval && !stale ? 'proj.dash.brief.approved' : 'proj.dash.brief.draft')}

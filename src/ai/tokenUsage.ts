@@ -6,8 +6,6 @@ export interface TokenTotals {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
-  /** null when any call in the group has an unknown price (Foundry): unknown is never treated as free. */
-  costJpy: number | null;
   /** Calls whose tokens are the app's estimate because the provider reported no usage. */
   estimatedCalls: number;
 }
@@ -31,16 +29,15 @@ export function stepOfStage(stage: string | undefined): string | undefined {
   return rerun ? rerun[1] : stage;
 }
 
-const empty = (): TokenTotals => ({ calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costJpy: 0, estimatedCalls: 0 });
+const empty = (): TokenTotals => ({ calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCalls: 0 });
 
-function add(t: TokenTotals, r: Pick<UsageRecord, 'inputTokens' | 'outputTokens' | 'costJpy' | 'estimated'>) {
+function add(t: TokenTotals, r: Pick<UsageRecord, 'inputTokens' | 'outputTokens' | 'estimated'>) {
   const input = r.inputTokens !== null && Number.isFinite(r.inputTokens) && r.inputTokens >= 0 ? r.inputTokens : null;
   const output = r.outputTokens !== null && Number.isFinite(r.outputTokens) && r.outputTokens >= 0 ? r.outputTokens : null;
   t.calls++;
   t.inputTokens = t.inputTokens === null || input === null ? null : t.inputTokens + input;
   t.outputTokens = t.outputTokens === null || output === null ? null : t.outputTokens + output;
   t.totalTokens = t.totalTokens === null || input === null || output === null ? null : t.totalTokens + input + output;
-  t.costJpy = t.costJpy === null || r.costJpy === null ? null : t.costJpy + r.costJpy;
   if (r.estimated) t.estimatedCalls++;
 }
 
@@ -66,4 +63,9 @@ export function summarizeTokens(records: readonly UsageRecord[]): TokenSummary {
 /** The ledger records of one work target ('demo' or a project id). Records without a scope are app-level or older. */
 export function recordsOfScope(records: readonly UsageRecord[], scope: string): UsageRecord[] {
   return records.filter((r) => r.scope === scope);
+}
+
+/** The records of one job run: the calls of a work target since the job started, optionally limited to the job's uses. */
+export function recordsOfJob(records: readonly UsageRecord[], job: { scope: string | null; since: string; uses?: readonly string[] }): UsageRecord[] {
+  return records.filter((r) => r.scope === (job.scope ?? undefined) && r.at >= job.since && (!job.uses || job.uses.includes(r.use)));
 }

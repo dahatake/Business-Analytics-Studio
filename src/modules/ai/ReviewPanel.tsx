@@ -3,12 +3,11 @@ import {
   Badge, Button, DrawerBody, DrawerFooter, DrawerHeader, DrawerHeaderTitle, Field, MessageBar, MessageBarBody, OverlayDrawer, Spinner, Textarea,
 } from '@fluentui/react-components';
 import { ArrowUndo20Regular, Delete20Regular, Dismiss24Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { aiComplete, readLedger } from '../../ai/client.ts';
+import { aiComplete, type TokenCount } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
-import { MockNotice } from './AiCommon.tsx';
+import { LiveNotice, MockNotice } from './AiCommon.tsx';
 import { componentsForRoute, entitiesOfComponents } from './explain.ts';
-import { usageSummary } from './ledger.ts';
 import { commitApply, overrideKey, parseProposals, reviewPrompt, undoLastApply, useAiOverrides, type Proposal } from './review.ts';
 import { isConfigured, useAiSettings } from './settingsStore.ts';
 import { useAiPanels } from './uiStore.ts';
@@ -21,7 +20,7 @@ type Notice =
 
 /** FR-278〜FR-281, FR-283, NFR-COST-001: "Copilot で分析実行" panel. */
 export function ReviewPanel() {
-  const { t, lang, fmt } = useI18n();
+  const { t, lang } = useI18n();
   const open = useAiPanels((s) => s.open === 'review');
   const setOpen = useAiPanels((s) => s.setOpen);
   const route = useRoute();
@@ -31,10 +30,10 @@ export function ReviewPanel() {
   const [running, setRunning] = useState(false);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
+  const [liveUsage, setLiveUsage] = useState<TokenCount | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   const components = componentsForRoute(route.path);
-  const usage = usageSummary(readLedger(), new Date(), settings.monthlyBudgetJpy);
 
   const run = async () => {
     setNotice(null);
@@ -44,6 +43,7 @@ export function ReviewPanel() {
       const res = await aiComplete({ use: 'review', lang, prompt: reviewPrompt(lang, route.path, components), entities });
       const parsed = parseProposals(res.text, components);
       setReasons(res.blockedReasons);
+      setLiveUsage(res.mode === 'live' ? res.usage ?? { inputTokens: null, outputTokens: null } : null);
       if (!parsed) setNotice({ kind: 'runFailed' });
       setProposals(parsed);
     } catch {
@@ -72,7 +72,6 @@ export function ReviewPanel() {
   };
 
   const applied = components.filter((c) => overrides.overrides[overrideKey(route.path, c.id)]);
-  const monthStop = usage.monthLevel === 'stop';
 
   return (
     <>
@@ -92,10 +91,6 @@ export function ReviewPanel() {
         <DrawerBody>
           <div className="ai-stack">
             <p className="muted">{t('ai.review.lead', { count: components.length })}</p>
-            <p className="ai-status">
-              <span data-testid="ai-review-budget">{t('ai.review.budget', { spent: fmt.yen(usage.monthSpentJpy), budget: fmt.yen(usage.monthBudgetJpy) })}</span>
-              {usage.monthLevel !== 'ok' && <Badge appearance="tint" color={monthStop ? 'danger' : 'warning'}>{t(`ai.level.${usage.monthLevel}`)}</Badge>}
-            </p>
             {!configured && <MessageBar intent="info"><MessageBarBody>{t('ai.review.notConfigured')}</MessageBarBody></MessageBar>}
             <div>
               <Button appearance="primary" icon={<Sparkle20Regular />} onClick={() => void run()} disabled={running} data-testid="ai-review-run">
@@ -113,7 +108,8 @@ export function ReviewPanel() {
                 </MessageBarBody>
               </MessageBar>
             )}
-            {proposals && (
+            {proposals && liveUsage && <LiveNotice usage={liveUsage} />}
+            {proposals && !liveUsage && (
               <MockNotice reasons={reasons}>
                 <p className="muted">{configured ? t('ai.review.mockRan') : t('ai.review.mockRanNotConfigured')}</p>
               </MockNotice>

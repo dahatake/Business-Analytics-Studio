@@ -59,7 +59,7 @@ async function setupBatch(page: Page, provider: Provider, failOnce?: string, aud
     'asis-field', { at, by: '担当者' });
   data.recommendations = { [`internal:${STEP_DEFS.asis.todos[0]!.id}`]: { approved: { text: '承認済みの提案', mock: false, at, by: '担当者' } } };
   await seedDeviceData(page, {
-    'bas.ai.settings': JSON.stringify({ state: { provider, liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
+    'bas.ai.settings': JSON.stringify({ state: { provider, liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }),
     'bas.scope.demo.proj.deliverables': JSON.stringify(data),
   });
   await page.reload();

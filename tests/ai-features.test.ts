@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
-import { DEFAULT_MONTHLY_BUDGET_JPY, workIqRequiredFor } from '../src/ai/policy.ts';
+import { workIqRequiredFor } from '../src/ai/policy.ts';
 import { loaded } from '../src/data/pack.ts';
-import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, isMediaConfigured, isSpeechReady, liveReady, parseBudget, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
+import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, isMediaConfigured, isSpeechReady, liveReady, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
 import {
@@ -15,7 +15,7 @@ import {
   appliedForRoute, applyProposals, commitApply, parseProposals, reviewPrompt, undoLastApply, useAiOverrides, overrideKey, type Proposal,
 } from '../src/modules/ai/review.ts';
 import { buildExplanation, componentsForRoute, entitiesOfComponents } from '../src/modules/ai/explain.ts';
-import { deleteExpiredUsage, expiredUsageCount, usageSummary } from '../src/modules/ai/ledger.ts';
+import { dailyUsage } from '../src/modules/ai/ledger.ts';
 import { USAGE_MAX_CHARS, USAGE_TIMEOUT_MS, TimeoutError, withTimeout } from '../src/modules/ai/usage.ts';
 
 const JAPANESE = /[\u3040-\u30ff\u3400-\u9fff\uff01-\uff60]/;
@@ -32,7 +32,7 @@ describe('HTML stories (FR-291/292)', () => {
   it('escapes source/model content in standalone HTML and keeps playback code fixed', () => {
     const video: StoryVideo = {
       sourceId: '</small><img src=x onerror=alert(1)>', sourceUpdatedAt: 'pack', createdAt: '2026-11-17',
-      lang: 'en', mode: 'live', status: 'latest', calls: 1, spentJpy: 1, estimateJpy: 2,
+      lang: 'en', mode: 'live', status: 'latest', calls: 1, inputTokens: 10, outputTokens: 20,
       scenes: [{ title: '</title><script>alert(1)</script>', narration: '<img src=x onerror=alert(1)> & "data"', role: 'opening', durationMs: 3000 }],
     };
     const html = storyHtml(video);
@@ -185,10 +185,9 @@ const CONNECTION = { endpoint: 'https://res.openai.azure.com', deployment: 'gpt'
 const READY = { liveEnabled: true, sendConsent: true, relayConnection: CONNECTION, connectionVerifiedAt: '2026-11-10T00:00:00Z', foundryKeySaved: true };
 const OFF = {
   liveEnabled: false, sendConsent: false, endpoint: '', deployment: '', foundryKeySaved: false, relayConnection: null, connectionVerifiedAt: null, provider: 'foundry' as const, authMethod: 'apiKey' as const,
-  monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
 };
 
-describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
+describe('settings provider wiring (FR-132, FR-275, D-1)', () => {
   let calls: LiveCall[];
   beforeEach(() => {
     localStorage.clear();
@@ -212,23 +211,24 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(workIqReady({ provider: 'foundry', workiq: { ...verified, signedIn: false } })).toBe(false);
   });
 
-  it('accepts project URLs and v1 formats, and guards diagnostic costs before sending', () => {
+  it('accepts project URLs and v1 formats, and guards the diagnostic interval before sending', () => {
     expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/api/projects/project' })).toBeNull();
     expect(connectionDraftProblem({ ...CONNECTION, endpoint: 'https://resource.services.ai.azure.com/openai/v1/' })).toBeNull();
-    const state = useAiSettings.getState();
-    expect(connectionTestPreflight(state).budget.allowed).toBe(true);
-    const ready = { ...state, ...READY };
-    expect(connectionTestPreflight(ready).budget.allowed).toBe(true);
-    expect(connectionTestPreflight({ ...ready, monthlyBudgetJpy: 0 }).budget.allowed).toBe(false);
+    writeLedger([]);
+    expect(connectionTestPreflight().budget.allowed).toBe(true);
+    writeLedger([{ at: new Date().toISOString(), use: 'connectionTest', inputTokens: 1, outputTokens: 1 }]);
+    expect(connectionTestPreflight().budget).toMatchObject({ allowed: false, reasons: ['tooSoon'] });
+    writeLedger([]);
   });
 
-  it('refuses a diagnostic when the budget is explicitly disabled without network access', async () => {
+  it('refuses a diagnostic inside the minimum interval without network access', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
     try {
-      useAiSettings.setState({ ...READY, monthlyBudgetJpy: 0 });
+      writeLedger([{ at: new Date().toISOString(), use: 'connectionTest', inputTokens: 1, outputTokens: 1 }]);
+      useAiSettings.setState({ ...READY });
       expect(await useAiSettings.getState().saveConnection()).toEqual({ ok: false, error: 'budget' });
       expect(spy).not.toHaveBeenCalled();
-    } finally { spy.mockRestore(); }
+    } finally { spy.mockRestore(); writeLedger([]); }
   });
 
   it.each([
@@ -243,7 +243,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
       useAiSettings.setState({ ...READY, ...CONNECTION });
       expect(await useAiSettings.getState().saveConnection()).toMatchObject({ ok: false, error });
       expect(readLedger()).toHaveLength(records);
-      if (records) expect(readLedger()[0]!.costJpy).toBeNull();
+      if (records) expect(readLedger()[0]).toMatchObject({ estimated: true });
       expect(isConfigured(useAiSettings.getState())).toBe(false);
     } finally { spy.mockRestore(); }
   });
@@ -262,31 +262,31 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
       expect(await useAiSettings.getState().saveConnection()).toMatchObject({ ok: true });
       expect(isConfigured(useAiSettings.getState())).toBe(true);
       expect(readLedger()).toHaveLength(1);
-      expect(readLedger()[0]).toMatchObject({ use: 'connectionTest', inputTokens: 30, outputTokens: 1, costJpy: null });
+      expect(readLedger()[0]).toMatchObject({ use: 'connectionTest', inputTokens: 30, outputTokens: 1 });
+      expect(readLedger()[0]).not.toHaveProperty('estimated');
     } finally { spy.mockRestore(); }
   });
 
-  it('is off and unconfigured by default, with the 100,000 JPY budget and no prices, so nothing is sent', async () => {
-    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, sendConsent: false, configured: false, monthlyBudgetJpy: 100_000, prices: null });
+  it('is off and unconfigured by default, so nothing is sent', async () => {
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: false, sendConsent: false, configured: false });
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: 'x' });
     expect(r.mode).toBe('mock');
     expect(r.blockedReasons).toEqual(expect.arrayContaining(['liveDisabled', 'notConfigured', 'notConfirmed']));
     expect(calls).toHaveLength(0);
   });
 
-  it('keeps Foundry ready without manual pricing and reports unavailable prices to the core', () => {
-    useAiSettings.setState({ ...READY, monthlyBudgetJpy: 5000 });
-    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 5000, prices: null });
-    expect(runtimeSettings().prices).toBeNull();
+  it('keeps Foundry ready without any pricing or budget input', () => {
+    useAiSettings.setState({ ...READY });
+    expect(runtimeSettings()).toEqual({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true });
     expect(liveReady(useAiSettings.getState())).toBe(true);
   });
 
-  it('Copilot is ready without a unit price and reports cost as unknown', () => {
+  it('Copilot is ready without any pricing input', () => {
     useAiSettings.setState({
       ...READY, provider: 'copilotSdk', copilotModel: 'claude-opus',
       copilotStatus: { reachable: true, available: true, authenticated: true, login: 'u', error: null, model: 'claude-opus', models: [{ id: 'claude-opus', name: 'Opus', multiplier: 10 }] },
     });
-    expect(runtimeSettings()).toMatchObject({ provider: 'copilotSdk', configured: true, prices: null });
+    expect(runtimeSettings()).toMatchObject({ provider: 'copilotSdk', configured: true });
     expect(liveReady(useAiSettings.getState())).toBe(true);
     useAiSettings.setState({ provider: 'foundry', copilotModel: null, copilotStatus: null });
   });
@@ -302,16 +302,16 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(liveReady(useAiSettings.getState())).toBe(false);
   });
 
-  it('FR-311 aiLive never answers with a mock: a Copilot answer records reported tokens and unknown cost', async () => {
+  it('FR-311 aiLive never answers with a mock: a Copilot answer records the reported tokens', async () => {
     writeLedger([]);
     await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x' })).rejects.toBeInstanceOf(AiLiveError);
     useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotStatus: null });
     const seenCalls: LiveCall[] = [];
-    setLiveTransport(async (c) => { seenCalls.push(c); return { text: '{}', inputTokens: 10, outputTokens: 20, premiumRequests: 2 }; });
+    setLiveTransport(async (c) => { seenCalls.push(c); return { text: '{}', inputTokens: 10, outputTokens: 20 }; });
     const r = await aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x', maxOutputTokens: 16000 });
-    expect(r).toMatchObject({ costJpy: null, inputTokens: 10, outputTokens: 20 });
+    expect(r).toEqual({ text: '{}', inputTokens: 10, outputTokens: 20 });
     expect(seenCalls[0]).toMatchObject({ use: 'packBuild', provider: 'copilotSdk', maxOutputTokens: 16000 });
-    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', costJpy: null, inputTokens: 10, outputTokens: 20 })]);
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', inputTokens: 10, outputTokens: 20 })]);
     await expect(aiLive({ use: 'explain', lang: 'ja', prompt: 'x' })).resolves.toMatchObject({ text: '{}' });
     setLiveTransport(async () => { throw new Error('relay 503 notSignedIn'); });
     await expect(aiLive({ use: 'packBuild', lang: 'ja', prompt: 'x' })).rejects.toMatchObject({ reasons: ['liveFailed'], message: 'relay 503 notSignedIn' });
@@ -319,7 +319,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     writeLedger([]);
   });
 
-  it('a cancelled Copilot call that may already be billed is recorded with unknown cost', async () => {
+  it('a cancelled Copilot call that may already have used tokens is recorded as an estimate', async () => {
     writeLedger([]);
     useAiSettings.setState({ ...READY, provider: 'copilotSdk', copilotModel: 'gpt-5', copilotStatus: null });
     const ac = new AbortController();
@@ -328,8 +328,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     ac.abort();
     const err = await pending.catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AiLiveError);
-    expect((err as AiLiveError).recordedCostJpy).toBeNull();
-    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', outputTokens: 0, costJpy: null, estimated: true })]);
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'packBuild', outputTokens: 0, estimated: true })]);
     useAiSettings.setState({ provider: 'foundry', copilotModel: null });
     writeLedger([]);
   });
@@ -342,7 +341,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('"explain" uses saved settings consent and records tokens with unknown cost', async () => {
+  it('"explain" uses saved settings consent and records the reported tokens', async () => {
     useAiSettings.setState(READY);
     const entities = entitiesOfComponents(componentsForRoute('/'));
     const req = { use: 'explain' as const, lang: 'en' as const, prompt: 'Explain', entities };
@@ -351,14 +350,13 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(pf.allowed).toBe(false);
     expect(pf.reasons).toContain('notConfirmed');
     expect(pf.internalCount).toBeGreaterThan(0);
-    expect(pf.estimatedCostJpy).toBeNull();
     expect((await aiComplete(req)).blockedReasons).toContain('notConfirmed');
     expect(calls).toHaveLength(0);
 
     useAiSettings.setState({ sendConsent: true });
     const r = await aiComplete(req);
     expect(r).toMatchObject({ mode: 'live', text: 'live answer', blockedReasons: [] });
-    expect(r.costJpy).toBeNull();
+    expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 500 });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.context).toContain('Transferring expert skills');
     expect(calls[0]!.maxOutputTokens).toBe(1500);
@@ -367,20 +365,20 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(ledger[0]).toMatchObject({ use: 'explain', inputTokens: 1000, outputTokens: 500 });
     expect(JSON.stringify(ledger)).not.toContain('Explain'); // prompts and answers are never recorded
 
-    // A zero budget still explicitly disables sending, including unpriced Foundry calls.
-    useAiSettings.setState({ monthlyBudgetJpy: 0 });
+    // The daily call limit still stops sending.
+    writeLedger(Array.from({ length: 30 }, () => ({ at: new Date().toISOString(), use: 'explain', inputTokens: 1, outputTokens: 1 })));
     const blocked = await aiComplete({ ...req });
     expect(blocked.mode).toBe('mock');
     expect(blocked.blockedReasons).toContain('budget');
     expect(calls).toHaveLength(1);
   });
 
-  it('records an interrupted Foundry call as unknown, not free, and retains quota enforcement', async () => {
+  it('records an interrupted Foundry call as an estimate, and retains quota enforcement', async () => {
     useAiSettings.setState(READY);
     setLiveTransport(async () => { throw Object.assign(new Error('timed out'), { name: 'TimeoutError' }); });
     await expect(aiLive({ use: 'explain', lang: 'en', prompt: 'x' }))
-      .rejects.toMatchObject({ recordedCostJpy: null });
-    expect(readLedger()).toEqual([expect.objectContaining({ use: 'explain', costJpy: null })]);
+      .rejects.toMatchObject({ reasons: ['liveFailed'] });
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'explain', outputTokens: 0, estimated: true })]);
     expect(preflight({ use: 'explain', lang: 'en', prompt: 'x' }).budget.reasons).toContain('tooSoon');
   });
 
@@ -410,17 +408,18 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(isConfigured({ ...s, foundryKeySaved: false, provider: 'foundry', authMethod: 'apiKey' })).toBe(false);
   });
 
-  it('never persists key values; persists one budget (the v1 review budget is dropped)', async () => {
-    useAiSettings.getState().update({ endpoint: 'https://e', monthlyBudgetJpy: 2500 });
+  it('never persists key values, and drops the retired budget settings', async () => {
+    useAiSettings.getState().update({ endpoint: 'https://e' });
     const raw = localStorage.getItem('bas.ai.settings') ?? '';
     expect(raw).toContain('https://e');
-    expect(raw).toContain('"monthlyBudgetJpy":2500');
+    expect(raw).not.toContain('monthlyBudgetJpy');
     expect(raw).not.toContain('KeySaved');
     expect(raw).not.toContain('relayConnection');
-    localStorage.setItem('bas.ai.settings', JSON.stringify({ state: { endpoint: 'https://old', reviewBudgetJpy: 7 }, version: 1 }));
+    localStorage.setItem('bas.ai.settings', JSON.stringify({ state: { endpoint: 'https://old', reviewBudgetJpy: 7, monthlyBudgetJpy: 500 }, version: 6 }));
     await useAiSettings.persist.rehydrate();
     expect(useAiSettings.getState().endpoint).toBe('https://old');
     expect('reviewBudgetJpy' in useAiSettings.getState()).toBe(false);
+    expect('monthlyBudgetJpy' in useAiSettings.getState()).toBe(false);
   });
 
   it.each([2, 3])('migrates away old prices from version %i without losing the connection', async (version) => {
@@ -434,7 +433,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(useAiSettings.getState()).not.toHaveProperty('priceInputPerM');
     expect(useAiSettings.getState()).not.toHaveProperty('priceOutputPerM');
     const saved = JSON.parse(localStorage.getItem('bas.ai.settings')!);
-    expect(saved.version).toBe(6);
+    expect(saved.version).toBe(7);
     expect(saved.state).not.toHaveProperty('copilotPricePerRequest');
     expect(saved.state).not.toHaveProperty('priceInputPerM');
     expect(saved.state).not.toHaveProperty('priceOutputPerM');
@@ -449,7 +448,7 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(useAiSettings.getState()).toMatchObject(CONNECTION);
     for (const field of ['speechEndpoint', 'speechRegion', 'mediaDraft']) expect(useAiSettings.getState()).not.toHaveProperty(field);
     const saved = JSON.parse(localStorage.getItem('bas.ai.settings')!);
-    expect(saved.version).toBe(6);
+    expect(saved.version).toBe(7);
     expect(JSON.stringify(saved.state)).not.toContain('bas-speech');
   });
 
@@ -469,10 +468,6 @@ describe('settings provider wiring (FR-132, FR-275, D-1, D-3)', () => {
     expect(isSpeechReady({ media, entra: null, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(true);
     expect(isSpeechReady({ media: { ...media, verifiedAt: { speech: null, vision: null } }, entra: null, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(false);
     expect(isSpeechReady({ media: { ...media, auth: 'entraId' }, entra: { signedIn: false } as never, speechConnection: { route: 'separate', eligible: true, separate } })).toBe(false);
-  });  it('accepts only whole JPY ≥ 0 as the budget', () => {
-    expect(parseBudget('100000')).toBe(100_000);
-    expect(parseBudget('0')).toBe(0);
-    for (const bad of ['', '-1', '1.5', 'abc', '1e3']) expect(parseBudget(bad), bad).toBeNull();
   });
 });
 
@@ -547,27 +542,14 @@ describe('legacy Foundry settings (D-6, P-01)', () => {
   });
 });
 
-describe('usage and limits (FR-276, NFR-COST-001, D-3, D-7, PARAM-121/122)', () => {
+describe('usage and limits (FR-276, PARAM-121/122)', () => {
   beforeEach(() => localStorage.clear());
 
-  it('summarizes the ledger against the single monthly budget with warn/stop levels', () => {
+  it('counts only today explain and chat calls against the daily limit; old records with a cost still load', () => {
     const now = new Date('2026-11-20T03:00:00Z');
-    const rec = (use: string, costJpy: number, at = '2026-11-20T01:00:00Z') => ({ at, use, inputTokens: 0, outputTokens: 0, costJpy });
-    const s = usageSummary([rec('explain', 0), rec('chat', 0), rec('review', 85_000), rec('review', 99, '2026-10-01T00:00:00Z')], now, 100_000);
-    expect(s).toEqual({ todayCalls: 2, dailyLimit: 30, monthSpentJpy: 85_000, monthBudgetJpy: 100_000, monthLevel: 'warn' });
-    expect(usageSummary([rec('explain', 50_000)], now, 50_000).monthLevel).toBe('stop');
-    expect(usageSummary([], now, 0).monthLevel).toBe('stop');
-  });
-
-  it('deletes records older than 13 months only when asked (D-7)', () => {
-    const now = new Date('2026-11-20T03:00:00Z');
-    const rec = (at: string) => ({ at, use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 });
-    writeLedger([rec('2025-10-31T14:59:00Z'), rec('2025-10-31T15:00:00Z'), rec('2026-11-01T00:00:00Z')]);
-    expect(expiredUsageCount(now)).toBe(1); // 2025-10 JST is outside; 2025-11 JST (15:00Z on 10/31) is kept
-    expect(readLedger()).toHaveLength(3);
-    expect(deleteExpiredUsage(now)).toBe(1);
-    expect(readLedger().map((r) => r.at)).toEqual(['2025-10-31T15:00:00Z', '2026-11-01T00:00:00Z']);
-    expect(deleteExpiredUsage(now)).toBe(0);
+    const rec = (use: string, at = '2026-11-20T01:00:00Z') => ({ at, use, inputTokens: 0, outputTokens: 0, costJpy: 85_000 });
+    writeLedger([rec('explain'), rec('chat'), rec('review'), rec('explain', '2026-10-01T00:00:00Z')]);
+    expect(dailyUsage(readLedger(), now)).toEqual({ todayCalls: 2, dailyLimit: 30 });
   });
 
   it('caps input at 8000 characters and times out after 60 s', async () => {

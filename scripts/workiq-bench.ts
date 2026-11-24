@@ -666,7 +666,7 @@ async function pipeline(projectId: string, rounds: number, provider: 'foundry' |
             remove: Array.isArray(a.remove) ? (a.remove as unknown[]).map((x) => String(x).replace(/^([a-z]+)-.*/, '$1-…')) : undefined,
             sections: isObj(a.sections) ? Object.fromEntries(Object.entries(a.sections).map(([k, v]) => [k, v === null ? null : isObj(v) ? Object.fromEntries(Object.entries(v).map(([k2, v2]) => [k2, v2 === null ? null : Array.isArray(v2) ? `array(${v2.length})` : typeof v2])) : typeof v])) : undefined });
         } catch { shapes.push({ stage, unparsed: true }); }
-        return { text: String(b.text ?? ''), costJpy: null, inputTokens: Number(b.inputTokens ?? 0), outputTokens: Number(b.outputTokens ?? 0) };
+        return { text: String(b.text ?? ''), inputTokens: Number(b.inputTokens ?? 0), outputTokens: Number(b.outputTokens ?? 0) };
       },
       fetchSite: (url, signal, terms) => post('/relay/site', { url, ...(terms?.length ? { terms } : {}) }, signal) as never,
       fetchNews: (company, l, signal) => post('/relay/news', { company, lang: l }, signal) as never,

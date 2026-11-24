@@ -175,7 +175,7 @@ export const MAX_GAP_TOPICS = 8;
 export const FOLLOWUP_ANSWER_MAX_CHARS = 3_000;
 export const MAX_FOLLOWUP_CHARS = 48_000;
 
-export interface CallResult { text: string; costJpy: number | null; inputTokens: number | null; outputTokens: number | null }
+export interface CallResult { text: string; inputTokens: number | null; outputTokens: number | null }
 
 export interface GenDeps {
   /** `stage` lets the caller attribute the call's tokens to the generation step in the usage ledger. */
@@ -210,7 +210,6 @@ export interface ProgressEvent {
   unmet?: ReadinessKey[];
   /** Problems still open (verify step). */
   errors?: number;
-  costJpy: number | null;
   /** Input + output tokens the provider reported for the calls finished so far. */
   tokens: number | null;
 }
@@ -246,8 +245,7 @@ export interface GenerationReport {
   inputs: Omit<PackGenInput, 'materials'> & { materials: { name: string; chars: number; text: string }[] };
   retrieved: RetrievedItem[];
   retrievalErrors: { what: 'site' | 'news' | 'workiq'; url?: string; error: string }[];
-  calls: { stage: GenStage; costJpy: number | null; inputTokens: number | null; outputTokens: number | null; ms: number; trimmedChars?: number; retried?: boolean }[];
-  costJpy: number | null;
+  calls: { stage: GenStage; inputTokens: number | null; outputTokens: number | null; ms: number; trimmedChars?: number; retried?: boolean }[];
   fixRounds: number;
   /** Items removed because they still failed verification after the fix rounds (with what depended on them). */
   removed: { path: string; reason: string }[];
@@ -292,15 +290,13 @@ export interface GenResult {
 export class PackGenError extends Error {
   readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'invalidAnalysis' | 'callFailed' | 'collectFailed';
   readonly detail: string;
-  readonly costJpy: number | null;
   readonly providerBusy: boolean;
   readonly retryAfterMs?: number;
 
-  constructor(code: PackGenError['code'], detail: string, costJpy: number | null, providerError?: RelayError) {
+  constructor(code: PackGenError['code'], detail: string, providerError?: RelayError) {
     super(`${code}: ${detail}`);
     this.code = code;
     this.detail = detail;
-    this.costJpy = costJpy;
     this.providerBusy = providerError?.code === 'providerBusy';
     this.retryAfterMs = this.providerBusy ? providerError?.retryAfterMs : undefined;
   }
@@ -697,7 +693,7 @@ export function analysisPrompt(pack: Record<string, unknown>, lang: Lang, entrie
   ].join('\n\n');
 }
 
-function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: number | null): AnalysisData {
+function analysisDataFrom(raw: Record<string, unknown>, at: string): AnalysisData {
   const entries = Array.isArray(raw.analyses) ? raw.analyses : [];
   const byMethod = new Map<MethodId, Record<string, unknown>>();
   for (const entry of entries) {
@@ -705,12 +701,12 @@ function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: num
     const candidate = entry as Record<string, unknown>;
     if (typeof candidate.method === 'string' && METHODS.includes(candidate.method as MethodId)) {
       const method = candidate.method as MethodId;
-      if (byMethod.has(method)) throw new PackGenError('invalidAnalysis', `duplicate method: ${method}`, costJpy);
+      if (byMethod.has(method)) throw new PackGenError('invalidAnalysis', `duplicate method: ${method}`);
       byMethod.set(method, candidate);
     }
   }
   if (entries.length !== METHODS.length || byMethod.size !== METHODS.length) {
-    throw new PackGenError('invalidAnalysis', 'Expected one result for each analysis method', costJpy);
+    throw new PackGenError('invalidAnalysis', 'Expected one result for each analysis method');
   }
   const analyses = METHODS.map((method) => {
     const source = byMethod.get(method)!;
@@ -718,7 +714,7 @@ function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: num
     const sourceItems = Array.isArray(source.items) ? source.items : [];
     const items: AnalysisItem[] = sourceItems.map((item) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        throw new PackGenError('invalidAnalysis', `${method}: invalid item`, costJpy);
+        throw new PackGenError('invalidAnalysis', `${method}: invalid item`);
       }
       const value = item as Record<string, unknown>;
       const category = value.category;
@@ -729,7 +725,7 @@ function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: num
       if (typeof category !== 'string' || !categories.some((id) => id === category) ||
         typeof jaText !== 'string' || !jaText.trim() || typeof enText !== 'string' || !enText.trim() ||
         typeof score !== 'number' || !Number.isFinite(score) || score < 1 || score > 5) {
-        throw new PackGenError('invalidAnalysis', `${method}: invalid analysis item`, costJpy);
+        throw new PackGenError('invalidAnalysis', `${method}: invalid analysis item`);
       }
       return {
         id: newId('ai'),
@@ -742,7 +738,7 @@ function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: num
       };
     });
     const missing = categories.filter((category) => !items.some((item) => item.category === category));
-    if (missing.length) throw new PackGenError('invalidAnalysis', `${method}: missing categories ${missing.join(', ')}`, costJpy);
+    if (missing.length) throw new PackGenError('invalidAnalysis', `${method}: missing categories ${missing.join(', ')}`);
     return {
       id: newId('an'),
       method,
@@ -754,7 +750,7 @@ function analysisDataFrom(raw: Record<string, unknown>, at: string, costJpy: num
     };
   });
   const result = AnalysisDataSchema.safeParse({ analyses, activeId: analyses[0]?.id ?? null });
-  if (!result.success) throw new PackGenError('invalidAnalysis', result.error.message, costJpy);
+  if (!result.success) throw new PackGenError('invalidAnalysis', result.error.message);
   return result.data;
 }
 
@@ -1263,20 +1259,19 @@ function parseAnswer(text: string): Pack | null {
 
 export async function generatePack(input: PackGenInput, deps: GenDeps, onProgress: (e: ProgressEvent) => void, signal: AbortSignal): Promise<GenResult> {
   if (input.useNews && input.publicWebTopic?.trim() && input.webTopicConfirmed !== true) {
-    throw new PackGenError('collectFailed', 'Public web topic was not confirmed', 0);
+    throw new PackGenError('collectFailed', 'Public web topic was not confirmed');
   }
   if (input.companyAnchor && !CompanyAnchorVersionSchema.safeParse(input.companyAnchor).success) {
-    throw new PackGenError('invalidPack', 'Invalid company anchor', 0);
+    throw new PackGenError('invalidPack', 'Invalid company anchor');
   }
   const now = deps.now ?? (() => new Date());
   const startedAt = now().toISOString();
-  let costJpy: number | null = 0;
   const calls: GenerationReport['calls'] = [];
   const emit = (step: StepId, status: StepStatus, within = status === 'done' ? 1 : 0, extra: Partial<ProgressEvent> = {}) => {
     const [a, b] = STEP_SPAN[step];
-    onProgress({ step, status, ratio: a + (b - a) * within, costJpy, tokens: calls.reduce<number | null>((n, c) => n === null || c.inputTokens === null || c.outputTokens === null ? null : n + c.inputTokens + c.outputTokens, 0), ...extra });
+    onProgress({ step, status, ratio: a + (b - a) * within, tokens: calls.reduce<number | null>((n, c) => n === null || c.inputTokens === null || c.outputTokens === null ? null : n + c.inputTokens + c.outputTokens, 0), ...extra });
   };
-  const cancelled = () => new PackGenError('cancelled', 'cancelled', costJpy);
+  const cancelled = () => new PackGenError('cancelled', 'cancelled');
   /*
    * D-15: every prompt is fitted to the two per-call limits a send must pass: the relay's character limit and the app's
    * own token estimate (src/ai/client.ts preflight). Material bodies are shortened in proportion only when needed, so a
@@ -1315,9 +1310,6 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       try {
         r = await deps.complete(prompt, signal, stage);
       } catch (err) {
-        // A cancelled or timed-out call the ledger counted as possibly billed also counts here.
-        const recorded = (err as { recordedCostJpy?: number | null }).recordedCostJpy;
-        costJpy = costJpy === null || recorded === null ? null : costJpy + (recorded ?? 0);
         if (signal.aborted) throw cancelled();
         // A refusal by the app's own gate (budget, daily count, input size) would fail the same way again.
         const reasons = (err as { reasons?: unknown }).reasons;
@@ -1325,23 +1317,22 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
         const busy = cause?.code === 'providerBusy';
         const delay = busy ? Math.max(deps.retryDelayMs ?? (15_000 * (attempt + 1)), cause.retryAfterMs ?? 0) : (deps.retryDelayMs ?? 5_000);
         // Do not retry sooner than the provider requests, or keep the dialog waiting indefinitely.
-        if (busy && delay > 60_000) throw new PackGenError('callFailed', (err as Error).message, costJpy, cause);
+        if (busy && delay > 60_000) throw new PackGenError('callFailed', (err as Error).message, cause);
         if (retriesLeft > 0 && (!Array.isArray(reasons) || reasons.includes('liveFailed'))) {
           retriesLeft--;
           await pause(delay);
           continue;
         }
-        throw new PackGenError('callFailed', (err as Error).message, costJpy, cause);
+        throw new PackGenError('callFailed', (err as Error).message, cause);
       }
-      costJpy = costJpy === null || r.costJpy === null ? null : costJpy + r.costJpy;
-      calls.push({ stage, costJpy: r.costJpy, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ms: Date.now() - t0, ...(trimmed ? { trimmedChars: trimmed } : {}), ...(attempt ? { retried: true } : {}) });
+      calls.push({ stage, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ms: Date.now() - t0, ...(trimmed ? { trimmedChars: trimmed } : {}), ...(attempt ? { retried: true } : {}) });
       const parsed = parseAnswer(r.text);
       if (parsed) return parsed;
       if (retriesLeft > 0) {
         retriesLeft--;
         continue;
       }
-      throw new PackGenError('noAnswer', `${stage}: no JSON object in the answer`, costJpy);
+      throw new PackGenError('noAnswer', `${stage}: no JSON object in the answer`);
     }
   };
 
@@ -1598,7 +1589,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   /* 4. Merge, enforce sources, verify, fix, prune */
   emit('verify', 'running');
   const enforced = mergeStages(a, b);
-  if (!enforced) throw new PackGenError('invalidPack', 'empty pack', costJpy);
+  if (!enforced) throw new PackGenError('invalidPack', 'empty pack');
   let pack: Pack = enforced.pack;
   const droppedSources = [...enforced.dropped];
 
@@ -1618,14 +1609,14 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const pruned = pruneInvalid(state.pack, now());
   if (!pruned.verify.ok) {
     const first = blockingErrors(pruned.verify)[0];
-    throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid', costJpy);
+    throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid');
   }
   const finalPack = pruned.pack;
   emit('verify', 'done', 1, { round: rounds, errors: 0 });
 
   emit('analysis', 'running');
   const analysisAnswer = await call('analysis', (material) => analysisPrompt(finalPack, input.lang, material));
-  const analysis = analysisDataFrom(analysisAnswer, now().toISOString(), costJpy);
+  const analysis = analysisDataFrom(analysisAnswer, now().toISOString());
   emit('analysis', 'done');
 
   // Rule-based (no model call): rank the issues the run produced by impact × feasibility and how well each is evidenced.
@@ -1658,7 +1649,6 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     retrieved: entries.map((e) => e.item),
     retrievalErrors,
     calls,
-    costJpy,
     fixRounds: rounds,
     removed: pruned.removed,
     droppedSources: [...new Set(droppedSources)],
@@ -1672,7 +1662,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const final = check(finalPack, now());
   if (!final.verify.ok) {
     const first = blockingErrors(final.verify)[0];
-    throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid', costJpy);
+    throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid');
   }
   emit('finalize', 'done');
   return { pack: final.pack, verify: final.verify, analysis, priority, summary: summarize(final.pack), report };

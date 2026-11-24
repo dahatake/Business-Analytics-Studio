@@ -177,7 +177,7 @@ test.describe('FR-335 the app resolves the open items', () => {
         groups: [], discountRate: null,
       }), inputTokens: 100, outputTokens: 100 } });
     });
-    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
     await page.reload();
     const panel = page.getByTestId('val-panel');
     await panel.getByTestId('val-draft-copilot').click();
@@ -234,7 +234,7 @@ test.describe('FR-336 [Copilotで説明]', () => {
       expect(body.use).toBe('valueExplain');
       await route.fulfill({ json: { text: JSON.stringify({ headline: 'The portfolio is worth 12,345 million yen.', sections: { npv: 'NPV compares today\'s value of future cash with the investment.' }, questions: ['Who owns the largest assumption?'] }), inputTokens: 100, outputTokens: 100 } });
     });
-    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }) });
+    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
     await page.reload();
     const panel = page.getByTestId('val-panel');
     await panel.getByTestId('val-explain-run').click();

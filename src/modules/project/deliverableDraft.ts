@@ -453,6 +453,6 @@ export async function requestDeliverableDraft(input: DraftInput, request: AiRequ
   if (missing.length) throw new Error(input.lang === 'ja'
     ? `AI の応答に必要な項目がありません: ${missing.join(', ')}`
     : `Incomplete AI response: ${missing.join(', ')}`);
-  const response: AiResponse = { mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: '', costJpy: live.costJpy, usage: { inputTokens: live.inputTokens, outputTokens: live.outputTokens } };
+  const response: AiResponse = { mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: '', usage: { inputTokens: live.inputTokens, outputTokens: live.outputTokens } };
   return { response, fields, tasks };
 }

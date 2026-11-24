@@ -8,7 +8,7 @@ export type { StoryScene } from '../../ai/storyOutput.ts';
 import type { StoryScene } from '../../ai/storyOutput.ts';
 export { STORY_OUTPUT_TOKENS } from '../../ai/storyOutput.ts';
 type StoryStep = 'storyboard' | 'animation';
-export type StoryAbort = 'budget' | 'maxCalls' | 'cancelled';
+export type StoryAbort = 'limits' | 'maxCalls' | 'cancelled';
 
 /** What a story is made from: a use case, or (when the project has none) a solution of the pack. */
 export interface StorySource {
@@ -78,8 +78,9 @@ export interface StoryVideo {
   scenes: StoryScene[];
   createdAt: string;
   calls: number;
-  spentJpy: number;
-  estimateJpy: number;
+  /** Tokens the provider reported for the generating call; null = unknown. Absent on older and mock stories. */
+  inputTokens?: number | null;
+  outputTokens?: number | null;
   status: 'latest' | 'aborted';
   abortReason?: StoryAbort;
 }

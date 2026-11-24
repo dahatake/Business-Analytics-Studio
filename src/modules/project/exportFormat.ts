@@ -264,19 +264,18 @@ export function tokenSection(s: TokenSummary, lang: Lang): string[] {
   const tr = (key: MessageKey, vars?: Vars) => translate(lang, key, vars);
   const locale = lang === 'ja' ? 'ja-JP' : 'en-US';
   const n = (v: number | null) => v === null ? tr('ai.tokens.unavailable') : new Intl.NumberFormat(locale).format(v);
-  const yen = (v: number | null) => (v === null ? tr('ai.cost.unavailable') : new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 2 }).format(v));
-  const row = (label: string, x: TokenTotals) => `| ${cell(label)} | ${n(x.calls)} | ${n(x.inputTokens)} | ${n(x.outputTokens)} | ${n(x.totalTokens)} | ${cell(yen(x.costJpy))} |`;
+  const row = (label: string, x: TokenTotals) => `| ${cell(label)} | ${n(x.calls)} | ${n(x.inputTokens)} | ${n(x.outputTokens)} | ${n(x.totalTokens)} |`;
   const out = [`## ${tr('proj.md.tokens')}`, '', tr('proj.md.tokensNote'), ''];
   out.push(
-    `| ${tr('ai.tokens.step')} | ${tr('ai.tokens.calls')} | ${tr('ai.tokens.input')} | ${tr('ai.tokens.output')} | ${tr('ai.tokens.total')} | ${tr('ai.tokens.cost')} |`,
-    '|---|---:|---:|---:|---:|---:|',
+    `| ${tr('ai.tokens.step')} | ${tr('ai.tokens.calls')} | ${tr('ai.tokens.input')} | ${tr('ai.tokens.output')} | ${tr('ai.tokens.total')} |`,
+    '|---|---:|---:|---:|---:|',
   );
   for (const l of s.lines) {
     const label = l.step ? tr(`proj.gen.step.${l.step}` as MessageKey) : tr(`ai.use.${l.use}` as MessageKey);
     out.push(row(l.estimatedCalls > 0 ? `${label} ${tr('ai.tokens.estimatedMark')}` : label, l));
   }
-  out.push(row(tr('proj.export.tokens.export'), { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costJpy: 0, estimatedCalls: 0 }));
-  out.push(row(`**${tr('ai.tokens.sum')}**`, s.total), '');
+  out.push(row(tr('proj.export.tokens.export'), { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCalls: 0 }));
+  out.push(row(`**${tr('ai.tokens.sum')}**${s.total.estimatedCalls > 0 ? ` ${tr('ai.tokens.estimatedMark')}` : ''}`, s.total), '');
   return out;
 }
 

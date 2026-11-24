@@ -197,7 +197,7 @@ export const showEn: Record<keyof typeof showJa, string> = {
   'show.ai.reason.liveDisabled': 'Live connections are not turned on',
   'show.ai.reason.notConfirmed': 'Broad send consent has not been given in AI settings',
   'show.ai.reason.notConfigured': 'There are no connection settings',
-  'show.ai.reason.budget': 'The budget limit has been reached',
+  'show.ai.reason.budget': 'A call, size or interval limit has been reached',
   'show.ai.reason.liveFailed': 'The real send failed, so a mock answered',
 
   'show.quiz.title': 'AI maturity quiz',

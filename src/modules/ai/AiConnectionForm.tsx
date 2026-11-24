@@ -6,7 +6,7 @@ import {
 import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { RelayError, acceptWorkIqEula, pollWorkIqSignIn, startWorkIqSignIn, verifyWorkIq, type ConnectionSaveError, type SecretName, type WorkIqDeviceCode, type WorkIqProvider } from './relayClient.ts';
-import { connectionTestPreflight, isConfigured, parseBudget, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
+import { connectionTestPreflight, isConfigured, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { EntraConnection } from './EntraConnection.tsx';
 import { DecisionSettings } from './DecisionSettings.tsx';
 import { workIqRequiredFor } from '../../ai/policy.ts';
@@ -78,7 +78,7 @@ export function ConnectionActions() {
     endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_FOUNDRY_API_VERSION,
   }, true);
   const problem = draft.ok ? null : draft.error;
-  const precheck = connectionTestPreflight(s);
+  const precheck = connectionTestPreflight();
   const entra = s.authMethod === 'entraId';
   const problemText = problem ? t(entra ? 'ai.entra.pickConnection' : `ai.conn.msg.${problem}`) : null;
   const blockers = [
@@ -103,7 +103,7 @@ export function ConnectionActions() {
     setMessage(null);
     setProviderStatus(undefined);
     setConsent(false);
-  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.entraTenantId, s.monthlyBudgetJpy]);
+  }, [s.endpoint, s.deployment, s.apiVersion, s.authMethod, s.entraTenantId]);
   const save = async () => {
     if (testing) return;
     setMessage(null);
@@ -137,7 +137,6 @@ export function ConnectionActions() {
       {problemText && <p role="alert" data-testid="ai-connection-validation">{problemText}</p>}
       {draft.ok && <p className="muted" data-testid="ai-connection-destination">{t('ai.conn.destination', { url: foundryChatUrl(draft.value) })}</p>}
       <p className="muted" data-testid="ai-connection-test-info">{t('ai.conn.testInfo')}</p>
-      <p className="muted" data-testid="ai-connection-test-cost">{t('ai.cost.unknown')}</p>
       {!entra && !s.foundryKeySaved && <p className="muted">{t('ai.conn.msg.keyMissing')}</p>}
       {!precheck.budget.allowed && <p role="alert">{t('ai.conn.msg.budget')}</p>}
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={testing} label={t('ai.conn.consent')} data-testid="ai-connection-consent" />
@@ -155,33 +154,6 @@ export function ConnectionActions() {
       </div>
       {message && <MessageBar intent={message === 'saved' || message === 'deleted' ? 'success' : 'error'} data-testid="ai-connection-msg"><MessageBarBody>{t(`ai.conn.msg.${message}`)}{providerStatus !== undefined && ` (HTTP ${providerStatus})`}</MessageBarBody></MessageBar>}
     </div>
-  );
-}
-
-/** D-3: one monthly budget for the whole app (integer JPY ≥ 0). */
-export function BudgetInput() {
-  const { t } = useI18n();
-  const budget = useAiSettings((s) => s.monthlyBudgetJpy);
-  const update = useAiSettings((s) => s.update);
-  const [text, setText] = useState(String(budget));
-  useEffect(() => setText(String(budget)), [budget]);
-  const valid = parseBudget(text) !== null;
-  return (
-    <Field label={t('ai.usage.budget')} hint={t('ai.usage.budgetHint')} validationState={valid ? 'none' : 'error'} validationMessage={valid ? undefined : t('ai.usage.budgetInvalid')}>
-      <Input
-        type="number"
-        min={0}
-        step={1}
-        inputMode="numeric"
-        value={text}
-        onChange={(_, d) => {
-          setText(d.value);
-          const v = parseBudget(d.value);
-          if (v !== null) update({ monthlyBudgetJpy: v });
-        }}
-        data-testid="ai-budget-input"
-      />
-    </Field>
   );
 }
 
@@ -264,7 +236,6 @@ export function WorkIqSettings() {
   const workiq = useAiSettings((s) => s.workiq);
   const provider = useAiSettings((s) => s.provider);
   const reachable = useAiSettings((s) => s.relayReachable);
-  const budget = useAiSettings((s) => s.monthlyBudgetJpy);
   const { saveWorkIq, deleteWorkIq, refreshRelay } = useAiSettings.getState();
   const [route, setRoute] = useState<'cli' | 'app'>(workiq?.method ?? 'cli');
   const [tenantId, setTenantId] = useState(workiq?.tenantId ?? '');
@@ -347,7 +318,7 @@ export function WorkIqSettings() {
   };
 
   const check = async () => {
-    if (!consent || checking || budget <= 0) return;
+    if (!consent || checking) return;
     setChecking(true);
     setMessage(null);
     try {
@@ -443,8 +414,7 @@ export function WorkIqSettings() {
       </p>
       <p className="muted">{t('ai.workiq.testInfo')}</p>
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={checking} label={t('ai.workiq.testConsent')} data-testid="ai-workiq-consent" />
-      {budget <= 0 && <p role="alert">{t('ai.conn.msg.budget')}</p>}
-      <Button icon={checking ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void check()} disabled={!reachable || busy || checking || changed || !canVerify || !consent || budget <= 0 || code !== null} data-testid="ai-workiq-check">
+      <Button icon={checking ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void check()} disabled={!reachable || busy || checking || changed || !canVerify || !consent || code !== null} data-testid="ai-workiq-check">
         {t(checking ? 'ai.workiq.testing' : 'ai.workiq.test')}
       </Button>
     </section>
@@ -529,17 +499,6 @@ export function CopilotSettings() {
 const COPILOT_ERRORS = ['notSignedIn', 'sdkUnavailable', 'startFailed', 'providerError', 'relayUnreachable'] as const;
 function copilotErrorKey(code: string | null): (typeof COPILOT_ERRORS)[number] {
   return (COPILOT_ERRORS as readonly string[]).includes(code ?? '') ? (code as (typeof COPILOT_ERRORS)[number]) : code === null ? 'notSignedIn' : 'providerError';
-}
-
-/** Cost notice for the selected provider. */
-export function PriceFields() {
-  const { t } = useI18n();
-  const s = useAiSettings();
-  return (
-    <div className="ai-stack">
-      <p className="muted" data-testid="ai-provider-cost-note">{t(s.provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown')}</p>
-    </div>
-  );
 }
 
 /** Readiness of the chosen provider for live sends, as one line: every condition of liveReady() (and Work IQ where it is required, D-14). */

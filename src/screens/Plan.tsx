@@ -120,7 +120,7 @@ export function Plan() {
                   <td>{fmt.date(i.start)}</td>
                   <td>{fmt.date(i.end)}</td>
                   <td className="num">{fmt.percent(i.progress)}</td>
-                  <td><EntityRef id={i.ownerId} image /></td>
+                  <td>{i.ownerId ? <EntityRef id={i.ownerId} image /> : i.ownerRole ? tx(i.ownerRole) : '—'}</td>
                   <td>{i.dependsOn.length ? i.dependsOn.map((d) => <EntityRef key={d} id={d} />) : '—'}</td>
                 </tr>
               ))}

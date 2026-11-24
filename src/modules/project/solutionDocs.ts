@@ -1,4 +1,4 @@
-import type { Entity, EntityOf } from '../../data/schema.ts';
+import { solutionMoney, type Entity, type EntityOf } from '../../data/schema.ts';
 import { isRuleKind, isVoiceKind, type EvidenceKind } from '../../data/extensionSchemas.ts';
 import { makeFormatters, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { personaLabel } from '../../state/personas.ts';
@@ -305,6 +305,8 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
   const inits = ts.initiativeIds.map(get).filter((e): e is EntityOf<'initiative'> => e?.kind === 'initiative').sort((a, b) => a.start.localeCompare(b.start));
   const contributions = c.strategy.contributions.filter((x) => x.solutionId === s.id);
   const system = isSystemType(ts.type);
+  const money = solutionMoney(s);
+  const money = solutionMoney(s);
   const evidence = evidenceViews(c.pack, c.strategy, lang);
   const systems = systemsOf(c.pack);
   const terms = glossaryOf(c.pack, lang);
@@ -376,10 +378,10 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
   });
   const rtm = rtmRows.length ? [rtmHead, '|---|---|---|---|---|---|---|', ...rtmRows].join('\n') : fill({ ja: 'KPI につなぐとトレーサビリティ表ができる', en: 'link a KPI to build the traceability matrix' });
 
-  const people = [...new Set(inits.map((i) => role(i.ownerId)).filter(Boolean))];
+  const people = [...new Set(inits.map((i) => (i.ownerId ? role(i.ownerId) : i.ownerRole ? loc(i.ownerRole, lang) : '')).filter(Boolean))];
   const kpiOwners = [...new Set(kpis.map((k) => {
     const pk = get(k.id);
-    return pk?.kind === 'kpi' ? role(pk.ownerId) : '';
+    return pk?.kind === 'kpi' ? (pk.ownerId ? role(pk.ownerId) : pk.ownerRole ? loc(pk.ownerRole, lang) : '') : '';
   }).filter(Boolean))];
   const personas = [...new Set(ucs.map((u) => translate(lang, personaLabel(u.persona) as MessageKey)))];
 
@@ -513,7 +515,9 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
       doc('solution', 'dataNeeds'),
     ]) || fill({ ja: '必要なデータと連携先', en: 'data and integrations needed' }),
     constraints: bullets([
-      L({ ja: `予算: ${fmt.yenCompact(s.costJpy)}`, en: `Budget: ${fmt.yenCompact(s.costJpy)}` }),
+      s.costJpy !== undefined
+        ? L({ ja: `予算: ${fmt.yenCompact(s.costJpy)}`, en: `Budget: ${fmt.yenCompact(s.costJpy)}` })
+        : fill({ ja: '予算（未確認。社内の見積書・稟議で確認する）', en: 'budget (unconfirmed; check an internal estimate or approval document)' }),
       inits.length ? L({ ja: `期間: ${inits[0]!.start}〜${inits.map((i) => i.end).sort().at(-1)}`, en: `Period: ${inits[0]!.start} – ${inits.map((i) => i.end).sort().at(-1)}` }) : '',
       doc('asis', 'constraints'),
       ...ruleLines,
@@ -563,11 +567,13 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
     ].join('\n'),
     governance: fill({ ja: '承認手続き（取締役会・労使協議・規程改定・届出）と日程', en: 'approvals (board, works council, rule changes, filings) and dates' }),
     investment: bullets([
-      L({ ja: `投資額: ${fmt.yenCompact(s.costJpy)}`, en: `Investment: ${fmt.yenCompact(s.costJpy)}` }),
+      s.costJpy !== undefined
+        ? L({ ja: `投資額: ${fmt.yenCompact(s.costJpy)}`, en: `Investment: ${fmt.yenCompact(s.costJpy)}` })
+        : fill({ ja: '投資額（未確認。社内の見積書・稟議で確認する）', en: 'investment (unconfirmed; check an internal estimate or approval document)' }),
       ...inits.map((i) => `${name(i)} (${i.start}〜${i.end})`),
     ]),
-    businessCase: s.annualBenefitJpy > 0
-      ? L({ ja: `投資 ${fmt.yenCompact(s.costJpy)}、年間効果 ${fmt.yenCompact(s.annualBenefitJpy)}、単純回収 ${num(s.costJpy / s.annualBenefitJpy)} 年`, en: `Invest ${fmt.yenCompact(s.costJpy)}, annual benefit ${fmt.yenCompact(s.annualBenefitJpy)}, simple payback ${num(s.costJpy / s.annualBenefitJpy)} years` })
+    businessCase: money && money.benefit > 0
+      ? L({ ja: `投資 ${fmt.yenCompact(money.cost)}、年間効果 ${fmt.yenCompact(money.benefit)}、単純回収 ${num(money.cost / money.benefit)} 年`, en: `Invest ${fmt.yenCompact(money.cost)}, annual benefit ${fmt.yenCompact(money.benefit)}, simple payback ${num(money.cost / money.benefit)} years` })
       : fill({ ja: '年間効果の金額', en: 'annual benefit in yen' }),
     procurement: fill({ ja: '調達方法（見積り・入札・リース）と日程', en: 'procurement route (quotes, tender, lease) and dates' }),
     sourcingScope: fill({ ja: '外部に任せる範囲と社内に残す範囲', en: 'what is sourced out and what stays in house' }),

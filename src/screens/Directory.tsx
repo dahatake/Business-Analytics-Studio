@@ -23,7 +23,7 @@ interface Column {
 function useTabConfig(tab: TabKey) {
   const { t, tx, fmt } = useI18n();
   return useMemo(() => {
-    const ref = (id: string, image = false) => <EntityRef id={id} image={image} />;
+    const ref = (id: string | undefined, image = false) => (id ? <EntityRef id={id} image={image} /> : '—');
     switch (tab) {
       case 'people': return {
         rows: entitiesOf('person') as Entity[],

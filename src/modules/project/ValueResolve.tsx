@@ -5,7 +5,7 @@ import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
 import { PER_USE_LIMITS } from '../../ai/policy.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
-import { reasonKey, yenFine } from '../ai/AiCommon.tsx';
+import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
 import { openAiSettings } from '../ai/uiStore.ts';
 import '../ai/liveTransport.ts';
 import { ScrollRegion } from './common.tsx';
@@ -39,6 +39,7 @@ export function DraftBar({ draftCtx, scope }: { draftCtx: DraftContext; scope: s
   const write = useWrite();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [tokens, setTokens] = useState<{ inputTokens: number | null; outputTokens: number | null } | null>(null);
   const abort = useRef<AbortController | null>(null);
   const alive = useRef(true);
   useEffect(() => {
@@ -46,8 +47,6 @@ export function DraftBar({ draftCtx, scope }: { draftCtx: DraftContext; scope: s
     return () => { alive.current = false; abort.current?.abort(); };
   }, []);
   const request = { use: 'valueDraft' as const, lang, prompt: valueDraftPrompt(draftCtx), scope, maxOutputTokens: PER_USE_LIMITS.valueDraft?.maxOutputTokens };
-  const estimate = preflight(request);
-  const cost = estimate.estimatedCostJpy === null ? t('val.draft.costUnknown') : yenFine(lang === 'ja' ? 'ja-JP' : 'en-US', estimate.estimatedCostJpy);
   const summarize = (d: ValueDraft) => {
     const unverified = d.lines.filter((l) => l.provenance?.status === 'unverified').length;
     const parts = [
@@ -67,11 +66,13 @@ export function DraftBar({ draftCtx, scope }: { draftCtx: DraftContext; scope: s
   const copilot = async () => {
     setBusy(true);
     setNotice(null);
+    setTokens(null);
     try {
       const pf = preflight(request);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
       abort.current = new AbortController();
       const result = await aiLive(request, abort.current.signal);
+      if (alive.current) setTokens({ inputTokens: result.inputTokens, outputTokens: result.outputTokens });
       if (!alive.current || useValueModel.getState().scope !== scope) return;
       let d: ValueDraft;
       try { d = parseValueDraft(result.text, latest(), 'copilot'); } catch { throw new Error(t('val.draft.badAnswer')); }
@@ -96,7 +97,7 @@ export function DraftBar({ draftCtx, scope }: { draftCtx: DraftContext; scope: s
         <Button icon={<Wand20Regular />} disabled={busy} onClick={rules} data-testid="val-draft-rules">{t('val.draft.rules')}</Button>
         {busy && <Button onClick={() => abort.current?.abort()}>{t('proj.cancel')}</Button>}
       </div>
-      <p className="muted" data-testid="val-draft-hint">{t('val.draft.hint', { cost })}</p>
+      <p className="muted" data-testid="val-draft-hint">{t('val.draft.hint')}</p>
       {notice && (
         <MessageBar intent={notice.intent} data-testid="val-draft-notice">
           <MessageBarBody>
@@ -105,6 +106,7 @@ export function DraftBar({ draftCtx, scope }: { draftCtx: DraftContext; scope: s
           </MessageBarBody>
         </MessageBar>
       )}
+      {tokens && <TokensInline usage={tokens} testId="val-draft-tokens" />}
     </section>
   );
 }

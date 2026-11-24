@@ -11,7 +11,7 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { LiveNotice, MockNotice } from './AiCommon.tsx';
 import { buildExplanation, componentsForRoute, entitiesOfComponents } from './explain.ts';
-import { usageSummary } from './ledger.ts';
+import { dailyUsage } from './ledger.ts';
 import { liveReady, useAiSettings } from './settingsStore.ts';
 import { useAiPanels } from './uiStore.ts';
 
@@ -27,7 +27,6 @@ export function ExplainPanel() {
   const setOpen = useAiPanels((s) => s.setOpen);
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
-  const budget = useAiSettings((s) => s.monthlyBudgetJpy);
   const live = useAiSettings((s) => liveReady(s));
   const [state, setState] = useState<RunState>({ status: 'idle' });
   const runId = useRef(0);
@@ -50,7 +49,7 @@ export function ExplainPanel() {
     })();
   }, [open, route.path, lang, live, t]);
 
-  const usage = usageSummary(readLedger(), new Date(), budget);
+  const usage = dailyUsage(readLedger(), new Date());
   const answeredLive = state.status === 'done' && state.res.mode === 'live';
 
   return (
@@ -78,7 +77,7 @@ export function ExplainPanel() {
             </p>
             {state.status === 'loading' && <Spinner size="tiny" label={t('ai.loading')} />}
             {state.status === 'done' && state.res.mode === 'live' && (
-              <LiveNotice costJpy={state.res.costJpy ?? null} usage={state.res.usage}>
+              <LiveNotice usage={state.res.usage}>
                 <p className="ai-answer" data-testid="ai-explain-answer">{state.res.text}</p>
               </LiveNotice>
             )}

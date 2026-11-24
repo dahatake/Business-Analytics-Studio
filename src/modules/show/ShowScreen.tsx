@@ -5,6 +5,7 @@ import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { useSettings } from '../../state/settings.ts';
 import { PERSONA_VIEWS, personaLabel, type PersonaView } from '../../state/personas.ts';
+import { TokensInline } from '../ai/AiCommon.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { buildChapters, buildStory, CHAPTER_IDS, chapterPoints, chapterTitleKey, INTENSITIES, SHOW_PARAMS, type Intensity } from './model.ts';
 import { generateStory, type GenerateResult } from './aiOutline.ts';
@@ -147,6 +148,7 @@ function AiStoryPanel() {
               </ul>
             </>
           )}
+          {result.res.mode === 'live' && result.res.usage && <TokensInline usage={result.res.usage} testId="show-ai-tokens" />}
           <pre className="show-ai-outline" lang={result.lang}>{result.res.text}</pre>
         </div>
       )}

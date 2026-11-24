@@ -19,7 +19,7 @@ export function PriorityMatrix({ ranked }: { ranked: RankedIssue[] }) {
     const svg = d3.select(ref.current);
     const x = d3.scaleLinear().domain([0.5, 5.5]).range([m.left, W - m.right]);
     const y = d3.scaleLinear().domain([0.5, 5.5]).range([H - m.bottom, m.top]);
-    const benefit = (issue: EntityOf<'issue'>) => entitiesOf('solution').filter((s) => s.issueIds.includes(issue.id)).reduce((a, s) => a + s.annualBenefitJpy, 0);
+    const benefit = (issue: EntityOf<'issue'>) => entitiesOf('solution').filter((s) => s.issueIds.includes(issue.id)).reduce((a, s) => a + (s.annualBenefitJpy ?? 0), 0);
     const r = d3.scaleSqrt().domain([0, d3.max(ranked, (d) => benefit(d.issue)) || 1]).range([8, 26]);
 
     svg.select<SVGGElement>('g.x').attr('transform', `translate(0,${H - m.bottom})`).call(d3.axisBottom(x).ticks(5).tickFormat(d3.format('d')));

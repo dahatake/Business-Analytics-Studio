@@ -81,9 +81,10 @@ function buildFormatters(lang: Lang) {
     number: (v: number) => nf().format(v),
     integer: (v: number) => nf0().format(v),
     percent: (v: number) => pf().format(v),
-    yen: (v: number) => cf().format(v),
+    /** An undefined amount is unknown (not yet stated by any source), shown as a dash, never as 0. */
+    yen: (v: number | undefined) => (v === undefined ? '—' : cf().format(v)),
     /** Millions of yen: "186 百万円" / "¥186M". */
-    yenCompact: (v: number) => (lang === 'ja' ? `${nf().format(v / 1_000_000)} 百万円` : `¥${nf().format(v / 1_000_000)}M`),
+    yenCompact: (v: number | undefined) => (v === undefined ? '—' : lang === 'ja' ? `${nf().format(v / 1_000_000)} 百万円` : `¥${nf().format(v / 1_000_000)}M`),
     date: (iso: string) => df().format(new Date(`${iso}T00:00:00+09:00`)),
     month: (d: Date) => mf().format(d),
     time: (d: Date) => tf().format(d),

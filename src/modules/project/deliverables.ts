@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { LoadedPack } from '../../data/pack.ts';
-import type { Entity, EntityOf } from '../../data/schema.ts';
+import { solutionMoney, type Entity, type EntityOf } from '../../data/schema.ts';
 import { chooseKpiVisual } from '../../domain/kpi.ts';
 import { rankIssues } from '../../domain/priority.ts';
 import { DEFAULT_WEIGHTS } from '../../domain/summary.ts';
@@ -327,8 +327,10 @@ const dayMs = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
  * Payback counted from the start of the solution's first initiative: the benefit is assumed to begin only when its
  * last initiative ends (conservative), so the build period is added to investment ÷ annual benefit.
  */
-export function paybackYears(s: EntityOf<'solution'>, inits: EntityOf<'initiative'>[]): number {
-  return buildYears(s.id, inits) + (s.annualBenefitJpy > 0 ? s.costJpy / s.annualBenefitJpy : Infinity);
+export function paybackYears(s: EntityOf<'solution'>, inits: EntityOf<'initiative'>[]): number | null {
+  const m = solutionMoney(s);
+  if (!m) return null;
+  return buildYears(s.id, inits) + (m.benefit > 0 ? m.cost / m.benefit : Infinity);
 }
 
 /** Years from the start of the solution's first initiative to the end of its last (0 without initiatives). */
@@ -853,7 +855,7 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
         check: (c) => {
           const inits = kindOf(c.pack, 'initiative');
           if (inits.length === 0) return fail('noInitiatives');
-          const bad = inits.filter((i) => c.pack.byId.get(i.ownerId)?.kind !== 'person');
+          const bad = inits.filter((i) => !(i.ownerId && c.pack.byId.get(i.ownerId)?.kind === 'person') && !i.ownerRole);
           return bad.length ? fail('initiativesWithoutOwner', entityRefs(bad), { n: bad.length }) : pass('allInitiativesOwned', { n: inits.length });
         },
       },
@@ -865,8 +867,11 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           const inits = kindOf(c.pack, 'initiative');
           const max = paybackLimit(c.deliverables);
           const years = solutions.map((s) => paybackYears(s, inits));
-          const bad = solutions.filter((_, i) => years[i]! > max);
-          const worst = Math.max(...years);
+          const unknown = solutions.filter((_, i) => years[i] === null);
+          if (unknown.length) return fail('paybackUnknown', entityRefs(unknown), { n: unknown.length });
+          const known = years as number[];
+          const bad = solutions.filter((_, i) => known[i]! > max);
+          const worst = Math.max(...known);
           const shown = Number.isFinite(worst) ? worst.toFixed(1) : '∞';
           return bad.length ? fail('paybackTooLong', entityRefs(bad), { n: bad.length, max, worst: shown }) : pass('paybackOk', { n: solutions.length, max, worst: shown });
         },

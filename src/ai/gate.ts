@@ -4,7 +4,7 @@ export type GateReason =
   | 'liveDisabled' // FR-132: the user has not explicitly enabled real connections
   | 'notConfirmed' // the user has not given broad send consent in AI settings
   | 'notConfigured' // no connection settings (endpoint/deployment/key held by the relay)
-  | 'budget' // budget guard refused (see BudgetDecision.reasons)
+  | 'budget' // a safety limit refused (token cap, minimum interval, daily calls; see BudgetDecision.reasons)
   | 'liveFailed'; // the live call was attempted and failed (FR-283: fall back to the mock)
 
 export interface GateInput {

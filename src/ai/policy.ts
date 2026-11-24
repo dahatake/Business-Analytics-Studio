@@ -12,20 +12,12 @@ export function isAiUse(value: unknown): value is AiUse {
   return typeof value === 'string' && AI_USES.some((use) => use === value);
 }
 
-export const DEFAULT_MONTHLY_BUDGET_JPY = 100_000;
-
 export const AI_LIMITS = {
   dailyCalls: 30,
   maxInputTokens: 8000,
   maxOutputTokens: 1500,
   minIntervalMs: 5000,
-  monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
-  warnRatio: 0.8,
-  stopRatio: 1.0,
-  estimateSafetyFactor: 1.2,
 };
-
-export type Limits = typeof AI_LIMITS;
 
 export interface PerCallLimits {
   dailyCalls?: number;
@@ -70,7 +62,7 @@ export const WORKIQ_SOURCE = {
   requiredFor: ['foundry'] as readonly Provider[],
   data: 'To Work IQ: company and project names, purpose, focus and as-of date in the questions the relay builds, and, for a deep read, the links of the OneDrive or SharePoint files Work IQ itself cited (and, when they do not answer, one follow-up turn in that ask conversation). Some searches name the Microsoft 365 source to search. The answer and citation titles are internal and go to the selected provider (Microsoft Foundry or GitHub Copilot) as packBuild material',
   enableCondition: 'Microsoft Foundry or GitHub Copilot selected and ready + the Work IQ CLI (or a tenant and app (client) ID signed in by device code, delegated WorkIQAgent.Ask) saved and verified in the relay + opt-in per run in the pack dialog. Required for Foundry, optional for GitHub Copilot',
-  cost: 'Billed by Microsoft as Copilot Credits or within the Microsoft 365 Copilot licence; unknown to the app and not counted in the app budget',
+  cost: 'Billed by Microsoft as Copilot Credits or within the Microsoft 365 Copilot licence; unknown to the app and not included in the per-job token summary',
   decidedBy: 'docs/decision-guide.md D-14 (2026-11-11; GitHub Copilot added 2026-11-19)',
 };
 

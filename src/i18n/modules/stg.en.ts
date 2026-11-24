@@ -35,7 +35,6 @@ export const stgEn: Record<keyof typeof stgJa, string> = {
   'stg.complete': 'The current step meets its exit criteria. Continue to the next step and verify outcomes.',
   'stg.optimize': 'Optimize with Copilot',
   'stg.liveHint': 'Uses the configured Foundry / GitHub Copilot connection to create a strategy and concrete tactics for the current step. Drafts are saved automatically; original data is unchanged until approval.',
-  'stg.budget': 'This feature checks known provider charges against JPY 10,000/month per provider, or the lower app budget. Unknown charges and other applications/Azure resources cannot be reliably capped. External billing controls are also required.',
   'stg.draft': 'Draft (not applied)',
   'stg.stepDraft': 'Strategy and tactics draft for {step}',
   'stg.sharedDraft': 'Shared strategy draft for all steps (batch generated)',

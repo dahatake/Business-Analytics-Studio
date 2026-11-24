@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { entitiesOf, subsetPack } from '../../data/pack.ts';
-import { LText, type Entity, type EntityOf } from '../../data/schema.ts';
+import { LText, solutionMoney, type Entity, type EntityOf } from '../../data/schema.ts';
 import type { Lang } from '../../i18n/index.ts';
 import { createScopedStore, type ImprovementStep } from '../../state/projects.ts';
 import type { Audience } from '../../state/settings.ts';
@@ -46,7 +46,9 @@ export interface OverviewDraft {
   audience: Audience;
   at: string;
   provider: 'foundry' | 'copilotSdk';
-  costJpy: number | null;
+  /** Tokens the provider reported for the call that wrote the draft; null = unknown. Absent on older drafts. */
+  inputTokens?: number | null;
+  outputTokens?: number | null;
 }
 export interface OverviewState {
   axis?: OverviewAxis;
@@ -138,7 +140,10 @@ export function issueScore(issue: EntityOf<'issue'>, axis: OverviewAxis, ctx: Ch
     // Evidence gaps first: this measures missing provenance, not business impact.
     case 'evidence': return issue.sourceIds.some((id) => ctx.pack.byId.get(id)?.kind === 'source') ? 0 : 1;
     // Best individual benefit/cost ratio, never summed across overlapping solutions.
-    case 'money': return solutions.length ? Math.max(...solutions.map((s) => s.annualBenefitJpy / s.costJpy)) : null;
+    case 'money': {
+      const ratios = solutions.flatMap((s) => { const m = solutionMoney(s); return m ? [m.benefit / m.cost] : []; });
+      return ratios.length ? Math.max(...ratios) : null;
+    }
     case 'people': return solutions.filter((s) => solutionType(s, ctx.strategy).type === 'people').length;
     case 'assets': return solutions.filter((s) => solutionType(s, ctx.strategy).type === 'asset').length;
   }
@@ -264,8 +269,10 @@ export function validateOverviewProposal(raw: unknown, ctx: CheckContext, step?:
   if (step && audience === 'internal') collect(ctx.deliverables.docs[step] ?? {});
   [1, 2, 3, 4, 5].forEach(collect);
   entitiesOf('solution', ctx.pack).forEach((s) => {
-    facts.push({ id: s.id, label: s.name, value: s.costJpy, format: 'yen' }, { id: s.id, label: s.name, value: s.annualBenefitJpy, format: 'yen' });
-    collect(s.annualBenefitJpy / s.costJpy);
+    if (s.costJpy !== undefined) facts.push({ id: s.id, label: s.name, value: s.costJpy, format: 'yen' });
+    if (s.annualBenefitJpy !== undefined) facts.push({ id: s.id, label: s.name, value: s.annualBenefitJpy, format: 'yen' });
+    const m = solutionMoney(s);
+    if (m) collect(m.benefit / m.cost);
   });
   const names = ctx.pack.pack.entities.flatMap((e) => [e.name.ja, e.name.en, e.description.ja, e.description.en]);
   const text = [p.answer, ...p.findings.map((f) => f.text), ...p.actions.map((f) => f.text), ...p.caveats, p.axisReason,

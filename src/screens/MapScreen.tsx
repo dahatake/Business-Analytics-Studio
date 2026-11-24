@@ -7,7 +7,7 @@ import countriesTopo from 'world-atlas/countries-50m.json';
 import { Button, Switch } from '@fluentui/react-components';
 import { Add16Regular, Subtract16Regular, ZoomFit24Regular } from '@fluentui/react-icons';
 import { entitiesOf, getEntity, loaded } from '../data/pack.ts';
-import type { EntityOf } from '../data/schema.ts';
+import { isLocated, type EntityOf, type LocatedSite } from '../data/schema.ts';
 import { useI18n } from '../i18n/index.ts';
 import { useReducedMotion, motionMs } from '../state/motion.ts';
 import { replaceQuery, useRoute } from '../state/router.ts';
@@ -126,7 +126,7 @@ function MapContents() {
   const [k, setK] = useState(1);
   const labelsRef = useRef<Set<string>>(new Set());
   const ROLE_PRIORITY = { hq: 3, plant: 2, dc: 1, office: 1 } as const;
-  const sites = entitiesOf('site');
+  const sites = entitiesOf('site').filter(isLocated);
   const world = sites.some((s) => !inJapan(s));
   const { projection, visibleCountries, paths, japanOutline } = useMemo(() => mapView(world), [world]);
   // On the world map, countries with a site are highlighted (Japan on the national map).
@@ -137,9 +137,9 @@ function MapContents() {
   const roles = [...new Set(sites.map((s) => s.role))];
 
   const flowLines = useMemo(() => loaded.pack.flows
-    .filter((f) => getEntity(f.source)?.kind === 'site' && getEntity(f.target)?.kind === 'site')
+    .filter((f) => { const a = getEntity(f.source), b = getEntity(f.target); return a?.kind === 'site' && b?.kind === 'site' && isLocated(a) && isLocated(b); })
     .map((f) => {
-      const s = getEntity(f.source) as Site, tg = getEntity(f.target) as Site;
+      const s = getEntity(f.source) as LocatedSite, tg = getEntity(f.target) as LocatedSite;
       return { key: `${f.source}-${f.target}`, value: f.valueT, a: projection([s.lon, s.lat])!, b: projection([tg.lon, tg.lat])! };
     }), [projection]);
 

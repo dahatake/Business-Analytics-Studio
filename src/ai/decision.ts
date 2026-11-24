@@ -22,19 +22,6 @@ export type DecisionUse = (typeof DECISION_USES)[number];
 /** Ledger label of the synthetic connection test (not a request use). */
 export const DECISION_TEST_USE = 'decisionTest';
 
-/**
- * Azure Retail Prices API, meter "Decision 1.1 Gl 1M Tokens" (Global, JPY, effective 2026-11-01): one rate for every
- * billed token. Used only to record an estimate in the app ledger; the Azure invoice is authoritative.
- */
-export const DECISION_PRICE = {
-  jpyPerMTokens: 6.64566,
-  meter: 'Decision 1.1 Gl 1M Tokens',
-  effective: '2026-11-01',
-  source: 'https://prices.azure.com/api/retail/prices?currencyCode=JPY&$filter=meterName eq \'Decision 1.1 Gl 1M Tokens\'',
-} as const;
-
-export const decisionCostJpy = (inputTokens: number, outputTokens: number) => ((inputTokens + outputTokens) * DECISION_PRICE.jpyPerMTokens) / 1_000_000;
-
 export type DecisionConnection = {
   /** Foundry resource origin, e.g. https://name.services.ai.azure.com */
   endpoint: string;

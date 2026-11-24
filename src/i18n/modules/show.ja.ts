@@ -196,7 +196,7 @@ export const showJa = {
   'show.ai.reason.liveDisabled': '実接続がオンになっていません',
   'show.ai.reason.notConfirmed': 'AI 設定で包括的な送信同意をしていません',
   'show.ai.reason.notConfigured': '接続設定がありません',
-  'show.ai.reason.budget': '予算の上限に達しています',
+  'show.ai.reason.budget': '回数・大きさ・間隔のいずれかの上限に達しています',
   'show.ai.reason.liveFailed': '実際の送信に失敗したため、モックで応答しました',
 
   'show.quiz.title': 'AI 成熟度クイズ',

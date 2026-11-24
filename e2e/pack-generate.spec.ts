@@ -44,8 +44,8 @@ test('launch screen: AI settings and the generator are reachable; missing requir
   await expect(settings.getByTestId('ai-workiq')).toBeVisible(); // D-14: optional with GitHub Copilot (required with Foundry)
   await expect(settings.getByTestId('ai-copilot-signin')).toContainText('Not checked');
   await expect(settings.getByTestId('ai-endpoint')).toHaveCount(0);
-  await expect(settings.getByTestId('ai-price-request')).toHaveCount(0); // Copilot charges cannot be priced or capped by BAS
-  await expect(settings.getByTestId('ai-provider-cost-note')).toBeVisible();
+  await expect(settings.getByTestId('ai-price-request')).toHaveCount(0);
+  await expect(settings.getByTestId('ai-provider-cost-note')).toHaveCount(0);
   await expect(settings.getByTestId('ai-send-consent')).toBeVisible(); // the dialog is the full AI settings, consent included
   await expect(settings.getByTestId('ai-readiness-consent')).toBeVisible();
   expect(await scan(page)).toEqual([]);
@@ -89,7 +89,7 @@ test('a Foundry quota rejection explains the cause and does not retry before the
     if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
     sessionStorage.setItem('bas.e2e.ai-seeded', '1');
     localStorage.setItem('bas.ai.settings', JSON.stringify({
-      version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true, monthlyBudgetJpy: 100000 },
+      version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true },
     }));
   }, connection);
   await page.route('**/relay/status', (route) => route.fulfill({ json: {
@@ -108,7 +108,6 @@ test('a Foundry quota rejection explains the cause and does not retry before the
   await dialog.getByTestId('gen-news').uncheck();
   await dialog.getByTestId('gen-workiq').uncheck();
   await dialog.getByTestId('gen-check-approved').check();
-  await dialog.getByTestId('gen-check-cost').check();
   await dialog.getByTestId('gen-start').click();
   await expect(dialog.getByTestId('gen-error')).toContainText('Microsoft Foundry');
   await expect(dialog.getByTestId('gen-error')).toContainText('HTTP 429');

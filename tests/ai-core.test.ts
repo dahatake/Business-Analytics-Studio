@@ -1,15 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { AI_USES, AI_LIMITS, PER_USE_LIMITS } from '../src/ai/policy.ts';
-import {
-  checkBudget, jstDay, jstMonth, estimateTokens, estimateCostJpy, actualCostJpy, parseUnitPrices, partitionLedger, ledgerCutoffMonth,
-  type UsageRecord,
-} from '../src/ai/budget.ts';
+import { checkBudget, jstDay, estimateTokens, type UsageRecord } from '../src/ai/budget.ts';
 import { evaluateGate } from '../src/ai/gate.ts';
 import { selectOutbound } from '../src/ai/redact.ts';
 import { aiComplete, preflight, readLedger, registerMock, setLiveTransport, setRuntimeSettingsProvider, type LiveCall } from '../src/ai/client.ts';
 import { loaded } from '../src/data/pack.ts';
 
-const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'explain', estimatedInputTokens: 10, maxOutputTokens: 100, estimatedCostJpy: 1 });
+const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'explain', estimatedInputTokens: 10, maxOutputTokens: 100 });
 const allTrue = { liveEnabled: true, sendConsent: true, configured: true, budget: okBudget };
 
 describe('AI send gate', () => {
@@ -20,7 +17,7 @@ describe('AI send gate', () => {
     }
   });
 
-  it('requires live mode, saved consent, a configured provider and budget', () => {
+  it('requires live mode, saved consent, a configured provider and the safety limits', () => {
     expect(evaluateGate(allTrue).allowed).toBe(true);
     expect(evaluateGate({ ...allTrue, liveEnabled: false }).reasons).toEqual(['liveDisabled']);
     expect(evaluateGate({ ...allTrue, sendConsent: false }).reasons).toEqual(['notConfirmed']);
@@ -29,26 +26,13 @@ describe('AI send gate', () => {
   });
 });
 
-describe('budget guard (PARAM-113〜119, D-3)', () => {
-  it('strategy optimization checks the provider-wide 10,000 JPY ceiling and the lower app ceiling', () => {
-    localStorage.clear();
-    const now = new Date('2026-11-16T00:00:00Z');
-    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 100_000 }));
-    localStorage.setItem('bas.ai.ledger', JSON.stringify([{ at: '2026-11-01T00:00:00Z', use: 'packBuild', provider: 'foundry', inputTokens: 0, outputTokens: 0, costJpy: 10_001 }]));
-    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x' }, now).allowed).toBe(false);
-    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 100_000 }));
-    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x' }, now).allowed).toBe(true);
-    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 1000 }));
-    expect(preflight({ use: 'strategyOverview', lang: 'en', prompt: 'x' }, now).allowed).toBe(false);
-    localStorage.clear();
-    setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
-  });
-  const rec = (at: string, use = 'explain', costJpy = 0): UsageRecord => ({ at, use, inputTokens: 0, outputTokens: 0, costJpy });
-  const req = { use: 'explain', estimatedInputTokens: 100, maxOutputTokens: 1000, estimatedCostJpy: 10 };
+describe('safety limits (PARAM-113〜116; no monetary budget)', () => {
+  const rec = (at: string, use = 'explain'): UsageRecord => ({ at, use, inputTokens: 0, outputTokens: 0 });
+  const req = { use: 'explain', estimatedInputTokens: 100, maxOutputTokens: 1000 };
 
-  it('uses Japan calendar days and months', () => {
+  it('uses Japan calendar days', () => {
     expect(jstDay(new Date('2026-10-31T15:30:00Z'))).toBe('2026-11-01');
-    expect(jstMonth(new Date('2026-10-31T14:59:00Z'))).toBe('2026-10');
+    expect(jstDay(new Date('2026-10-31T14:59:00Z'))).toBe('2026-10-31');
   });
 
   it('enforces the daily quota shared by explain and chat (Q-059)', () => {
@@ -63,27 +47,18 @@ describe('budget guard (PARAM-113〜119, D-3)', () => {
     expect(d.reasons).toEqual(['tooSoon', 'inputTooLarge', 'outputTooLarge']);
   });
 
-  it('warns at 80% and stops at 100% of the monthly budget, resetting each JST month', () => {
-    const spent = (jpy: number) => [rec('2026-11-01T09:00:00+09:00', 'review', jpy)];
-    expect(checkBudget(spent(79_000), new Date('2026-11-20T00:00:00+09:00'), req).level).toBe('ok');
-    expect(checkBudget(spent(80_000), new Date('2026-11-20T00:00:00+09:00'), req).level).toBe('warn');
-    const stop = checkBudget(spent(99_995), new Date('2026-11-20T00:00:00+09:00'), req);
-    expect(stop.level).toBe('stop');
-    expect(stop.allowed).toBe(false);
-    expect(checkBudget(spent(99_995), new Date('2026-12-01T00:00:00+09:00'), req).level).toBe('ok');
-  });
-
-  it('honours a user-changed monthly budget (D-3: changeable later)', () => {
-    const limits = { ...AI_LIMITS, monthlyBudgetJpy: 20_000 };
-    expect(checkBudget([rec('2026-11-01T09:00:00+09:00', 'explain', 19_995)], new Date('2026-11-09T12:00:00+09:00'), req, limits).reasons).toEqual(['monthlyStop']);
-  });
-
-  it('separates unknown costs from known spend while counting them toward rate and daily limits', () => {
+  it('counts calls with unknown tokens and old records that carry a retired cost field toward the rate and daily limits', () => {
     const now = new Date('2026-11-09T12:00:03+09:00');
-    const unknown: UsageRecord = { ...rec('2026-11-09T12:00:00+09:00'), costJpy: null };
-    const decision = checkBudget([rec('2026-11-01T09:00:00+09:00', 'packBuild', 500), unknown], now, { ...req, estimatedCostJpy: null });
-    expect(decision).toMatchObject({ monthSpentJpy: 500, monthUnpricedCalls: 1, todayCalls: 1, reasons: ['tooSoon'] });
-    expect(checkBudget(Array.from({ length: 30 }, () => unknown), now, { ...req, estimatedCostJpy: null }).reasons).toContain('dailyLimit');
+    const unknown: UsageRecord = { ...rec('2026-11-09T12:00:00+09:00'), inputTokens: null, outputTokens: null };
+    expect(checkBudget([unknown], now, req)).toMatchObject({ todayCalls: 1, reasons: ['tooSoon'] });
+    const old = { ...rec('2026-11-09T12:00:00+09:00'), costJpy: 123 } as UsageRecord;
+    expect(checkBudget(Array.from({ length: 30 }, () => old), now, req).reasons).toContain('dailyLimit');
+    expect(checkBudget([unknown], now, req)).not.toHaveProperty('monthSpentJpy');
+  });
+
+  it('estimates tokens before sending', () => {
+    expect(estimateTokens('受注')).toBe(2);
+    expect(estimateTokens('abcdefgh')).toBe(2);
   });
 
   it('applies PARAM-113〜116 only where decided, not to every use (§3.1)', () => {
@@ -91,29 +66,10 @@ describe('budget guard (PARAM-113〜119, D-3)', () => {
     expect(checkBudget([], at, { ...req, use: 'presentation', maxOutputTokens: 4000 }).reasons).toEqual([]);
     expect(checkBudget([], at, { ...req, use: 'presentation', maxOutputTokens: 4001 }).reasons).toEqual(['outputTooLarge']);
     expect(checkBudget([], at, { ...req, use: 'review', estimatedInputTokens: 50_000, maxOutputTokens: 9000 }).reasons).toEqual([]);
-    expect(checkBudget([rec('2026-11-01T09:00:00+09:00', 'explain', 100_000)], at, { ...req, use: 'review' }).reasons).toEqual(['monthlyStop']);
     expect(checkBudget([rec('2026-11-09T11:59:59+09:00', 'explain')], at, { ...req, use: 'chat', estimatedInputTokens: 9000 }).reasons).toEqual([]);
     expect(PER_USE_LIMITS.explain?.maxOutputTokens).toBe(1500);
   });
 
-  it('estimates tokens and costs; prices are required (D-3)', () => {
-    expect(estimateTokens('受注')).toBe(2);
-    expect(estimateTokens('abcdefgh')).toBe(2);
-    expect(parseUnitPrices('', '1200')).toBeNull();
-    expect(parseUnitPrices('0', '1200')).toBeNull();
-    const p = parseUnitPrices('300', 1200)!;
-    // The worked example in docs/decision-guide.md D-3: 8000 in + 1500 out = 4.2 JPY, ×1.2 for the estimate.
-    expect(actualCostJpy(8000, 1500, p)).toBeCloseTo(4.2, 9);
-    expect(estimateCostJpy(8000, 1500, p)).toBeCloseTo(5.04, 9);
-  });
-
-  it('D-7: keeps 13 JST months and reports older records (pruned only by an explicit action)', () => {
-    const now = new Date('2026-11-09T12:00:00+09:00');
-    expect(ledgerCutoffMonth(now)).toBe('2025-11');
-    const { keep, expired } = partitionLedger([rec('2025-10-31T23:59:00+09:00'), rec('2025-11-01T00:00:00+09:00'), rec('2026-11-09T00:00:00+09:00')], now);
-    expect(expired.map((r) => r.at)).toEqual(['2025-10-31T23:59:00+09:00']);
-    expect(keep).toHaveLength(2);
-  });
 });
 
 describe('outbound selection (D-2: internal may be sent)', () => {
@@ -144,24 +100,25 @@ describe('AI client', () => {
 
   const kpis = () => loaded.pack.entities.filter((e) => e.kind === 'kpi');
 
-  it('sends "explain" live only when every condition holds, and records the actual cost', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+  it('sends "explain" live only when every condition holds, and records the reported tokens', async () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
     const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis() });
     expect(r.mode).toBe('live');
     expect(calls).toHaveLength(1);
     expect(calls[0]!.maxOutputTokens).toBe(1500);
     expect(calls[0]!.context).toContain('Employee engagement'); // internal-sourced KPI is sent (D-2)
-    expect(r.costJpy).toBeCloseTo(0.9, 9);
-    expect(readLedger()).toHaveLength(1);
+    expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 500 });
+    expect(readLedger()).toEqual([expect.objectContaining({ use: 'explain', inputTokens: 1000, outputTokens: 500 })]);
+    expect(readLedger()[0]).not.toHaveProperty('costJpy');
   });
 
   it('falls back to a labelled mock without calling the transport when any condition fails', async () => {
     registerMock('explain', (q, ctx) => `mock:${q.lang}:${ctx.split('\n').length}`);
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: false, configured: true, prices: null }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: false, configured: true }));
     const noConfirmation = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain', entities: kpis() });
     expect(noConfirmation.mode).toBe('mock');
     expect(noConfirmation.blockedReasons).toEqual(['notConfirmed']);
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
     const chat = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi' });
     expect(chat.mode).toBe('live');
     expect(calls).toHaveLength(1);
@@ -182,16 +139,17 @@ describe('AI client', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('stops sending once the monthly budget is used up (0 transport calls)', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, monthlyBudgetJpy: 1, prices: { inputPerM: 300, outputPerM: 1200 } }));
-    localStorage.setItem('bas.ai.ledger', JSON.stringify([{ at: new Date().toISOString(), use: 'review', inputTokens: 0, outputTokens: 0, costJpy: 1 }]));
+  it('stops sending once the daily call limit is used up, even with old records that carry a cost (0 transport calls)', async () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
+    const at = new Date(Date.now() - 60_000).toISOString();
+    localStorage.setItem('bas.ai.ledger', JSON.stringify(Array.from({ length: AI_LIMITS.dailyCalls }, () => ({ at, use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 }))));
     const r = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain' });
     expect(r.blockedReasons).toContain('budget');
     expect(calls).toHaveLength(0);
   });
 
   it('a failing live call falls back to the mock (FR-283)', async () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
     setLiveTransport(async () => { throw new Error('network'); });
     const r = await aiComplete({ use: 'explain', lang: 'ja', prompt: '説明' });
     expect(r.mode).toBe('mock');
@@ -199,12 +157,12 @@ describe('AI client', () => {
     expect(readLedger()).toHaveLength(0);
   });
 
-  it('preflight reports request content and estimated cost without requiring per-send confirmation', () => {
-    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, prices: { inputPerM: 300, outputPerM: 1200 } }));
+  it('preflight reports request content without requiring per-send confirmation', () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
     const pf = preflight({ use: 'explain', lang: 'en', prompt: 'Explain', entities: loaded.pack.entities });
     expect(pf.internalCount).toBeGreaterThan(0);
     expect(pf.personCount).toBe(10);
-    expect(pf.estimatedCostJpy).toBeGreaterThan(0);
+    expect(pf.estimatedInputTokens).toBeGreaterThan(0);
     expect(pf.reasons).toEqual([]);
   });
 

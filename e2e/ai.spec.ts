@@ -116,7 +116,7 @@ test.describe('Strategic overview optimization', () => {
     });
     await open(page, '/', { lang: 'en' });
     await seedDeviceData(page, {
-      'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey', monthlyBudgetJpy: 100000 }, version: 1 }),
+      'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }),
     });
     await page.reload();
     const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
@@ -193,7 +193,7 @@ function recordResponses(page: Page): string[] {
 test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/012)', () => {
   test.describe.configure({ mode: 'serial' });
 
-  test('Copilot is ready without a unit price and explains unknown charges', async ({ page }) => {
+  test('Copilot is ready without any price or budget input', async ({ page }) => {
     await page.route('**/relay/status', async (route) => {
       const response = await route.fetch();
       await route.fulfill({ json: { ...await response.json(), copilot: { model: 'gpt-5' } } });
@@ -203,7 +203,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await page.getByTestId('ai-send-consent').check();
     await page.getByTestId('ai-live-switch').check();
     await expect(page.getByTestId('ai-price-request')).toHaveCount(0);
-    await expect(page.getByTestId('ai-provider-cost-note')).toContainText('請求額を制限できません');
+    await expect(page.getByTestId('ai-provider-cost-note')).toHaveCount(0);
     await expect(page.getByTestId('ai-state')).not.toContainText('モック');
     await page.reload();
     await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
@@ -647,7 +647,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       await settings.getByTestId('ai-deployment').fill('gpt-deployed');
       await expect(settings.getByTestId('ai-price-input')).toHaveCount(0);
       await expect(settings.getByTestId('ai-price-output')).toHaveCount(0);
-      await expect(settings.getByTestId('ai-connection-test-cost')).toBeVisible();
+      await expect(settings.getByTestId('ai-connection-test-cost')).toHaveCount(0);
       await expect(settings.getByTestId('ai-connection-destination')).toContainText('https://resource.services.ai.azure.com/openai/v1/chat/completions');
       await expect(settings.getByTestId('ai-api-version')).toBeDisabled();
       await expect(settings.getByTestId('ai-connection-validation')).toHaveCount(0);
@@ -722,7 +722,7 @@ test.describe('verified Foundry connection settings (D-13)', () => {
   });
 
   for (const lang of ['en', 'ja'] as const) {
-    test(`${lang}: project guidance, DNS/auth failures, v1 verification, cost and key invalidation`, async ({ page }) => {
+    test(`${lang}: project guidance, DNS/auth failures, v1 verification and key invalidation`, async ({ page }) => {
       sent = [];
       responseStatus = 401;
       const bodies = recordResponses(page);
@@ -771,7 +771,8 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       const ledger = await page.evaluate(() => JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string }[]);
       expect(ledger).toHaveLength(1);
       expect(ledger[0]!.use).toBe('connectionTest');
-      await expect(page.getByTestId('ai-usage-month').getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^(?:0|1|0\.\d+)$/);
+      await expect(page.getByTestId('ai-usage-daily')).toBeVisible();
+      await expect(page.getByTestId('ai-usage-month')).toHaveCount(0);
       await page.getByTestId('ai-connection-consent').check();
       await expect(page.getByTestId('ai-connection-save')).toBeEnabled({ timeout: 7000 });
       await page.reload();
@@ -843,7 +844,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
   test('story video exports standalone HTML with playback and safe model text', async ({ page }) => {
     await open(page, '/assistant', { lang: 'en', motion: 'full' });
     const story = page.getByTestId('ai-story');
-    await expect(story.getByTestId('ai-story-estimate')).toContainText('server-side model pricing');
+    await expect(story.getByTestId('ai-story-estimate')).toHaveCount(0);
     await expect(story.getByTestId('ai-story-generate-live')).toBeDisabled();
     await expect(story.getByTestId('ai-story-generate')).toBeEnabled();
     await expect(story.getByTestId('ai-story-overcap')).toHaveCount(0);
@@ -886,15 +887,12 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
       connection: { endpoint: 'https://example.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' },
       connectionVerifiedAt: '2026-11-17T00:00:00Z', keyProtection: null, copilot: null, workiq: null,
     } }));
-    await page.route('**/relay/story/estimate', (route) => route.fulfill({ json: {
-      maximumJpy: 10, remainingJpy: 9990, source: 'https://azure.microsoft.com/pricing/', expiresAt: '2026-12-01T00:00:00Z',
-    } }));
     await page.route('**/relay/ai', async (route) => {
       expect(route.request().postDataJSON().use).toBe('storyVideo');
       calls++;
       await route.fulfill({ json: {
         text: JSON.stringify({ scenes: [{ title: 'Source evidence', narration: '<img src=x onerror=alert(1)>', role: 'opening', durationMs: 3000 }] }),
-        inputTokens: 100, outputTokens: 80, costJpy: 1.25,
+        inputTokens: 100, outputTokens: 80,
       } });
     });
     const settings = await openAiSettings(page, { lang: 'en' });
@@ -904,7 +902,7 @@ test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
     await page.goto('/#/assistant');
     await page.getByTestId('ai-story-generate-live').click();
     await expect(page.getByTestId('ai-story').getByTestId('ai-live-label')).toBeVisible();
-    await expect(page.getByTestId('ai-story').getByTestId('ai-live-label')).toContainText('1.25');
+    await expect(page.getByTestId('ai-story').getByTestId('ai-live-tokens')).toHaveText('Tokens used: 180 (input 100 / output 80)');
     expect(calls).toBe(1);
     const frame = page.frameLocator('[data-testid="ai-story-player"]');
     await expect(frame.locator('li')).toContainText('<img src=x onerror=alert(1)>');
@@ -984,8 +982,8 @@ test.describe('legacy Foundry settings (D-6, P-01)', () => {
   });
 });
 
-test.describe('usage ledger retention (D-3, D-7)', () => {
-  test('one budget input; old records are counted and deleted only after confirmation', async ({ page }) => {
+test.describe('usage log (budget management removed)', () => {
+  test('shows only today\'s call count: no budget, price or retention controls, and old records with a cost still load', async ({ page }) => {
     await page.addInitScript(() => {
       if (sessionStorage.getItem('bas.e2e.ledger')) return;
       sessionStorage.setItem('bas.e2e.ledger', '1');
@@ -995,17 +993,13 @@ test.describe('usage ledger retention (D-3, D-7)', () => {
       ]));
     });
     await openAiSettings(page, { lang: 'en' });
-    await expect(page.getByTestId('ai-review-budget-input')).toHaveCount(0);
-    await expect(page.getByTestId('ai-budget-input')).toHaveValue('100000');
+    await expect(page.getByTestId('ai-usage-daily')).toContainText('1 / 30');
     await expect(page.getByTestId('ai-usage-no-content')).toBeVisible();
-    await expect(page.getByTestId('ai-ledger-expired')).toContainText('older than 13 months: 1');
-    await page.getByTestId('ai-ledger-prune-button').click();
-    const dialog = page.getByTestId('ai-ledger-prune-confirm');
-    await expect(dialog).toContainText('1 usage records');
+    for (const id of ['ai-budget-input', 'ai-usage-month', 'ai-usage-unpriced', 'ai-prices', 'ai-ledger-prune', 'ai-ledger-expired', 'ai-ledger-prune-button']) {
+      await expect(page.getByTestId(id)).toHaveCount(0);
+    }
     expect(await scan(page)).toEqual([]);
-    await dialog.getByTestId('ai-ledger-prune-ok').click();
-    await expect(page.getByTestId('ai-ledger-expired')).toContainText('older than 13 months: 0');
-    expect(JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as unknown[]).toHaveLength(1);
+    expect(JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as unknown[]).toHaveLength(2);
   });
 });
 
@@ -1075,7 +1069,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await page.getByTestId('ai-live-switch').check();
   }
 
-  test('confirm unknown charges → live answer and token record without manual pricing; a zero budget stops sending', async ({ page }) => {
+  test('live answer and token record without any pricing or budget input; the job shows its reported tokens', async ({ page }) => {
     await configure(page, 'en');
     await expect(page.getByTestId('ai-state')).toHaveText('Live (consent and settings active)');
     await expect(page.getByTestId('ai-configured')).toContainText('Saved');
@@ -1088,7 +1082,6 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await page.goto('/#/');
     await page.getByTestId('ai-explain-button').click();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
-    await expect(page.getByTestId('ai-explain-panel').getByTestId('ai-live-label')).toContainText('Unknown');
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
 
@@ -1102,12 +1095,12 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     expect(received[0]!.apiKey).toBe(FAKE_KEY);
     expect(received[0]!.body).toContain('Transferring expert skills'); // internal entity (D-2)
     expect((JSON.parse(received[0]!.body) as { max_completion_tokens: number }).max_completion_tokens).toBeLessThanOrEqual(1500);
-    const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { costJpy: number | null; use: string; inputTokens: number; outputTokens: number }[];
+    const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as { use: string; inputTokens: number; outputTokens: number }[];
     expect(ledger).toHaveLength(2);
     expect(ledger[0]!.use).toBe('connectionTest');
     expect(ledger[1]!.use).toBe('explain');
-    expect(ledger[1]).toMatchObject({ costJpy: null, inputTokens: 2000, outputTokens: 300 });
-    await expect(panel.getByTestId('ai-live-label')).toContainText('Unknown');
+    expect(ledger[1]).toMatchObject({ inputTokens: 2000, outputTokens: 300 });
+    expect(ledger[1]).not.toHaveProperty('costJpy');
     await expect(panel.getByTestId('ai-live-tokens')).toHaveText('Tokens used: 2,300 (input 2,000 / output 300)');
     expect(JSON.stringify(ledger)).not.toContain('Stub live');
     await noJapanese(page);
@@ -1115,14 +1108,9 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await panel.getByRole('button', { name: 'Close' }).click();
     await expect(panel).toBeHidden();
 
-    // A zero budget still explicitly disables sending, including Foundry calls with unknown costs.
     await page.getByTestId('nav-ai-settings').click();
-    await expect(page.getByTestId('ai-usage-unpriced')).toContainText('2 calls');
-    await page.getByTestId('ai-budget-input').fill('0');
-    await page.getByTestId('ai-settings-dialog-close').click();
-    await page.getByTestId('ai-explain-button').click();
-    await expect(panel.getByTestId('ai-mock-label').locator('[data-reason="budget"]')).toBeVisible();
-    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
+    await expect(page.getByTestId('ai-usage-daily')).toContainText('1 / 30');
+    await expect(page.getByTestId('ai-budget-input')).toHaveCount(0);
     expect(received).toHaveLength(1);
   });
 
@@ -1328,10 +1316,10 @@ test.describe('live generation through the relay (D-12)', () => {
     await dialog.getByTestId('gen-news').uncheck(); // no internet in the test
     await dialog.getByTestId('gen-files').setInputFiles({ name: 'delivery-kpi.csv', mimeType: 'text/csv', buffer: Buffer.from('kpi,baseline,current,target\non-time delivery %,92,94,98\ngear unit price JPY,12000,,\nlogo minimum width: 20 px\n') });
     await expect(dialog.getByTestId('gen-file-list')).toContainText('delivery-kpi.csv');
-    await expect(dialog.getByTestId('gen-estimate')).toContainText('unknown charges are not free');
+    await expect(dialog.getByTestId('gen-estimate')).toContainText(/\d+ to \d+/);
+    await expect(dialog.getByTestId('gen-check-cost')).toHaveCount(0);
     await expect(dialog.getByTestId('gen-start')).toBeDisabled();
     await dialog.getByTestId('gen-check-approved').check();
-    await dialog.getByTestId('gen-check-cost').check();
     await expect(dialog.getByTestId('gen-start')).toBeDisabled(); // a model response and sign-in alone are insufficient
     await dialog.getByTestId('gen-open-settings').click();
     await settings.getByTestId('ai-workiq-consent').check();
@@ -1347,7 +1335,6 @@ test.describe('live generation through the relay (D-12)', () => {
     expect(await scan(page)).toEqual([]);
     // Verifying Work IQ and changing its inclusion alters the approved send scope, so reconfirm both approvals.
     await dialog.getByTestId('gen-check-approved').check();
-    await dialog.getByTestId('gen-check-cost').check();
     await expect(dialog.getByTestId('gen-start')).toBeEnabled();
     await dialog.getByTestId('gen-check-logo').check();
     await expect(dialog.getByTestId('gen-start')).toBeDisabled();
@@ -1362,8 +1349,7 @@ test.describe('live generation through the relay (D-12)', () => {
     await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
     await expect(dialog.getByTestId('gen-progress')).toHaveCount(0);
     await expect(dialog.getByTestId('gen-checks')).toHaveText('1 fix rounds, 0 items removed, 0 invented sources discarded');
-    await expect(dialog.getByTestId('gen-cost')).toContainText('(4 sends)');
-    await expect(dialog.getByTestId('gen-cost')).toContainText('Unknown');
+    await expect(dialog.getByTestId('gen-cost')).toHaveCount(0);
     // Tokens per step as the provider reported them (6,000 + 2,500 per call) and their total.
     await expect(dialog.getByTestId('gen-tokens-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500']);
     await expect(dialog.getByTestId('gen-tokens-row')).toContainText(['Foundation', 'Business', 'Check and fix', 'Five analyses']);
@@ -1384,12 +1370,12 @@ test.describe('live generation through the relay (D-12)', () => {
 
     const stored = await page.evaluate(() => ({
       index: JSON.parse(localStorage.getItem('bas.packs.index') ?? '{}') as Record<string, { files: string[]; entities: number }>,
-      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; costJpy: number | null; scope?: string; stage?: string }[],
+      ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; scope?: string; stage?: string }[],
     }));
     expect(stored.index['pj-c']).toMatchObject({ files: ['generated:foundry', 'delivery-kpi.csv'] });
     expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(4);
     expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'fix-1'], ['pj-c', 'analysis']]);
-    expect(stored.ledger.every((r) => r.costJpy === null)).toBe(true);
+    expect(stored.ledger.every((r) => !('costJpy' in r))).toBe(true);
 
     const reloaded = page.waitForEvent('load', { timeout: 10_000 }).catch(() => undefined);
     await dialog.getByTestId('gen-open').click();

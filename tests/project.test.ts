@@ -438,7 +438,7 @@ describe('export and restore (FR-051〜FR-056, FR-219)', () => {
   });
 
   it('includes the AI token table only for internal recipients, and still restores', () => {
-    const usage = summarizeTokens([{ at: '2026-05-01T00:00:00Z', use: 'explain', inputTokens: 2000, outputTokens: 300, costJpy: null }]);
+    const usage = summarizeTokens([{ at: '2026-05-01T00:00:00Z', use: 'explain', inputTokens: 2000, outputTokens: 300 }]);
     const internal = toMarkdown(prepareExport(source(demoData()), opts({ lang: 'en' })).bundle, usage);
     expect(internal).toContain('## Generative AI token usage');
     expect(internal).toContain('| Explain current state | 1 | 2,000 | 300 | 2,300 |');

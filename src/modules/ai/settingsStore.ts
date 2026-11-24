@@ -5,7 +5,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { checkBudget } from '../../ai/budget.ts';
 import { appendLedger, readLedger, setRuntimeSettingsProvider, type AiRuntimeSettings } from '../../ai/client.ts';
 import { CONNECTION_TEST_MAX_TOKENS, DEFAULT_FOUNDRY_API_VERSION, parseFoundryConnection } from '../../ai/foundry.ts';
-import { AI_LIMITS, DEFAULT_MONTHLY_BUDGET_JPY, workIqAllowedFor } from '../../ai/policy.ts';
+import { workIqAllowedFor } from '../../ai/policy.ts';
 import {
   clearMediaCheck, deleteCopilotSettings, deleteDecisionConnection, deleteRelayConnection, deleteSecret, deleteWorkIqSettings, fetchCopilotStatus, fetchRelayStatus, NO_MEDIA, NO_SPEECH_CONNECTION,
   saveCopilotModel, saveDecisionConnection, saveRelayConnection, saveSecret, selectDecisionModel,
@@ -14,7 +14,7 @@ import {
   type SpeechConnectionStatus, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
 import type { FoundryServicesInfo, MediaService } from '../../ai/mediaConnection.ts';
-import { DECISION_TEST_USE, decisionCostJpy, decisionUsesFoundry } from '../../ai/decision.ts';
+import { DECISION_TEST_USE, decisionUsesFoundry } from '../../ai/decision.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
 export type AuthMethod = 'apiKey' | 'entraId';
@@ -22,14 +22,7 @@ export type AuthMethod = 'apiKey' | 'entraId';
 /** Microsoft Foundry chat-completions API version used when none is entered (also the relay's default). */
 export const DEFAULT_API_VERSION = DEFAULT_FOUNDRY_API_VERSION;
 
-/** D-3: the single monthly budget is an integer number of JPY ≥ 0. Returns null for anything else. */
-export function parseBudget(raw: string): number | null {
-  const s = raw.trim();
-  if (!/^\d{1,12}$/.test(s)) return null;
-  return Number(s);
-}
-
-type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'entraTenantId' | 'liveEnabled' | 'sendConsent' | 'monthlyBudgetJpy';
+type Editable = 'provider' | 'endpoint' | 'deployment' | 'apiVersion' | 'authMethod' | 'entraTenantId' | 'liveEnabled' | 'sendConsent';
 
 /**
  * Non-secret AI settings (FR-275/FR-282/FR-167). App-wide, not per project: the connection belongs to the PC.
@@ -48,8 +41,6 @@ export interface AiSettingsState {
   liveEnabled: boolean;
   /** D-26: one-time permission for data included in AI requests, captured in AI settings. */
   sendConsent: boolean;
-  /** D-3: one monthly budget for the whole app (PARAM-117), default 100,000 JPY. */
-  monthlyBudgetJpy: number;
   relayReachable: boolean;
   foundryKeySaved: boolean;
   /** FR-324/FR-328: Speech / Vision through the relay's Foundry connection. */
@@ -105,7 +96,6 @@ export const useAiSettings = create<AiSettingsState>()(
       entraTenantId: '',
       liveEnabled: false,
       sendConsent: false,
-      monthlyBudgetJpy: DEFAULT_MONTHLY_BUDGET_JPY,
       relayReachable: false,
       foundryKeySaved: false,
       media: NO_MEDIA,
@@ -116,7 +106,7 @@ export const useAiSettings = create<AiSettingsState>()(
         if (r.ok && r.usage) {
           appendLedger({
             at: new Date().toISOString(), use: DECISION_TEST_USE, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens,
-            costJpy: decisionCostJpy(r.usage.inputTokens, r.usage.outputTokens), provider: 'foundry',
+            provider: 'foundry',
           });
         }
         await get().refreshRelay();
@@ -203,7 +193,7 @@ export const useAiSettings = create<AiSettingsState>()(
       },
       saveConnection: async () => {
         const s = get();
-        const precheck = connectionTestPreflight(s);
+        const precheck = connectionTestPreflight();
         if (!precheck.budget.allowed) return { ok: false, error: 'budget' };
         const target = { endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION };
         const r = await saveRelayConnection(s.authMethod === 'entraId' ? { ...target, auth: 'entraId', tenantId: s.entraTenantId.trim() } : target);
@@ -211,7 +201,6 @@ export const useAiSettings = create<AiSettingsState>()(
           appendLedger({
             at: new Date().toISOString(), use: 'connectionTest', inputTokens: r.usage?.inputTokens ?? 200,
             outputTokens: r.usage?.outputTokens ?? 0,
-            costJpy: null,
             provider: 'foundry',
             ...(r.usage ? {} : { estimated: true as const }),
           });
@@ -243,17 +232,17 @@ export const useAiSettings = create<AiSettingsState>()(
     }),
     {
       name: AI_SETTINGS_KEY,
-      version: 6,
+      version: 7,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         provider: s.provider, endpoint: s.endpoint, deployment: s.deployment, apiVersion: s.apiVersion, authMethod: s.authMethod, entraTenantId: s.entraTenantId, liveEnabled: s.liveEnabled,
         sendConsent: s.sendConsent,
-        monthlyBudgetJpy: s.monthlyBudgetJpy,
       }),
-      // v1 had a separate review budget (PARAM-120); D-3 merged it into the single monthly budget.
-      migrate: (persisted, version) => {
+      // Budget management was removed: v1-v6 stored a monthly budget (and v1 a review budget) that no longer exists.
+      migrate: (persisted) => {
         const p = { ...(persisted as Record<string, unknown>) };
-        if (version < 2) delete p.reviewBudgetJpy;
+        delete p.reviewBudgetJpy;
+        delete p.monthlyBudgetJpy;
         delete p.priceInputPerM;
         delete p.priceOutputPerM;
         delete p.copilotPricePerRequest;
@@ -286,10 +275,8 @@ export function connectionDraftProblem(s: Pick<AiSettingsState, 'endpoint' | 'de
   return parsed.ok ? null : parsed.error;
 }
 
-export function connectionTestPreflight(s: Pick<AiSettingsState, 'monthlyBudgetJpy'>) {
-  const budget = checkBudget(readLedger(), new Date(), {
-    use: 'connectionTest', estimatedInputTokens: 200, maxOutputTokens: CONNECTION_TEST_MAX_TOKENS, estimatedCostJpy: null,
-  }, { ...AI_LIMITS, monthlyBudgetJpy: s.monthlyBudgetJpy });
+export function connectionTestPreflight() {
+  const budget = checkBudget(readLedger(), new Date(), { use: 'connectionTest', estimatedInputTokens: 200, maxOutputTokens: CONNECTION_TEST_MAX_TOKENS });
   return { budget };
 }
 
@@ -300,8 +287,6 @@ export function runtimeSettings(): AiRuntimeSettings {
     liveEnabled: s.liveEnabled,
     sendConsent: s.sendConsent,
     configured: isConfigured(s),
-    monthlyBudgetJpy: s.monthlyBudgetJpy,
-    prices: null,
   };
 }
 

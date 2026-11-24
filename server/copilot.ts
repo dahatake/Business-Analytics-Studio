@@ -36,8 +36,6 @@ export interface CopilotCompletion {
   text: string;
   inputTokens: number | null;
   outputTokens: number | null;
-  /** Premium requests consumed (sum of the reported model-multiplier cost, else the model multiplier). */
-  premiumRequests: number;
 }
 
 export type CopilotErrorCode = 'sdkUnavailable' | 'startFailed' | 'notSignedIn' | 'unknownModel' | 'timeout' | 'aborted' | 'providerError' | 'emptyAnswer' | 'unsupportedAttachment';
@@ -178,7 +176,6 @@ export class CopilotService {
     }
     let inputTokens = 0;
     let outputTokens = 0;
-    let reportedCost = 0;
     let usageEvents = 0;
     let tokensAvailable = true;
     const off = session.on('assistant.usage', (event) => {
@@ -191,7 +188,6 @@ export class CopilotService {
       } else {
         tokensAvailable = false;
       }
-      if (typeof d.cost === 'number') reportedCost += d.cost;
     });
     const onAbort = () => void session.abort().catch(() => undefined);
     input.signal?.addEventListener('abort', onAbort, { once: true });
@@ -207,8 +203,7 @@ export class CopilotService {
       if (input.signal?.aborted) throw new CopilotError('aborted');
       const text = answer?.data?.content;
       if (typeof text !== 'string' || text.trim() === '') throw new CopilotError('emptyAnswer');
-      const multiplier = typeof model?.billing?.multiplier === 'number' ? model.billing.multiplier : 1;
-      return { text, inputTokens: usageEvents && tokensAvailable ? inputTokens : null, outputTokens: usageEvents && tokensAvailable ? outputTokens : null, premiumRequests: reportedCost > 0 ? reportedCost : Math.max(1, usageEvents) * multiplier };
+      return { text, inputTokens: usageEvents && tokensAvailable ? inputTokens : null, outputTokens: usageEvents && tokensAvailable ? outputTokens : null };
     } catch (err) {
       if (err instanceof CopilotError) {
         if (err.code === 'timeout') await session.abort().catch(() => undefined);

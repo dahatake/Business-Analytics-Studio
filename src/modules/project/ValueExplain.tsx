@@ -22,7 +22,6 @@ interface Generated {
   check: ExplainCheck;
   mode: AiResponse['mode'];
   blockedReasons: AiResponse['blockedReasons'];
-  costJpy?: number | null;
   usage?: AiResponse['usage'];
   hash: string;
 }
@@ -49,7 +48,7 @@ export function ExplainSection({ input, scope }: { input: ExplainInput; scope: s
       try { check = parseExplain(response.text, f); } catch { throw new Error(t('val.x.badAnswer')); }
       setGenerated({
         check, mode: response.mode, blockedReasons: response.blockedReasons, hash: f.hash,
-        ...(response.costJpy !== undefined ? { costJpy: response.costJpy } : {}), ...(response.usage ? { usage: response.usage } : {}),
+        ...(response.usage ? { usage: response.usage } : {}),
       });
       requestAnimationFrame(() => heading.current?.focus());
     } catch (e) {
@@ -75,7 +74,7 @@ export function ExplainSection({ input, scope }: { input: ExplainInput; scope: s
           <h3 id="val-explain-title" className="step-chart-title" tabIndex={-1} ref={heading}>{t('val.x.title')}</h3>
           {generated.mode === 'mock'
             ? <MockNotice reasons={generated.blockedReasons}>{t('val.x.mock')}</MockNotice>
-            : <LiveNotice costJpy={generated.costJpy ?? null} {...(generated.usage ? { usage: generated.usage } : {})} />}
+            : <LiveNotice {...(generated.usage ? { usage: generated.usage } : {})} />}
           {stale && <MessageBar intent="warning" data-testid="val-explain-stale"><MessageBarBody>{t('val.x.stale')}</MessageBarBody></MessageBar>}
           {unverifiedAll.length > 0
             ? <MessageBar intent="warning" data-testid="val-explain-unverified"><MessageBarBody>{t('val.x.unverified', { list: [...new Set(unverifiedAll)].join(', ') })}</MessageBarBody></MessageBar>

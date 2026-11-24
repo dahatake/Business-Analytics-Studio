@@ -1,9 +1,6 @@
 import { z } from 'zod';
 
-export const STORY_CAP_JPY = 1000;
-export const STORY_MONTHLY_CAP_JPY = 10_000;
 export const STORY_OUTPUT_TOKENS = 2000;
-export const STORY_SAFETY_FACTOR = 1.2;
 
 export const StoryScenes = z.array(z.object({
   title: z.string().trim().min(1).max(160),

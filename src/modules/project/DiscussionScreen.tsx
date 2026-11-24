@@ -469,7 +469,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
                   {kind === 'suggestion' && aiOutcome && (
                     <div role="status" data-testid="proj-ai-outcome">
                       {aiOutcome.mode === 'live'
-                        ? <LiveNotice costJpy={aiOutcome.costJpy ?? null} usage={aiOutcome.usage} />
+                        ? <LiveNotice usage={aiOutcome.usage} />
                         : <MockNotice reasons={aiOutcome.blockedReasons} />}
                     </div>
                   )}

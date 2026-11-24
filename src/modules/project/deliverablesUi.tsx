@@ -17,7 +17,7 @@ import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { catalogForScope, useCatalogImport } from '../usecases/catalog.ts';
-import { reasonKey } from '../ai/AiCommon.tsx';
+import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { MockBadge } from './common.tsx';
@@ -599,6 +599,7 @@ export function DraftDialog() {
                 <p className="dlv-draft-note" data-testid="dlv-draft-mode" data-mode={ready.response.mode}>
                   {ready.response.mode === 'mock' && <MockBadge />} {t(ready.response.mode === 'mock' ? 'dlv.draft.mockNote' : 'dlv.draft.liveNote')}
                 </p>
+                {ready.response.mode === 'live' && ready.response.usage && <TokensInline usage={ready.response.usage} testId="dlv-draft-tokens" />}
                 <p className="muted">{t('dlv.draft.savedNote')}</p>
                 <p className="muted">{t('dlv.draft.savedAt', { at: ready.at })}</p>
                 {draftChanged && <p role="alert" data-testid="dlv-draft-changed">{t('dlv.draft.changed')}</p>}

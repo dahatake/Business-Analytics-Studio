@@ -145,10 +145,11 @@ export interface SolutionRow {
   type: SolutionType;
   confirmed: boolean;
   contributions: number;
-  costJpy: number;
-  annualBenefitJpy: number;
+  costJpy: number | undefined;
+  annualBenefitJpy: number | undefined;
   /** Payback years from the start of the first initiative; Infinity when there is no benefit. */
-  payback: number;
+  /** Years to pay back (build period included); null while cost or benefit is unknown. */
+  payback: number | null;
 }
 
 export interface CoverageRow {
@@ -535,7 +536,7 @@ function deliverable(c: CheckContext): { tiles: DashTile[]; detail: StepDetail }
   // Same rule as the `plan-schedule` criterion: reversed dates, a dependency loop, or a dependency that ends too late.
   const cyclic = new Set(cyclicInitiatives(inits));
   const rows: InitiativeRow[] = inits.map((i) => {
-    const owner = c.pack.byId.get(i.ownerId);
+    const owner = i.ownerId ? c.pack.byId.get(i.ownerId) : undefined;
     return {
       id: i.id, solutionId: i.solutionId, start: i.start, end: i.end, progress: i.progress,
       ...(owner?.kind === 'person' ? { ownerId: owner.id } : {}),
@@ -562,7 +563,7 @@ function deliverable(c: CheckContext): { tiles: DashTile[]; detail: StepDetail }
       { id: 'solutionsPlanned', kind: 'ratio', value: solutions.filter((s) => inits.some((i) => i.solutionId === s.id)).length, total: solutions.length, todoId: 'plan-coverage', href: '/plan' },
       { id: 'initiativesOwned', kind: 'ratio', value: rows.filter((r) => r.ownerId).length, total: rows.length, todoId: 'plan-owner', href: '/plan' },
       { id: 'scheduleConflicts', kind: 'problems', value: rows.filter((r) => r.conflict).length, total: rows.length, todoId: 'plan-schedule', href: '/plan' },
-      { id: 'paybackOk', kind: 'ratio', value: solutions.filter((s) => s.payback <= limit).length, total: solutions.length, todoId: 'plan-payback', href: '/plan' },
+      { id: 'paybackOk', kind: 'ratio', value: solutions.filter((s) => s.payback !== null && s.payback <= limit).length, total: solutions.length, todoId: 'plan-payback', href: '/plan' },
       { id: 'chainBreaks', kind: 'problems', value: breaks, total: thread.solutions.length, todoId: 'dlv-trace', href: '/deliverables?step=deliverable&target=sol-thread' },
       { id: 'planDecisions', kind: 'count', value: decisions, total: decisions, todoId: 'plan-decision', href: '/discussion' },
     ],

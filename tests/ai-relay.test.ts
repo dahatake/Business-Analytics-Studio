@@ -10,7 +10,6 @@ import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loaded } from '../src/data/pack.ts';
 import { SecretVault, protectorWorks, windowsDpapi, type KeyProtector } from '../server/vault.ts';
 import { replaceFileSync } from '../server/files.ts';
-import { reserveStory, storyQuote } from '../server/storyBudget.ts';
 import {
   STRICT_RELAY_CONFIG, handleRelay, hostAllowed, isLoopback, loadConnection, newRelayToken, originAllowed, outboundAllowed, relayAiDecision,
   relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, pruneDiagnostics, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
@@ -102,96 +101,38 @@ describe('authenticated company news relay', () => {
   });
 });
 
-describe('HTML story cost reservations', () => {
+describe('HTML story through the relay (no budget gating)', () => {
   const conn = { endpoint: 'https://res.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
-  const now = Date.parse('2026-11-17T00:00:00Z');
-  const pricing = { ...conn, model: 'model-router', inputPerM: 300, outputPerM: 1200, source: 'https://azure.microsoft.com/pricing/details/ai-foundry-models/model-router/', expiresAt: '2026-12-01T00:00:00Z' };
   const body = { use: 'storyVideo', provider: 'foundry', lang: 'en', prompt: 'Generate a source-grounded story.', context: '', maxOutputTokens: 2000, timeoutMs: 90_000 };
+  const scenes = JSON.stringify({ scenes: [{ title: 'Source', narration: 'Only supplied evidence.', role: 'opening', durationMs: 3000 }] });
   const prepare = async () => {
     vault.set('foundryKey', FAKE_KEY);
     await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply });
-    const { apiVersion: _, ...rates } = pricing;
-    writeFileSync(join(vault.dir, 'story-pricing.json'), JSON.stringify(rates));
   };
-  it('refuses missing, expired, malformed, or destination-mismatched prices before any send', async () => {
+  it('sends without any price file and returns the reported tokens, with no cost or reservation', async () => {
     await prepare();
-    const send = vi.fn<typeof fetch>();
-    for (const patch of [{ expiresAt: '2020-01-01T00:00:00Z' }, { deployment: 'different' }, { endpoint: 'https://other.openai.azure.com' }, { inputPerM: 0 }, { source: 'https://unverified.example' }]) {
-      const { apiVersion: _, ...rates } = pricing;
-      writeFileSync(join(vault.dir, 'story-pricing.json'), JSON.stringify({ ...rates, ...patch }));
-      expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'storyPricing' });
-    }
-    rmSync(join(vault.dir, 'story-pricing.json'));
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'storyPricing' });
-    expect(send).not.toHaveBeenCalled();
-  });
-  it('binds prices to the resource origin, whether or not the endpoint includes /openai/v1', async () => {
-    await prepare();
-    const { apiVersion: _, ...rates } = pricing;
-    writeFileSync(join(vault.dir, 'story-pricing.json'), JSON.stringify({ ...rates, endpoint: 'https://RES.openai.azure.com/openai/v1' }));
-    expect(storyQuote(vault.dir, conn, body.prompt, '', 2000, now).maximumJpy).toBeGreaterThan(0);
-  });
-  it('reserves before forwarding, validates structured output, and persists costs across requests', async () => {
-    await prepare();
-    const before = storyQuote(vault.dir, conn, body.prompt, '', 2000, now);
-    const result = await call(req('POST', '/relay/story/estimate', body), { now: () => now });
-    expect(result.body).toMatchObject({ maximumJpy: before.maximumJpy, remainingJpy: 10_000 });
-    expect(existsSync(join(vault.dir, 'story-budget.json'))).toBe(false);
     const send = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
-      expect(JSON.parse(readFileSync(join(vault.dir, 'story-budget.json'), 'utf8'))['2026-11']).toBe(before.maximumJpy);
       expect(JSON.parse(String(init?.body)).max_completion_tokens).toBe(2000);
       expect(JSON.parse(String(init?.body)).response_format).toEqual({ type: 'json_object' });
-      return new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ scenes: [{ title: 'Source', narration: 'Only supplied evidence.', role: 'opening', durationMs: 3000 }] }) } }],
-        usage: { prompt_tokens: 100, completion_tokens: 80 },
-      }));
+      return new Response(JSON.stringify({ choices: [{ message: { content: scenes } }], usage: { prompt_tokens: 100, completion_tokens: 80 } }));
     });
-    const live = await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now });
-    expect(live).toMatchObject({ status: 200, body: { costJpy: 0.126, reservedJpy: before.maximumJpy } });
+    const live = await call(req('POST', '/relay/ai', body), { fetch: send });
+    expect(live).toEqual({ status: 200, body: { text: scenes, inputTokens: 100, outputTokens: 80 } });
     expect(send).toHaveBeenCalledTimes(1);
-    expect(storyQuote(vault.dir, conn, body.prompt, '', 2000, now).allocatedJpy).toBe(before.maximumJpy);
+    expect(readdirSync(vault.dir).filter((name) => name.startsWith('story-'))).toEqual([]);
   });
-  it('rejects per-story and monthly overages, including concurrent sends, without contacting Foundry', async () => {
-    await prepare();
-    const quote = storyQuote(vault.dir, conn, body.prompt, '', 2000, now);
-    writeFileSync(join(vault.dir, 'story-budget.json'), JSON.stringify({ '2026-11': 10_000 - quote.maximumJpy }));
-    reserveStory(vault.dir, conn, body.prompt, '', 2000, now);
-    const send = vi.fn<typeof fetch>();
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'storyMonthlyCap' });
-    expect(send).not.toHaveBeenCalled();
-    writeFileSync(join(vault.dir, 'story-budget.json'), '{}');
-    let finish!: (response: Response) => void;
-    const pending = new Promise<Response>((resolve) => { finish = resolve; });
-    writeFileSync(join(vault.dir, 'story-budget.json'), JSON.stringify({ '2026-11': 10_000 - quote.maximumJpy }));
-    const first = call(req('POST', '/relay/ai', body), { fetch: () => pending, now: () => now });
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'storyMonthlyCap' });
-    finish(new Response('{}', { status: 500 }));
-    await first;
-    expect(send).not.toHaveBeenCalled();
-    const { apiVersion: _, ...rates } = pricing;
-    writeFileSync(join(vault.dir, 'story-pricing.json'), JSON.stringify({ ...rates, outputPerM: 1_000_000 }));
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'storyCap' });
-  });
-  it('accepts a rounded 1,000 JPY reservation but rejects the next cent', async () => {
-    await prepare();
-    const { apiVersion: _, ...rates } = pricing;
-    const inputTokens = storyQuote(vault.dir, conn, body.prompt, '', 2000, now).inputTokens;
-    const inputPerM = 0.000001;
-    const outputPerM = ((999.995 / 1.2) * 1_000_000 - inputTokens * inputPerM) / 2000;
-    writeFileSync(join(vault.dir, 'story-pricing.json'), JSON.stringify({ ...rates, inputPerM, outputPerM }));
-    expect(storyQuote(vault.dir, conn, body.prompt, '', 2000, now).maximumJpy).toBe(1000);
-    writeFileSync(join(vault.dir, 'story-pricing.json'), JSON.stringify({ ...rates, inputPerM, outputPerM: outputPerM + 10 }));
-    expect(() => storyQuote(vault.dir, conn, body.prompt, '', 2000, now)).toThrow('storyCap');
-  });
-  it('retains failed-call reservations, fails closed on corrupt accounting, and uses the JST month boundary', async () => {
+  it('rejects output that is not a valid storyboard, and has no estimate route any more', async () => {
     await prepare();
     const send: typeof fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: '{"scenes":[]}' } }], usage: { prompt_tokens: 100, completion_tokens: 10 } }));
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'badProviderResponse' });
-    expect(storyQuote(vault.dir, conn, body.prompt, '', 2000, now).allocatedJpy).toBeGreaterThan(0);
-    writeFileSync(join(vault.dir, 'story-budget.json'), JSON.stringify({ '2026-10': 10_000 }));
-    expect(storyQuote(vault.dir, conn, body.prompt, '', 2000, Date.parse('2026-10-31T15:00:00Z')).month).toBe('2026-11');
-    writeFileSync(join(vault.dir, 'story-budget.json'), 'corrupt');
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send, now: () => now })).body).toEqual({ error: 'storyBudgetUnavailable' });
+    expect((await call(req('POST', '/relay/ai', body), { fetch: send })).body).toEqual({ error: 'badProviderResponse' });
+    expect((await call(req('POST', '/relay/story/estimate', body), { fetch: send })).status).toBe(404);
+  });
+  it('is Foundry only and takes no attachments', async () => {
+    await prepare();
+    const send = vi.fn<typeof fetch>();
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    expect((await call(req('POST', '/relay/ai', { ...body, provider: 'copilotSdk' }), { fetch: send })).status).toBe(400);
+    expect(send).not.toHaveBeenCalled();
   });
 });
 
@@ -777,6 +718,16 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect(Object.keys(sent).sort()).toEqual(['max_completion_tokens', 'messages']);
   });
 
+  it('records unknown tokens, never an estimate, when the provider reports no usage or malformed usage', async () => {
+    const reply = (usage?: unknown) => async () => new Response(JSON.stringify({ choices: [{ message: { content: 'answer' } }], ...(usage === undefined ? {} : { usage }) }));
+    const doFetch = (usage?: unknown) => ctx({ fetch: reply(usage) });
+    expect((await call(req('POST', '/relay/ai', aiBody()), doFetch())).body).toEqual({ text: 'answer', inputTokens: null, outputTokens: null });
+    clock += 60_000;
+    expect((await call(req('POST', '/relay/ai', aiBody()), doFetch({ prompt_tokens: 12 }))).body).toEqual({ text: 'answer', inputTokens: 12, outputTokens: null });
+    clock += 60_000;
+    expect((await call(req('POST', '/relay/ai', aiBody()), doFetch({ prompt_tokens: 'many', completion_tokens: -1 }))).body).toEqual({ text: 'answer', inputTokens: null, outputTokens: null });
+  });
+
   it('accepts every declared AI use and rejects unknown uses without contacting the provider', async () => {
     for (const use of AI_USES.filter((value) => value !== 'connectionTest' && value !== 'storyVideo')) {
       expect((await call(req('POST', '/relay/ai', aiBody({ use })), ctx())).status, use).toBe(200);
@@ -890,7 +841,7 @@ describe('D-12 packBuild through the relay', () => {
       status: async () => ({ available: true, authenticated: true, login: 'octocat', models: [{ id: 'gpt-5', name: 'GPT-5', multiplier: 1 }] }),
       complete: async (i: { model: string; system: string; prompt: string; timeoutMs: number }) => {
         calls.push(i);
-        return { text: answer, inputTokens: 10, outputTokens: 20, premiumRequests: 1 };
+        return { text: answer, inputTokens: 10, outputTokens: 20 };
       },
     };
     return { calls, service: service as unknown as NonNullable<RelayContext['copilot']> };
@@ -984,7 +935,7 @@ describe('D-12 packBuild through the relay', () => {
     expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
     expect(((await call(req('GET', '/relay/status'))).body as { copilot: unknown }).copilot).toEqual({ model: 'gpt-5' });
     const r = await call(req('POST', '/relay/ai', packBody({ provider: 'copilotSdk' })), { copilot: service });
-    expect(r).toEqual({ status: 200, body: { text: '{"packId":"x"}', inputTokens: 10, outputTokens: 20, premiumRequests: 1 } });
+    expect(r).toEqual({ status: 200, body: { text: '{"packId":"x"}', inputTokens: 10, outputTokens: 20 } });
     expect(calls[0]!.model).toBe('gpt-5');
     expect(calls[0]!.system).toContain('JSON');
     expect(seen).toHaveLength(0);
@@ -1049,7 +1000,7 @@ describe('D-12 review fixes: Copilot and the outbound allowlist', () => {
     let calls = 0;
     const copilot = {
       status: async () => { calls++; return { available: true, authenticated: true, login: 'u', models: [] }; },
-      complete: async () => { calls++; return { text: '{}', inputTokens: 1, outputTokens: 1, premiumRequests: 1 }; },
+      complete: async () => { calls++; return { text: '{}', inputTokens: 1, outputTokens: 1 }; },
     } as unknown as NonNullable<RelayContext['copilot']>;
     const foundryOnly: RelayConfig = { ...STRICT_RELAY_CONFIG, outboundHosts: ['res.openai.azure.com'] };
     await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }), { config: foundryOnly });

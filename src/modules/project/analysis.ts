@@ -201,7 +201,7 @@ export function demoAnalyses(pack: CustomerPack): AnalysisData {
   const add = (category: CategoryId, text: AnalysisItem['text'], score: number) => items.push({ id: `ai-demo-${++n}`, category, text, score: clampScore(Math.round(score * 10) / 10), weight: 1, author: 'sample' });
   kindOf(pack, 'site').filter((s) => s.role === 'plant').forEach((s) => add('strengths', s.name, 4));
   kindOf(pack, 'issue').forEach((i) => add('weaknesses', i.name, i.impact));
-  kindOf(pack, 'solution').forEach((s) => add('opportunities', s.name, s.annualBenefitJpy >= s.costJpy ? 4 : 3));
+  kindOf(pack, 'solution').forEach((s) => add('opportunities', s.name, (s.annualBenefitJpy ?? 0) >= (s.costJpy ?? Infinity) ? 4 : 3));
   add('threats', { ja: '原材料価格の上昇', en: 'Rising raw-material prices' }, 4);
   add('threats', { ja: '海外競合の低価格攻勢', en: 'Low-price push by overseas competitors' }, 3);
   const swot: Analysis = {

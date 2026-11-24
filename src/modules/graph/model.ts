@@ -206,8 +206,8 @@ export function deriveTwins(data: LoadedPack, ext?: NormalizedGraphExtension): T
   }
   for (const e of data.pack.entities) {
     if (e.kind !== 'kpi' || isNewsDerived(e, data.byId)) continue;
-    const owner = data.byId.get(e.ownerId);
-    if (owner?.kind === 'person' && data.byId.has(owner.siteId)) add(e.id, owner.siteId, 'measures', 'derived');
+    const owner = e.ownerId ? data.byId.get(e.ownerId) : undefined;
+    if (owner?.kind === 'person' && owner.siteId && data.byId.has(owner.siteId)) add(e.id, owner.siteId, 'measures', 'derived');
   }
   for (const tw of ext?.twins ?? []) {
     const d = data.byId.get(tw.digital), r = data.byId.get(tw.real);
@@ -417,7 +417,7 @@ export function deriveSpatial(data: LoadedPack, visible: (id: string) => boolean
     here.forEach((p, i) => rooms[i % rooms.length]!.people.push(p.id));
     const siteKpis: string[] = [];
     for (const k of kpis) {
-      const room = rooms.find((r) => r.people.includes(k.ownerId));
+      const room = rooms.find((r) => !!k.ownerId && r.people.includes(k.ownerId));
       if (room) {
         room.kpis.push(k.id);
         siteKpis.push(k.id);

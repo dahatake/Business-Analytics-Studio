@@ -7,7 +7,7 @@ import {
   ArrowUpload20Regular, BotSparkle20Regular, CheckmarkCircle20Filled, Delete20Regular, DismissCircle20Filled, Open20Regular, Settings20Regular,
 } from '@fluentui/react-icons';
 import { AiLiveError, aiLive, preflight, readLedger, rebindLedgerScope } from '../../ai/client.ts';
-import { jstDay, jstMonth } from '../../ai/budget.ts';
+import { jstDay } from '../../ai/budget.ts';
 import { PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, workIqAllowedFor, workIqRequiredFor } from '../../ai/policy.ts';
 import { recordsOfScope, summarizeTokens, type TokenTotals } from '../../ai/tokenUsage.ts';
 import { isReadableFile, preparePackLogo, withoutPackLogo } from '../../data/packImport.ts';
@@ -20,7 +20,7 @@ import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useSettings } from '../../state/settings.ts';
 import { AiReadiness } from '../ai/AiConnectionForm.tsx';
 import { AiSettingsDialog } from '../ai/AiSettingsPanel.tsx';
-import { TokenTable, yenFine } from '../ai/AiCommon.tsx';
+import { TokenTable } from '../ai/AiCommon.tsx';
 import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect, type WorkIqProvider } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
@@ -45,7 +45,7 @@ type Phase =
   | { kind: 'form' }
   | { kind: 'running'; startedAt: number }
   | { kind: 'saved'; result: GenResult; projectId: string }
-  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed' | 'analysisSaveFailed'; detail: string; costJpy: number | null; tokens: TokenTotals; providerBusy?: boolean; retryAfterMs?: number };
+  | { kind: 'error'; code: PackGenError['code'] | 'saveFailed' | 'analysisSaveFailed'; detail: string; tokens: TokenTotals; providerBusy?: boolean; retryAfterMs?: number };
 
 function todayJst(): string {
   return jstDay(new Date());
@@ -111,7 +111,6 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const [fileNotes, setFileNotes] = useState<string[]>([]);
   const [researchNote, setResearchNote] = useState('');
   const [approved, setApproved] = useState(false);
-  const [costOk, setCostOk] = useState(false);
   const [logoApproved, setLogoApproved] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoError, setLogoError] = useState<string | null>(null);
@@ -129,7 +128,6 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     setProjectName(existing?.name ?? (target.kind === 'new' ? target.projectName : ''));
     setPhase({ kind: 'form' });
     setApproved(false);
-    setCostOk(false);
     setLogoApproved(false);
     setLogoFile(null);
     setLogoError(null);
@@ -206,7 +204,6 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     : [];
   useEffect(() => {
     setApproved(false);
-    setCostOk(false);
   }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, orgUnit, materials, researchNote, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, ai.provider]);
   useEffect(() => { setPublicTopicOk(false); }, [companyName, lang, useNews]);
   const missing = missingRequired(input);
@@ -218,26 +215,18 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     const plan = runPlan(input);
     const prompt = stageAPrompt(input, []) + materials.map((m) => m.text).join('\n') + researchNote + ' '.repeat(Math.max(0, plan.promptChars - chars));
     const pf = preflight({ use: 'packBuild', lang, prompt, maxOutputTokens: PER_USE_LIMITS.packBuild?.maxOutputTokens });
-    const ledger = readLedger();
-    const month = jstMonth(new Date());
-    const spent = ledger.filter((r) => jstMonth(new Date(r.at)) === month).reduce((a, r) => a + (r.costJpy ?? 0), 0);
     return {
       calls: plan.maxCalls,
-      perCall: pf.estimatedCostJpy,
-      max: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * plan.maxCalls,
-      min: pf.estimatedCostJpy === null ? null : pf.estimatedCostJpy * plan.minCalls,
-      spent,
       tokens: pf.estimatedInputTokens,
       inputTooLarge: pf.budget.reasons.includes('inputTooLarge'),
       // D-15: the daily count refuses a call partway through a run; warn before it starts.
       callsLeft: Math.max(0, (PER_USE_LIMITS.packBuild?.dailyCalls ?? Infinity) - pf.budget.todayCalls),
     };
-    // Recomputed when what is sent or the price settings change.
+    // Recomputed when what is sent or the provider settings change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyName, projectName, purpose, asOf, industry, officialUrl, focus, orgUnit, useNews, publicWebTopic, includeAnchor, audience, anchorLoad.value?.version, workIqOn, workIqRounds, materials, researchNote, lang, ai.provider, ai.copilotModel, ai.copilotStatus, open]);
-  const overBudget = estimate.max !== null && estimate.spent + estimate.max > ai.monthlyBudgetJpy;
   const ready = liveReady(ai);
-  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved && costOk && !overBudget
+  const canStart = missing.length === 0 && !targetProblem && !tooMuch && !estimate.inputTooLarge && ready && approved
     && (!logoApproved || !!logoFile)
     && (!workIqRequired || workIqReady(ai)) && !topicInvalid && (!topic || publicTopicOk) && (!anchorEnabled || !anchorLoad.error);
 
@@ -341,7 +330,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       setSteps((s) => Object.fromEntries(STEPS.map((k) => [k, s[k] === 'running' ? 'failed' : s[k]])) as Record<StepId, StepStatus>);
       setPhase({
         kind: 'error', code: e?.code ?? 'callFailed', detail: e?.detail ?? (reasons || (err as Error).message),
-        costJpy: e ? e.costJpy : null, tokens, providerBusy: e?.providerBusy, retryAfterMs: e?.retryAfterMs,
+        tokens, providerBusy: e?.providerBusy, retryAfterMs: e?.retryAfterMs,
       });
       return;
     } finally {
@@ -349,7 +338,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     }
     const resolved = resolveProject();
     if (!resolved) {
-      setPhase({ kind: 'error', code: 'saveFailed', detail: t('proj.err.duplicateProject'), costJpy: result.report.costJpy, tokens: runTokens() });
+      setPhase({ kind: 'error', code: 'saveFailed', detail: t('proj.err.duplicateProject'), tokens: runTokens() });
       return;
     }
     const { projectId, created } = resolved;
@@ -367,7 +356,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       const tokens = runTokens();
       rollback(created);
       if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
-      setPhase({ kind: 'error', code: 'saveFailed', detail: (err as Error).message, costJpy: result.report.costJpy, tokens });
+      setPhase({ kind: 'error', code: 'saveFailed', detail: (err as Error).message, tokens });
       return;
     }
     try {
@@ -375,7 +364,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     } catch (err) {
       const tokens = runTokens();
       if (target.kind === 'project') rebindLedgerScope(runScope, target.projectId);
-      setPhase({ kind: 'error', code: 'analysisSaveFailed', detail: (err as Error).message, costJpy: result.report.costJpy, tokens });
+      setPhase({ kind: 'error', code: 'analysisSaveFailed', detail: (err as Error).message, tokens });
       return;
     }
     rebindLedgerScope(runScope, projectId);
@@ -395,7 +384,6 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
 
   const labelOf = (f: RequiredField) => t(`proj.gen.field.${f}`);
   const running = phase.kind === 'running';
-  const yen = (v: number | null) => v === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, v);
   const stepIcon = (s: StepStatus) => (s === 'done' ? <CheckmarkCircle20Filled className="gen-ok" /> : s === 'failed' ? <DismissCircle20Filled className="gen-fail" /> : s === 'running' ? <Spinner size="extra-tiny" /> : <span className="gen-dot" aria-hidden />);
 
   return (
@@ -577,16 +565,11 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                     </div>
                     <dl className="gen-estimate" data-testid="gen-estimate">
                       <dt>{t('proj.gen.calls')}</dt><dd>{t('proj.gen.callsValue', { min: 2, max: estimate.calls })}</dd>
-                      <dt>{t('proj.gen.cost')}</dt>
-                      <dd>{estimate.max === null ? t(ai.provider === 'foundry' ? 'ai.cost.unknown' : 'ai.cost.unknownCopilot') : t('proj.gen.costValue', { min: yen(estimate.min!), max: yen(estimate.max) })}</dd>
-                      <dt>{t('proj.gen.month')}</dt><dd>{t('proj.gen.monthValue', { spent: yen(estimate.spent), budget: fmt.yen(ai.monthlyBudgetJpy) })}</dd>
                     </dl>
-                    {overBudget && <MessageBar intent="error" data-testid="gen-over-budget"><MessageBarBody>{t('proj.gen.overBudget')}</MessageBarBody></MessageBar>}
                     {estimate.inputTooLarge && <MessageBar intent="error"><MessageBarBody>{t('proj.gen.inputTooLarge')}</MessageBarBody></MessageBar>}
                     {estimate.callsLeft < estimate.calls && <MessageBar intent="warning" data-testid="gen-daily-short"><MessageBarBody>{t('proj.gen.dailyShort', { left: estimate.callsLeft, max: estimate.calls })}</MessageBarBody></MessageBar>}
                     <p className="muted" data-testid="gen-sends">{t('proj.gen.sends')}{workIqOn ? ` ${t('proj.gen.sendsWorkIq')}` : ''}{input.companyAnchor ? ` ${t('proj.anchor.sendNote')}` : ''}</p>
                     <Checkbox checked={approved} onChange={(_, d) => setApproved(d.checked === true)} label={t('proj.gen.checkApproved')} data-testid="gen-check-approved" />
-                    <Checkbox checked={costOk} onChange={(_, d) => setCostOk(d.checked === true)} label={t('proj.gen.checkCost')} data-testid="gen-check-cost" />
                   </section>
                 </div>
               )}
@@ -595,7 +578,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                 <div className="gen-progress" data-testid="gen-progress" aria-live="polite">
                   <ProgressBar value={progress?.ratio ?? 0} thickness="large" aria-label={t('proj.gen.progressLabel')} data-testid="gen-progress-bar" />
                   <p className="muted">
-                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, cost: yen(progress ? progress.costJpy : 0), tokens: progress?.tokens === null ? t('ai.tokens.unavailable') : fmt.integer(progress?.tokens ?? 0) })}
+                    {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, tokens: progress?.tokens === null ? t('ai.tokens.unavailable') : fmt.integer(progress?.tokens ?? 0) })}
                   </p>
                   <ol className="gen-steps">
                     {STEPS.map((s) => (
@@ -614,7 +597,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                         {phase.providerBusy && phase.retryAfterMs !== undefined && phase.retryAfterMs > 0 &&
                           t('proj.gen.error.retryAfter', { seconds: fmt.integer(Math.ceil(phase.retryAfterMs / 1000)) })}
                         <span className="gen-detail" lang="en">{phase.detail}</span>
-                        {t('proj.gen.errorCost', { cost: yen(phase.costJpy), tokens: phase.tokens.totalTokens === null ? t('ai.tokens.unavailable') : fmt.integer(phase.tokens.totalTokens) })}
+                        {t('proj.gen.errorTokens', { tokens: phase.tokens.totalTokens === null ? t('ai.tokens.unavailable') : fmt.integer(phase.tokens.totalTokens) })}
                       </MessageBarBody>
                     </MessageBar>
                   )}
@@ -654,10 +637,10 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
 }
 
 function SavedSummary({ result }: { result: GenResult }) {
-  const { t, fmt } = useI18n();
+  const { t } = useI18n();
   const { summary, report } = result;
   const kinds = Object.entries(summary.byKind).filter(([, n]) => (n ?? 0) > 0);
-  const tokens = summarizeTokens(report.calls.map((c) => ({ at: report.finishedAt, use: 'packBuild', stage: c.stage, inputTokens: c.inputTokens, outputTokens: c.outputTokens, costJpy: c.costJpy })));
+  const tokens = summarizeTokens(report.calls.map((c) => ({ at: report.finishedAt, use: 'packBuild', stage: c.stage, inputTokens: c.inputTokens, outputTokens: c.outputTokens })));
   return (
     <div className="gen-saved" data-testid="gen-saved">
       <MessageBar intent="success"><MessageBarBody>{t('proj.gen.saved', { entities: summary.entities })}</MessageBarBody></MessageBar>
@@ -672,8 +655,6 @@ function SavedSummary({ result }: { result: GenResult }) {
         <dd data-testid="gen-checks">{t('proj.gen.sum.checksValue', { rounds: report.fixRounds, removed: report.removed.length, dropped: report.droppedSources.length })}</dd>
         <dt>{t('proj.gen.sum.priority')}</dt>
         <dd data-testid="gen-priority">{t('proj.gen.sum.priorityValue', { n: result.priority.stats.n, quick: result.priority.stats.quickWin, big: result.priority.stats.bigBet, unproven: result.priority.stats.unproven })}</dd>
-        <dt>{t('proj.gen.sum.cost')}</dt>
-        <dd data-testid="gen-cost">{t('proj.gen.sum.costValue', { cost: report.costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, report.costJpy), calls: report.calls.length })}</dd>
       </dl>
       <TokenTable summary={tokens} testId="gen-tokens" caption={t('proj.gen.sum.tokens')} />
       {report.ungrounded.length > 0 && (

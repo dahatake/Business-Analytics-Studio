@@ -169,7 +169,7 @@ describe('all-step drafts', () => {
     const now = Date.now();
     const interval = PER_USE_LIMITS.deliverableDraft?.minIntervalMs;
     if (interval === undefined) throw new Error('Missing fixture interval');
-    writeLedger([{ at: new Date(now - 2000).toISOString(), use: 'deliverableDraft', inputTokens: 1, outputTokens: 1, costJpy: null }]);
+    writeLedger([{ at: new Date(now - 2000).toISOString(), use: 'deliverableDraft', inputTokens: 1, outputTokens: 1 }]);
     expect(batchIntervalMs('deliverableDraft', new Map(), now)).toBe(interval - 2000);
     expect(batchIntervalMs('deliverableDraft', new Map([['deliverableDraft', now - 1000]]), now)).toBe(interval - 1000);
     const abort = new AbortController();

@@ -1,4 +1,4 @@
-import type { Entity, EntityKind, EntityOf } from '../../data/schema.ts';
+import { solutionMoney, type Entity, type EntityKind, type EntityOf } from '../../data/schema.ts';
 import { getEntity, loaded } from '../../data/pack.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { selectOutbound } from '../../ai/redact.ts';
@@ -60,8 +60,10 @@ export function proposalFor(lang: Lang, entities: Entity[]): string {
     return translate(lang, 'ai.review.issue', { name: name(top), impact: top.impact, feasibility: top.feasibility });
   }
   if (solutions.length > 0) {
-    const best = [...solutions].sort(by((s) => -(s.annualBenefitJpy / s.costJpy)))[0]!;
-    return translate(lang, 'ai.review.solution', { name: name(best), ratio: (best.annualBenefitJpy / best.costJpy).toFixed(1) });
+    const roi = (s: (typeof solutions)[number]) => { const m = solutionMoney(s); return m ? m.benefit / m.cost : null; };
+    const measured = solutions.filter((s) => roi(s) !== null);
+    const best = [...measured].sort(by((s) => -roi(s)!))[0];
+    if (best) return translate(lang, 'ai.review.solution', { name: name(best), ratio: roi(best)!.toFixed(1) });
   }
   if (initiatives.length > 0) {
     const slow = [...initiatives].sort(by((i) => i.progress))[0]!;

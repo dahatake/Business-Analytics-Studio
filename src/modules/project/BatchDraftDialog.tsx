@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner } from '@fluentui/react-components';
-import { AiLiveError, preflight, type Preflight } from '../../ai/client.ts';
+import { AiLiveError, preflight, readLedger, type Preflight } from '../../ai/client.ts';
 import { PER_USE_LIMITS, type AiUse } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { currentScope, useProjects } from '../../state/projects.ts';
 import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
-import { reasonKey } from '../ai/AiCommon.tsx';
+import { recordsOfJob, summarizeTokens, type TokenSummary } from '../../ai/tokenUsage.ts';
+import { reasonKey, TokenTable } from '../ai/AiCommon.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob } from './batchDraft.ts';
 import { useCheckContext } from './deliverablesUi.tsx';
@@ -33,6 +34,8 @@ export function BatchDraftDialog() {
   const [interrupted, setInterrupted] = useState(false);
   const completed = useRef(new Set<string>());
   const attempts = useRef(new Map<AiUse, number>());
+  const [startedAt] = useState(() => new Date().toISOString());
+  const [tokens, setTokens] = useState<TokenSummary | null>(null);
   const [initialSource] = useState(batchSourceStamp);
   const source = useRef(initialSource);
   const running = useRef(false);
@@ -48,6 +51,11 @@ export function BatchDraftDialog() {
     if (job.kind === 'strategy') return t('dlv.batch.strategy');
     if (job.kind === 'solution') return t('dlv.batch.solution', { name: job.name });
     return t(job.kind === 'fields' ? 'dlv.batch.fields' : 'dlv.batch.brief', { step: t(`proj.step.${job.step}`) });
+  };
+  const refreshTokens = () => {
+    const uses = [...new Set(jobs.map((job) => job.request.use))];
+    const summary = summarizeTokens(recordsOfJob(readLedger(), { scope, since: startedAt, uses }));
+    setTokens(summary.total.calls > 0 ? summary : null);
   };
   const setStatus = (job: BatchJob, status: JobStatus) => setStatuses((current) => ({ ...current, [batchJobId(job)]: status }));
   const assertCurrent = () => {
@@ -105,7 +113,7 @@ export function BatchDraftDialog() {
         assertCurrent();
         setStatus(job, 'working');
         attempts.current.set(job.request.use, Date.now());
-        const result = await runBatchJob(job, abort.signal);
+        const result = await runBatchJob(job, abort.signal).finally(refreshTokens);
         if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         assertCurrent();
         saveBatchResult(job, result, ctx, audience, provider);
@@ -155,6 +163,7 @@ export function BatchDraftDialog() {
               {error && <p role="alert" data-testid="dlv-batch-error">{error}</p>}
               {interrupted && <p role="status">{t('dlv.batch.interrupted')}</p>}
               {done === jobs.length && !strategySkipped && <p role="status">{t('dlv.batch.complete')}</p>}
+              {tokens && <TokenTable summary={tokens} testId="dlv-batch-tokens" caption={t('ai.tokens.job')} />}
               <ol className="dlv-batch-list">
                 {jobs.map((job) => {
                   const id = batchJobId(job);

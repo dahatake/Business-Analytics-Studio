@@ -97,7 +97,7 @@ export function ChapterScene({ chapter, headingId, title, onSkip }: { chapter: C
         </>
       );
     case 'roi': {
-      const max = Math.max(...chapter.items.map((s) => Math.max(s.solution.costJpy, s.solution.annualBenefitJpy)), 1);
+      const max = Math.max(...chapter.items.map((s) => Math.max(s.solution.costJpy ?? 0, s.solution.annualBenefitJpy ?? 0)), 1);
       return (
         <>
           {heading}
@@ -119,9 +119,9 @@ export function ChapterScene({ chapter, headingId, title, onSkip }: { chapter: C
               {chapter.items.map((s) => (
                 <tr key={s.solution.id}>
                   <th scope="row">{tx(s.solution.name)}</th>
-                  <td style={bar(s.solution.costJpy / max)}><span className="show-bar-track cost" aria-hidden><span className="show-bar-fill" /></span>{fmt.yenCompact(s.solution.costJpy)}</td>
-                  <td style={bar(s.solution.annualBenefitJpy / max)}><span className="show-bar-track" aria-hidden><span className="show-bar-fill" /></span>{fmt.yenCompact(s.solution.annualBenefitJpy)}</td>
-                  <td>{t('show.roi.months', { months: fmt.integer(s.paybackMonths) })}</td>
+                  <td style={bar((s.solution.costJpy ?? 0) / max)}><span className="show-bar-track cost" aria-hidden><span className="show-bar-fill" /></span>{fmt.yenCompact(s.solution.costJpy)}</td>
+                  <td style={bar((s.solution.annualBenefitJpy ?? 0) / max)}><span className="show-bar-track" aria-hidden><span className="show-bar-fill" /></span>{fmt.yenCompact(s.solution.annualBenefitJpy)}</td>
+                  <td>{t('show.roi.months', { months: fmt.integer(s.paybackMonths ?? 0) })}</td>
                 </tr>
               ))}
             </tbody>
@@ -201,7 +201,7 @@ export function StorySceneView({ scene, story, headingId, title, lines }: { scen
           <div className="show-roi-totals">
             <p><span className="show-big">{fmt.yenCompact(scene.item.solution.annualBenefitJpy)}</span><span>{t('show.roi.benefit')}</span></p>
             <p><span className="show-big">{fmt.yenCompact(scene.item.solution.costJpy)}</span><span>{t('show.roi.cost')}</span></p>
-            <p><span className="show-big">{t('show.roi.months', { months: fmt.integer(scene.item.paybackMonths) })}</span><span>{t('show.roi.payback')}</span></p>
+            <p><span className="show-big">{scene.item.paybackMonths === null ? '—' : t('show.roi.months', { months: fmt.integer(scene.item.paybackMonths) })}</span><span>{t('show.roi.payback')}</span></p>
           </div>
         </>
       );

@@ -10,21 +10,20 @@ import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { cardSpecs, type CardSpec } from '../ui/cardSpecs.ts';
 import { kindIcon } from '../ui/icons.ts';
 import { hrefFor } from '../state/router.ts';
-import { LEDGER_RETENTION_MONTHS } from '../ai/budget.ts';
 import { openAiSettings } from '../modules/ai/uiStore.ts';
 import type { MessageKey } from '../i18n/index.ts';
 import { DataLocationPanel } from './DataLocationPanel.tsx';
 
-/** D-7 (proposal P-03, approved 2026-11-09): what is kept, how it is deleted, and what survives for budget accounting. */
-const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageKey; budget: MessageKey; where?: string; aiSettings?: true }[] = [
-  { target: 'retention.pack', retention: 'retention.keep.untilReplaced', deletion: 'retention.del.packFile', budget: 'retention.budget.na' },
-  { target: 'retention.cache', retention: 'retention.keep.cache', deletion: 'retention.del.cacheFolder', budget: 'retention.budget.na' },
-  { target: 'retention.project', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.project', budget: 'retention.budget.kept', where: '/projects' },
-  { target: 'retention.importedPack', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.importedPack', budget: 'retention.budget.na', where: '/data' },
-  { target: 'retention.connection', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.connection', budget: 'retention.budget.na', aiSettings: true },
-  { target: 'retention.ledger', retention: 'retention.keep.ledger', deletion: 'retention.del.ledger', budget: 'retention.budget.self', aiSettings: true },
-  { target: 'retention.exports', retention: 'retention.keep.outside', deletion: 'retention.del.exports', budget: 'retention.budget.na' },
-  { target: 'retention.chat', retention: 'retention.keep.notStored', deletion: 'retention.del.none', budget: 'retention.budget.na' },
+/** D-7 (proposal P-03, approved 2026-11-09): what is kept and how it is deleted. */
+const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageKey; where?: string; aiSettings?: true }[] = [
+  { target: 'retention.pack', retention: 'retention.keep.untilReplaced', deletion: 'retention.del.packFile' },
+  { target: 'retention.cache', retention: 'retention.keep.cache', deletion: 'retention.del.cacheFolder' },
+  { target: 'retention.project', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.project', where: '/projects' },
+  { target: 'retention.importedPack', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.importedPack', where: '/data' },
+  { target: 'retention.connection', retention: 'retention.keep.untilDeleted', deletion: 'retention.del.connection', aiSettings: true },
+  { target: 'retention.ledger', retention: 'retention.keep.ledger', deletion: 'retention.del.ledger' },
+  { target: 'retention.exports', retention: 'retention.keep.outside', deletion: 'retention.del.exports' },
+  { target: 'retention.chat', retention: 'retention.keep.notStored', deletion: 'retention.del.none' },
 ];
 
 /** AI rows open the single AI settings dialog (D-25); other rows link to their screen. */
@@ -148,22 +147,20 @@ export function SettingsScreen() {
         </div>
       </Panel>
       <Panel title={t('retention.title')} rationale="retention.why" testId="retention">
-        <p>{t('retention.intro', { months: LEDGER_RETENTION_MONTHS })}</p>
+        <p>{t('retention.intro')}</p>
         <div className="table-scroll">
           <table className="data-table">
             <thead><tr>
               <th scope="col">{t('retention.col.target')}</th>
               <th scope="col">{t('retention.col.retention')}</th>
               <th scope="col">{t('retention.col.deletion')}</th>
-              <th scope="col">{t('retention.col.budget')}</th>
             </tr></thead>
             <tbody>
               {RETENTION.map((r) => (
                 <tr key={r.target}>
                   <th scope="row">{t(r.target)}</th>
-                  <td>{t(r.retention, { months: LEDGER_RETENTION_MONTHS })}</td>
+                  <td>{t(r.retention)}</td>
                   <td>{deletionCell(r, t(r.deletion))}</td>
-                  <td>{t(r.budget)}</td>
                 </tr>
               ))}
             </tbody>

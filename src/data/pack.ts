@@ -83,9 +83,9 @@ function buildEdges(entities: Entity[], flows: CustomerPack['flows'], byId: Map<
         e.kpiIds.forEach((k) => add(e.id, k, 'improves'));
         break;
       case 'initiative': add(e.id, e.solutionId, 'implements'); break;
-      case 'product': add(e.id, e.siteId, 'madeAt'); break;
-      case 'person': add(e.id, e.siteId, 'worksAt'); break;
-      case 'kpi': add(e.ownerId, e.id, 'accountableFor'); break;
+      case 'product': if (e.siteId) add(e.id, e.siteId, 'madeAt'); break;
+      case 'person': if (e.siteId) add(e.id, e.siteId, 'worksAt'); break;
+      case 'kpi': if (e.ownerId) add(e.ownerId, e.id, 'accountableFor'); break;
       default: break;
     }
     e.sourceIds.forEach((s) => add(e.id, s, 'citedFrom'));

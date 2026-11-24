@@ -1,5 +1,5 @@
 import type { LoadedPack } from '../../data/pack.ts';
-import type { Entity, EntityOf } from '../../data/schema.ts';
+import { solutionMoney, type Entity, type EntityOf } from '../../data/schema.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { priorityScore } from '../../domain/priority.ts';
 import { DEFAULT_WEIGHTS } from '../../domain/summary.ts';
@@ -145,7 +145,7 @@ export function stepTargets(input: Pick<TargetInput, 'pack' | 'useCases' | 'kpis
   }
 
   const sols = kindOf(pack, 'solution');
-  const roiOf = (s: EntityOf<'solution'>) => s.annualBenefitJpy / s.costJpy;
+  const roiOf = (s: EntityOf<'solution'>) => { const m = solutionMoney(s); return m ? m.benefit / m.cost : 0; };
   const maxRoi = Math.max(0, ...sols.map(roiOf));
   const solution = sols.map((s) => entity('solution', s, maxRoi > 0 ? roiOf(s) / maxRoi : 0, { kind: 'solution', roi: round(roiOf(s)) }));
 

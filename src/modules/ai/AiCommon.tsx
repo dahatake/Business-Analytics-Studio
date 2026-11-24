@@ -17,11 +17,6 @@ export function reasonKey(r: string): MessageKey {
   return (KNOWN_REASONS as readonly string[]).includes(r) ? `ai.reason.${r as KnownReason}` : 'ai.reason.unknown';
 }
 
-/** Yen with up to 2 decimals: live calls usually cost less than 1 JPY. */
-export function yenFine(locale: string, v: number): string {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'JPY', maximumFractionDigits: 2 }).format(v);
-}
-
 /** D-4: rights and contracts are assumed settled before the app starts. Shown in AI setup. */
 export function D4Warning({ testId = 'ai-d4-warning' }: { testId?: string }) {
   const { t } = useI18n();
@@ -54,23 +49,29 @@ export function MockNotice({ reasons, children }: { reasons: string[]; children?
   );
 }
 
-/** A real (live) answer: labelled "Live" with the recorded cost and the tokens the provider reported. */
-export function LiveNotice({ costJpy, usage, children }: { costJpy: number | null; usage?: TokenCount; children?: ReactNode }) {
+/** Input / output / total tokens of one job as the provider reported them; any figure it did not report reads "unknown". */
+export function TokensInline({ usage, testId = 'ai-live-tokens' }: { usage: TokenCount; testId?: string }) {
   const { t, fmt } = useI18n();
+  const known = (v: number | null) => (v === null ? t('ai.tokens.unavailable') : fmt.integer(v));
+  const total = usage.inputTokens === null || usage.outputTokens === null ? null : usage.inputTokens + usage.outputTokens;
+  return (
+    <p className="muted" data-testid={testId}>
+      {t('ai.tokens.call', { total: known(total), input: known(usage.inputTokens), output: known(usage.outputTokens) })}
+    </p>
+  );
+}
+
+/** A real (live) answer: labelled "Live" with the tokens the provider reported (unknown when it reported none). */
+export function LiveNotice({ usage, children }: { usage?: TokenCount; children?: ReactNode }) {
+  const { t } = useI18n();
   const provider = useAiSettings((s) => s.provider);
   return (
     <div className="ai-live" data-testid="ai-live-label">
       <div className="ai-mock-head">
         <Badge appearance="filled" color="success">{t('ai.live.badge')}</Badge>
-        <span>{t('ai.live.explain', { provider: t(`ai.provider.${provider}`), cost: costJpy === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, costJpy) })}</span>
+        <span>{t('ai.live.explain', { provider: t(`ai.provider.${provider}`) })}</span>
       </div>
-      {usage && (
-        <p className="muted" data-testid="ai-live-tokens">
-          {usage.inputTokens === null || usage.outputTokens === null ? t('ai.tokens.unavailable') : t('ai.tokens.call', {
-            total: fmt.integer(usage.inputTokens + usage.outputTokens), input: fmt.integer(usage.inputTokens), output: fmt.integer(usage.outputTokens),
-          })}
-        </p>
-      )}
+      {usage && <TokensInline usage={usage} />}
       {children}
     </div>
   );
@@ -92,7 +93,6 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
   caption?: string;
 }) {
   const { t, fmt } = useI18n();
-  const yen = (v: number | null) => (v === null ? t('ai.cost.unavailable') : yenFine(fmt.locale, v));
   const tokens = (v: number | null) => v === null ? t('ai.tokens.unavailable') : fmt.integer(v);
   return (
     <table className="ai-token-table" data-testid={testId}>
@@ -104,7 +104,6 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
           <th scope="col">{t('ai.tokens.input')}</th>
           <th scope="col">{t('ai.tokens.output')}</th>
           <th scope="col">{t('ai.tokens.total')}</th>
-          <th scope="col">{t('ai.tokens.cost')}</th>
         </tr>
       </thead>
       <tbody>
@@ -115,7 +114,6 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
             <td>{tokens(l.inputTokens)}</td>
             <td>{tokens(l.outputTokens)}</td>
             <td data-testid={`${testId}-row-total`}>{tokens(l.totalTokens)}</td>
-            <td>{yen(l.costJpy)}</td>
           </tr>
         ))}
         {extraRows.map((label) => (
@@ -123,18 +121,16 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
             <th scope="row">{label}</th>
             <td>0</td><td>0</td><td>0</td>
             <td data-testid={`${testId}-row-total`}>0</td>
-            <td>{yenFine(fmt.locale, 0)}</td>
           </tr>
         ))}
       </tbody>
       <tfoot>
         <tr data-testid={`${testId}-total`}>
-          <th scope="row">{t('ai.tokens.sum')}</th>
+          <th scope="row">{t('ai.tokens.sum')}{summary.total.estimatedCalls > 0 ? ` ${t('ai.tokens.estimatedMark')}` : ''}</th>
           <td>{fmt.integer(summary.total.calls)}</td>
           <td>{tokens(summary.total.inputTokens)}</td>
           <td>{tokens(summary.total.outputTokens)}</td>
           <td data-testid={`${testId}-total-value`}>{tokens(summary.total.totalTokens)}</td>
-          <td>{yen(summary.total.costJpy)}</td>
         </tr>
       </tfoot>
     </table>

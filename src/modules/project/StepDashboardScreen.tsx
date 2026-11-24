@@ -436,8 +436,8 @@ function SolutionsTable({ rows, visible, limit, title }: { rows: SolutionRow[]; 
                 <td className="num">{fmt.yen(s.costJpy)}</td>
                 <td className="num">{fmt.yen(s.annualBenefitJpy)}</td>
                 <td className="num">
-                  {Number.isFinite(s.payback) ? t('proj.dash.years', { n: s.payback.toFixed(1) }) : t('proj.dash.never')}
-                  {limit !== undefined && <> <OkNg ok={s.payback <= limit} /></>}
+                  {s.payback === null ? '—' : Number.isFinite(s.payback) ? t('proj.dash.years', { n: s.payback.toFixed(1) }) : t('proj.dash.never')}
+                  {limit !== undefined && s.payback !== null && <> <OkNg ok={s.payback <= limit} /></>}
                 </td>
               </tr>
             ))}

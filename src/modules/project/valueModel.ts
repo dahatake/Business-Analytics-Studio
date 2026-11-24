@@ -296,6 +296,8 @@ export interface ValueSolution {
   cost: EngineRange;
   /** The cost is the pack's single number (no range entered). */
   costPoint: boolean;
+  /** The pack states no cost and none was entered: the cost is 0 only as a placeholder and must be flagged. */
+  costUnknown: boolean;
   /** No benefit lines: the pack's annual benefit stands in as one undecomposed line. */
   implicit: boolean;
   selected: boolean;
@@ -324,7 +326,7 @@ export function buildValueModel(pack: LoadedPack, strategy: StrategyData, data: 
     const range = data.settings.costs[s.id];
     return {
       id: s.id, type: t.type, typeConfirmed: t.confirmed, buildYears: buildYears(s.id, inits),
-      cost: range ?? point(s.costJpy), costPoint: !range,
+      cost: range ?? point(s.costJpy ?? 0), costPoint: !range, costUnknown: !range && s.costJpy === undefined,
       implicit: !data.benefits.some((b) => b.solutionId === s.id),
       selected: !excluded.has(s.id), kpiIds: s.kpiIds, issueIds: s.issueIds, products: s.msProducts,
     };
@@ -448,7 +450,7 @@ export function coverage(data: ValueData, solutions: ValueSolution[]): CoverageC
 /* ---------- Checks on the model ---------- */
 
 export type ValueWarning =
-  | 'undecomposed' | 'pointEstimate' | 'fullConversion' | 'noDisbenefit' | 'unmeasured' | 'unowned' | 'enablerMissing' | 'openCells' | 'defaultRate' | 'defaultCorrelation';
+  | 'undecomposed' | 'pointEstimate' | 'costUnknown' | 'fullConversion' | 'noDisbenefit' | 'unmeasured' | 'unowned' | 'enablerMissing' | 'openCells' | 'defaultRate' | 'defaultCorrelation';
 
 export interface ValueCheck {
   id: ValueWarning;
@@ -465,6 +467,7 @@ export function valueChecks(data: ValueData, built: BuiltValueModel): ValueCheck
   const push = (id: ValueWarning, refs: string[]) => { if (refs.length) out.push({ id, refs }); };
   push('undecomposed', sel.filter((s) => s.implicit).map((s) => s.id));
   push('pointEstimate', [...money.filter((b) => b.amountJpy!.high === b.amountJpy!.low).map((b) => b.id), ...sel.filter((s) => s.costPoint).map((s) => s.id)]);
+  push('costUnknown', sel.filter((s) => s.costUnknown).map((s) => s.id));
   push('fullConversion', money.filter((b) => b.sign === 'benefit' && b.lever === 'cost' && b.conversion.mode >= 1).map((b) => b.id));
   if (sel.length && !lines.some((b) => b.sign === 'disbenefit')) push('noDisbenefit', sel.map((s) => s.id));
   push('unmeasured', lines.filter((b) => b.sign === 'benefit' && !b.kpiId).map((b) => b.id));
@@ -616,8 +619,8 @@ export function valueFacts(pack: LoadedPack, built: BuiltValueModel, kpis: KpiFa
   for (const s of built.solutions) {
     const e = pack.byId.get(s.id);
     if (e?.kind !== 'solution') continue;
-    facts[`${s.id}.costJpy`] = e.costJpy;
-    facts[`${s.id}.annualBenefitJpy`] = e.annualBenefitJpy;
+    if (e.costJpy !== undefined) facts[`${s.id}.costJpy`] = e.costJpy;
+    if (e.annualBenefitJpy !== undefined) facts[`${s.id}.annualBenefitJpy`] = e.annualBenefitJpy;
     facts[`${s.id}.buildYears`] = Math.round(s.buildYears * 100) / 100;
   }
   for (const k of kpis) {
@@ -833,7 +836,7 @@ export function parseValueDraft(answer: string | unknown, c: DraftContext, by: '
   // Over-claim against the pack's own figure: drafted + existing annual benefits of a solution, at their mode.
   const overclaim = c.built.solutions.filter((s) => {
     const e = c.pack.byId.get(s.id);
-    if (e?.kind !== 'solution' || e.annualBenefitJpy <= 0) return false;
+    if (e?.kind !== 'solution' || e.annualBenefitJpy === undefined || e.annualBenefitJpy <= 0) return false;
     const sum = [...c.data.benefits, ...lines].filter((b) => b.solutionId === s.id && b.sign === 'benefit' && b.nature === 'financial' && b.timing === 'annual' && b.amountJpy)
       .reduce((a, b) => a + b.amountJpy!.mode * b.conversion.mode, 0);
     return sum > DRAFT_LIMITS.overclaim * e.annualBenefitJpy;

@@ -1,6 +1,6 @@
 import { entitiesOf, getEntity, loaded, type LoadedPack } from '../../data/pack.ts';
 import { appStorage as localStorage } from '../../data/deviceStorage.ts';
-import type { EntityOf } from '../../data/schema.ts';
+import { solutionMoney, type EntityOf } from '../../data/schema.ts';
 import { makeFormatters, pick, translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { rankIssues, type PriorityWeights, type RankedIssue } from '../../domain/priority.ts';
 import { DEFAULT_WEIGHTS } from '../../domain/summary.ts';
@@ -52,8 +52,9 @@ export interface RankedSolution {
   score: number;
   issue: Issue | undefined;
   /** (annual benefit − cost) / cost. */
-  roi: number;
-  paybackMonths: number;
+  /** Null while the solution's cost or annual benefit is unknown. */
+  roi: number | null;
+  paybackMonths: number | null;
 }
 
 export interface BeforeAfterMetric {
@@ -79,15 +80,16 @@ export function rankSolutions(audience: Audience, data: LoadedPack = loaded, wei
   const ranked = rankIssues(entitiesOf('issue', data).filter(visible), weights);
   const byIssue = new Map(ranked.map((r) => [r.issue.id, r] as const));
   return entitiesOf('solution', data).filter(visible).map((solution) => {
+    const money = solutionMoney(solution);
     const issues = solution.issueIds.map((id) => byIssue.get(id)).filter((r): r is RankedIssue => r !== undefined).sort((a, b) => b.score - a.score);
     return {
       solution,
       score: issues[0]?.score ?? 0,
       issue: issues[0]?.issue,
-      roi: (solution.annualBenefitJpy - solution.costJpy) / solution.costJpy,
-      paybackMonths: (solution.costJpy / solution.annualBenefitJpy) * 12,
+      roi: money ? (money.benefit - money.cost) / money.cost : null,
+      paybackMonths: money ? (money.cost / money.benefit) * 12 : null,
     };
-  }).sort((a, b) => b.score - a.score || b.roi - a.roi || a.solution.id.localeCompare(b.solution.id));
+  }).sort((a, b) => b.score - a.score || (b.roi ?? -Infinity) - (a.roi ?? -Infinity) || a.solution.id.localeCompare(b.solution.id));
 }
 
 /** FR-077 / FR-079: every chapter of the program, built from the pack. Empty chapters are explicit, never silently dropped. */
@@ -110,7 +112,7 @@ export function buildChapters(audience: Audience, data: LoadedPack = loaded): Ch
   }
 
   const solutions = rankSolutions(audience, data);
-  const roiItems = [...solutions].sort((a, b) => b.roi - a.roi || a.solution.id.localeCompare(b.solution.id));
+  const roiItems = solutions.filter((s) => s.roi !== null).sort((a, b) => (b.roi ?? -Infinity) - (a.roi ?? -Infinity) || a.solution.id.localeCompare(b.solution.id));
   const kpis = entitiesOf('kpi', data).filter(visible).map((kpi) => ({ kpi, status: kpiStatus(kpi), progress: kpiProgress(kpi) }));
   const initiatives = entitiesOf('initiative', data).filter(visible).filter((i) => i.progress < 1)
     .sort((a, b) => a.start.localeCompare(b.start) || a.id.localeCompare(b.id)).slice(0, 5);
@@ -121,8 +123,8 @@ export function buildChapters(audience: Audience, data: LoadedPack = loaded): Ch
     { id: 'beforeAfter', empty: metrics.length === 0, metrics },
     {
       id: 'roi', empty: roiItems.length === 0, items: roiItems,
-      totalCostJpy: roiItems.reduce((a, s) => a + s.solution.costJpy, 0),
-      totalBenefitJpy: roiItems.reduce((a, s) => a + s.solution.annualBenefitJpy, 0),
+      totalCostJpy: roiItems.reduce((a, s) => a + (s.solution.costJpy ?? 0), 0),
+      totalBenefitJpy: roiItems.reduce((a, s) => a + (s.solution.annualBenefitJpy ?? 0), 0),
     },
     { id: 'kpis', empty: kpis.length === 0, kpis },
     { id: 'solutions', empty: solutions.length === 0, items: solutions },
@@ -158,7 +160,7 @@ export function chapterPoints(ch: Chapter, lang: Lang): string[] {
       const best = ch.items[0]!;
       return [
         translate(lang, 'show.points.roiTotal', { cost: fmt.yenCompact(ch.totalCostJpy), benefit: fmt.yenCompact(ch.totalBenefitJpy) }),
-        translate(lang, 'show.points.roiBest', { solution: pick(lang, best.solution.name), months: fmt.integer(best.paybackMonths) }),
+        translate(lang, 'show.points.roiBest', { solution: pick(lang, best.solution.name), months: fmt.integer(best.paybackMonths ?? 0) }),
       ];
     }
     case 'kpis': {
@@ -215,7 +217,7 @@ export function solutionReasons(item: RankedSolution, persona: PersonaView, lang
   const names = (ids: string[]) => ids.map((id) => getEntity(id, data)).filter((e) => e !== undefined).map((e) => pick(lang, e.name));
   switch (persona) {
     case 'executive':
-      out.push(translate(lang, 'show.reason.executive', { benefit: fmt.yenCompact(item.solution.annualBenefitJpy), cost: fmt.yenCompact(item.solution.costJpy), months: fmt.integer(item.paybackMonths) }));
+      if (item.paybackMonths !== null) out.push(translate(lang, 'show.reason.executive', { benefit: fmt.yenCompact(item.solution.annualBenefitJpy), cost: fmt.yenCompact(item.solution.costJpy), months: fmt.integer(item.paybackMonths) }));
       break;
     case 'business': {
       const causes = item.issue ? names(item.issue.causeIds) : [];

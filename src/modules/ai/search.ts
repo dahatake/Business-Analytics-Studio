@@ -92,6 +92,8 @@ export interface ChatTurn {
   a: string;
   citations: string[];
   reasons: string[];
+  /** Tokens the provider reported for a live answer; absent for mock answers and older turns. */
+  usage?: { inputTokens: number | null; outputTokens: number | null };
 }
 
 export function contextWindow<T>(history: T[], pairs = CHAT_CONTEXT_PAIRS): T[] {

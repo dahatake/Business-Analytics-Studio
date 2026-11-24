@@ -33,7 +33,7 @@ export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob;
 export type BatchResult =
   | { kind: 'fields'; fields: Record<string, string>; tasks: Record<string, string> }
   | { kind: 'brief'; brief: GeneratedBrief }
-  | { kind: 'strategy'; proposal: OverviewProposal; costJpy: number | null }
+  | { kind: 'strategy'; proposal: OverviewProposal; inputTokens: number | null; outputTokens: number | null }
   | { kind: 'solution'; draft: SolutionDraft };
 
 export function batchJobId(job: BatchJob): string {
@@ -73,7 +73,7 @@ export async function runBatchJob(job: BatchJob, signal: AbortSignal): Promise<B
   if (job.kind === 'brief') return { kind: 'brief', brief: await requestLiveStepBrief(job.brief, request, signal) };
   if (job.kind === 'solution') return { kind: 'solution', draft: await requestLiveSolutionDraft(job.input, request, signal) };
   const live = await aiLive(request, signal);
-  return { kind: 'strategy', proposal: parseOverviewResponse(live.text, job.context, request.lang), costJpy: live.costJpy };
+  return { kind: 'strategy', proposal: parseOverviewResponse(live.text, job.context, request.lang), inputTokens: live.inputTokens, outputTokens: live.outputTokens };
 }
 
 /** Snapshot all mutable inputs and existing drafts so another tab cannot silently overwrite them. */
@@ -91,7 +91,7 @@ export function batchSourceStamp(includePack = true): string {
     fieldDrafts: useFieldDrafts.getState().value, solutionDrafts: useSolutionDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,
     audience: useSettings.getState().audience, lang: useSettings.getState().lang,
     provider: ai.provider, liveEnabled: ai.liveEnabled, model: ai.copilotModel, connection: ai.relayConnection,
-    monthlyBudgetJpy: ai.monthlyBudgetJpy, relayReachable: ai.relayReachable, foundryKeySaved: ai.foundryKeySaved,
+    relayReachable: ai.relayReachable, foundryKeySaved: ai.foundryKeySaved,
     connectionVerifiedAt: ai.connectionVerifiedAt, authMethod: ai.authMethod,
   });
 }
@@ -135,7 +135,7 @@ export function saveBatchResult(
     const baseline = overviewBaseline(current, useOverview.getState().value);
     useOverview.getState().set((value) => ({
       ...value,
-      draft: { proposal: result.proposal, baseline, lang: job.request.lang, audience, at: new Date().toISOString(), provider, costJpy: result.costJpy },
+      draft: { proposal: result.proposal, baseline, lang: job.request.lang, audience, at: new Date().toISOString(), provider, inputTokens: result.inputTokens, outputTokens: result.outputTokens },
     }));
   } else if (job.kind === 'solution' && result.kind === 'solution') {
     const draft: SavedSolutionDraft = {

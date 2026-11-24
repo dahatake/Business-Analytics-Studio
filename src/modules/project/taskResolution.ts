@@ -464,9 +464,9 @@ export function suggestOwner(input: ResolutionInput, option: RepairOption, edito
   };
   const solutions = all.flatMap((e) => e.kind === 'solution' && e.issueIds.includes(issue.id) ? [e] : []);
   const solutionKpis = new Set(solutions.flatMap((s) => s.kpiIds));
-  const kpiOwners = all.flatMap((e) => e.kind === 'kpi' && (solutionKpis.has(e.id) || e.sourceIds.some((id) => issue.sourceIds.includes(id))) ? [e.ownerId] : []);
+  const kpiOwners = all.flatMap((e) => e.kind === 'kpi' && (solutionKpis.has(e.id) || e.sourceIds.some((id) => issue.sourceIds.includes(id))) ? e.ownerId ? [e.ownerId] : [] : []);
   const solutionIds = new Set(solutions.map((s) => s.id));
-  const initiativeOwners = all.flatMap((e) => e.kind === 'initiative' && solutionIds.has(e.solutionId) ? [e.ownerId] : []);
+  const initiativeOwners = all.flatMap((e) => e.kind === 'initiative' && solutionIds.has(e.solutionId) && e.ownerId ? [e.ownerId] : []);
   const name = editor.trim().toLowerCase();
   const editorPerson = name ? people.find((p) => [p.name.ja, p.name.en].some((n) => n.trim().toLowerCase() === name)) : undefined;
   return pick(kpiOwners, 'relatedKpi') ?? pick(initiativeOwners, 'initiative')

@@ -239,7 +239,7 @@ function Narrative({ facts, industryLabel, signature }: { facts: Fact[]; industr
       )}
       {state.status === 'loading' && <Spinner size="tiny" label={t('res.ai.loading')} />}
       {state.status === 'done' && state.res.mode === 'live' && (
-        <LiveNotice costJpy={state.res.costJpy ?? null} usage={state.res.usage}>
+        <LiveNotice usage={state.res.usage}>
           <p className={`res-ai-text${stale ? ' is-stale' : ''}`} data-testid="resource-ai-text">{state.res.text}</p>
         </LiveNotice>
       )}

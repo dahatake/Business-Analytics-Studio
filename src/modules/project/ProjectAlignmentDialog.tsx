@@ -12,7 +12,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useProjects, type Company, type Project } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
-import { yenFine } from '../ai/AiCommon.tsx';
+import { TokensInline } from '../ai/AiCommon.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import { ALIGNMENT_KINDS, alignmentPrompt, assessAlignment, emptyAlignment, orderedCompanyObjectives, parseAlignmentProposal, projectEvidenceSources, type Alignment, type ProjectEvidenceSource } from './companyAlignment.ts';
@@ -35,7 +35,7 @@ export function ProjectAlignmentButton({ company, project }: { company: Company;
 }
 
 function ProjectAlignmentDialog({ company, project, onClose }: { company: Company; project: Project; onClose: () => void }) {
-  const { t, lang, fmt } = useI18n();
+  const { t, lang } = useI18n();
   const ai = useAiSettings();
   const loaded = useMemo(() => {
     try { return { value: latestCompanyAnchor(company.id), error: false }; }
@@ -47,8 +47,8 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
   const [packSources, setPackSources] = useState<ProjectEvidenceSource[]>([]);
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
   const [aiApproved, setAiApproved] = useState(false);
-  const [aiCostOk, setAiCostOk] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tokens, setTokens] = useState<{ inputTokens: number | null; outputTokens: number | null } | null>(null);
   const abort = useRef<AbortController | null>(null);
   const projectSourceIds = packSources.map((source) => source.id);
   const assessment = assessAlignment(purpose, version, draft, projectSourceIds);
@@ -74,7 +74,7 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
     return () => { active = false; abort.current?.abort(); };
   }, [project.id, lang, t]);
 
-  useEffect(() => { setAiApproved(false); setAiCostOk(false); }, [proposal, ai.provider]);
+  useEffect(() => { setAiApproved(false); }, [proposal, ai.provider]);
 
   const edit = (patch: Partial<Alignment>) => {
     setDraft((current) => ({ ...current, ...patch, status: 'draft', confirmedBy: '', confirmedAt: '' }));
@@ -107,16 +107,18 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
     setMessage({ error: false, text: t('proj.align.removed') });
   };
   const suggest = async () => {
-    if (!version || !aiApproved || !aiCostOk || !estimate?.allowed || proposal.length > 32_000) return;
+    if (!version || !aiApproved || !estimate?.allowed || proposal.length > 32_000) return;
     const controller = new AbortController();
     abort.current = controller;
     setBusy(true);
     setMessage(null);
+    setTokens(null);
     try {
       const result = await aiLive({
         use: 'alignmentProposal', lang, prompt: proposal,
         maxOutputTokens: PER_USE_LIMITS.alignmentProposal?.maxOutputTokens, scope: project.id,
       }, controller.signal);
+      setTokens({ inputTokens: result.inputTokens, outputTokens: result.outputTokens });
       const next = parseAlignmentProposal(result.text, version);
       setDraft({ ...next, id: draft.id, assessedPurpose: purpose });
       setMessage({ error: false, text: t('proj.align.aiDraft') });
@@ -220,14 +222,14 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
               {version && (
                 <details>
                   <summary>{t('proj.align.aiTitle')}</summary>
-                  <p>{t('proj.align.aiNotice', { provider: t(`ai.provider.${ai.provider}`), cost: estimate?.estimatedCostJpy == null ? t(ai.provider === 'copilotSdk' ? 'ai.cost.unknownCopilot' : 'ai.cost.unknown') : yenFine(fmt.locale, estimate.estimatedCostJpy) })}</p>
+                  <p>{t('proj.align.aiNotice', { provider: t(`ai.provider.${ai.provider}`) })}</p>
                   <p className="muted">{t('proj.align.aiContents')}</p>
                   <pre className="proj-prewrap" data-testid="alignment-ai-preview">{proposal}</pre>
                   <Checkbox checked={aiApproved} onChange={(_, data) => setAiApproved(data.checked === true)} label={t('proj.align.aiApprove')} data-testid="alignment-ai-approve" />
-                  <Checkbox checked={aiCostOk} onChange={(_, data) => setAiCostOk(data.checked === true)} label={t('proj.align.aiCost')} data-testid="alignment-ai-cost" />
                   {(!estimate?.allowed || proposal.length > 32_000) && <p className="muted">{t('proj.align.aiNotReady', { reason: proposal.length > 32_000 ? 'inputTooLarge' : estimate?.reasons.join(', ') ?? '' })}</p>}
-                  <Button disabled={busy || !liveReady(ai) || !aiApproved || !aiCostOk || !estimate?.allowed || proposal.length > 32_000 || !purpose.trim()}
+                  <Button disabled={busy || !liveReady(ai) || !aiApproved || !estimate?.allowed || proposal.length > 32_000 || !purpose.trim()}
                     onClick={() => void suggest()} data-testid="alignment-ai-run">{t('proj.align.aiRun')}</Button>
+                  {tokens && <TokensInline usage={tokens} testId="alignment-ai-tokens" />}
                 </details>
               )}
             </div>

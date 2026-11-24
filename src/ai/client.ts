@@ -2,8 +2,8 @@ import type { Entity } from '../data/schema.ts';
 import { appStorage as localStorage } from '../data/deviceStorage.ts';
 import { loaded } from '../data/pack.ts';
 import { currentScope } from '../state/projects.ts';
-import { AI_LIMITS, PER_USE_LIMITS, type AiUse, type Limits, type Provider } from './policy.ts';
-import { actualCostJpy, checkBudget, estimateCostJpy, estimateTokens, type BudgetDecision, type UnitPrices, type UsageRecord } from './budget.ts';
+import { AI_LIMITS, PER_USE_LIMITS, type AiUse, type Provider } from './policy.ts';
+import { checkBudget, estimateTokens, type BudgetDecision, type UsageRecord } from './budget.ts';
 import { evaluateGate, type GateReason } from './gate.ts';
 import { selectOutbound, toPromptContext } from './redact.ts';
 import type { MediaPart } from './attachments.ts';
@@ -42,8 +42,6 @@ export interface AiResponse {
   blockedReasons: GateReason[];
   withheldIds: string[];
   context: string;
-  /** Recorded cost of a live answer (JPY). */
-  costJpy?: number | null;
   /** Tokens the provider reported for a live answer (mock answers send nothing and have none). */
   usage?: TokenCount;
 }
@@ -55,10 +53,6 @@ export interface AiRuntimeSettings {
   configured: boolean;
   /** One-time consent saved in AI settings for data included in AI requests. */
   sendConsent?: boolean;
-  /** D-3: the user's monthly budget (default 100,000 JPY). */
-  monthlyBudgetJpy?: number;
-  /** Optional pricing for integrations that can calculate costs. */
-  prices?: UnitPrices | null;
 }
 
 /** What the browser hands to the transport (the localhost relay). */
@@ -78,10 +72,6 @@ export interface LiveResult {
   text: string;
   inputTokens: number | null;
   outputTokens: number | null;
-  /** GitHub Copilot: premium requests the call consumed (model multiplier included). */
-  premiumRequests?: number;
-  /** Server-calculated cost using the story deployment's verified rate ceilings. */
-  costJpy?: number | null;
 }
 
 export type LiveTransport = (call: LiveCall, signal?: AbortSignal) => Promise<LiveResult>;
@@ -131,7 +121,7 @@ function pickMock(req: AiRequest): MockFn | undefined {
 }
 
 let runtime: () => AiRuntimeSettings = () => ({ liveEnabled: false, configured: false });
-/** The AI settings module provides the user's live switch, connection state, budget and prices. */
+/** The AI settings module provides the user's live switch and connection state. */
 export function setRuntimeSettingsProvider(fn: () => AiRuntimeSettings) {
   runtime = fn;
 }
@@ -148,8 +138,6 @@ export interface Preflight {
   budget: BudgetDecision;
   estimatedInputTokens: number;
   maxOutputTokens: number;
-  /** null when unit prices are missing. */
-  estimatedCostJpy: number | null;
   internalCount: number;
   personCount: number;
   context: string;
@@ -162,17 +150,7 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
   const settings = runtime();
   const maxOutputTokens = req.maxOutputTokens ?? PER_USE_LIMITS[req.use]?.maxOutputTokens ?? AI_LIMITS.maxOutputTokens;
   const estimatedInputTokens = estimateTokens(req.prompt + context) + (req.media?.length ?? 0) * MEDIA_TOKEN_ESTIMATE;
-  const prices = settings.prices ?? null;
-  const estimatedCostJpy = prices ? estimateCostJpy(estimatedInputTokens, maxOutputTokens, prices) : null;
-  const limits: Limits = { ...AI_LIMITS, monthlyBudgetJpy: settings.monthlyBudgetJpy ?? AI_LIMITS.monthlyBudgetJpy };
-  const ledger = readLedger();
-  const budgetRequest = { use: req.use, estimatedInputTokens, maxOutputTokens, estimatedCostJpy };
-  let budget = checkBudget(ledger, now, budgetRequest, limits);
-  if (req.use === 'strategyOverview') {
-    const providerBudget = checkBudget(ledger.filter((r) => !r.provider || r.provider === (settings.provider ?? 'foundry')), now, budgetRequest,
-      { ...limits, monthlyBudgetJpy: Math.min(limits.monthlyBudgetJpy, 10_000) });
-    if (!providerBudget.allowed) budget = { ...budget, allowed: false, level: 'stop', reasons: [...new Set([...budget.reasons, ...providerBudget.reasons])] };
-  }
+  const budget = checkBudget(readLedger(), now, { use: req.use, estimatedInputTokens, maxOutputTokens });
   const gate = evaluateGate({
     liveEnabled: settings.liveEnabled,
     sendConsent: settings.sendConsent ?? false,
@@ -185,7 +163,6 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
     budget,
     estimatedInputTokens,
     maxOutputTokens,
-    estimatedCostJpy,
     internalCount: selection.internalCount,
     personCount: selection.personCount,
     context,
@@ -194,7 +171,7 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
 
 /**
  * The only entry point for generative AI. It evaluates the global consent gate; when every condition holds it sends through the
- * relay transport and records the actual cost in the ledger. Otherwise (or when the live call fails) it answers with the
+ * relay transport and records the reported tokens in the ledger. Otherwise (or when the live call fails) it answers with the
  * registered mock and reports why.
  */
 export async function aiComplete(req: AiRequest): Promise<AiResponse> {
@@ -209,7 +186,7 @@ export async function aiComplete(req: AiRequest): Promise<AiResponse> {
   try {
     const live = await sendLive(req, pf);
     return {
-      mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: pf.context, costJpy: live.costJpy,
+      mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: pf.context,
       usage: { inputTokens: live.inputTokens, outputTokens: live.outputTokens },
     };
   } catch {
@@ -220,7 +197,7 @@ export async function aiComplete(req: AiRequest): Promise<AiResponse> {
 /** Limit for a live call that does not set its own timeoutMs. */
 export const DEFAULT_LIVE_TIMEOUT_MS = 60_000;
 
-async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Promise<LiveResult & { costJpy: number | null }> {
+async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Promise<LiveResult> {
   const settings = runtime();
   const provider = settings.provider ?? 'foundry';
   const scope = req.scope === undefined ? currentScope() : req.scope;
@@ -238,16 +215,14 @@ async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Pr
       ...(req.media?.length ? { media: req.media } : {}),
     }, signal);
   } catch (err) {
-    // A cancelled or timed-out call may be billed; retain unknown costs as null, never free.
+    // A cancelled or timed-out call may have consumed tokens; record the app's estimate, marked as such.
     if (mayHaveBeenBilled(err, signal)) {
-      appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: pf.estimatedInputTokens, outputTokens: 0, costJpy: pf.estimatedCostJpy, ...attribution, estimated: true });
-      throw Object.assign(err instanceof Error ? err : new Error(String(err)), { recordedCostJpy: pf.estimatedCostJpy });
+      appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: pf.estimatedInputTokens, outputTokens: 0, ...attribution, estimated: true });
     }
     throw err;
   }
-  const costJpy = result.costJpy ?? (settings.prices && result.inputTokens !== null && result.outputTokens !== null ? actualCostJpy(result.inputTokens, result.outputTokens, settings.prices) : null);
-  appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costJpy, ...attribution });
-  return { ...result, costJpy };
+  appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ...attribution });
+  return result;
 }
 
 /** Cancelled by the user, timed out in the browser, or the relay reported a provider timeout/abort (504/499). */
@@ -261,30 +236,26 @@ function mayHaveBeenBilled(err: unknown, signal?: AbortSignal): boolean {
 export class AiLiveError extends Error {
   readonly reasons: GateReason[];
   readonly budget?: BudgetDecision;
-  /** Cost written to the ledger for a call that may have been billed although it produced no answer. */
-  readonly recordedCostJpy: number | null;
 
-  constructor(reasons: GateReason[], message: string, budget?: BudgetDecision, recordedCostJpy: number | null = 0, cause?: unknown) {
+  constructor(reasons: GateReason[], message: string, budget?: BudgetDecision, cause?: unknown) {
     super(message, { cause });
     this.reasons = reasons;
     this.budget = budget;
-    this.recordedCostJpy = recordedCostJpy;
   }
 }
 
 /**
  * Live only, never a mock: for features whose result is stored as real data (FR-311 Project pack generation), a mock
- * answer would be wrong data. Same gate, budget and ledger as aiComplete; a refusal or failure throws AiLiveError.
+ * answer would be wrong data. Same gate, safety limits and usage log as aiComplete; a refusal or failure throws AiLiveError.
  */
-export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ text: string; costJpy: number | null; inputTokens: number | null; outputTokens: number | null }> {
+export async function aiLive(req: AiRequest, signal?: AbortSignal): Promise<{ text: string; inputTokens: number | null; outputTokens: number | null }> {
   const pf = preflight(req);
   if (!pf.allowed) throw new AiLiveError(pf.reasons, `blocked: ${pf.reasons.join(', ')}`, pf.budget);
   if (!transport) throw new AiLiveError(['liveFailed'], 'no transport');
   try {
     const r = await sendLive(req, pf, signal);
-    return { text: r.text, costJpy: r.costJpy, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
+    return { text: r.text, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } catch (err) {
-    const recorded = (err as { recordedCostJpy?: number | null }).recordedCostJpy;
-    throw new AiLiveError(['liveFailed'], signal?.aborted ? 'aborted' : (err as Error).message, undefined, recorded === undefined ? 0 : recorded, err);
+    throw new AiLiveError(['liveFailed'], signal?.aborted ? 'aborted' : (err as Error).message, undefined, err);
   }
 }

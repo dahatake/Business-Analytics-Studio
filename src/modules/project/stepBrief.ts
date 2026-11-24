@@ -391,8 +391,8 @@ const solution: Builder<'solution'> = (d, x, lang) => {
   const n = x.f('solutions', { ja: '施策', en: 'Solutions' }, nN, 'count');
   const estN = d.solutions.filter((s) => s.contributions > 0).length;
   const est = x.f('estimated', { ja: '効果見積りのある施策', en: 'Solutions with an estimate' }, estN, 'count');
-  const costV = d.solutions.reduce((a, s) => a + s.costJpy, 0);
-  const benefitV = d.solutions.reduce((a, s) => a + s.annualBenefitJpy, 0);
+  const costV = d.solutions.reduce((a, s) => a + (s.costJpy ?? 0), 0);
+  const benefitV = d.solutions.reduce((a, s) => a + (s.annualBenefitJpy ?? 0), 0);
   if (!nN) {
     return {
       answer: L(lang, { ja: '施策が登録されていないため、目標達成の見込みを判断できません。', en: 'No solution is recorded, so the chance of reaching the targets cannot be judged.' }),
@@ -495,14 +495,14 @@ const deliverable: Builder<'deliverable'> = (d, x, lang) => {
   }
   const ownedN = rows.filter((r) => r.ownerId).length;
   const conflictN = rows.filter((r) => r.conflict).length;
-  const okN = d.solutions.filter((s) => s.payback <= d.paybackLimit).length;
+  const okN = d.solutions.filter((s) => s.payback !== null && s.payback <= d.paybackLimit).length;
   const unowned = x.f('unowned', { ja: '担当者のいない実行施策', en: 'Initiatives without an owner' }, nN - ownedN, 'count');
   const conflicts = x.f('conflicts', { ja: '日程の矛盾', en: 'Schedule conflicts' }, conflictN, 'count');
   const ok = x.f('paybackOk', { ja: '基準内に回収できる施策', en: 'Solutions within the hurdle' }, okN, 'count');
   const sols = x.f('solutions', { ja: '施策', en: 'Solutions' }, d.solutions.length, 'count');
   const breaks = x.f('chainBreaks', { ja: '戦略から施策までのつながりの切れ目', en: 'Breaks in the strategy chain' }, d.gaps, 'count');
   const avg = x.f('avgProgress', { ja: '実行施策の平均進捗', en: 'Average initiative progress' }, mean(rows.map((r) => r.progress)), 'percent');
-  const slow = [...d.solutions].filter((s) => s.payback > d.paybackLimit).sort((a, b) => b.payback - a.payback).map((s) => ({ s, name: x.name(s.id) })).find((v) => v.name !== null);
+  const slow = [...d.solutions].filter((s) => s.payback !== null && s.payback > d.paybackLimit).sort((a, b) => b.payback! - a.payback!).map((s) => ({ s, name: x.name(s.id) })).find((v) => v.name !== null);
   const problems = nN - ownedN + conflictN + (d.solutions.length - okN) + d.gaps;
   const issues: string[] = [];
   if (nN - ownedN) issues.push(L(lang, { ja: `担当者のいない実行施策 ${unowned} 件`, en: `${unowned} initiatives without an owner` }));
@@ -698,7 +698,6 @@ export interface GeneratedBrief {
   hash: string;
   lang: Lang;
   check: NumberCheck;
-  costJpy?: number | null;
   usage?: AiResponse['usage'];
   approval?: { at: string; by: string };
 }
@@ -723,14 +722,14 @@ function generatedBrief(brief: StepBrief, lang: Lang, response: AiResponse): Gen
   const text = [content.answer, content.situation, content.complication, content.question, ...content.findings, ...content.actions, ...content.caveats].join('\n');
   return {
     content, mode: response.mode, blockedReasons: response.blockedReasons, at: new Date().toISOString(), hash: brief.hash, lang, check: verifyNumbers(text, brief),
-    ...(response.costJpy !== undefined ? { costJpy: response.costJpy } : {}), ...(response.usage ? { usage: response.usage } : {}),
+    ...(response.usage ? { usage: response.usage } : {}),
   };
 }
 
 export async function requestLiveStepBrief(brief: StepBrief, request: AiRequest, signal?: AbortSignal): Promise<GeneratedBrief> {
   const live = await aiLive(request, signal);
   const response: AiResponse = {
-    mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: '', costJpy: live.costJpy,
+    mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: '',
     usage: { inputTokens: live.inputTokens, outputTokens: live.outputTokens },
   };
   const result = generatedBrief(brief, request.lang, response);

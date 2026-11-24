@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { Badge, Button, Checkbox, Field, Input, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { Add20Regular, Delete20Regular, Save20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
+import { aiLive, AiLiveError, preflight, readLedger } from '../../ai/client.ts';
 import { PER_USE_LIMITS } from '../../ai/policy.ts';
 import { OkrExtension } from '../../data/extensionSchemas.ts';
 import { getEntity, loaded, packOrigin } from '../../data/pack.ts';
@@ -10,7 +10,8 @@ import { useI18n } from '../../i18n/index.ts';
 import { useProjects } from '../../state/projects.ts';
 import { loc, type Localizable } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
-import { reasonKey, yenFine } from '../ai/AiCommon.tsx';
+import { recordsOfJob, summarizeTokens, type TokenSummary } from '../../ai/tokenUsage.ts';
+import { reasonKey, TokenTable } from '../ai/AiCommon.tsx';
 import { openAiSettings } from '../ai/uiStore.ts';
 import { DecisionUnavailable, decisionLive } from '../ai/decisionClient.ts';
 import { isDecisionReady, useAiSettings } from '../ai/settingsStore.ts';
@@ -235,6 +236,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
+  const [jobTokens, setJobTokens] = useState<TokenSummary | null>(null);
   const decisionReady = useAiSettings(isDecisionReady);
   const abort = useRef<AbortController | null>(null);
   const alive = useRef(true);
@@ -259,8 +261,6 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
   if (!hasCandidates && !hasMissing && !notice) return null;
   const request = { use: 'kpiOkrDraft' as const, lang, prompt: kpiDraftPrompt(input), scope, maxOutputTokens: PER_USE_LIMITS.kpiOkrDraft?.maxOutputTokens };
   const missingRequest = { ...request, prompt: missingKpiDraftPrompt(input, loaded.pack) };
-  const estimate = openCount ? preflight(request) : null;
-  const missingEstimate = hasMissing ? preflight(missingRequest) : null;
 
   const report = (before: KpiDrafts, r: AddResult, copilot: boolean, rejected = 0, screenNote = '') => {
     const kpiN = r.drafts.kpis.length - before.kpis.length;
@@ -286,8 +286,10 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
     abort.current = controller;
     const pack = loaded.pack;
     const activeRequest = proposeMissing ? missingRequest : request;
+    const since = new Date().toISOString();
     setBusy(true);
     setNotice(null);
+    setJobTokens(null);
     try {
       const pf = preflight(activeRequest);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
@@ -342,7 +344,11 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
       setNotice({ intent: 'error', text: `${t('proj.adopt.aiError')} ${detail}`, settings: blocked });
     } finally {
       abort.current = null;
-      if (alive.current) setBusy(false);
+      if (alive.current) {
+        const summary = summarizeTokens(recordsOfJob(readLedger(), { scope, since, uses: [activeRequest.use, 'kpiOkrScreen'] }));
+        setJobTokens(summary.total.calls > 0 ? summary : null);
+        setBusy(false);
+      }
     }
   };
   const stateBadges = (cid: string) => {
@@ -355,14 +361,12 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
       </>
     );
   };
-  const cost = estimate?.estimatedCostJpy === null || estimate === null ? t('proj.adopt.costUnknown') : yenFine(lang === 'ja' ? 'ja-JP' : 'en-US', estimate.estimatedCostJpy);
-  const missingCost = missingEstimate?.estimatedCostJpy == null ? t('proj.adopt.costUnknown') : yenFine(lang === 'ja' ? 'ja-JP' : 'en-US', missingEstimate.estimatedCostJpy);
 
   return (
     <Panel title={t(hasCandidates ? 'proj.packOkr.title' : 'proj.adopt.missingTitle')} rationale={hasCandidates ? 'proj.packOkr.why' : 'proj.adopt.missingWhy'} className="span-full" testId="proj-pack-okr">
       {hasMissing && (
         <div data-testid="proj-missing-drafts">
-          <p>{t('proj.adopt.missingHint', { types: missing.kpis && missing.okrs ? 'KPI / OKR' : missing.kpis ? 'KPI' : 'OKR', cost: missingCost })}</p>
+          <p>{t('proj.adopt.missingHint', { types: missing.kpis && missing.okrs ? 'KPI / OKR' : missing.kpis ? 'KPI' : 'OKR', })}</p>
           <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate(true)} data-testid="proj-missing-copilot">{t('proj.adopt.missingGenerate')}</Button>
         </div>
       )}
@@ -373,7 +377,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
         <Button icon={<Add20Regular />} disabled={!selected.length} onClick={() => add('okr')} data-testid="proj-adopt-okr">{t('proj.adopt.toOkr')}</Button>
         <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy || openCount === 0} onClick={() => void generate()} data-testid="proj-adopt-copilot">{t('proj.adopt.copilot')}</Button>
       </div>
-      <p className="muted" data-testid="proj-adopt-copilot-hint">{openCount ? t('proj.adopt.copilotHint', { n: openCount, cost }) : t('proj.adopt.allAdopted')}</p>
+      <p className="muted" data-testid="proj-adopt-copilot-hint">{openCount ? t('proj.adopt.copilotHint', { n: openCount }) : t('proj.adopt.allAdopted')}</p>
       {openCount > 0 && decisionReady && <p className="muted" data-testid="proj-adopt-screen-hint">{t('proj.adopt.screenHint')}</p>}
       </>}
       {busy && <Button onClick={() => abort.current?.abort()}>{t('proj.cancel')}</Button>}
@@ -385,6 +389,7 @@ export function PackOkrPanel({ data }: { data: KpiData }) {
           </MessageBarBody>
         </MessageBar>
       )}
+      {jobTokens && <TokenTable summary={jobTokens} testId="proj-adopt-tokens" caption={t('ai.tokens.job')} />}
       {kpis.length > 0 && (
         <ScrollRegion label={t('proj.packOkr.kpis')}>
           <table className="data-table compact">

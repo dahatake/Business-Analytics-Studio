@@ -110,7 +110,7 @@ export function discoveryAdvice(step: ImprovementStep, c: CheckContext): AdviceI
       flag('noOwner', 'resources', hrefFor('/plan', { target: 'plan-table' }), unowned.length, ids(unowned));
       const conflicts = d.initiatives.filter((i) => i.conflict);
       flag('schedule', 'resources', hrefFor('/plan', { target: 'gantt-panel' }), conflicts.length, ids(conflicts));
-      const late = d.solutions.filter((s) => s.payback > d.paybackLimit);
+      const late = d.solutions.filter((s) => s.payback !== null && s.payback > d.paybackLimit);
       flag('paybackOver', 'resources', hrefFor('/plan', { target: 'plan-table' }), late.length, ids(late), { years: d.paybackLimit });
       if (c.deliverables.criteria?.paybackMaxYears === undefined) add('paybackAssumed', 'info', 'resources', hrefFor('/deliverables', { step, target: 'dlv-criteria' }), { years: PAYBACK_MAX_YEARS });
       flag('chain', 'context', hrefFor('/deliverables', { step, target: 'sol-thread' }), d.gaps);

@@ -96,10 +96,10 @@ function deps(answers: unknown[], extra: Partial<GenDeps> = {}): GenDeps & { pro
     complete: async (prompt) => {
       prompts.push(prompt);
       if (prompt.includes('# 検査済みProjectパック') || prompt.includes('# Verified Project pack')) {
-        return { text: JSON.stringify(analysisAnswer()), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+        return { text: JSON.stringify(analysisAnswer()), inputTokens: 1000, outputTokens: 500 };
       }
       const a = answers[Math.min(i++, answers.length - 1)];
-      return { text: typeof a === 'string' ? a : JSON.stringify(a), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+      return { text: typeof a === 'string' ? a : JSON.stringify(a), inputTokens: 1000, outputTokens: 500 };
     },
     fetchSite: async () => ({ pages: [sitePage], failed: [{ url: 'https://www.contoso.example/ir/', error: 'siteTimeout' }] }),
     fetchNews: async () => ({ provider: 'Google News RSS', fetchedAt: '2026-11-10T02:59:30.000Z', articles: [{ title: 'Contoso が新工場', url: 'https://news.example/a', source: '日刊', publishedAt: '2026-10-01T00:00:00Z' }] }),
@@ -142,7 +142,6 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.report.removed.map((x) => x.path)).toContain('entities.product-ghost');
     expect(r.report.fixRounds).toBe(3);
     expect(r.report.calls.map((c) => c.stage)).toEqual(['foundation', 'business', 'fix-1', 'fix-2', 'fix-3', 'analysis']);
-    expect(r.report.costJpy).toBe(60);
     expect(r.report.retrievalErrors).toEqual([{ what: 'site', url: 'https://www.contoso.example/ir/', error: 'siteTimeout' }]);
     expect(r.report.ungrounded).toEqual([]); // 12,000 is on the page, 92/94/98 in kpi.csv
     expect(r.report.inputs.materials[0]).toMatchObject({ name: 'kpi.csv', text: expect.stringContaining('納期遵守率') });
@@ -186,7 +185,7 @@ describe('FR-311 pack generation (D-12)', () => {
       if (stage === 'analysis') {
         d.prompts.push(prompt);
         const answer = analysisAnswer();
-        return { text: JSON.stringify({ ...answer, analyses: answer.analyses.slice(0, 4) }), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+        return { text: JSON.stringify({ ...answer, analyses: answer.analyses.slice(0, 4) }), inputTokens: 1000, outputTokens: 500 };
       }
       return complete(prompt, signal, stage);
     };
@@ -195,17 +194,17 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(runPlan(input({ useWorkIq: false }))).toMatchObject({ minCalls: 3, maxCalls: 8 });
   });
 
-  it('preserves unknown call costs in the saved report and progress instead of reporting free generation', async () => {
+  it('preserves unknown call tokens in the saved report and progress instead of reporting zero', async () => {
     const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }]);
     const complete = d.complete;
     let calls = 0;
-    d.complete = async (...args) => ({ ...await complete(...args), costJpy: ++calls === 1 ? null : 10 });
+    d.complete = async (...args) => ({ ...await complete(...args), ...(++calls === 1 ? { inputTokens: null, outputTokens: null } : {}) });
     const events: ProgressEvent[] = [];
     const r = await generatePack(input(), d, (event) => events.push(event), new AbortController().signal);
-    expect(r.report.costJpy).toBeNull();
-    expect(r.report.calls[0]!.costJpy).toBeNull();
-    expect(events.at(-1)!.costJpy).toBeNull();
-    expect((r.pack.extensions as { generation: { costJpy: number | null } }).generation.costJpy).toBeNull();
+    expect(r.report.calls[0]).toMatchObject({ inputTokens: null, outputTokens: null });
+    expect(r.report.calls[1]!.inputTokens).toEqual(expect.any(Number));
+    expect(events.at(-1)!.tokens).toBeNull();
+    expect((r.pack.extensions as { generation: object }).generation).not.toHaveProperty('costJpy');
   });
 
   it('reports numbers the cited text does not contain', async () => {
@@ -422,8 +421,8 @@ describe('FR-311 pack generation (D-12)', () => {
     const d = deps([], {
       complete: async (prompt, _signal, stage) => {
         d.prompts.push(prompt);
-        if (stage === 'analysis') return { text: JSON.stringify(analysisAnswer()), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
-        return { text: JSON.stringify(byStage[stage ?? ''] ?? { replace: [] }), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+        if (stage === 'analysis') return { text: JSON.stringify(analysisAnswer()), inputTokens: 1000, outputTokens: 500 };
+        return { text: JSON.stringify(byStage[stage ?? ''] ?? { replace: [] }), inputTokens: 1000, outputTokens: 500 };
       },
       fetchWorkIq: async (q) => {
         queries.push(q);
@@ -462,9 +461,9 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.report.readiness!.find((x) => x.key === 'workflow')).toMatchObject({ have: 3, met: true });
     expect(verifyPack(r.pack).ok).toBe(true);
     // Re-runs count under their stage's step in the token table.
-    expect(summarizeTokens(r.report.calls.map((c) => ({ at: NOW.toISOString(), use: 'packBuild', stage: c.stage, inputTokens: 1, outputTokens: 1, costJpy: 1 }))).lines.map((l) => l.step))
+    expect(summarizeTokens(r.report.calls.map((c) => ({ at: NOW.toISOString(), use: 'packBuild', stage: c.stage, inputTokens: 1, outputTokens: 1 }))).lines.map((l) => l.step))
       .toEqual(expect.arrayContaining(['foundation', 'business']));
-    expect(summarizeTokens(r.report.calls.map((c) => ({ at: NOW.toISOString(), use: 'packBuild', stage: c.stage, inputTokens: 1, outputTokens: 1, costJpy: 1 }))).lines.map((l) => l.step))
+    expect(summarizeTokens(r.report.calls.map((c) => ({ at: NOW.toISOString(), use: 'packBuild', stage: c.stage, inputTokens: 1, outputTokens: 1 }))).lines.map((l) => l.step))
       .not.toContain('foundation-3');
     // A later re-fetch starts from what this run used.
     expect(prefillFromPack(r.pack)).toMatchObject({ purpose: '納期遅延を減らす', useWorkIq: true, workIqRounds: 2, materials: [{ name: 'kpi.csv', text: expect.stringContaining('納期遵守率') }] });
@@ -485,7 +484,7 @@ describe('FR-311 pack generation (D-12)', () => {
         const answer = stage === 'analysis' ? analysisAnswer()
           : stage.startsWith('foundation') ? { ...stageA, gaps: [{ section: 'kpi', missing: [`NSAT の目標値 ${n}`] }] }
             : stage.startsWith('business') ? { entities: [], gaps: [{ section: 'issue', missing: [`遅延の原因 ${n}`] }] } : { replace: [] };
-        return { text: JSON.stringify(answer), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+        return { text: JSON.stringify(answer), inputTokens: 1000, outputTokens: 500 };
       },
       fetchWorkIq: async (q) => {
         queries.push(q);
@@ -636,7 +635,7 @@ describe('FR-311 pack generation (D-12)', () => {
         const answer = stage === 'analysis' ? analysisAnswer()
           : stage.startsWith('foundation') ? { ...stageA, entities: stageA.entities.map((e) => ({ ...e, sourceIds: src })) }
             : stage.startsWith('business') ? b1 : { replace: [] };
-        return { text: JSON.stringify(answer), costJpy: 10, inputTokens: 1000, outputTokens: 500 };
+        return { text: JSON.stringify(answer), inputTokens: 1000, outputTokens: 500 };
       },
       fetchWorkIq: async (q) => {
         queries.push(q);
@@ -676,7 +675,7 @@ describe('FR-311 pack generation (D-12)', () => {
     flaky.complete = async (prompt, signal, stage) => {
       n++;
       if (n === 1) throw new Error('relay 502');
-      if (n === 2) return { text: 'すみません', costJpy: 10, inputTokens: 1, outputTokens: 1 };
+      if (n === 2) return { text: 'すみません', inputTokens: 1, outputTokens: 1 };
       return answer(prompt, signal, stage);
     };
     const r = await generatePack(input(), flaky, () => {}, new AbortController().signal);
@@ -697,7 +696,7 @@ describe('FR-311 pack generation (D-12)', () => {
       const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }]);
       const answer = d.complete;
       d.complete = async (...args) => {
-        if (++n === 1) throw new AiLiveError(['liveFailed'], 'relay 502 providerBusy', undefined, 0, new RelayError(502, 'providerBusy', 20_000));
+        if (++n === 1) throw new AiLiveError(['liveFailed'], 'relay 502 providerBusy', undefined, new RelayError(502, 'providerBusy', 20_000));
         return answer(...args);
       };
       const pending = generatePack(input(), d, () => {}, new AbortController().signal);
@@ -716,7 +715,7 @@ describe('FR-311 pack generation (D-12)', () => {
     let n = 0;
     const long = deps([stageA], { complete: async () => {
       n++;
-      throw new AiLiveError(['liveFailed'], 'relay 502 providerBusy', undefined, 0, new RelayError(502, 'providerBusy', 120_000));
+      throw new AiLiveError(['liveFailed'], 'relay 502 providerBusy', undefined, new RelayError(502, 'providerBusy', 120_000));
     } });
     await expect(generatePack(input(), long, () => {}, new AbortController().signal))
       .rejects.toMatchObject({ code: 'callFailed', providerBusy: true, retryAfterMs: 120_000 });
@@ -1051,10 +1050,10 @@ describe('GitHub Copilot adapter (server/copilot.ts)', () => {
     expect(await new CopilotService(async () => fakeSdk({ signedIn: false }).sdk).status()).toMatchObject({ authenticated: false, error: 'notSignedIn' });
   });
 
-  it('runs a tool-less session with the given system prompt, counts premium requests and deletes the session', async () => {
+  it('runs a tool-less session with the given system prompt, returns the reported tokens and deletes the session', async () => {
     const f = fakeSdk({ usage: [{ inputTokens: 100, outputTokens: 50, cost: 10 }] });
     const r = await new CopilotService(async () => f.sdk).complete({ model: 'claude-opus', system: 'SYS', prompt: 'P', timeoutMs: 1000 });
-    expect(r).toEqual({ text: '{"ok":true}', inputTokens: 100, outputTokens: 50, premiumRequests: 10 });
+    expect(r).toEqual({ text: '{"ok":true}', inputTokens: 100, outputTokens: 50 });
     expect(f.created[0]).toMatchObject({ model: 'claude-opus', availableTools: [], systemMessage: { mode: 'replace', content: 'SYS' }, enableSessionStore: false });
     // The user's Copilot MCP servers and plugins (e.g. a Work IQ plugin) and the built-in GitHub one are not started.
     expect(f.created[0]!.disabledMcpServers).toEqual(['workiq', 'azure', 'github-mcp-server']);
@@ -1074,9 +1073,7 @@ describe('GitHub Copilot adapter (server/copilot.ts)', () => {
     expect(await complete([{ inputTokens: 0, outputTokens: 0 }])).toMatchObject({ inputTokens: 0, outputTokens: 0 });
   });
 
-  it('falls back to the model multiplier when no cost is reported, and maps failures', async () => {
-    const f = fakeSdk({ usage: [{ inputTokens: 1, outputTokens: 1 }] });
-    expect((await new CopilotService(async () => f.sdk).complete({ model: 'claude-opus', system: 'S', prompt: 'P', timeoutMs: 1000 })).premiumRequests).toBe(10);
+  it('maps failures', async () => {
     await expect(new CopilotService(async () => fakeSdk({ signedIn: false }).sdk).complete({ model: 'gpt-5', system: 'S', prompt: 'P', timeoutMs: 1000 }))
       .rejects.toEqual(new CopilotError('notSignedIn'));
     await expect(new CopilotService(async () => fakeSdk().sdk).complete({ model: 'nope', system: 'S', prompt: 'P', timeoutMs: 1000 })).rejects.toMatchObject({ code: 'unknownModel' });

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeLedger } from '../src/ai/client.ts';
-import { AiReadiness, ConnectionActions, FoundryFields, PriceFields } from '../src/modules/ai/AiConnectionForm.tsx';
+import { AiReadiness, ConnectionActions, FoundryFields } from '../src/modules/ai/AiConnectionForm.tsx';
 import { DecisionSettings } from '../src/modules/ai/DecisionSettings.tsx';
 import { LiveNotice, TokenTable } from '../src/modules/ai/AiCommon.tsx';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
@@ -26,7 +26,6 @@ beforeEach(() => {
   save.mockReset().mockResolvedValue({ ok: false, error: 'unauthorized', providerStatus: 401 });
   useAiSettings.setState({
     ...initial, ...connection, relayReachable: true, foundryKeySaved: true,
-    monthlyBudgetJpy: 100_000,
     relayConnection: connection, connectionVerifiedAt: '2026-11-10T00:00:00Z', saveConnection: save,
   });
 });
@@ -71,17 +70,30 @@ describe('connection test action', () => {
     act(() => useAiSettings.setState({ sendConsent: true }));
     expect(item()).toContain('OK');
   });
-  it('shows Copilot cost limitations without asking for a price, and displays reported or unavailable tokens', () => {
+  it('shows reported tokens, and "unknown" for any figure the provider did not report, with no price or cost shown', () => {
     useAiSettings.setState({ provider: 'copilotSdk', copilotModel: 'gpt-5', liveEnabled: true });
-    const { rerender } = render(<><PriceFields /><AiReadiness /><LiveNotice costJpy={null} usage={{ inputTokens: 10, outputTokens: 20 }} /></>);
+    const { rerender } = render(<><AiReadiness /><LiveNotice usage={{ inputTokens: 10, outputTokens: 20 }} /></>);
     expect(screen.queryByTestId('ai-price-request')).toBeNull();
-    expect(screen.getByTestId('ai-provider-cost-note').textContent).toContain('cannot be capped');
+    expect(screen.queryByTestId('ai-provider-cost-note')).toBeNull();
     expect(screen.getByTestId('ai-readiness').textContent).not.toContain('Unit price');
-    expect(screen.getByTestId('ai-live-tokens').textContent).toContain('30');
-    rerender(<><LiveNotice costJpy={null} usage={{ inputTokens: null, outputTokens: null }} />
-      <TokenTable summary={summarizeTokens([{ at: new Date().toISOString(), use: 'packBuild', inputTokens: null, outputTokens: null, costJpy: null }])} /></>);
-    expect(screen.getByTestId('ai-live-tokens').textContent).toContain('Unavailable');
-    expect(screen.getByTestId('ai-tokens-total-value').textContent).toBe('Unavailable');
+    expect(screen.getByTestId('ai-live-tokens').textContent).toBe('Tokens used: 30 (input 10 / output 20)');
+    rerender(<LiveNotice usage={{ inputTokens: 10, outputTokens: null }} />);
+    expect(screen.getByTestId('ai-live-tokens').textContent).toBe('Tokens used: unknown (input 10 / output unknown)');
+    rerender(<><LiveNotice usage={{ inputTokens: null, outputTokens: null }} />
+      <TokenTable summary={summarizeTokens([{ at: new Date().toISOString(), use: 'packBuild', inputTokens: null, outputTokens: null }])} /></>);
+    expect(screen.getByTestId('ai-live-tokens').textContent).toContain('unknown');
+    expect(screen.getByTestId('ai-tokens-total-value').textContent).toBe('unknown');
+    expect(screen.queryByText('Cost')).toBeNull();
+  });
+  it('marks token lines and the total that include the app\'s estimate', () => {
+    const at = new Date().toISOString();
+    render(<TokenTable summary={summarizeTokens([
+      { at, use: 'packBuild', inputTokens: 100, outputTokens: 50 },
+      { at, use: 'packBuild', inputTokens: 80, outputTokens: 0, estimated: true },
+    ])} />);
+    expect(screen.getByTestId('ai-tokens-row').textContent).toContain('includes estimates');
+    expect(screen.getByTestId('ai-tokens-total').textContent).toContain('includes estimates');
+    expect(screen.getByTestId('ai-tokens-total-value').textContent).toBe('230');
   });
   it.each<{ patch: Partial<AiSettingsState>; reason: string }>([
     { patch: { endpoint: 'https://other.example/api/projects/project' }, reason: 'project URL' },
@@ -92,7 +104,6 @@ describe('connection test action', () => {
     { patch: { authMethod: 'entraId' }, reason: 'Sign in with your Microsoft account first' },
     { patch: { authMethod: 'entraId', entra: { signedIn: true, account: 'u@example.com', tenantId: null, signIn: 'idle' } }, reason: 'Pick a Foundry resource' },
     { patch: { foundryKeySaved: false }, reason: 'First save the API key' },
-    { patch: { monthlyBudgetJpy: 0 }, reason: 'monthly budget' },
   ])('keeps the button usable but refuses sending for $reason', ({ patch, reason }) => {
     useAiSettings.setState(patch);
     render(<ConnectionActions />);
@@ -284,11 +295,11 @@ describe('connection test action', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it('removes Foundry price inputs and permits a test after acknowledging unknown charges', async () => {
-    render(<><FoundryFields /><PriceFields /></>);
+  it('has no price inputs or cost notices and permits a test after consent', async () => {
+    render(<FoundryFields />);
     expect(screen.queryByTestId('ai-price-input')).toBeNull();
     expect(screen.queryByTestId('ai-price-output')).toBeNull();
-    expect(screen.getByTestId('ai-connection-test-cost').textContent).toContain('unknown charges are not free');
+    expect(screen.queryByTestId('ai-connection-test-cost')).toBeNull();
     consent();
     fireEvent.click(button());
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
@@ -338,7 +349,7 @@ describe('connection test action', () => {
     vi.setSystemTime(new Date('2026-11-11T12:00:00Z'));
     writeLedger(Array.from({ length: 30 }, () => ({
       at: new Date(Date.now() - 6000).toISOString(), use: 'connectionTest' as const,
-      inputTokens: 30, outputTokens: 1, costJpy: 0.034,
+      inputTokens: 30, outputTokens: 1,
     })));
     render(<ConnectionActions />);
     consent();
@@ -349,7 +360,7 @@ describe('connection test action', () => {
 
   it('permits retry once the send interval expires', async () => {
     vi.useFakeTimers();
-    writeLedger([{ at: new Date().toISOString(), use: 'connectionTest', inputTokens: 30, outputTokens: 1, costJpy: 0.034 }]);
+    writeLedger([{ at: new Date().toISOString(), use: 'connectionTest', inputTokens: 30, outputTokens: 1 }]);
     render(<ConnectionActions />);
     consent();
     fireEvent.click(button());

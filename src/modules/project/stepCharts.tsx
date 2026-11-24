@@ -527,12 +527,12 @@ export function GanttChart({ rows, today, nameOf }: { rows: InitiativeRow[]; tod
 export function PaybackChart({ rows, limit, nameOf }: { rows: SolutionRow[]; limit: number; nameOf: NameOf }) {
   const { t } = useI18n();
   if (rows.length === 0) return <p className="muted" data-testid="step-dash-chart-payback-empty">{t('proj.dash.chart.payback.empty')}</p>;
-  const sorted = [...rows].sort((a, b) => a.payback - b.payback || a.id.localeCompare(b.id));
-  const finite = sorted.filter((r) => Number.isFinite(r.payback)).map((r) => r.payback);
+  const sorted = [...rows].sort((a, b) => (a.payback ?? Infinity) - (b.payback ?? Infinity) || a.id.localeCompare(b.id));
+  const finite = sorted.flatMap((r) => (r.payback !== null && Number.isFinite(r.payback) ? [r.payback] : []));
   const max = Math.max(limit * 1.5, ...finite, 1);
-  const inLimit = (r: SolutionRow) => !(r.payback > limit);
+  const inLimit = (r: SolutionRow) => r.payback !== null && !(r.payback > limit);
   const ok = sorted.filter(inLimit).length;
-  const years = (r: SolutionRow) => (Number.isFinite(r.payback) ? t('proj.dash.years', { n: r.payback.toFixed(1) }) : t('proj.dash.never'));
+  const years = (r: SolutionRow) => (r.payback === null ? '—' : Number.isFinite(r.payback) ? t('proj.dash.years', { n: r.payback.toFixed(1) }) : t('proj.dash.never'));
   return (
     <ChartFigure
       id="payback"
@@ -547,7 +547,7 @@ export function PaybackChart({ rows, limit, nameOf }: { rows: SolutionRow[]; lim
               <div key={r.id} className="step-chart-row" data-solution={r.id} data-ok={within}>
                 <span className="step-chart-label">{nameOf(r.id)}</span>
                 <span className="step-chart-track">
-                  {Number.isFinite(r.payback) && <span className={`step-chart-bar ${within ? 'is-good' : 'is-bad'}`} style={{ width: pct(r.payback / max) }} />}
+                  {r.payback !== null && Number.isFinite(r.payback) && <span className={`step-chart-bar ${within ? 'is-good' : 'is-bad'}`} style={{ width: pct(r.payback / max) }} />}
                   <span className="step-chart-mark is-target" style={{ left: pct(limit / max) }} />
                 </span>
                 <span className="step-chart-value">{years(r)} <Glyph ok={within} /></span>

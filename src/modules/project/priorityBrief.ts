@@ -83,7 +83,7 @@ export function priorityBrief(step: PriorityStep, c: CheckContext): PriorityBrie
       break;
     }
     case 'deliverable': {
-      const late = d.solutions.filter((s) => s.payback > d.paybackLimit).length;
+      const late = d.solutions.filter((s) => s.payback !== null && s.payback > d.paybackLimit).length;
       const noOwner = d.initiatives.filter((i) => !i.ownerId).length;
       vars.late = late;
       vars.noOwner = noOwner;

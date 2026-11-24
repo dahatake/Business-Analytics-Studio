@@ -14,7 +14,7 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { useUseCases } from '../usecases/store.ts';
-import { MockNotice } from './AiCommon.tsx';
+import { LiveNotice, MockNotice } from './AiCommon.tsx';
 import { CHAT_CONTEXT_PAIRS, buildIndex, chatPrompt, search, type ChatTurn } from './search.ts';
 import { isConfigured, useAiSettings } from './settingsStore.ts';
 import { StoryVideoSection } from './StoryVideo.tsx';
@@ -55,7 +55,7 @@ function SearchAndChat() {
     setBusy(true);
     const res: AiResponse = await aiComplete({ use: 'chat', lang, prompt: chatPrompt(q, history), entities: grounding });
     const citations = selectOutbound(grounding, loaded.byId).included.map((e) => e.id);
-    setHistory((h) => [...h, { q, a: res.text, citations, reasons: res.blockedReasons }]);
+    setHistory((h) => [...h, { q, a: res.text, citations, reasons: res.blockedReasons, ...(res.mode === 'live' ? { usage: res.usage ?? { inputTokens: null, outputTokens: null } } : {}) }]);
     setQuestion('');
     setBusy(false);
   };
@@ -102,15 +102,20 @@ function SearchAndChat() {
             {history.map((turn, i) => (
               <li key={i} className="ai-turn">
                 <p className="ai-q"><span className="ai-label">{t('ai.chat.you')}</span> {turn.q}</p>
-                <MockNotice reasons={turn.reasons}>
-                  <p className="ai-answer">{turn.a}</p>
-                  {turn.citations.length > 0 && (
-                    <div className="ai-cites">
-                      <span className="ai-label">{t('ai.chat.sources')}</span>
-                      {turn.citations.map((id) => <EntityRef key={id} id={id} />)}
-                    </div>
-                  )}
-                </MockNotice>
+                {(() => {
+                  const body = (
+                    <>
+                      <p className="ai-answer">{turn.a}</p>
+                      {turn.citations.length > 0 && (
+                        <div className="ai-cites">
+                          <span className="ai-label">{t('ai.chat.sources')}</span>
+                          {turn.citations.map((id) => <EntityRef key={id} id={id} />)}
+                        </div>
+                      )}
+                    </>
+                  );
+                  return turn.usage ? <LiveNotice usage={turn.usage}>{body}</LiveNotice> : <MockNotice reasons={turn.reasons}>{body}</MockNotice>;
+                })()}
               </li>
             ))}
           </ol>

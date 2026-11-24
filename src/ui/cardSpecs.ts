@@ -1,4 +1,4 @@
-import type { Entity, EntityKind, EntityOf } from '../data/schema.ts';
+import { solutionMoney, type Entity, type EntityKind, type EntityOf } from '../data/schema.ts';
 import { getEntity, entitiesOf, isNewsDerived, regionName, neighbors } from '../data/pack.ts';
 import type { Formatters, MessageKey } from '../i18n/index.ts';
 import type { LText } from '../data/schema.ts';
@@ -23,8 +23,8 @@ export interface CardSpec<K extends EntityKind = EntityKind> {
   route: ((e: EntityOf<K>) => string) | null;
 }
 
-const nameOf = (id: string, ctx: CardContext) => {
-  const e = getEntity(id);
+const nameOf = (id: string | undefined, ctx: CardContext) => {
+  const e = id ? getEntity(id) : undefined;
   return e ? ctx.tx(e.name) : '—';
 };
 const entityRoute = (e: Entity) => `/entity/${encodeURIComponent(e.id)}`;
@@ -116,7 +116,7 @@ export const cardSpecs: Specs = {
       { label: 'field.msProducts', value: (e, c) => e.msProducts.join(c.t('list.separator')) },
       { label: 'field.cost', internal: true, value: (e, c) => c.fmt.yenCompact(e.costJpy) },
       { label: 'field.annualBenefit', value: (e, c) => c.fmt.yenCompact(e.annualBenefitJpy) },
-      { label: 'field.roi', value: (e, c) => c.fmt.percent((e.annualBenefitJpy - e.costJpy) / e.costJpy) },
+      { label: 'field.roi', value: (e, c) => { const m = solutionMoney(e); return m ? c.fmt.percent((m.benefit - m.cost) / m.cost) : '—'; } },
     ],
   },
   kpi: {
@@ -135,7 +135,7 @@ export const cardSpecs: Specs = {
     fields: [
       { label: 'field.period', value: (e, c) => `${c.fmt.date(e.start)} – ${c.fmt.date(e.end)}` },
       { label: 'field.progress', value: (e, c) => c.fmt.percent(e.progress) },
-      { label: 'field.owner', value: (e, c) => nameOf(e.ownerId, c) },
+      { label: 'field.owner', value: (e, c) => (e.ownerId ? nameOf(e.ownerId, c) : e.ownerRole ? c.tx(e.ownerRole) : '—') },
     ],
   },
   supplier: {

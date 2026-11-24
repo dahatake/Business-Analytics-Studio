@@ -706,9 +706,14 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
       choices?: { message?: { content?: unknown } }[];
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
     };
-    const text = data.choices?.[0]?.message?.content;
-    const inputTokens = data.usage?.prompt_tokens;
-    const outputTokens = data.usage?.completion_tokens;
+    const content = data.choices?.[0]?.message?.content;
+    // Some deployments return the answer as an array of content parts.
+    const text = Array.isArray(content)
+      ? content.map((p) => (p && typeof p === 'object' && typeof (p as { text?: unknown }).text === 'string' ? (p as { text: string }).text : '')).join('')
+      : content;
+    // Some deployments omit usage; fall back to a conservative length-based estimate so the call is still accounted for.
+    const inputTokens = data.usage?.prompt_tokens ?? (data.usage ? undefined : Math.ceil(`${call.prompt}${call.context}`.length));
+    const outputTokens = data.usage?.completion_tokens ?? (data.usage ? undefined : (typeof text === 'string' ? Math.ceil(text.length) : undefined));
     if (typeof text !== 'string' || !text.trim() || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) || typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
       return { status: 502, body: { error: 'badProviderResponse' } };
     }

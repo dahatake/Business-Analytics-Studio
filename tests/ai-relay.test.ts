@@ -13,7 +13,7 @@ import { replaceFileSync } from '../server/files.ts';
 import { reserveStory, storyQuote } from '../server/storyBudget.ts';
 import {
   STRICT_RELAY_CONFIG, handleRelay, hostAllowed, isLoopback, loadConnection, newRelayToken, originAllowed, outboundAllowed, relayAiDecision,
-  relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
+  relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, pruneDiagnostics, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
 } from '../server/relay.ts';
 import { spawn } from 'node:child_process';
 import { MAX_PURPOSE_SEARCHES, WORKIQ_OUTBOUND_HOSTS, WorkIqError, purposeTopics, workIqAspectKeywords, workIqAspectQuery, workIqPlan, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
@@ -857,6 +857,22 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     clock += 10_000;
     mode = 'garbage';
     expect(await call(req('POST', '/relay/ai', aiBody()), ctx())).toEqual({ status: 502, body: { error: 'badProviderResponse' } });
+    const log = readFileSync(join(vault.dir, 'relay-diagnostics.log'), 'utf8');
+    expect(log).toContain('"error":"badProviderResponse"');
+    expect(log).toContain('"error":"providerError"');
+    expect(log).not.toContain(FAKE_KEY);
+    expect(log).not.toContain(PROVIDER_SECRET_BODY);
+    // Startup cleanup keeps recent entries and drops week-old ones.
+    const file = join(vault.dir, 'relay-diagnostics.log');
+    writeFileSync(file, `${JSON.stringify({ at: new Date(Date.now() - 8 * 86_400_000).toISOString(), error: 'old' })}\n${JSON.stringify({ at: new Date().toISOString(), error: 'recent' })}\nnot json\n`);
+    pruneDiagnostics(vault.dir);
+    const pruned = readFileSync(file, 'utf8');
+    expect(pruned).toContain('recent');
+    expect(pruned).not.toContain('"old"');
+    expect(pruned).not.toContain('not json');
+    writeFileSync(file, `${JSON.stringify({ at: new Date(Date.now() - 8 * 86_400_000).toISOString() })}\n`);
+    pruneDiagnostics(vault.dir);
+    expect(existsSync(file)).toBe(false);
     for (const a of answers) expect(JSON.stringify(a.body)).not.toContain(FAKE_KEY);
   });
 });

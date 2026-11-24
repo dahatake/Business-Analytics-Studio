@@ -654,7 +654,44 @@ async function contentFiltered(res: Response): Promise<boolean> {
   }
 }
 
-async function forward(call: AiCall, conn: RelayConnection, credential: FoundryCredential, config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal): Promise<FoundryResponse> {
+const DIAGNOSTICS_FILE = 'relay-diagnostics.log';
+const DIAGNOSTICS_MAX_BYTES = 512 * 1024;
+
+const DIAGNOSTICS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Run when the relay starts: drops entries older than seven days (and unreadable lines), and deletes the file when nothing is left. */
+export function pruneDiagnostics(dir: string, now: number = Date.now()): void {
+  try {
+    const file = join(dir, DIAGNOSTICS_FILE);
+    if (!existsSync(file)) return;
+    const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    const kept = lines.filter((line) => {
+      try {
+        const at = Date.parse((JSON.parse(line) as { at?: string }).at ?? '');
+        return Number.isFinite(at) && now - at <= DIAGNOSTICS_RETENTION_MS;
+      } catch { return false; }
+    });
+    if (kept.length === lines.length) return;
+    if (kept.length === 0) rmSync(file, { force: true });
+    else writeFileSync(file, `${kept.join('\n')}\n`, { mode: 0o600 });
+  } catch { /* diagnostics must never break the relay */ }
+}
+
+/** Appends one metadata-only line (never prompts, answers or keys) so a failed provider call can be diagnosed later. */
+function appendDiagnostic(dir: string, call: AiCall, conn: RelayConnection, info: Record<string, unknown>): void {
+  try {
+    const file = join(dir, DIAGNOSTICS_FILE);
+    if (existsSync(file) && readFileSync(file).length > DIAGNOSTICS_MAX_BYTES) rmSync(file, { force: true });
+    const line = JSON.stringify({
+      at: new Date().toISOString(), use: call.use, deployment: conn.deployment, endpointHost: (() => { try { return new URL(conn.endpoint).host; } catch { return null; } })(),
+      maxOutputTokens: call.maxOutputTokens, promptChars: call.prompt.length, contextChars: call.context.length, ...info,
+    });
+    writeFileSync(file, `${line}\n`, { flag: 'a', mode: 0o600 });
+  } catch { /* diagnostics must never break a call */ }
+}
+
+async function forward(call: AiCall, conn: RelayConnection, credential: FoundryCredential, config: RelayConfig, doFetch: typeof fetch, signal?: AbortSignal, diagDir?: string): Promise<FoundryResponse> {
+  const diag = (info: Record<string, unknown>) => { if (diagDir) appendDiagnostic(diagDir, call, conn, info); };
   if (signal?.aborted) return { status: 499, body: { error: 'aborted' } };
   const url = foundryChatUrl(conn);
   if (!outboundAllowed(url, conn.endpoint, config)) return { status: 403, body: { error: 'outboundNotAllowed' } };
@@ -698,10 +735,14 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
       const error: FoundryError = res.status === 401 ? 'unauthorized' : res.status === 403 ? 'forbidden' :
         res.status === 404 ? 'deploymentNotFound' : res.status === 400 ? 'invalidApiRequest' : res.status === 429 ? 'providerBusy' : 'providerError';
       const retryAfterMs = res.status === 429 ? providerRetryAfter(res.headers) : undefined;
+      diag({ error, providerStatus: res.status });
       return { status: 502, body: { error, providerStatus: res.status, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) } };
     }
     const raw: unknown = await res.json();
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { status: 502, body: { error: 'badProviderResponse' } };
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      diag({ error: 'badProviderResponse', reason: 'notObject', providerStatus: res.status });
+      return { status: 502, body: { error: 'badProviderResponse' } };
+    }
     const data = raw as {
       choices?: { message?: { content?: unknown } }[];
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
@@ -715,11 +756,21 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
     const inputTokens = data.usage?.prompt_tokens ?? (data.usage ? undefined : Math.ceil(`${call.prompt}${call.context}`.length));
     const outputTokens = data.usage?.completion_tokens ?? (data.usage ? undefined : (typeof text === 'string' ? Math.ceil(text.length) : undefined));
     if (typeof text !== 'string' || !text.trim() || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) || typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
+      const choice = (data.choices?.[0] ?? {}) as { finish_reason?: unknown; message?: { refusal?: unknown; reasoning_content?: unknown } };
+      diag({
+        error: 'badProviderResponse', reason: typeof text !== 'string' ? 'contentNotText' : !text.trim() ? 'emptyContent' : 'invalidUsage', providerStatus: res.status,
+        finishReason: typeof choice.finish_reason === 'string' ? choice.finish_reason : null, choices: Array.isArray(data.choices) ? data.choices.length : null,
+        contentType: Array.isArray(content) ? 'array' : typeof content, textChars: typeof text === 'string' ? text.length : null,
+        hasRefusal: Boolean(choice.message?.refusal), hasReasoningContent: choice.message?.reasoning_content !== undefined,
+        usage: data.usage ?? null, topLevelKeys: Object.keys(raw),
+      });
       return { status: 502, body: { error: 'badProviderResponse' } };
     }
     return { status: 200, body: { text, inputTokens, outputTokens } };
   } catch (error) {
     if (signal?.aborted) return { status: 499, body: { error: 'aborted' } };
+    const code = error instanceof SyntaxError ? 'badProviderResponse' : controller.signal.aborted ? 'timeout' : networkError(error);
+    diag({ error: code, reason: error instanceof Error ? error.name : 'unknown', message: error instanceof Error ? error.message.slice(0, 200) : null });
     return controller.signal.aborted ? { status: 504, body: { error: 'timeout' } } :
       { status: 502, body: { error: error instanceof SyntaxError ? 'badProviderResponse' : networkError(error) } };
   } finally {
@@ -1471,7 +1522,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     if (!conn) return json(403, { allowed: false, reasons: ['notConfigured'] });
     const credential = await credentialFor(conn);
     if (!('kind' in credential)) return credential;
-    return forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal);
+    return forward(call, conn, credential, config, ctx.fetch ?? modelFetch, ctx.signal, vault.dir);
   }
 
   return json(404, { error: 'notFound' });
@@ -1536,6 +1587,7 @@ function send(res: ServerResponse, r: RelayResponse) {
 }
 
 export function relayMiddleware(vault: SecretVault, token: string = newRelayToken(), config: RelayConfig = STRICT_RELAY_CONFIG) {
+  pruneDiagnostics(vault.dir);
   const lastCall = new Map<string, number>();
   const news = new NewsService();
   const copilot = new CopilotService();

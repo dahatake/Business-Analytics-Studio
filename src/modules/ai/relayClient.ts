@@ -1,7 +1,7 @@
 import type { LiveCall, LiveResult, LiveTransport } from '../../ai/client.ts';
 import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
-import { FoundryServices, MEDIA_TEST_TIMEOUT_MS, type FoundryServicesInfo, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
+import { FOUNDRY_SERVICES_CHECK_TIMEOUT_MS, FoundryServices, MEDIA_TEST_TIMEOUT_MS, type FoundryServicesInfo, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
 import { DECISION_INPUT_ERRORS, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, validateDecisionConnection, type DecisionConnection, type DecisionRequest, type DecisionResult } from '../../ai/decision.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
@@ -230,7 +230,7 @@ export type ConnectionSaveError = ConnectionInputError | FoundryError | 'hostNot
   | 'notSignedIn' | 'interactionRequired' | 'authFailed' | 'accountChanged' | 'invalidTenant' | 'failed';
 export interface ConnectionUsage { inputTokens: number; outputTokens: number }
 export type ConnectionSaveResult =
-  | { ok: true; connection: RelayConnectionInfo; connectionVerifiedAt: string; usage: ConnectionUsage }
+  | { ok: true; connection: RelayConnectionInfo; connectionVerifiedAt: string; usage: ConnectionUsage; services?: FoundryServicesInfo }
   | { ok: false; error: ConnectionSaveError; providerStatus?: number; usage?: ConnectionUsage };
 
 /** Saves the non-secret connection in the relay (validated there: https, no credentials, deployment pattern). */
@@ -239,15 +239,16 @@ export async function saveRelayConnection(c: RelayConnectionInfo): Promise<Conne
     const res = await relayFetch('/relay/connection', {
       method: 'PUT',
       extraHeaders: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(c),
-      signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS + 5_000),
+      body: JSON.stringify({ ...c, checkServices: true }),
+      signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS + FOUNDRY_SERVICES_CHECK_TIMEOUT_MS + 5_000),
     });
-    const body = (await res.json()) as { connection?: unknown; connectionVerifiedAt?: unknown; usage?: ConnectionUsage; error?: string; providerStatus?: number };
+    const body = (await res.json()) as { connection?: unknown; connectionVerifiedAt?: unknown; usage?: ConnectionUsage; services?: unknown; error?: string; providerStatus?: number };
     const saved = asConnection(body.connection);
     const usage = body.usage && Number.isFinite(body.usage.inputTokens) && body.usage.inputTokens >= 0 &&
       Number.isFinite(body.usage.outputTokens) && body.usage.outputTokens >= 0 ? body.usage : undefined;
     if (res.ok && saved && usage && typeof body.connectionVerifiedAt === 'string') {
-      return { ok: true, connection: saved, connectionVerifiedAt: body.connectionVerifiedAt, usage };
+      const services = FoundryServices.safeParse(body.services);
+      return { ok: true, connection: saved, connectionVerifiedAt: body.connectionVerifiedAt, usage, services: services.success ? services.data : undefined };
     }
     const known: ConnectionSaveError[] = [...CONNECTION_INPUT_ERRORS, ...FOUNDRY_ERRORS, 'hostNotAllowed', 'outboundNotAllowed', 'keyMissing', 'keyChanged', 'tooSoon',
       'notSignedIn', 'interactionRequired', 'authFailed', 'accountChanged', 'invalidTenant'];

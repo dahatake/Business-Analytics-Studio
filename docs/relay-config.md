@@ -178,16 +178,20 @@ For a new resource, prefer `disableLocalAuth: true` (keys off) with a custom sub
 
 ## Microsoft Foundry Decision
 
-FR-325 / D-37, simplified on 2026-11-20. **AI Settings → Microsoft Foundry** has only a **Decision model** picker after
-the common Foundry connection is verified. Choose an existing deployment to save it immediately, or **Do not use** to
+FR-325 / D-37. In **AI Settings → Microsoft Foundry**, the **Decision model** picker sits directly below the LLM
+deployment after the common Foundry connection is verified. Choose an existing deployment to save it immediately, or **Do not use** to
 remove it. There are no Decision endpoint/key fields, manual deployment-name input, test consent, test/save/delete
 buttons, prices or separate status panel. API key and Entra ID both reuse the common resource and authentication.
 
-`POST /relay/foundry/services {}` performs read-only resource checks when the settings open:
+**Test connection and save** runs one LLM test and returns the Decision, Speech and Vision checks with
+the saved connection (`PUT /relay/connection` with `checkServices: true`). Optional service failures are reported
+separately and do not undo a successful LLM save. For an existing connection, `POST /relay/foundry/services {}`
+performs the same read-only checks when settings open and no matching result from a save is available:
 
 - **Entra ID:** find the saved resource in its tenant through Resource Graph; read the effective Speech/Vision data
   actions and succeeded `Microsoft-Decision-*` deployments. For Decision, check the documented `MaaS/*` model
-  permissions, not the OpenAI chat role. Narrow/custom grants or exclusions that cannot establish this access remain
+  permissions, not the OpenAI chat role. Ignore exclusions for unrelated actions such as fine-tuning.
+  Narrow/custom grants or exclusions that cannot establish this access remain
   unknown rather than declaring them absent. These checks do not assign roles or guarantee inference/network success.
 - **API key:** read the free Speech voices list, Vision's `GET /vision/v3.2/models`, and
   `GET https://<resource>.services.ai.azure.com/openai/deployments?api-version=2024-10-21`.

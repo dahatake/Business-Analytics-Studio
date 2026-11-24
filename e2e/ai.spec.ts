@@ -290,6 +290,15 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       entra: { signedIn: entraMode, account: entraMode ? 'user@example.test' : null, tenantId, signIn: { status: entraMode ? 'signedIn' : 'idle' } },
     } }));
     await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId, name: 'Directory', signedIn: true }] } }));
+    await page.route('**/relay/entra/instances', (route) => route.fulfill({ json: { instances: [{
+      id: `/subscriptions/${tenantId}/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/decision-resource`,
+      name: 'decision-resource', kind: 'AIServices', location: 'eastus', resourceGroup: 'rg', subscriptionId: tenantId,
+      subscriptionName: 'Test', tenantId, endpoint: 'https://decision-resource.openai.azure.com/openai/v1', keyAuthDisabled: false,
+    }] } }));
+    await page.route('**/relay/entra/inspect', (route) => route.fulfill({ json: {
+      deployments: [{ name: 'chat', model: 'gpt-chat-latest', version: '', sku: 'GlobalStandard' }],
+      access: { canCall: true, canAssign: false },
+    } }));
     await page.route('**/relay/foundry/services', (route) => route.fulfill({ json: {
       speech: 'available', vision: 'available', decision: 'available',
       deployments: ['decision-1-1', 'decision-other'].map((name) => ({ name, model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' })),
@@ -320,7 +329,11 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     entraMode = true;
     await page.reload();
     await page.getByTestId('nav-ai-settings').click();
+    await page.getByTestId('ai-auth-entra').check();
+    await page.getByTestId('ai-entra-instance').selectOption({ label: 'decision-resource — Test / rg (eastus)' });
+    await expect(page.getByTestId('ai-entra-deployment')).toHaveValue('chat');
     await expect(picker).toBeEnabled();
+    expect(await panel.evaluate((element) => !!element.previousElementSibling?.querySelector('[data-testid="ai-entra-deployment"]'))).toBe(true);
     await expect(picker).toHaveValue('');
     await picker.selectOption('decision-1-1');
     await expect(picker).toHaveValue('decision-1-1');
@@ -427,10 +440,16 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       const connection = { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2024-10-21' };
       let verified = false;
       const serviceCalls: string[] = [];
-      await page.route('**/relay/foundry/services', (route) => route.fulfill({ json: {
+      let backgroundChecks = 0;
+      let saves = 0;
+      const serviceResult = {
         speech: 'available', vision: 'available', decision: 'available',
         deployments: [{ name: 'decision-1-1', model: 'Microsoft-Decision-1.1', version: '1', sku: 'GlobalStandard' }],
-      } }));
+      };
+      await page.route('**/relay/foundry/services', (route) => {
+        backgroundChecks++;
+        return route.fulfill({ json: serviceResult });
+      });
       await page.route('**/relay/status', (route) => route.fulfill({ json: {
         secrets: { foundryKey: true }, connection: verified ? connection : null,
         connectionVerifiedAt: verified ? '2026-11-20T00:00:00.000Z' : null,
@@ -442,8 +461,12 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
           verified = false;
           return route.fulfill({ json: { connection: null } });
         }
+        saves++;
+        expect(route.request().postDataJSON()).toMatchObject({ checkServices: true });
         verified = true;
-        return route.fulfill({ json: { connection, verifiedAt: '2026-11-20T00:00:00.000Z' } });
+        return route.fulfill({ json: {
+          connection, connectionVerifiedAt: '2026-11-20T00:00:00.000Z', usage: { inputTokens: 10, outputTokens: 1 }, services: serviceResult,
+        } });
       });
       await page.route(/\/relay\/(?:media\/(?:speech|vision)|decision|speech\/(?:route|separate))$/, (route) => {
         serviceCalls.push(route.request().url());
@@ -459,6 +482,11 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       await page.getByTestId('ai-connection-save').click();
       await expect(services).toBeVisible();
       await expect(services.getByTestId('ai-decision-deployment')).toBeEnabled();
+      await expect(services.getByTestId('ai-decision-deployment')).toContainText('decision-1-1 (Microsoft-Decision-1.1)');
+      await expect(dialog.getByTestId('ai-connection-msg')).toBeVisible();
+      expect(await services.evaluate((element) => !!element.previousElementSibling?.querySelector('[data-testid="ai-deployment"]'))).toBe(true);
+      expect(saves).toBe(1);
+      expect(backgroundChecks).toBe(0);
       await expect(services.locator('select')).toHaveCount(1);
       await expect(services.locator('button, input')).toHaveCount(0);
       for (const id of ['ai-speech-connection', 'ai-vision-connection', 'ai-speech', 'ai-media', 'ai-decision-panel', 'ai-speech-route-choice', 'ai-speech-separate']) {

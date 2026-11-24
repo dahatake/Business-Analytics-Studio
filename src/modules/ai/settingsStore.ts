@@ -13,7 +13,7 @@ import {
   saveWorkIqSettings, testMediaConnection, type ConnectionSaveResult, type CopilotStatusInfo, type EntraStatus, type KeyProtection, type MediaStatus, type MediaTestResult, type RelayConnectionInfo, type SecretName,
   type SpeechConnectionStatus, type WorkIqSettingsInput, type WorkIqStatus,
 } from './relayClient.ts';
-import type { MediaService } from '../../ai/mediaConnection.ts';
+import type { FoundryServicesInfo, MediaService } from '../../ai/mediaConnection.ts';
 import { DECISION_TEST_USE, decisionCostJpy, decisionUsesFoundry } from '../../ai/decision.ts';
 
 export type AiProvider = 'foundry' | 'copilotSdk';
@@ -63,6 +63,7 @@ export interface AiSettingsState {
   selectDecisionModel: (deployment: string | null) => Promise<DecisionSaveResult>;
   relayConnection: RelayConnectionInfo | null;
   connectionVerifiedAt: string | null;
+  foundryServicesCheck: { verifiedAt: string; endpoint: string; account: string | null; services: FoundryServicesInfo } | null;
   keyProtection: KeyProtection | null;
   /** The Copilot model saved in the relay (the copy that sends). */
   copilotModel: string | null;
@@ -133,6 +134,7 @@ export const useAiSettings = create<AiSettingsState>()(
       },
       relayConnection: null,
       connectionVerifiedAt: null,
+      foundryServicesCheck: null,
       keyProtection: null,
       copilotModel: null,
       copilotStatus: null,
@@ -215,6 +217,9 @@ export const useAiSettings = create<AiSettingsState>()(
           });
         }
         const current = get();
+        if (r.ok) set({ foundryServicesCheck: r.services ? {
+          verifiedAt: r.connectionVerifiedAt, endpoint: r.connection.endpoint, account: s.entra?.account ?? null, services: r.services,
+        } : null });
         if (r.ok && (
           s.relayConnection === null
           || s.relayConnection.endpoint !== r.connection.endpoint
@@ -231,7 +236,7 @@ export const useAiSettings = create<AiSettingsState>()(
       },
       deleteConnection: async () => {
         const ok = await deleteRelayConnection();
-        if (ok) set({ endpoint: '', deployment: '', apiVersion: DEFAULT_API_VERSION, liveEnabled: false, sendConsent: false });
+        if (ok) set({ endpoint: '', deployment: '', apiVersion: DEFAULT_API_VERSION, liveEnabled: false, sendConsent: false, foundryServicesCheck: null });
         await get().refreshRelay();
         return ok;
       },

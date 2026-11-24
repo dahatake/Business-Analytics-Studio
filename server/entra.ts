@@ -520,7 +520,12 @@ export async function inspectFoundryInstance(deps: ArmDeps, resourceId: string, 
   if (kind !== 'decision') return result;
   // Learn documents MaaS/* for Foundry model inference. Do not equate the OpenAI chat role with Decision access.
   const family = 'Microsoft.CognitiveServices/accounts/MaaS/*';
-  const fullAccess = perms.some((p) => permitted([p], family, true) && !p.notDataActions?.length);
+  const familyPrefix = family.slice(0, -1).toLowerCase();
+  const mayExcludeDecision = (pattern: string) => {
+    const prefix = pattern.toLowerCase().split('*', 1)[0]!;
+    return prefix.startsWith(familyPrefix) || (pattern.includes('*') && familyPrefix.startsWith(prefix));
+  };
+  const fullAccess = perms.some((p) => permitted([p], family, true) && !p.notDataActions?.some(mayExcludeDecision));
   const partialAccess = perms.some((p) => !p.notDataActions?.some((action) => actionMatches(action, family))
     && (permitted([p], family, true) || p.dataActions?.some((action) => action.toLowerCase().startsWith('microsoft.cognitiveservices/accounts/maas/'))));
   return { ...result, decisionAccess: fullAccess ? 'available' : partialAccess ? 'unknown' : 'unavailable' };

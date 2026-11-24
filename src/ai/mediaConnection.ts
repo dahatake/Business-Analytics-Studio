@@ -22,6 +22,7 @@ export const FoundryServices = z.object({
   deployments: z.array(z.object({ name: z.string(), model: z.string(), version: z.string(), sku: z.string() })),
 });
 export type FoundryServicesInfo = z.infer<typeof FoundryServices>;
+export const FOUNDRY_SERVICES_CHECK_TIMEOUT_MS = 30_000;
 
 /** Why the Foundry connection cannot carry Speech / Vision: none saved, or not an Azure resource host (APIM, proxy). */
 export type MediaUnavailable = 'noConnection' | 'unsupportedHost';

@@ -2395,6 +2395,28 @@ describe('read-only Foundry resource checks and Decision model selection', () =>
     expect(vault.get('decisionKey')).toBeUndefined();
   });
 
+  it('tests the LLM once and includes optional service checks in the same save response', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    const metadata = keyReply();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      if (init?.method === 'POST') {
+        expect(String(url)).toBe(`${ENDPOINT}/chat/completions`);
+        return verifiedReply(url, init);
+      }
+      if (String(url).endsWith('/vision/v3.2/models')) return new Response('{}', { status: 503 });
+      return metadata(url, init);
+    });
+    const saved = await call(req('PUT', '/relay/connection', {
+      endpoint: ENDPOINT, deployment: 'chat', checkServices: true,
+    }), { fetch });
+    expect(saved).toMatchObject({ status: 200, body: {
+      connectionVerifiedAt: expect.any(String),
+      services: { speech: 'available', vision: 'unknown', decision: 'available', deployments: [{ name: 'decision-current' }] },
+    } });
+    expect(fetch.mock.calls.map(([, init]) => init?.method)).toEqual(['POST', 'GET', 'GET', 'GET']);
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ connectionVerifiedAt: expect.any(String) });
+  });
+
   it.each([401, 403, 404, 429, 500])('distinguishes resource/access failure from temporary metadata failure (%i)', async (status) => {
     await connect();
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}', { status }));
@@ -2416,7 +2438,7 @@ describe('read-only Foundry resource checks and Decision model selection', () =>
     expect(never).not.toHaveBeenCalled();
   });
 
-  it.each(['missing', 'denied', 'partial', 'chatOnly', 'restricted', 'excluded', 'network', 'malformed', 'available'] as const)('checks the saved Entra tenant and service permissions without role assignment (%s)', async (scenario) => {
+  it.each(['missing', 'denied', 'partial', 'chatOnly', 'restricted', 'excluded', 'decisionExclusion', 'unrelatedExclusion', 'network', 'malformed', 'available'] as const)('checks the saved Entra tenant and service permissions without role assignment (%s)', async (scenario) => {
     await connect('entraId');
     const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
       const u = String(url);
@@ -2437,7 +2459,13 @@ describe('read-only Foundry resource checks and Decision model selection', () =>
         dataActions: scenario === 'partial' ? ['Microsoft.CognitiveServices/accounts/ComputerVision/*', 'Microsoft.CognitiveServices/accounts/MaaS/*']
           : scenario === 'chatOnly' ? ['Microsoft.CognitiveServices/accounts/OpenAI/*']
             : scenario === 'restricted' ? ['Microsoft.CognitiveServices/accounts/MaaS/completions/action'] : ['Microsoft.CognitiveServices/accounts/*'],
-        notDataActions: scenario === 'excluded' ? ['Microsoft.CognitiveServices/accounts/MaaS/*'] : [],
+        notDataActions: scenario === 'excluded' ? ['Microsoft.CognitiveServices/accounts/MaaS/*']
+          : scenario === 'decisionExclusion' ? ['Microsoft.CognitiveServices/accounts/MaaS/systemone/action']
+            : scenario === 'unrelatedExclusion' ? [
+              'Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action',
+              'Microsoft.CognitiveServices/accounts/OpenAI/fine-tunes-deployments/write',
+              'Microsoft.CognitiveServices/accounts/AIServices/fine_tuning_deployments/write',
+            ] : [],
       }] }));
       throw new Error(`Unexpected outbound URL: ${u}`);
     });
@@ -2447,7 +2475,7 @@ describe('read-only Foundry resource checks and Decision model selection', () =>
     expect(result.body).toMatchObject({
       speech: unavailable || scenario === 'partial' || scenario === 'restricted' ? 'unavailable' : unknown ? 'unknown' : 'available',
       vision: unavailable || scenario === 'restricted' ? 'unavailable' : unknown ? 'unknown' : 'available',
-      decision: unavailable || scenario === 'excluded' ? 'unavailable' : unknown || scenario === 'restricted' ? 'unknown' : 'available',
+      decision: unavailable || scenario === 'excluded' ? 'unavailable' : unknown || scenario === 'restricted' || scenario === 'decisionExclusion' ? 'unknown' : 'available',
     });
     if (scenario === 'available') {
       expect((await select('decision-current', fetch)).body).toMatchObject({ decision: {

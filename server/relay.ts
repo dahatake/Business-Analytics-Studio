@@ -35,7 +35,7 @@ import {
   DECISION_TEST_REQUEST, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, decisionEndpointFromChat, decisionUrl, decisionUsesFoundry, parseDecisionAnswers, validateDecisionConnection, validateDecisionRequest,
   type DecisionConnection, type DecisionResult,
 } from '../src/ai/decision.ts';
-import { FoundryServices, type FoundryServicesInfo } from '../src/ai/mediaConnection.ts';
+import { FOUNDRY_SERVICES_CHECK_TIMEOUT_MS, FoundryServices, type FoundryServicesInfo } from '../src/ai/mediaConnection.ts';
 
 /** Largest request body the relay reads: a pack-generation prompt with attached material (MAX_AI_CHARS_BY_USE), UTF-8 and JSON-escaped, plus base64 media files. */
 export const MAX_BODY_BYTES = 1024 * 1024 + Math.ceil(MAX_REQUEST_MEDIA_BYTES / 3) * 4 + 64 * 1024;
@@ -831,13 +831,13 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     return d ? { endpoint: d.endpoint, deployment: d.deployment, ...(d.auth === 'entraId' ? { auth: d.auth, tenantId: d.tenantId } : {}), ...(d.accessError ? { accessError: d.accessError } : {}), verifiedAt: decisionVerifiedAt(d, vault, entra, config) } : null;
   };
 
-  const inspectServices = async (conn: RelayConnection): Promise<FoundryServicesInfo> => {
+  const inspectServices = async (conn: RelayConnection, signal = ctx.signal): Promise<FoundryServicesInfo> => {
     const unknown: FoundryServicesInfo = { speech: 'unknown', vision: 'unknown', decision: 'unknown', deployments: [] };
     const sub = foundrySubdomain(conn.endpoint);
     if (!sub) return unknown;
     if (conn.auth === 'entraId' && conn.tenantId) {
       if (!entraOutboundAllowed(config)) return unknown;
-      const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal };
+      const deps = { tokens: entra, fetch: ctx.fetch ?? fetch, signal };
       try {
         const resource = (await listFoundryInstancesForTenant(deps, conn.tenantId)).find((r) => r.endpoint && foundrySubdomain(r.endpoint) === sub);
         if (!resource) return { ...unknown, speech: 'unavailable', vision: 'unavailable', decision: 'unavailable' };
@@ -872,12 +872,12 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     const deploymentsUrl = `https://${sub}.services.ai.azure.com/openai/deployments?api-version=2024-10-21`;
     const doFetch = ctx.fetch ?? fetch;
     const media = (service: MediaService) => endpointHostAllowed(new URL(mediaEndpoint), config)
-      ? inspectMediaAccess(service, mediaEndpoint, { kind: 'key', key }, doFetch, ctx.signal) : Promise.resolve('unknown' as const);
+      ? inspectMediaAccess(service, mediaEndpoint, { kind: 'key', key }, doFetch, signal) : Promise.resolve('unknown' as const);
     const decision = async (): Promise<Pick<FoundryServicesInfo, 'decision' | 'deployments'>> => {
       if (!endpointHostAllowed(new URL(deploymentsUrl), config)) return { decision: 'unknown', deployments: [] };
       try {
         const timeout = AbortSignal.timeout(30_000);
-        const res = await doFetch(deploymentsUrl, { method: 'GET', headers: { 'api-key': key }, redirect: 'error', signal: ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout });
+        const res = await doFetch(deploymentsUrl, { method: 'GET', headers: { 'api-key': key }, redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
         if ([401, 403, 404].includes(res.status)) return { decision: 'unavailable', deployments: [] };
         if (!res.ok) return { decision: 'unknown', deployments: [] };
         const deployments = parseFoundryDeployments(await res.json(), 'decision');
@@ -1348,7 +1348,10 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
 
   if (path === '/relay/connection') {
     if (method === 'PUT') {
-      const r = validateConnection(parseBody(req.body), config);
+      const body = parseBody(req.body);
+      const { checkServices, ...input } = body ?? {};
+      if (checkServices !== undefined && checkServices !== true) return json(400, { error: 'invalidBody' });
+      const r = validateConnection(body ? input : body, config);
       if (!r.ok) return json(400, { error: r.error });
       const entraAccount = r.value.auth === 'entraId' ? entra.account() : null;
       let credential: FoundryCredential;
@@ -1394,7 +1397,9 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         verification = connectionSignature(r.value, at, key);
       }
       saveConnection(vault.dir, { ...r.value, verifiedAt: at, verification });
-      return json(200, { connection: publicConnection(r.value), connectionVerifiedAt: at, usage });
+      const timeout = AbortSignal.timeout(FOUNDRY_SERVICES_CHECK_TIMEOUT_MS);
+      const services = checkServices ? await inspectServices(r.value, ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout) : undefined;
+      return json(200, { connection: publicConnection(r.value), connectionVerifiedAt: at, usage, ...(services ? { services } : {}) });
     }
     if (method === 'DELETE') {
       rmSync(join(vault.dir, CONNECTION_FILE), { force: true });

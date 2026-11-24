@@ -18,15 +18,19 @@ export function DecisionSettings() {
   const endpoint = connection?.endpoint;
   const auth = connection?.auth;
   const tenantId = connection?.tenantId;
+  const check = s.foundryServicesCheck;
+  const checked = check && check.verifiedAt === s.connectionVerifiedAt && check.endpoint === endpoint
+    && check.account === (s.entra?.account ?? null) ? check.services : null;
   const selected = s.decision?.verifiedAt && decisionUsesFoundry(s.decision, connection) ? s.decision.deployment : '';
 
   useEffect(() => {
     const controller = new AbortController();
     const current = ++request.current;
-    setChecking(true);
-    setServices(null);
+    setChecking(!checked);
+    setServices(checked);
     setError(null);
     setSaving(false);
+    if (checked) return;
     void inspectFoundryServices(AbortSignal.any([controller.signal, AbortSignal.timeout(95_000)])).then((result) => {
       if (current === request.current) setServices(result);
     }, () => {
@@ -35,7 +39,7 @@ export function DecisionSettings() {
       if (current === request.current) setChecking(false);
     });
     return () => { controller.abort(); request.current += 1; };
-  }, [endpoint, auth, tenantId, s.connectionVerifiedAt, s.entra?.account]);
+  }, [endpoint, auth, tenantId, s.connectionVerifiedAt, s.entra?.account, checked]);
 
   const choose = async (value: string) => {
     if (saving) return;

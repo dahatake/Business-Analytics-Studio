@@ -204,6 +204,12 @@ export function FoundryFields() {
   const s = useAiSettings();
   const endpoint = parseFoundryEndpoint(s.endpoint, true);
   const v1 = endpoint.ok && isFoundryV1(endpoint.value);
+  const saved = s.relayConnection;
+  const services = s.relayReachable && s.connectionVerifiedAt && saved &&
+    (s.endpoint.trim() === '' || (endpoint.ok && saved.endpoint === endpoint.value)) && (saved.auth ?? 'apiKey') === s.authMethod &&
+    (s.authMethod !== 'entraId' || saved.tenantId === s.entraTenantId)
+    ? <DecisionSettings />
+    : <p className="muted" data-testid="ai-foundry-services-locked">{t('ai.foundry.servicesLocked')}</p>;
   return (
     <div className="ai-stack" data-testid="ai-foundry">
       <p className="muted">{t('ai.foundry.resourceHint')}</p>
@@ -215,6 +221,7 @@ export function FoundryFields() {
           <Field label={t('ai.settings.deployment')} hint={t('ai.settings.deploymentHint')}>
             <Input value={s.deployment} onChange={(_, d) => s.update({ deployment: d.value })} data-testid="ai-deployment" />
           </Field>
+          {services}
           <Field label={t('ai.settings.apiVersion')} hint={v1 ? t('ai.settings.v1Hint') : undefined}>
             <Input value={s.apiVersion} onChange={(_, d) => s.update({ apiVersion: d.value })} disabled={v1} data-testid="ai-api-version" />
           </Field>
@@ -225,11 +232,8 @@ export function FoundryFields() {
         <Radio value="apiKey" label={t('ai.auth.apiKey')} data-testid="ai-auth-apikey" />
         <Radio value="entraId" label={t('ai.auth.entraId')} data-testid="ai-auth-entra" />
       </RadioGroup>
-      {s.authMethod === 'entraId' ? <EntraConnection /> : <KeyField name="foundryKey" label={t('ai.key.foundry')} testId="ai-foundry-key" />}
+      {s.authMethod === 'entraId' ? <EntraConnection afterDeployment={services} /> : <KeyField name="foundryKey" label={t('ai.key.foundry')} testId="ai-foundry-key" />}
       <ConnectionActions />
-      {s.relayReachable && s.connectionVerifiedAt ? (
-        <DecisionSettings />
-      ) : <p className="muted" data-testid="ai-foundry-services-locked">{t('ai.foundry.servicesLocked')}</p>}
       <p className="ai-status" data-testid="ai-key-protection">
         <span>{t('ai.keyProtection.label')}</span>
         <Badge appearance="tint" color={s.keyProtection === 'dpapi' ? 'success' : 'informative'} data-protection={s.keyProtection ?? 'unknown'}>

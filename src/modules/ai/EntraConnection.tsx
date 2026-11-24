@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Badge, Button, Field, Input, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { ArrowSync20Regular, PersonKey20Regular, ShieldKeyhole20Regular, SignOut20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
@@ -29,7 +29,7 @@ const preferredDeployment = (d: FoundryInstanceDetail['deployments']) =>
  * Microsoft Entra ID for Microsoft Foundry: sign in once (the relay keeps MSAL's token cache in its encrypted vault), then
  * pick one of the resources the account can read and one of its chat deployments. This screen never sees a token.
  */
-export function EntraConnection() {
+export function EntraConnection({ afterDeployment }: { afterDeployment?: ReactNode }) {
   const { t } = useI18n();
   const entra = useAiSettings((s) => s.entra);
   const reachable = useAiSettings((s) => s.relayReachable);
@@ -311,6 +311,7 @@ export function EntraConnection() {
           </Select>
         </Field>
       )}
+      {afterDeployment}
       {selected && detail && !detail.access.canCall && (
         <div className="ai-stack">
           <p className="muted">{t(detail.access.canAssign ? 'ai.entra.access.assignHint' : 'ai.entra.access.askAdmin')}</p>

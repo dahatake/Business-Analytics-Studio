@@ -312,7 +312,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.conn.verified': 'Verified and saved',
   'ai.conn.unverified': 'Saved but unverified (unavailable)',
   'ai.conn.verifiedAt': 'Last verified: {at}. This does not guarantee future availability.',
-  'ai.conn.testInfo': 'Sends a fixed "Reply with OK only" connection test to the endpoint and deployment above. No customer, project or material is sent. Times out after 30 seconds; saves only after a usable model response. Failures leave the existing connection unchanged.',
+  'ai.conn.testInfo': 'Sends a fixed "Reply with OK only" test to the LLM. A usable response saves the connection, and the same action checks Decision, AI Speech and AI Vision without extra inference. No customer, project or material is sent. The LLM test times out after 30 seconds; failure leaves the existing connection unchanged.',
   'ai.conn.consent': 'I confirm the test destination and understand the charge information above',
   'ai.conn.checkBeforeTest': 'No connection test was sent. Check the following items.',
   'ai.conn.msg.consentRequired': 'Review the destination and charge information, then select the consent checkbox above.',

@@ -9,7 +9,7 @@ import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { emptyDeliverables, evaluateStep, paybackYears, type CheckContext } from '../src/modules/project/deliverables.ts';
 import { buildDraft } from '../src/modules/project/deliverableDraft.ts';
 import { stepDashboard } from '../src/modules/project/stepDashboard.ts';
-import { unconfirmedTopics } from '../src/modules/project/packGenerate.ts';
+import { pruneInvalid, unconfirmedTopics } from '../src/modules/project/packGenerate.ts';
 import { buildChapters } from '../src/modules/show/model.ts';
 
 // A pack as a public-source-only run produces it: the facts public sources cannot state are left out, not guessed.
@@ -77,5 +77,17 @@ describe('values public sources cannot state stay unknown, never zero', () => {
     const topics = unconfirmedTopics(pack.pack as never, ['engagements', 'kpi', 'locations'], 'en');
     expect(topics.some((t) => /cost \(JPY\)/.test(t))).toBe(true);
     expect(topics.some((t) => /location/.test(t))).toBe(true);
+  });
+
+  it('a dangling optional single reference is dropped, the entity is kept', () => {
+    const p = structuredClone(samplePack) as unknown as { entities: Record<string, unknown>[] };
+    const person = p.entities.find((e) => e.kind === 'person')!;
+    person.siteId = 'site-does-not-exist';
+    const r = pruneInvalid(p as never, new Date('2026-11-25'));
+    const kept = (r.pack.entities as Record<string, unknown>[]).find((e) => e.id === person.id);
+    expect(kept).toBeDefined();
+    expect(kept!.siteId).toBeUndefined();
+    expect(r.removed).toContainEqual(expect.objectContaining({ path: `entities.${String(person.id)}.siteId` }));
+    expect(r.removed.some((x) => x.path === `entities.${String(person.id)}`)).toBe(false);
   });
 });

@@ -1440,9 +1440,11 @@ process.stdin.on('data', (d) => {
     expect(sections.map((s) => s.key)).toEqual(['kpi', 'data', 'topic-1']);
     expect(sections.every((s) => s.citations.length === 2)).toBe(true);
     const asked = calls().map((c) => String(c.arguments.query));
-    expect(asked).toHaveLength(3);
-    expect(asked[2]).toContain('NSAT target');
-    expect(new Set(asked).size).toBe(3);
+    // One search per section; the follow-up topic is searched with four wordings and fused into one section (study §20).
+    expect(asked).toHaveLength(6);
+    expect(asked.slice(2)).toEqual(expect.arrayContaining(['kpi: NSAT target', 'kpi', 'kpi NSAT target report scorecard']));
+    expect(asked.slice(2).some((q) => q.includes('Contoso') && q.includes('NSAT target'))).toBe(true);
+    expect(new Set(asked).size).toBe(6);
   });
 
   it('keeps one CLI session for the searches of a generation and retries a transient failure twice', async () => {
@@ -1458,8 +1460,8 @@ process.stdin.on('data', (d) => {
       const second = await svc.askSections({ ...q, aspects: [], topics: ['kpi: NSAT target'] });
       expect(second.map((s) => s.key)).toEqual(['topic-1']);
       expect(spawned).toBe(1);
-      // Two sections, two retries of the KPI search, and the follow-up.
-      expect(calls()).toHaveLength(5);
+      // Two sections, two retries of the KPI search, and the follow-up's four wordings.
+      expect(calls()).toHaveLength(8);
     } finally {
       svc.closeSession();
     }

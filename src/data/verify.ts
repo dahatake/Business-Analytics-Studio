@@ -138,6 +138,8 @@ export function verifyPack(raw: unknown): VerifyResult {
     const rec = e as unknown as Record<string, unknown>;
     for (const [field, kinds] of Object.entries(REFERENCES[e.kind] ?? {})) {
       const value = rec[field];
+      // An absent single reference is an optional field left out (schema.ts), not a reference to "undefined".
+      if (value === undefined || value === null) continue;
       const ids = Array.isArray(value) ? (value as string[]) : [value as string];
       ids.forEach((ref, j) => {
         const target = byId.get(ref);

@@ -980,6 +980,9 @@ export function applyFix(pack: Pack, answer: unknown, ownIds: Set<string>): Pack
   return next;
 }
 
+/** Optional single references (schema.ts): a dangling one is removed, the entity is kept. */
+const OPTIONAL_REFS: Record<string, readonly string[]> = { person: ['siteId'], product: ['siteId'], kpi: ['ownerId'], initiative: ['ownerId'] };
+
 /**
  * Removes what still fails, keeping valid items untouched: dangling ids are taken out of lists that may be empty;
  * entities with any other error are removed, then whatever depended on them, until the pack verifies.
@@ -1000,6 +1003,7 @@ export function pruneInvalid(pack: Pack, now: Date): { pack: Pack; verify: Verif
     const dropDuplicates = new Set<number>();
     // Indices are those of the verified pack: collect them all, then filter each list once (removing one shifts the rest).
     const dropRefs = new Map<string, { entity: number; field: string; at: Set<number> }>();
+    const dropFields: { entity: number; field: string; reason: string }[] = [];
     let changed = false;
     for (const err of errors) {
       const flow = /^flows\[(\d+)\]/.exec(err.path);
@@ -1017,6 +1021,13 @@ export function pruneInvalid(pack: Pack, now: Date): { pack: Pack; verify: Verif
       const dup = err.code === 'DUPLICATE_ID' ? /^entities\[(\d+)\]\.id$/.exec(err.path) : null;
       if (dup) { dropDuplicates.add(Number(dup[1])); continue; }
       const ref = /^entities\[(\d+)\]\.(\w+)\[(\d+)\]$/.exec(err.path);
+      // An optional single reference that points nowhere is dropped alone (measured 2026-11-25: three people and six
+      // products were removed for one unknown siteId each, taking the organisation readiness item to 0).
+      const single = /^entities\[(\d+)\]\.(\w+)$/.exec(err.path);
+      if (single && err.code === 'DANGLING_REF' && OPTIONAL_REFS[kindOf.get(err.entityId) ?? '']?.includes(single[2]!)) {
+        dropFields.push({ entity: Number(single[1]), field: single[2]!, reason: err.cause });
+        continue;
+      }
       if (ref && (err.code === 'DANGLING_REF' || err.code === 'SOURCE_KIND')) {
         const field = ref[2]!;
         const kind = kindOf.get(err.entityId) as EntityKind | undefined;
@@ -1035,6 +1046,13 @@ export function pruneInvalid(pack: Pack, now: Date): { pack: Pack; verify: Verif
       const e = ents[entity]!;
       if (drop.has(String(e.id))) continue;
       e[field] = (e[field] as unknown[]).filter((_, j) => !at.has(j));
+      changed = true;
+    }
+    for (const { entity, field, reason } of dropFields) {
+      const e = ents[entity]!;
+      if (drop.has(String(e.id)) || !(field in e)) continue;
+      delete e[field];
+      removed.push({ path: `entities.${String(e.id)}.${field}`, reason });
       changed = true;
     }
     if (dropRegions.size && Array.isArray(p.regions)) {
@@ -1230,7 +1248,9 @@ export function fieldTopics(pack: Pack, problems: Problem[], unmet: readonly Rea
 /**
  * Facts the schema leaves optional because public sources rarely state them, but a deliverable needs: a solution's cost
  * and annual benefit, who owns a KPI or initiative, where a site is. An item built without them is kept (a hypothesis)
- * and the fact is still searched for, so the missing value is not simply accepted.
+ * and the fact is still searched for, so the missing value is not simply accepted. Only while a readiness item is
+ * unmet: measured 2026-11-25 (docs/workiq-agentic-retrieval-study.md §19), asking for them in every stage regardless
+ * added three model calls and no amount, because the Microsoft 365 material did not state any.
  */
 export function unconfirmedTopics(pack: Pack, unmet: readonly ReadinessKey[], lang: Lang): string[] {
   const ja = lang === 'ja';

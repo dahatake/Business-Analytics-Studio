@@ -89,7 +89,9 @@ describe('F-3.5.3 translation coverage', () => {
   it('every dictionary key is used somewhere (no dead keys hiding missing usages)', () => {
     const all = sources.map((s) => s.text).join('\n');
     const dynamicPrefixes = [...all.matchAll(/`([a-zA-Z]+(?:\.[a-zA-Z]+)*\.)\$\{/g)].map((m) => m[1]!);
-    const unused = jaKeys.filter((k) => !all.includes(`'${k}'`) && !all.includes(`"${k}"`) && !dynamicPrefixes.some((p) => k.startsWith(p)));
+    // Quoted key-shaped tokens, collected once; the substring search remains only for keys not found this way.
+    const quoted = new Set([...all.matchAll(/(['"])([a-zA-Z][\w.]*)\1/g)].map((m) => m[2]!));
+    const unused = jaKeys.filter((k) => !quoted.has(k) && !all.includes(`'${k}'`) && !all.includes(`"${k}"`) && !dynamicPrefixes.some((p) => k.startsWith(p)));
     expect(unused).toEqual([]);
   });
 

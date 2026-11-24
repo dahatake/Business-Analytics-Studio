@@ -14,7 +14,7 @@ export type UserSecretName = (typeof SECRET_NAMES)[number];
  * MSAL token cache of the Entra ID sign-in and the key that seals an Entra connection test for Foundry, Speech and
  * Vision — signing out deletes it, which drops every Entra check); never accepted over HTTP.
  */
-export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'entraTokenCache', 'foundryEntraKey', 'decisionKey'] as const;
+export const INTERNAL_SECRET_NAMES = ['workiqRefreshToken', 'workiqCliKey', 'workiqFoundryKey', 'entraTokenCache', 'foundryEntraKey', 'decisionKey'] as const;
 export type SecretName = UserSecretName | (typeof INTERNAL_SECRET_NAMES)[number];
 export const MAX_SECRET_LENGTH = 4096;
 /** Refresh tokens issued by Microsoft Entra can be longer than an API key. */

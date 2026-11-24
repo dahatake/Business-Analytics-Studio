@@ -61,10 +61,41 @@ export interface SavedWorkIqCli {
 
 export type StoredWorkIq = (SavedWorkIq & { method: 'app' }) | SavedWorkIqCli;
 
+/**
+ * Work IQ through a Microsoft Foundry project connection (server/workiqFoundry.ts). Kept apart from workiq.json: the CLI
+ * (or app) settings stay as they are, and this route takes over only once its own retrieval check passed.
+ */
+export interface SavedWorkIqFoundry {
+  endpoint: string;
+  connection: string;
+  verifiedAt?: string;
+  verification?: string;
+}
+const FOUNDRY_SETTINGS_FILE = 'workiq-foundry.json';
+export const WORKIQ_FOUNDRY_SETTINGS_FILE = FOUNDRY_SETTINGS_FILE;
+
+export function loadWorkIqFoundry(dir: string): SavedWorkIqFoundry | null {
+  const path = join(dir, FOUNDRY_SETTINGS_FILE);
+  if (!existsSync(path)) return null;
+  try {
+    const v = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    if (typeof v.endpoint !== 'string' || typeof v.connection !== 'string') return null;
+    const verified = typeof v.verifiedAt === 'string' && Number.isFinite(Date.parse(v.verifiedAt)) && typeof v.verification === 'string' && /^[a-f0-9]{64}$/.test(v.verification)
+      ? { verifiedAt: v.verifiedAt, verification: v.verification } : {};
+    return { endpoint: v.endpoint, connection: v.connection, ...verified };
+  } catch {
+    return null;
+  }
+}
+
+export function removeWorkIqFoundry(dir: string) {
+  rmSync(join(dir, FOUNDRY_SETTINGS_FILE), { force: true });
+}
+
 export type WorkIqErrorCode =
   | 'invalidSettings' | 'notConfigured' | 'notSignedIn' | 'signInNotStarted' | 'signInExpired' | 'signInDeclined' | 'authFailed'
   | 'workiqForbidden' | 'workiqBusy' | 'workiqTimeout' | 'workiqUnavailable' | 'badWorkiqResponse' | 'workiqNoGrounding' | 'invalidQuestion'
-  | 'workiqEulaRequired' | 'workiqCliMissing';
+  | 'workiqEulaRequired' | 'workiqCliMissing' | 'workiqViaFoundry' | 'foundryEntraRequired';
 
 export class WorkIqError extends Error {
   readonly code: WorkIqErrorCode;
@@ -267,7 +298,7 @@ export function purposeTopics(q: Pick<WorkIqQuestion, 'company' | 'project' | 'p
  * (keys `<aspect>-en`), and `answers: true` adds Microsoft 365 Copilot's synthesized answer (`ask`) to the WORKIQ_ANSWER_ASPECTS sections
  * (keys `<aspect>-answer`, kind `answer`).
  */
-export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?: boolean; answers?: boolean } = {}): PlannedSearch[] {
+export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?: boolean; answers?: boolean; topicWordings?: boolean } = {}): PlannedSearch[] {
   const ladder = q.expand && opts.ladder !== false;
   const purpose = q.expand ? purposeTopics(q) : [];
   const kind = (a: WorkIqAspect): PlannedSearch['kind'] => (WORKIQ_SCOPED_ASPECTS.includes(a) ? 'scoped' : 'aspect');
@@ -278,8 +309,22 @@ export function workIqPlan(q: WorkIqQuestion, opts: { ladder?: boolean; sources?
     ...(ladder ? REQUIREMENTS.flatMap((r) => r.ladder[q.lang].map((w, n): PlannedSearch => ({ key: `${r.key}-${n + 1}`, query: workIqTopicQuery(q, w), kind: 'ladder', items: [r.key], wording: w }))) : []),
     ...purpose.map((t, n): PlannedSearch => ({ key: `purpose-${n + 1}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [] })),
     ...(opts.sources ? purpose.slice(0, SOURCE_FANOUT_TOPICS).flatMap((t, n) => WORKIQ_SOURCES.map((s): PlannedSearch => ({ key: `purpose-${n + 1}-${s}`, query: workIqTopicQuery(q, t), kind: 'purpose', items: [], sources: [s] }))) : []),
-    ...q.topics.map((topic, i): PlannedSearch => ({ key: `topic-${i + 1}`, query: workIqTopicQuery(q, topic), kind: 'topic', items: [] })),
+    ...q.topics.flatMap((topic, i): PlannedSearch[] => (opts.topicWordings ? topicWordings(q, topic) : [workIqTopicQuery(q, topic)])
+      .map((query) => ({ key: `topic-${i + 1}`, query, kind: 'topic', items: [] }))),
   ];
+}
+
+/**
+ * The wordings one follow-up topic ("<item>: <facts>") is searched with on the `retrieve` route, fused into one section.
+ * Measured 2026-11-25 (study §20) on 24 facts already cited in a saved pack: one search per fact found 4–12 of them
+ * (it varied run to run); these four wordings found 16, as many as four searches planned by a model, and a model's
+ * follow-up round after an insufficient result recovered none.
+ */
+export function topicWordings(q: WorkIqQuestion, topic: string): string[] {
+  const at = topic.search(/[:：]/);
+  const name = (at > 0 ? topic.slice(0, at) : topic).trim();
+  const facts = at > 0 ? topic.slice(at + 1).trim() : '';
+  return [...new Set([workIqTopicQuery(q, topic), topic, name, `${name} ${facts} report scorecard`.replace(/\s+/g, ' ').trim()])].filter((w) => w.length >= 2);
 }
 
 /**

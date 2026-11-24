@@ -595,7 +595,193 @@ function report(file?: string) {
   writeFileSync(path.replace(/\.json$/, '.md'), `${text}\n`);
 }
 
+/* ---------- Needs: Agentic Retrieval effort levels on facts known to exist (ground truth in the saved pack) ---------- */
+
+interface Need { id: string; kind: 'kpi' | 'engagement' | 'probe'; name: string; context: string; field: string; truth: string[] }
+
+/** Number-like tokens a hit must contain to state the value ("$83.3M" → "83.3", "2026-06-09" → "2026-06-09"). */
+function valueTokens(v: unknown): string[] {
+  if (typeof v !== 'string') return [];
+  const dates = [...v.matchAll(/\d{4}-\d{2}-\d{2}/g)].map((m) => m[0]);
+  if (dates.length) return dates;
+  return [...v.normalize('NFKC').matchAll(/\d+(?:[.,]\d+)?/g)].map((m) => m[0].replace(/,/g, '')).filter((t) => t.length >= 2 || /\./.test(t));
+}
+const nameTerms = (n: string) => n.normalize('NFKC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 4 && !['microsoft', 'innovation'].includes(t));
+
+/** A hit states the fact when it contains the value and at least one distinctive word of the item's name. */
+function states(hit: LiveHit, need: Need): boolean {
+  const text = `${hit.title}\n${hit.text}`.normalize('NFKC').toLowerCase().replace(/(\d),(?=\d{3})/g, '$1');
+  const terms = nameTerms(need.name);
+  return need.truth.some((t) => text.includes(t.toLowerCase())) && (!terms.length || terms.some((t) => text.includes(t)));
+}
+const mentions = (hit: LiveHit, need: Need) => { const text = `${hit.title}\n${hit.text}`.toLowerCase(); const terms = nameTerms(need.name); return terms.length > 0 && terms.some((t) => text.includes(t)); };
+
+function needsFromPack(projectId: string, max: number): { needs: Need[]; project: string; purpose: string } {
+  const db = new DatabaseSync(join(RELAY_DIR, 'device.sqlite'), { readOnly: true });
+  const row = db.prepare('select value from records where key = ?').get(`bas.binary.pack.${projectId}`) as { value?: string } | undefined;
+  db.close();
+  const pack = JSON.parse(row?.value ?? '{}') as Json;
+  const ext = isObj(pack.extensions) ? pack.extensions : {};
+  const gen = reportOf(projectId).inputs as Json;
+  const en = (n: unknown) => (isObj(n) ? String(n.en ?? n.ja ?? '') : String(n ?? '')).trim();
+  const okr = isObj(ext.okr) ? ext.okr : {};
+  const units = new Map((Array.isArray(okr.orgUnits) ? okr.orgUnits : []).filter(isObj).map((u) => [String(u.id), en(u.name)]));
+  const kpis = (Array.isArray(okr.kpis) ? okr.kpis : []).filter(isObj).flatMap((k, i): Need[] => {
+    const truth = [...valueTokens(k.current), ...valueTokens(k.target)];
+    return truth.length ? [{ id: `kpi-${i}`, kind: 'kpi', name: en(k.name), context: units.get(String(k.orgUnitId)) || String(gen.projectName), field: 'current value and target', truth }] : [];
+  });
+  const engs = (isObj(ext.engagements) && Array.isArray(ext.engagements.items) ? ext.engagements.items : []).filter(isObj).flatMap((x, i): Need[] => {
+    const truth = valueTokens(x.period);
+    return truth.length ? [{ id: `eng-${i}`, kind: 'engagement', name: en(x.name), context: String(x.customer ?? x.type ?? gen.projectName), field: 'date', truth }] : [];
+  });
+  const take = Math.ceil(max / 2);
+  return { needs: [...kpis.slice(0, take), ...engs.slice(0, max - Math.min(take, kpis.length))], project: String(gen.projectName), purpose: String(gen.purpose) };
+}
+
+async function chat(system: string, user: string): Promise<Json> {
+  const conn = JSON.parse(readFileSync(join(RELAY_DIR, 'connection.json'), 'utf8')) as { endpoint: string; deployment: string };
+  const token = process.env.AZ_COG_TOKEN;
+  if (!token) throw new Error('set AZ_COG_TOKEN (az account get-access-token --resource https://cognitiveservices.azure.com)');
+  const res = await fetch(`${conn.endpoint.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST', signal: AbortSignal.timeout(180_000), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: conn.deployment, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], max_completion_tokens: 2000, response_format: { type: 'json_object' } }),
+  });
+  if (!res.ok) throw new Error(`chat HTTP ${res.status}`);
+  const d = await res.json() as { choices?: { message?: { content?: string } }[] };
+  return JSON.parse(d.choices?.[0]?.message?.content ?? '{}') as Json;
+}
+
+const PLAN_SYSTEM = 'You plan Microsoft 365 enterprise searches (Work IQ retrieve). Given a project and one information need, write 3 short, focused search queries that would find a document stating the fact: one natural question, one English keyword query (entity name + fact words + likely document types such as scorecard, dashboard, review, recap, newsletter), one variant with synonyms or the likely document context. Never include the value itself. Answer JSON only: {"queries":["...","...","..."]}.';
+const JUDGE_SYSTEM = 'You check enterprise search results. For the information need, say whether any result text states the fact explicitly. If none does, write 2 new focused search queries (drill down or broaden; use what the results reveal, such as document names, teams or periods). Answer JSON only: {"sufficient":true|false,"queries":["...","..."]}.';
+
+async function needs(projectId: string, max: number) {
+  const { needs: list, project, purpose } = needsFromPack(projectId, max);
+  if (!list.length) throw new Error('no facts with values in the saved pack');
+  const session = await Session.open(workIqCliCommand());
+  let calls = 0;
+  const retrieve = async (query: string): Promise<LiveHit[]> => {
+    calls++;
+    const a = analyse(await session.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding', timeZone: 'Asia/Tokyo' } }));
+    return a.ok ? a.hits : [];
+  };
+  /** Reciprocal-rank fusion of several result lists (k = 60), deduplicated by URL. */
+  const fuseHits = (lists: LiveHit[][]): LiveHit[] => {
+    const score = new Map<string, { hit: LiveHit; s: number }>();
+    for (const l of lists) l.forEach((h, r) => { const c = score.get(h.h); score.set(h.h, { hit: c?.hit ?? h, s: (c?.s ?? 0) + 1 / (61 + r) }); });
+    return [...score.values()].sort((a, b) => b.s - a.s).map((x) => x.hit);
+  };
+  const need = (n: Need) => `${n.name} (${n.context}): ${n.field}`;
+  const run = async (n: Need) => {
+    const t0 = Date.now();
+    const minimal = await retrieve(`${n.name}: ${n.field}`);
+    const graph = await retrieve(need(n));
+    let planned: string[] = [];
+    try { planned = ((await chat(PLAN_SYSTEM, `Project: ${project}\nPurpose: ${purpose.slice(0, 400)}\nNeed: ${need(n)}`)).queries as string[] ?? []).filter((q) => typeof q === 'string').slice(0, 3); } catch { planned = []; }
+    const lowLists = await Promise.all(planned.map(retrieve));
+    const low = fuseHits([graph, ...lowLists]);
+    // Same number of searches without a model: is the gain the planning, or only the extra searches?
+    const control = fuseHits([minimal, graph, await retrieve(n.name), await retrieve(`${n.name} ${n.field} report scorecard`)]);
+    let medium = low;
+    let retried = false;
+    if (!low.slice(0, 10).some((h) => states(h, n))) {
+      const shown = low.slice(0, 8).map((h, i) => `[${i + 1}] ${h.title}\n${h.text.slice(0, 600).replace(/\s+/g, ' ')}`).join('\n\n');
+      try {
+        const j = await chat(JUDGE_SYSTEM, `Project: ${project}\nNeed: ${need(n)}\n\n${shown || '(no results)'}`);
+        const more = (Array.isArray(j.queries) ? j.queries : []).filter((q): q is string => typeof q === 'string').slice(0, 2);
+        if (j.sufficient !== true && more.length) { retried = true; medium = fuseHits([low, ...(await Promise.all(more.map(retrieve)))]); }
+      } catch { /* keep low */ }
+    }
+    const rank = (hs: LiveHit[]) => { const i = hs.findIndex((h) => states(h, n)); return i < 0 ? null : i + 1; };
+    const prec = (hs: LiveHit[]) => { const top = hs.slice(0, 10); return top.length ? Math.round((100 * top.filter((h) => mentions(h, n)).length) / top.length) : 0; };
+    return {
+      id: n.id, kind: n.kind, queries: { minimal: 1, graph: 1, control: 4, low: 1 + planned.length, medium: 1 + planned.length + (retried ? 2 : 0) },
+      found: { minimal: rank(minimal), graph: rank(graph), control: rank(control), low: rank(low), medium: rank(medium) },
+      onTopicTop10: { minimal: prec(minimal), graph: prec(graph), control: prec(control), low: prec(low), medium: prec(medium) }, retried, sec: Math.round((Date.now() - t0) / 1000),
+    };
+  };
+  const rows = await pool(list, 3, run);
+  session.close();
+  const levels = ['minimal', 'graph', 'control', 'low', 'medium'] as const;
+  const sum = Object.fromEntries(levels.map((l) => [l, {
+    found: rows.filter((r) => r.found[l] !== null).length,
+    foundTop3: rows.filter((r) => (r.found[l] ?? 99) <= 3).length,
+    onTopicTop10: Math.round(rows.reduce((a, r) => a + r.onTopicTop10[l], 0) / rows.length),
+    searches: rows.reduce((a, r) => a + r.queries[l], 0),
+  }]));
+  const out = { kind: 'needs', at: new Date().toISOString(), needs: rows.length, byKind: { kpi: rows.filter((r) => r.kind === 'kpi').length, engagement: rows.filter((r) => r.kind === 'engagement').length }, workIqCalls: calls, sum, rows };
+  console.log(JSON.stringify({ ...out, rows: undefined }, null, 1));
+  for (const r of rows) console.log(r.id, JSON.stringify(r.found), r.retried ? 'retried' : '');
+  save('needs', out);
+}
+
+/** The app's own follow-up path (WorkIqCliService.askSections with topics) against the former single search per topic. */
+async function appNeeds(projectId: string, max: number) {
+  const { needs: list, project, purpose } = needsFromPack(projectId, max);
+  const gen = reportOf(projectId).inputs as Json;
+  const q: WorkIqQuestion = { company: String(gen.companyName), project, purpose, focus: '', asOf: new Date().toISOString().slice(0, 10), lang: 'en', timeZone: 'Asia/Tokyo', aspects: [], topics: [], expand: false };
+  const topicOf = (n: Need) => `${n.name}: ${n.field}`;
+  const found = (text: string, n: Need) => states({ title: '', text } as LiveHit, n);
+  const session = await Session.open(workIqCliCommand());
+  const before = await pool(list, 4, async (n) => {
+    const a = analyse(await session.request('tools/call', { name: 'retrieve', arguments: { query: workIqTopicQuery(q, topicOf(n)), strategy: 'grounding', timeZone: 'Asia/Tokyo' } }));
+    return a.ok && a.hits.some((h) => states(h, n));
+  });
+  session.close();
+  const svc = new WorkIqCliService();
+  const after: boolean[] = [];
+  try {
+    for (let i = 0; i < list.length; i += 8) {
+      const batch = list.slice(i, i + 8);
+      const sections = await svc.askSections({ ...q, topics: batch.map(topicOf) });
+      batch.forEach((n, j) => {
+        const s = sections.find((x) => x.key === `topic-${j + 1}`);
+        after.push(!!s && !('error' in s) && found(s.answer, n));
+      });
+    }
+  } finally {
+    svc.closeSession();
+  }
+  const out = { kind: 'needs-app', at: new Date().toISOString(), needs: list.length, before: before.filter(Boolean).length, after: after.filter(Boolean).length, rows: list.map((n, i) => ({ id: n.id, before: before[i], after: after[i] })) };
+  console.log(JSON.stringify(out, null, 1));
+  save('needs-app', out);
+}
+
 /* ---------- End-to-end: one real pack generation through the relay handlers (metrics only, nothing saved) ---------- */
+
+/**
+ * The values a deliverable needs, counted on the saved pack: "have/of". The same fields as the missing-data fill
+ * (dataFill.ts findGaps) plus the KPI numbers, so a run that retrieves more can be judged by what reaches the pack.
+ */
+export function deliverableFacts(pack: Json): Json {
+  const ents = (Array.isArray(pack.entities) ? pack.entities : []).filter(isObj) as Json[];
+  const byId = new Map(ents.map((e) => [String(e.id), e]));
+  const of = (k: string) => ents.filter((e) => e.kind === k);
+  const has = (e: Json, f: string) => e[f] !== undefined && e[f] !== null && e[f] !== '';
+  const num = (e: Json, f: string) => typeof e[f] === 'number' && Number.isFinite(e[f]);
+  const owned = (e: Json) => (has(e, 'ownerId') && byId.get(String(e.ownerId))?.kind === 'person') || has(e, 'ownerRole');
+  const count = (list: Json[], ok: (e: Json) => boolean) => `${list.filter(ok).length}/${list.length}`;
+  const solutions = of('solution');
+  const kpis = of('kpi');
+  const inits = of('initiative');
+  const sites = of('site');
+  const plants = sites.filter((s) => s.role !== 'office');
+  const products = of('product');
+  const okr = isObj(pack.extensions) && isObj(pack.extensions.okr) ? pack.extensions.okr : {};
+  const okrKpis = (Array.isArray(okr.kpis) ? okr.kpis : []).filter(isObj) as Json[];
+  const missing = solutions.reduce((n, s) => n + (num(s, 'costJpy') ? 0 : 1) + (num(s, 'annualBenefitJpy') ? 0 : 1), 0)
+    + [...kpis, ...inits].filter((e) => !owned(e)).length
+    + sites.reduce((n, s) => n + (num(s, 'lat') ? 0 : 1) + (num(s, 'lon') ? 0 : 1), 0) + plants.filter((s) => !num(s, 'capacityTPerMonth')).length
+    + products.reduce((n, p) => n + (num(p, 'unitPriceJpy') ? 0 : 1) + (has(p, 'siteId') ? 0 : 1), 0);
+  return {
+    solutionCost: count(solutions, (s) => num(s, 'costJpy')), solutionBenefit: count(solutions, (s) => num(s, 'annualBenefitJpy')),
+    kpiOwner: count(kpis, owned), kpiNumbers: count(kpis, (k) => num(k, 'baseline') && num(k, 'target')),
+    initiativeOwner: count(inits, owned), initiativeDates: count(inits, (x) => has(x, 'start') && has(x, 'end')),
+    siteCoords: count(sites, (s) => num(s, 'lat') && num(s, 'lon')), plantCapacity: count(plants, (s) => num(s, 'capacityTPerMonth')),
+    productPrice: count(products, (p) => num(p, 'unitPriceJpy')), productSite: count(products, (p) => has(p, 'siteId')),
+    okrKpiTarget: count(okrKpis, (k) => has(k, 'target')), okrKpiCurrent: count(okrKpis, (k) => has(k, 'current')),
+    missing,
+  };
+}
 
 async function pipeline(projectId: string, rounds: number, provider: 'foundry' | 'copilotSdk' = 'foundry', keep = false) {
   const g = reportOf(projectId);
@@ -707,6 +893,7 @@ async function pipeline(projectId: string, rounds: number, provider: 'foundry' |
       removed: rep.removed.map((x) => `${x.path.replace(/^entities\.([a-z]+)-.*/, 'entities.$1-…')}: ${x.reason.slice(0, 90)}`),
       droppedSources: rep.droppedSources, ungrounded: rep.ungrounded.length, fixRounds: rep.fixRounds, shapes, gate, problems,
       blockedInApp: gate.filter((g) => g.blockedInApp).length, maxEstimatedTokens: Math.max(0, ...gate.map((g) => Number(g.estimatedTokens))),
+      deliverable: deliverableFacts(r.pack),
     };
     console.log(JSON.stringify(out, null, 1));
     save('pipeline', out);
@@ -840,6 +1027,11 @@ try {
     const project = flag('project');
     if (!project) throw new Error('--project <pj-id> is required');
     await fields(project);
+  } else if (cmdName === 'needs') {
+    const project = flag('project');
+    if (!project) throw new Error('--project <pj-id> is required');
+    if (rest.includes('--app')) await appNeeds(project, Number(flag('max') ?? 24));
+    else await needs(project, Number(flag('max') ?? 20));
   } else if (cmdName === 'recall') recall(rest[0]);
   else if (cmdName === 'report') report(rest[0]);
   else console.log('usage: node scripts/workiq-bench.ts startup [--runs 3] | run --project <pj-id> [--concurrency 4] [--max-calls 60] [--judge] | pipeline --project <pj-id> [--rounds 3] | fields --project <pj-id> | report [<run.json>]');

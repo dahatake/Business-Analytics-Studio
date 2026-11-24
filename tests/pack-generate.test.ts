@@ -857,20 +857,22 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(next.extensions).toEqual({});
   });
 
-  it('prune removes an entity whose required reference is gone, and then what depended on it', () => {
+  it('prune removes an entity whose required reference is gone, and drops only an optional reference that points nowhere', () => {
     const pack = {
       packId: 'p', company: { name: lt('c'), industry: lt('i') }, isSample: false, regions: [], flows: [],
       entities: [
         base('source-doc-1', 'source', 'digital', 'data', [], { publisher: lt('c') }),
         base('person-a', 'person', 'real', 'person', ['source-doc-1'], { role: lt('r'), siteId: 'site-missing' }),
         base('kpi-a', 'kpi', 'digital', 'metric', ['source-doc-1'], { unit: lt('%'), baseline: 1, current: 2, target: 3, direction: 'increase', scale: 'ratio', period: lt('y'), ownerId: 'person-a' }),
+        base('init-a', 'initiative', 'real', 'event', ['source-doc-1'], { solutionId: 'solution-missing', start: '2026-01-01', end: '2026-06-30', progress: 0.2, ownerId: 'person-a' }),
         base('cause-a', 'cause', 'real', 'event', ['source-doc-1']),
       ],
     };
     const r = pruneInvalid(pack, NOW);
     expect(r.verify.ok).toBe(true);
-    expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(['source-doc-1', 'cause-a']);
-    expect(r.removed.map((x) => x.path)).toEqual(['entities.person-a', 'entities.kpi-a']);
+    expect((r.pack.entities as { id: string; siteId?: string }[]).map((e) => e.id)).toEqual(['source-doc-1', 'person-a', 'kpi-a', 'cause-a']);
+    expect((r.pack.entities as { id: string; siteId?: string }[])[1]!.siteId).toBeUndefined();
+    expect(r.removed.map((x) => x.path).sort()).toEqual(['entities.init-a', 'entities.person-a.siteId']);
   });
 
   it('prune keeps the first of two entities sharing an id and removes only the repeat', () => {

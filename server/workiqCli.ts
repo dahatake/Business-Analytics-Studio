@@ -436,7 +436,14 @@ function endSessionsOnExit() {
  * generation share a session. Requests never reject: an error answer, a timeout, an abort or the process ending becomes
  * a WorkIqError in its place.
  */
-export class McpSession {
+/** What the search plan needs from an MCP session: the CLI's own process, or the Foundry transport. */
+export interface McpSessionLike {
+  readonly alive: boolean;
+  request(method: string, params: Json, timeoutMs: number, signal?: AbortSignal): Promise<Json | WorkIqError>;
+  close(): void;
+}
+
+export class McpSession implements McpSessionLike {
   initResult: Json = {};
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, (value: Json | WorkIqError) => void>();
@@ -621,6 +628,11 @@ export function workIqCliConfig(cmd: WorkIqCliCommand, timeoutMs = 120_000): Pro
 export interface WorkIqCliServiceOptions {
   command?: () => WorkIqCliCommand;
   spawn?: SpawnLike;
+  /**
+   * Opens the MCP session another way than starting the CLI (server/workiqFoundry.ts: Work IQ through a Microsoft
+   * Foundry project connection). The search plan, rerank, deep reads and answers stay the same.
+   */
+  openSession?: (signal?: AbortSignal) => Promise<McpSessionLike>;
   now?: () => number;
   timeoutMs?: number;
   /** Reads the CLI's persisted config (tests inject one). */
@@ -934,10 +946,11 @@ export class WorkIqCliService {
   private readonly readConfig: (cmd: WorkIqCliCommand) => Promise<WorkIqCliConfig | null>;
   private readonly sessionIdleMs: number;
   private readonly retryDelayMs: number;
+  private readonly openCustom: ((signal?: AbortSignal) => Promise<McpSessionLike>) | undefined;
   private busy = false;
   private lastVerification = -Infinity;
-  private session: McpSession | null = null;
-  private opening: Promise<McpSession> | null = null;
+  private session: McpSessionLike | null = null;
+  private opening: Promise<McpSessionLike> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   /** The search tool of the current session (startSearchSession). */
   private searchTool: SearchTool = 'retrieve';
@@ -946,6 +959,7 @@ export class WorkIqCliService {
     this.readConfig = opts.config ?? ((cmd) => workIqCliConfig(cmd));
     this.command = opts.command ?? (() => workIqCliCommand());
     this.doSpawn = opts.spawn;
+    this.openCustom = opts.openSession;
     this.now = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? WORKIQ_TIMEOUT_MS;
     this.sessionIdleMs = opts.sessionIdleMs ?? WORKIQ_SESSION_IDLE_MS;
@@ -962,8 +976,16 @@ export class WorkIqCliService {
     }
   }
 
-  private call(name: string, args: Json, signal?: AbortSignal) {
-    return callMcpTool(this.command(), name, args, signal, this.timeoutMs, this.doSpawn);
+  private async call(name: string, args: Json, signal?: AbortSignal): Promise<Json> {
+    if (!this.openCustom) return callMcpTool(this.command(), name, args, signal, this.timeoutMs, this.doSpawn);
+    const s = await this.openCustom(signal);
+    try {
+      const r = await s.request('tools/call', { name, arguments: args }, this.timeoutMs, signal);
+      if (r instanceof WorkIqError) throw r;
+      return r;
+    } finally {
+      s.close();
+    }
   }
 
   private async retrieve(query: string, timeZone: string, signal?: AbortSignal): Promise<WorkIqAnswer> {
@@ -977,7 +999,7 @@ export class WorkIqCliService {
   }
 
   /** The pack-search session: reused while alive, started once when several searches need it at the same moment. */
-  private openSession(signal?: AbortSignal): Promise<McpSession> {
+  private openSession(signal?: AbortSignal): Promise<McpSessionLike> {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
@@ -993,9 +1015,9 @@ export class WorkIqCliService {
    * Starts `workiq mcp` and checks which search tool it offers (tools/list): a process without `retrieve` is restarted
    * up to TOOL_RESTARTS times, then `ask` is used. A server that cannot list its tools is assumed to have `retrieve`.
    */
-  private async startSearchSession(signal?: AbortSignal): Promise<McpSession> {
+  private async startSearchSession(signal?: AbortSignal): Promise<McpSessionLike> {
     for (let start = 0; ; start++) {
-      const s = await McpSession.open(this.command(), this.doSpawn ?? (spawn as unknown as SpawnLike), this.timeoutMs, signal);
+      const s = this.openCustom ? await this.openCustom(signal) : await McpSession.open(this.command(), this.doSpawn ?? (spawn as unknown as SpawnLike), this.timeoutMs, signal);
       const listed = await s.request('tools/list', {}, Math.min(this.timeoutMs, TOOLS_LIST_TIMEOUT_MS), signal);
       const names = listed instanceof WorkIqError || !Array.isArray(listed.tools) ? null
         : listed.tools.flatMap((t) => (isObj(t) && typeof t.name === 'string' ? [t.name] : []));
@@ -1079,7 +1101,7 @@ export class WorkIqCliService {
         } catch {
           // Reported by the searches below, which try to start the session again.
         }
-        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve', sources: this.searchTool === 'retrieve', answers: this.searchTool === 'retrieve' });
+        plan = workIqPlan(question, { ladder: this.searchTool === 'retrieve', sources: this.searchTool === 'retrieve', answers: this.searchTool === 'retrieve', topicWordings: this.searchTool === 'retrieve' });
         const limit = new AdaptiveLimit();
         // A synthesized answer takes about a minute, so it neither counts toward the fast streak nor is retried long.
         raw = await inAdaptivePool(plan, limit, async (p) => {
@@ -1115,7 +1137,14 @@ export class WorkIqCliService {
         if (codes[i]) return { key, error: codes[i]! };
         return { key, ...parseRetrieveResult(r, plan[i]!.query, fetchedAt, WORKIQ_SECTION_MAX_CHARS) };
       };
-      if (!question.expand) return plan.map((_, i) => single(i));
+      // A follow-up topic searched with several wordings is one section, its results fused by reciprocal rank.
+      const topicKeys = [...new Set(plan.flatMap((p) => (p.kind === 'topic' ? [p.key] : [])))];
+      const topicSections = (): WorkIqSectionAnswer[] => topicKeys.map((key) => {
+        const idx = plan.flatMap((p, i) => (p.kind === 'topic' && p.key === key ? [i] : []));
+        if (idx.length === 1) return single(idx[0]!);
+        return mergeByItem([{ key, queries: idx.map((i) => plan[i]!.query), wordings: [], results: idx.map((i) => raw[i]!) }], fetchedAt, WORKIQ_SECTION_MAX_CHARS)[0]!;
+      });
+      if (!question.expand) return [...plan.flatMap((p, i) => (p.kind === 'topic' ? [] : [single(i)])), ...topicSections()];
       const items: ItemSearches[] = REQUIREMENTS.map((req) => {
         const idx = plan.flatMap((p, i) => (p.kind !== 'answer' && p.kind !== 'scoped' && p.items.includes(req.key) ? [i] : []));
         return { key: req.key, queries: idx.map((i) => plan[i]!.query), wordings: idx.flatMap((i) => (plan[i]!.wording ? [plan[i]!.wording!] : [])), results: idx.map((i) => raw[i]!) };
@@ -1161,7 +1190,7 @@ export class WorkIqCliService {
           if (at >= 0) merged[at] = withAnswer(merged[at]!, raw[i]!, question.lang, fetchedAt);
         }
       });
-      return [...merged, ...plan.flatMap((p, i) => (p.kind === 'topic' ? [single(i)] : []))];
+      return [...merged, ...topicSections()];
     });
   }
 

@@ -80,13 +80,18 @@ export interface EntraStatus {
 }
 
 export interface WorkIqStatus {
-  /** `cli`: Microsoft's Work IQ CLI on this PC holds the sign-in; `app`: the user's app registration and device code. */
-  method: 'app' | 'cli';
+  /**
+   * `cli`: Microsoft's Work IQ CLI on this PC holds the sign-in; `app`: the user's app registration and device code;
+   * `foundry`: the Work IQ MCP server through a Microsoft Foundry project connection (in use once verified; the CLI is then not used).
+   */
+  method: 'app' | 'cli' | 'foundry';
   tenantId: string | null;
   clientId: string | null;
   account: string | null;
   signedIn: boolean;
   verifiedAt: string | null;
+  /** The Foundry route's saved project and connection, and its own check (null when not saved). */
+  foundry?: { endpoint: string; connection: string; verifiedAt: string | null } | null;
 }
 
 const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null,
@@ -126,8 +131,12 @@ function asEntra(v: unknown): EntraStatus | null {
 
 function asWorkIq(v: unknown): WorkIqStatus | null {
   if (!v || typeof v !== 'object') return null;
-  const w = v as Partial<WorkIqStatus>;
-  const common = { account: typeof w.account === 'string' ? w.account : null, signedIn: w.signedIn === true, verifiedAt: typeof w.verifiedAt === 'string' ? w.verifiedAt : null };
+  const w = v as Partial<Omit<WorkIqStatus, 'foundry'>> & { foundry?: unknown };
+  const f = w.foundry && typeof w.foundry === 'object' ? (w.foundry as Record<string, unknown>) : null;
+  const foundry = f && typeof f.endpoint === 'string' && typeof f.connection === 'string'
+    ? { endpoint: f.endpoint, connection: f.connection, verifiedAt: typeof f.verifiedAt === 'string' ? f.verifiedAt : null } : null;
+  const common = { account: typeof w.account === 'string' ? w.account : null, signedIn: w.signedIn === true, verifiedAt: typeof w.verifiedAt === 'string' ? w.verifiedAt : null, foundry };
+  if (w.method === 'foundry') return foundry ? { method: 'foundry', tenantId: null, clientId: null, ...common } : null;
   if (w.method === 'cli') return { method: 'cli', tenantId: null, clientId: null, ...common };
   return typeof w.tenantId === 'string' && typeof w.clientId === 'string' ? { method: 'app', tenantId: w.tenantId, clientId: w.clientId, ...common } : null;
 }
@@ -680,6 +689,31 @@ export async function verifyWorkIq(provider: WorkIqProvider = 'foundry'): Promis
 export async function acceptWorkIqEula(provider: WorkIqProvider = 'foundry'): Promise<void> {
   const res = await relayFetch('/relay/workiq/eula', { ...jsonInit('POST', { provider, accept: true }), signal: AbortSignal.timeout(125_000) });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+}
+
+/** A settings-screen step that reports success by resolving and failure by throwing RelayError. */
+export type RelayStep = () => Promise<unknown>;
+
+/** Saves the Foundry route's project endpoint and connection name (not used until verified). */
+export async function saveWorkIqFoundry(endpoint: string, connection: string): Promise<WorkIqStatus | null> {
+  const res = await relayFetch('/relay/workiq/foundry', jsonInit('PUT', { endpoint: endpoint.trim(), connection: connection.trim() }));
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  return asWorkIq(((await res.json()) as { workiq?: unknown }).workiq);
+}
+
+/** Removes the Foundry route; the CLI (or app) route is used again. */
+export async function deleteWorkIqFoundry(): Promise<void> {
+  const res = await relayFetch('/relay/workiq/foundry', { method: 'DELETE' });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+}
+
+/** One real search through Foundry; on success the relay uses this route and stops using the Work IQ CLI. */
+export async function verifyWorkIqFoundry(provider: WorkIqProvider = 'foundry'): Promise<WorkIqStatus> {
+  const res = await relayFetch('/relay/workiq/foundry/verify', { ...jsonInit('POST', { provider }), signal: AbortSignal.timeout(330_000) });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const status = asWorkIq(((await res.json()) as { workiq?: unknown }).workiq);
+  if (status?.method !== 'foundry' || !status.verifiedAt) throw new RelayError(502, 'badWorkiqResponse');
+  return status;
 }
 
 export interface WorkIqQuestionInput {

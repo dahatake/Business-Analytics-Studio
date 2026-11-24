@@ -34,6 +34,7 @@ Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/
 - **Imports use explicit extensions** (`'./x.ts'`, `'./Y.tsx'`).
 - **Project isolation (FR-138, G-007):** anything that belongs to a project is stored with `createScopedStore(name, initial)` from `src/state/projects.ts`. The demo scope starts from sample data; new projects start empty.
 - **Undo:** use `UndoStack` from `src/state/history.ts` (limit PARAM-024 = 100).
+- **Value labels for filled data (FR-360):** a value Copilot fills for a missing field is labelled in `DeliverableData.fills` (keyed `entityId:field`), never by adding fields to pack entities. The app decides the label (`dataFill.ts` checks the quote and the value against the cited source; the fillable fields, their value forms and target kinds are `FILL_FIELDS`/`FILL_VALUE_TYPE`/`FILL_TARGETS` in `deliverables.ts`); a label applies only while the stored value still matches (`activeFill`), and unreviewed estimates never satisfy a completion criterion.
 - **Reference items:** show entities with `<EntityRef id>` (detail card + drill-through). In SVG, use `SvgEntityNode` or `attachCardTrigger`.
 - **Panels:** `PageHeader`, `Panel` (with `rationale` = a key explaining why this visual was chosen) from `src/ui/Panel.tsx`.
 - **Motion:** honour `useReducedMotion()` from `src/state/motion.ts` (durations 0, no autoplay). CSS animations are disabled globally under `[data-motion='reduced']`.

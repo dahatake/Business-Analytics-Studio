@@ -289,7 +289,7 @@ const LTEXT_FIELDS: Map<string, string[]> = new Map(
   [...optionShapes].map(([kind, shape]) => [kind, Object.keys(shape).filter((k) => shape[k] === LText)]),
 );
 const NUMBER_FIELDS: Map<string, string[]> = new Map(
-  [...optionShapes].map(([kind, shape]) => [kind, Object.keys(shape).filter((k) => shape[k] instanceof z.ZodNumber)]),
+  [...optionShapes].map(([kind, shape]) => [kind, Object.keys(shape).filter((k) => shape[k] instanceof z.ZodNumber || (shape[k] instanceof z.ZodOptional && (shape[k] as z.ZodOptional<z.ZodType>).unwrap() instanceof z.ZodNumber))]),
 );
 /** §3.7 world/type per kind, as used by the built-in sample. */
 const WORLD_TYPE: Map<string, { world: string; type: string }> = new Map(

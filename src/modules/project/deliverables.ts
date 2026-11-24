@@ -78,6 +78,65 @@ export const QualificationSchema = z.object({
 }).refine((q) => q.verdict !== 'pursue' || q.different !== undefined, { path: ['different'] });
 export type Qualification = z.infer<typeof QualificationSchema>;
 
+/**
+ * Missing-data fill: a value Copilot (or a person) put into a field that the Project pack left empty, with its label.
+ * - evidence: a cited source states the value (verified locally: the quote is in the source and states the value)
+ * - estimate: Copilot's estimate; it counts toward the exit criteria only after a person approves it
+ * - unacquired: no value could be given; the note says where to get it
+ * - human: a person typed the value while reviewing
+ */
+export const FILL_FIELDS = ['costJpy', 'annualBenefitJpy', 'ownerRole', 'unitPriceJpy', 'siteId', 'capacityTPerMonth', 'lat', 'lon'] as const;
+export type FillField = (typeof FILL_FIELDS)[number];
+/** The form of a filled value: yen, tonnes per month, degrees, a role text or the id of a site. */
+export type FillValueType = 'yen' | 'tonnes' | 'lat' | 'lon' | 'role' | 'site';
+export const FILL_VALUE_TYPE: Record<FillField, FillValueType> = {
+  costJpy: 'yen', annualBenefitJpy: 'yen', unitPriceJpy: 'yen', ownerRole: 'role', siteId: 'site', capacityTPerMonth: 'tonnes', lat: 'lat', lon: 'lon',
+};
+/** Which entity kinds each field is filled for (a person's site is never sent to Copilot, so it is not filled). */
+export const FILL_TARGETS: Record<FillField, readonly Entity['kind'][]> = {
+  costJpy: ['solution'], annualBenefitJpy: ['solution'], ownerRole: ['kpi', 'initiative'], unitPriceJpy: ['product'], siteId: ['product'],
+  capacityTPerMonth: ['site'], lat: ['site'], lon: ['site'],
+};
+/** Upper bounds: a larger yen amount or capacity is treated as unusable. */
+export const FILL_MAX_YEN = 1e15;
+export const FILL_MAX_TONNES = 1e9;
+/** Whether a value has the form its field needs (references are checked against the pack separately). */
+export function validFillValue(field: FillField, value: unknown): boolean {
+  const type = FILL_VALUE_TYPE[field];
+  if (type === 'role') {
+    const v = value as { ja?: unknown; en?: unknown } | null;
+    return typeof v === 'object' && v !== null && typeof v.ja === 'string' && typeof v.en === 'string' && !!v.ja.trim() && !!v.en.trim();
+  }
+  if (type === 'site') return typeof value === 'string' && value.trim().length > 0;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  if (type === 'yen') return value > 0 && value <= FILL_MAX_YEN;
+  if (type === 'tonnes') return value > 0 && value <= FILL_MAX_TONNES;
+  return type === 'lat' ? value >= -90 && value <= 90 : value >= -180 && value <= 180;
+}
+export const FILL_BASES = ['evidence', 'estimate', 'unacquired', 'human'] as const;
+export type FillBasis = (typeof FILL_BASES)[number];
+export const FILL_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export type FillStatus = (typeof FILL_STATUSES)[number];
+const FillText = z.object({ ja: z.string().min(1), en: z.string().min(1) });
+export const FillRecordSchema = z.object({
+  entityId: z.string().min(1),
+  field: z.enum(FILL_FIELDS),
+  basis: z.enum(FILL_BASES),
+  /** The value written into the pack. Absent only for `unacquired`. */
+  value: z.union([z.number(), FillText, z.string().min(1)]).optional(),
+  /** How the value was derived, or where to obtain it. */
+  note: FillText,
+  /** Evidence only: the exact text of the cited source that states the value. */
+  quote: z.string().optional(),
+  sourceIds: z.array(z.string()),
+  status: z.enum(FILL_STATUSES),
+  at: z.string(),
+  reviewed: z.object({ at: z.string(), by: z.string() }).optional(),
+}).refine((r) => (r.basis === 'unacquired') === (r.value === undefined), { path: ['value'] })
+  .refine((r) => r.value === undefined || validFillValue(r.field, r.value), { path: ['value'] });
+export type FillRecord = z.infer<typeof FillRecordSchema>;
+export const fillKey = (entityId: string, field: FillField) => `${entityId}:${field}`;
+
 export const DeliverableDataSchema = z.object({
   /** step → field id → value. */
   docs: z.record(z.string(), z.record(z.string(), FieldValueSchema)),
@@ -98,8 +157,35 @@ export const DeliverableDataSchema = z.object({
       return q.success ? [[id, q.data]] : [];
     })))
     .optional().catch(undefined),
+  /** `entityId:field` → how a missing pack value was filled and whether a person reviewed it. A broken entry is dropped alone. */
+  fills: z.record(z.string(), z.unknown())
+    .transform((r): Record<string, FillRecord> => Object.fromEntries(Object.entries(r).flatMap(([key, v]) => {
+      const f = FillRecordSchema.safeParse(v);
+      return f.success && key === fillKey(f.data.entityId, f.data.field) ? [[key, f.data]] : [];
+    })))
+    .optional().catch(undefined),
 });
 export type DeliverableData = z.infer<typeof DeliverableDataSchema>;
+
+const sameFillValue = (a: FillRecord['value'], b: unknown) =>
+  typeof a === 'number' || typeof a === 'string' ? a === b : !!a && typeof b === 'object' && b !== null && (b as { ja?: unknown }).ja === a.ja && (b as { en?: unknown }).en === a.en;
+
+/**
+ * The fill label that still describes the entity's current value: a value later changed elsewhere is no longer the filled one.
+ * An `unacquired` record applies while the field is still empty.
+ */
+export function activeFill(data: DeliverableData, entity: Entity, field: FillField): FillRecord | undefined {
+  const r = data.fills?.[fillKey(entity.id, field)];
+  if (!r || r.status === 'rejected') return undefined;
+  const current = (entity as Partial<Record<FillField, unknown>>)[field];
+  return r.value === undefined ? (current === undefined ? r : undefined) : sameFillValue(r.value, current) ? r : undefined;
+}
+
+/** A Copilot estimate no person has approved yet: shown and used, but not counted as a finished exit criterion. */
+export const unreviewedEstimate = (data: DeliverableData, entity: Entity, field: FillField) => {
+  const r = activeFill(data, entity, field);
+  return r?.basis === 'estimate' && r.status === 'pending';
+};
 
 export const emptyDeliverables = (): DeliverableData => ({ docs: {}, signOffs: {} });
 
@@ -856,7 +942,9 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           const inits = kindOf(c.pack, 'initiative');
           if (inits.length === 0) return fail('noInitiatives');
           const bad = inits.filter((i) => !(i.ownerId && c.pack.byId.get(i.ownerId)?.kind === 'person') && !i.ownerRole);
-          return bad.length ? fail('initiativesWithoutOwner', entityRefs(bad), { n: bad.length }) : pass('allInitiativesOwned', { n: inits.length });
+          if (bad.length) return fail('initiativesWithoutOwner', entityRefs(bad), { n: bad.length });
+          const estimated = inits.filter((i) => !(i.ownerId && c.pack.byId.get(i.ownerId)?.kind === 'person') && unreviewedEstimate(c.deliverables, i, 'ownerRole'));
+          return estimated.length ? fail('ownersUnreviewed', entityRefs(estimated), { n: estimated.length }) : pass('allInitiativesOwned', { n: inits.length });
         },
       },
       {
@@ -869,6 +957,8 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
           const years = solutions.map((s) => paybackYears(s, inits));
           const unknown = solutions.filter((_, i) => years[i] === null);
           if (unknown.length) return fail('paybackUnknown', entityRefs(unknown), { n: unknown.length });
+          const estimated = solutions.filter((s) => unreviewedEstimate(c.deliverables, s, 'costJpy') || unreviewedEstimate(c.deliverables, s, 'annualBenefitJpy'));
+          if (estimated.length) return fail('paybackUnreviewed', entityRefs(estimated), { n: estimated.length });
           const known = years as number[];
           const bad = solutions.filter((_, i) => known[i]! > max);
           const worst = Math.max(...known);

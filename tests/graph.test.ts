@@ -66,7 +66,7 @@ describe('FR-212/213/214 world classification and twin relations', () => {
   });
   it('derives KPI measures the site of its owner', () => {
     const kpi = loaded.byId.get('kpi-defect')!;
-    const owner = kpi.kind === 'kpi' ? loaded.byId.get(kpi.ownerId) : undefined;
+    const owner = kpi.kind === 'kpi' ? loaded.byId.get(kpi.ownerId ?? '') : undefined;
     expect(owner?.kind).toBe('person');
     expect(twins).toContainEqual(expect.objectContaining({ digital: 'kpi-defect', real: owner?.kind === 'person' ? owner.siteId : '', kind: 'measures', origin: 'derived' }));
   });

@@ -742,6 +742,92 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('dlv-todo-plan-doc')).toHaveAttribute('data-done', 'true');
   });
 
+  test('one Draft button also fills missing data: each value is labelled, applied as pending and reviewed one by one', async ({ page }) => {
+    await go(page, '/home');
+    await fakeAi(page);
+    const SOL = 'sol-demand-planning';
+    const INIT = 'init-dp-pilot';
+    const upserts = samplePack.entities.flatMap((e): object[] => {
+      if (e.id === SOL) { const { costJpy: _c, annualBenefitJpy: _b, ...rest } = e as typeof e & { costJpy?: number; annualBenefitJpy?: number }; return [rest]; }
+      if (e.id === INIT) { const { ownerId: _o, ...rest } = e as typeof e & { ownerId?: string }; return [rest]; }
+      return [];
+    });
+    await seedDeviceData(page, { 'bas.scope.demo.pack.edits': JSON.stringify({ upserts, deleted: [], regions: [] }) });
+    await page.reload();
+    await expect(page.locator('main#main')).toBeVisible();
+    const fillPrompts: string[] = [];
+    await page.route('**/relay/ai', async (route) => {
+      const request = route.request().postDataJSON() as { prompt: string };
+      if (!request.prompt.startsWith('[bas-proj:fill]')) return route.fallback();
+      fillPrompts.push(request.prompt);
+      const note = (ja: string, en: string) => ({ ja, en });
+      await route.fulfill({ json: { inputTokens: 100, outputTokens: 100, text: JSON.stringify({ items: [
+        // Claims a source, but no source says it: the app labels it an estimate.
+        { gapId: `${SOL}:costJpy`, basis: 'evidence', value: 30_000_000, quote: '導入費用は3000万円', sourceIds: ['src-annual-report'], note: note('統合報告書の投資計画', 'Investment plan') },
+        { gapId: `${SOL}:annualBenefitJpy`, basis: 'unacquired', value: null, note: note('経営企画部の効果試算', 'Corporate planning benefit estimate') },
+        { gapId: `${INIT}:ownerRole`, basis: 'estimate', value: { ja: '生産管理部長', en: 'Head of production control' }, note: note('PoC は生産計画の範囲', 'The PoC covers production planning') },
+      ] }) } });
+    });
+
+    await page.locator('.proj-step[data-step="deliverable"]').click();
+    await openStepDraft(page);
+    const dialog = page.getByTestId('dlv-draft-dialog');
+    const toggle = dialog.getByTestId('dlv-fill-toggle');
+    await expect(toggle).toBeChecked();
+    await expect(dialog).toContainText('データ欠損時に Copilot にドラフトを作成してもらう（欠損 3 件）');
+    await dialog.getByTestId('dlv-draft-generate').click();
+    // The text draft waits out the per-use send interval after the fill request.
+    await expect(page.getByTestId('dlv-draft-mode')).toHaveAttribute('data-mode', 'live', { timeout: 20_000 });
+    expect(fillPrompts).toHaveLength(1);
+    expect(fillPrompts[0]).toContain(`${INIT}:ownerRole`);
+    const proposals = dialog.getByTestId('dlv-fill-proposals');
+    await expect(proposals.getByTestId(`dlv-fill-proposal-${SOL}-costJpy`)).toHaveAttribute('data-basis', 'estimate');
+    await expect(proposals.getByTestId(`dlv-fill-proposal-${SOL}-costJpy`).getByTestId('dlv-fill-downgraded')).toBeVisible();
+    await expect(proposals.getByTestId(`dlv-fill-proposal-${SOL}-annualBenefitJpy`)).toHaveAttribute('data-basis', 'unacquired');
+    await expect(proposals.getByTestId(`dlv-fill-proposal-${INIT}-ownerRole`)).toHaveAttribute('data-basis', 'estimate');
+    expect(await scan(page)).toEqual([]);
+    await dialog.getByTestId('dlv-draft-apply').click();
+    await expect(dialog).toBeHidden();
+    // An unreviewed estimate is not an owner yet.
+    await expect(page.getByTestId('dlv-todo-plan-owner')).toHaveAttribute('data-done', 'false');
+
+    await page.getByTestId('dlv-open').click();
+    const panel = page.getByTestId('dlv-fill-panel');
+    const cost = panel.getByTestId(`dlv-fill-${SOL}-costJpy`);
+    const benefit = panel.getByTestId(`dlv-fill-${SOL}-annualBenefitJpy`);
+    const owner = panel.getByTestId(`dlv-fill-${INIT}-ownerRole`);
+    await expect(panel.getByTestId('dlv-fill-summary')).toHaveText('資料に記載 0 件 / Copilot 推定 2 件 / 未取得 1 件 / 人が入力 0 件（レビュー待ち 3 件）');
+    for (const row of [cost, benefit, owner]) await expect(row).toHaveAttribute('data-status', 'pending');
+    await expect(benefit.getByTestId('dlv-fill-approve')).toHaveCount(0);
+    expect(await scan(page)).toEqual([]);
+
+    await owner.getByTestId('dlv-fill-approve').click();
+    await expect(owner).toHaveAttribute('data-status', 'approved');
+    await expect(owner).toContainText('E2E が');
+    await expect(page.getByTestId('dlv-band').getByTestId('dlv-todo-plan-owner')).toHaveAttribute('data-done', 'true');
+
+    await cost.getByTestId('dlv-fill-reject').click();
+    await expect(cost).toHaveAttribute('data-status', 'rejected');
+    const costOf = async () => {
+      const edits = JSON.parse((await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']?.value ?? '{"upserts":[]}') as { upserts: { id: string; costJpy?: number; annualBenefitJpy?: number }[] };
+      return edits.upserts.find((e) => e.id === SOL) ?? ({} as { costJpy?: number; annualBenefitJpy?: number });
+    };
+    await expect.poll(async () => (await costOf()).costJpy).toBeUndefined();
+
+    await benefit.getByTestId('dlv-fill-edit').click();
+    await benefit.getByTestId('dlv-fill-input').fill('60,000,000');
+    await benefit.getByTestId('dlv-fill-save').click();
+    await expect(benefit).toHaveAttribute('data-basis', 'human');
+    await expect(benefit).toHaveAttribute('data-status', 'approved');
+    await expect.poll(async () => (await costOf()).annualBenefitJpy).toBe(60_000_000);
+    expect(await scan(page)).toEqual([]);
+
+    await page.reload();
+    await expect(page.getByTestId(`dlv-fill-${INIT}-ownerRole`)).toHaveAttribute('data-status', 'approved');
+    await expect(page.getByTestId(`dlv-fill-${SOL}-costJpy`)).toHaveAttribute('data-status', 'rejected');
+    await expect(page.getByTestId(`dlv-fill-${SOL}-annualBenefitJpy`)).toHaveAttribute('data-basis', 'human');
+  });
+
   test('a new project starts with failing checks that link to where the work is done', async ({ page }) => {
     await go(page, '/projects');
     await page.getByTestId('proj-company-name').fill('検証社');

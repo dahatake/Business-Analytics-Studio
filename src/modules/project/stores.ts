@@ -51,6 +51,8 @@ export interface SavedFieldDraft {
   fields: Record<string, string>;
   lang: Lang;
   at: string;
+  /** Missing-data proposals made with this draft (dataFill.ts FillProposal; read back with savedProposals). */
+  fills?: unknown[];
 }
 export const useFieldDrafts = createScopedStore<Record<string, SavedFieldDraft>>('proj.fieldDrafts', () => ({}));
 /** Per audience and solution: Copilot's proposed type and whole-document draft, kept until a person approves or discards it. */
@@ -113,6 +115,8 @@ export const useProjUi = create<ProjUiState>()(
 syncDeviceStore('bas.proj.ui', () => useProjUi.persist.rehydrate());
 
 /** Transient UI state shared by the top bar, the overlay and the screens. */
+/** A draft applied from the dialog; filled/skipped count the missing-data values applied with it. */
+type DraftApplied = { step: ImprovementStep; count: number; filled?: number; skipped?: number };
 interface ProjTransient {
   exportOpen: boolean;
   exportThemeId: string | null;
@@ -124,12 +128,12 @@ interface ProjTransient {
   batchDraftOpen: boolean;
   resolutionTodoId: string | null;
   /** Last applied draft, announced by the to-do band. */
-  draftApplied: { step: ImprovementStep; count: number } | null;
+  draftApplied: DraftApplied | null;
   openExport: (themeId?: string | null) => void;
   closeExport: () => void;
   selectTheme: (id: string | null) => void;
   openDraft: (step: ImprovementStep) => void;
-  closeDraft: (applied?: { step: ImprovementStep; count: number }) => void;
+  closeDraft: (applied?: DraftApplied) => void;
   openBatchDraft: () => void;
   closeBatchDraft: () => void;
   openResolution: (todoId: string) => void;

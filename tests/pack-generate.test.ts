@@ -5,7 +5,7 @@ import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, par
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import {
-  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
+  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, repairExtensions, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
 } from '../src/modules/project/packGenerate.ts';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
@@ -871,6 +871,36 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.verify.ok).toBe(true);
     expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(['source-doc-1', 'cause-a']);
     expect(r.removed.map((x) => x.path)).toEqual(['entities.person-a', 'entities.kpi-a']);
+  });
+
+  it('prune keeps the first of two entities sharing an id and removes only the repeat', () => {
+    const pack = {
+      packId: 'p', company: { name: lt('c'), industry: lt('i') }, isSample: false, regions: [], flows: [],
+      entities: [
+        base('source-doc-1', 'source', 'digital', 'data', [], { publisher: lt('c') }),
+        base('cause-a', 'cause', 'real', 'event', ['source-doc-1'], { name: lt('first') }),
+        base('cause-a', 'cause', 'real', 'event', ['source-doc-1'], { name: lt('second') }),
+      ],
+    };
+    const r = pruneInvalid(pack, NOW);
+    expect(r.verify.ok).toBe(true);
+    const kept = (r.pack.entities as { id: string; name?: { ja: string } }[]).filter((e) => e.id === 'cause-a');
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.name?.ja).toBe('first');
+  });
+
+  it('a missing link list means no known link: the issue and solution stay (no KPI was stated)', () => {
+    const pack = {
+      packId: 'p', company: { name: lt('c'), industry: lt('i') }, isSample: false, regions: [], flows: [],
+      entities: [
+        base('source-doc-1', 'source', 'digital', 'data', [], { publisher: lt('c') }),
+        base('issue-a', 'issue', 'real', 'event', ['source-doc-1'], { impact: 3, feasibility: 3 }),
+        base('solution-a', 'solution', 'real', 'operation', ['source-doc-1'], { issueIds: ['issue-a'] }),
+      ],
+    };
+    const r = pruneInvalid(repairExtensions(pack), NOW);
+    expect(r.verify.ok).toBe(true);
+    expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(['source-doc-1', 'issue-a', 'solution-a']);
   });
 
   it('reads numbers in Japanese and English notation', () => {

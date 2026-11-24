@@ -18,6 +18,7 @@ import {
 import { deliverableNameKey, Refs, StrategySummary, TodoItem, todayIn, todoHref, todoLabel, useCheckContext, usePaybackLimit } from './deliverablesUi.tsx';
 import { inputCount } from './stepDashboard.ts';
 import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
+import { DataFillPanel } from './DataFillPanel.tsx';
 import { PriorityBriefPanel } from './PriorityBrief.tsx';
 import { useDeliverables, useFieldDrafts, useProjTransient, useProjUi } from './stores.ts';
 import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
@@ -269,6 +270,7 @@ export function DeliverablesScreen() {
 
       <PriorityBriefPanel step={step} ctx={ctx} />
       <DiscoveryAdvicePanel step={step} ctx={ctx} />
+      <DataFillPanel ctx={ctx} />
 
       {selectedTask && <TaskWorkbench key={selectedTask.todo.id} result={selectedTask} ctx={ctx} step={step} />}
 

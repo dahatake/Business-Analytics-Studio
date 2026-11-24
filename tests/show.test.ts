@@ -52,8 +52,8 @@ describe('FR-077 chapter builder', () => {
     const roi = chapters.find((c) => c.id === 'roi');
     if (roi?.id !== 'roi') throw new Error();
     const sols = sample.pack.entities.filter((e) => e.kind === 'solution');
-    expect(roi.totalCostJpy).toBe(sols.reduce((a, s) => a + (s.kind === 'solution' ? s.costJpy : 0), 0));
-    for (let i = 1; i < roi.items.length; i++) expect(roi.items[i - 1]!.roi).toBeGreaterThanOrEqual(roi.items[i]!.roi);
+    expect(roi.totalCostJpy).toBe(sols.reduce((a, s) => a + (s.kind === 'solution' ? (s.costJpy ?? 0) : 0), 0));
+    for (let i = 1; i < roi.items.length; i++) expect(roi.items[i - 1]!.roi!).toBeGreaterThanOrEqual(roi.items[i]!.roi!);
   });
 
   it('every chapter has data or an explicit empty state', () => {

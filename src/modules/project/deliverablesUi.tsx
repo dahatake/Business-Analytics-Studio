@@ -3,16 +3,16 @@ import {
   Badge, Button, Caption1, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar,
 } from '@fluentui/react-components';
 import {
-  CheckmarkCircle20Filled, ChevronDown20Regular, ChevronUp20Regular, DocumentText20Regular, ErrorCircle20Regular, Sparkle20Regular,
+  CheckmarkCircle20Filled, ChevronDown20Regular, ChevronUp20Regular, DatabaseSearch20Regular, DocumentText20Regular, ErrorCircle20Regular, Sparkle20Regular,
 } from '@fluentui/react-icons';
 import { AiLiveError, preflight, type AiResponse } from '../../ai/client.ts';
 import { PARAMS } from '../../config/params.ts';
 import { loaded, packOrigin } from '../../data/pack.ts';
 import { useI18n, type Lang, type MessageKey } from '../../i18n/index.ts';
-import { IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
+import { currentScope, IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
-import { usePackVersion } from '../../state/packEdits.ts';
+import { commitPackChanges, usePackVersion } from '../../state/packEdits.ts';
 import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
@@ -22,6 +22,9 @@ import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
+import { fillChanges, fillRequest, findGaps, mergeFills, previewFillContext, requestFill, savedProposals, type FillProposal } from './dataFill.ts';
+import { batchIntervalMs, waitForBatchInterval } from './batchDraft.ts';
+import { FillProposalList } from './DataFillPanel.tsx';
 import {
   applyDraft, evaluateStep, threadOf, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
   type AppCheckContext, type CheckContext, type CheckRef, type TodoResult,
@@ -390,7 +393,11 @@ export function StepTodoBand() {
             <span className="dlv-band-next-text">{todoLabel(t, next.todo.id, maxYears)}</span>
           </a>
         )}
-        <span className="visually-hidden" role="status">{applied ? t('dlv.draft.applied', { n: applied.count }) : ''}</span>
+        <span className="visually-hidden" role="status">{applied ? [
+          t('dlv.draft.applied', { n: applied.count }),
+          applied.filled !== undefined ? t('dlv.fill.applied', { n: applied.filled }) : '',
+          applied.skipped ? t('dlv.fill.skipped', { n: applied.skipped }) : '',
+        ].filter(Boolean).join(' ') : ''}</span>
         <div className="dlv-band-actions">
           <Button appearance="primary" className="dlv-batch-button" icon={<Sparkle20Regular />} onClick={openBatchDraft} data-testid="dlv-draft">{t('dlv.batch.button')}</Button>
           <Button as="a" appearance="secondary" icon={<DocumentText20Regular />} href={hrefFor('/deliverables', { step })} data-testid="dlv-open">{t('dlv.band.open')}</Button>
@@ -420,7 +427,7 @@ type DraftTextMap = Record<string, string>;
 type DraftState =
   | { status: 'idle' }
   | { status: 'working'; stage: AiStage; startedAt?: number }
-  | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap; at: string }
+  | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap; at: string; fills: FillProposal[]; fillError?: string }
   | { status: 'cancelled' }
   | { status: 'error'; message: string };
 
@@ -439,6 +446,10 @@ export function DraftDialog() {
   const savedDraft = useFieldDrafts((s) => step ? s.value[`${audience}:${step}`] : undefined);
   const [state, setState] = useState<DraftState>({ status: 'idle' });
   const [overwrite, setOverwrite] = useState(false);
+  const [fillOn, setFillOn] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const missing = useMemo(() => findGaps(ctx, audience).length, [ctx, audience]);
   const abortRef = useRef<AbortController | null>(null);
   const cancel = () => abortRef.current?.abort();
   // Closing the dialog or switching the target stops the request instead of leaving it running unseen.
@@ -457,8 +468,10 @@ export function DraftDialog() {
       fields: saved.fields,
       tasks: {},
       at: saved.at,
+      fills: savedProposals(saved.fills),
     } : { status: 'idle' });
     setOverwrite(false);
+    setApplyError(null);
   }, [step, scope, audience, lang]);
 
   const generate = async () => {
@@ -478,14 +491,17 @@ export function DraftDialog() {
       && useProjTransient.getState().draftStep === step
       && useSettings.getState().audience === audience
       && useSettings.getState().lang === lang;
-    const input = { step, ctx, lang, audience };
-    const request = draftRequest(input);
+    const gaps = fillOn ? findGaps(ctx, audience) : [];
+    const fillReq = gaps.length ? fillRequest(ctx, lang, audience, gaps) : null;
+    const firstInput = { step, ctx, lang, audience };
+    const request = draftRequest(firstInput);
     const pf = preflight(request);
-    if (!pf.allowed) {
-      setState({ status: 'error', message: pf.reasons.map((r) => t(reasonKey(r))).join(' ') });
+    const fillPf = fillReq ? preflight(fillReq) : null;
+    if (!pf.allowed || (fillPf && !fillPf.allowed)) {
+      setState({ status: 'error', message: [...new Set([...pf.reasons, ...(fillPf?.reasons ?? [])])].map((r) => t(reasonKey(r))).join(' ') });
       return;
     }
-    if (request.prompt.length + pf.context.length > 32_000) {
+    if (request.prompt.length + pf.context.length > 32_000 || (fillReq && fillPf && fillReq.prompt.length + fillPf.context.length > 32_000)) {
       setState({ status: 'error', message: t('dlv.draft.tooLarge') });
       return;
     }
@@ -499,7 +515,23 @@ export function DraftDialog() {
       }
       abortRef.current = controller;
       setState({ status: 'working', stage: 'generate', startedAt: Date.now() });
-      const r = await requestDeliverableDraft(input, request, controller.signal);
+      // Missing data first, so the deliverable text is written from the filled (and labelled) values.
+      let proposals: FillProposal[] = [];
+      let fillError: string | undefined;
+      let input = firstInput;
+      if (fillReq) {
+        try {
+          proposals = await requestFill(fillReq, gaps, ctx, audience, controller.signal);
+          input = { ...firstInput, ctx: previewFillContext(ctx, proposals, new Date().toISOString()) };
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          proposals = [];
+          fillError = t('dlv.fill.failed', { detail: error instanceof AiLiveError ? error.reasons.map((r) => t(reasonKey(r))).join(' ') || error.message : error instanceof Error ? error.message : String(error) });
+        }
+        // Both calls share the deliverableDraft send interval; wait it out rather than fail the text draft.
+        await waitForBatchInterval(batchIntervalMs('deliverableDraft', new Map()), controller.signal);
+      }
+      const r = await requestDeliverableDraft(input, input.ctx === ctx ? request : draftRequest(input), controller.signal);
       if (targetCurrent()) {
         if (!draftsUnchanged()) {
           setState({ status: 'error', message: t('dlv.draft.changed') });
@@ -515,8 +547,8 @@ export function DraftDialog() {
           }
           return { ...data, recommendations };
         });
-        useFieldDrafts.getState().set((value) => ({ ...value, [`${audience}:${step}`]: { fields: r.fields, lang, at } }));
-        setState({ status: 'ready', ...r, at });
+        useFieldDrafts.getState().set((value) => ({ ...value, [`${audience}:${step}`]: { fields: r.fields, lang, at, ...(proposals.length ? { fills: proposals } : {}) } }));
+        setState({ status: 'ready', ...r, at, fills: proposals, ...(fillError ? { fillError } : {}) });
       }
     } catch (error) {
       if (controller.signal.aborted) {
@@ -547,11 +579,31 @@ export function DraftDialog() {
   const before = evaluateStep(step, ctx);
   const changes = simulation.filter((after, i) => after.todo.kind === 'auto' && after.done !== before[i]?.done);
 
-  const apply = () => {
-    if (!ready) return;
+  const apply = async () => {
+    if (!ready || applying) return;
     if (!sameFieldDraft(useFieldDrafts.getState().value[`${audience}:${step}`], ready, lang)) {
       setState({ status: 'error', message: t('dlv.draft.changed') });
       return;
+    }
+    let filled = 0;
+    let skipped = 0;
+    if (ready.fills.length) {
+      setApplying(true);
+      setApplyError(null);
+      try {
+        // Against the data as it is now: a field filled meanwhile is skipped, never overwritten.
+        const live = { ...ctx, pack: loaded, deliverables: normalizeDeliverables(useDeliverables.getState().value) };
+        const plan = fillChanges(live, ready.fills, new Date().toISOString());
+        await commitPackChanges(plan.changes, currentScope(), live.pack);
+        useDeliverables.getState().set((v) => mergeFills(normalizeDeliverables(v), plan.fills));
+        filled = Object.keys(plan.fills).length;
+        skipped = plan.skipped.length;
+      } catch (error) {
+        setApplyError(t('dlv.fill.applyFailed', { detail: error instanceof Error ? error.message : String(error) }));
+        return;
+      } finally {
+        setApplying(false);
+      }
     }
     let count = 0;
     useDeliverables.getState().set((v) => {
@@ -567,7 +619,7 @@ export function DraftDialog() {
       delete next[key];
       return next;
     });
-    closeDraft({ step, count });
+    closeDraft({ step, count, ...(ready.fills.length ? { filled, skipped } : {}) });
   };
 
   const discard = () => {
@@ -593,6 +645,18 @@ export function DraftDialog() {
             {state.status === 'working' && <AiProgress stage={state.stage} startedAt={state.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS} testId="dlv-draft-progress" />}
             {state.status === 'cancelled' && <p role="status" data-testid="dlv-draft-cancelled">{t('ai.progress.cancelled')}</p>}
             {state.status === 'error' && <p role="alert">{t('dlv.draft.failed')} {state.message}</p>}
+            {state.status !== 'working' && (
+              <div className="dlv-fill-option">
+                <Checkbox
+                  checked={fillOn && missing > 0}
+                  disabled={missing === 0}
+                  onChange={(_, d) => setFillOn(d.checked === true)}
+                  label={<span className="dlv-fill-option-label"><DatabaseSearch20Regular aria-hidden />{missing ? t('dlv.fill.option', { n: missing }) : t('dlv.fill.optionNone')}</span>}
+                  data-testid="dlv-fill-toggle"
+                />
+                <Caption1 className="muted">{t('dlv.fill.optionHint')}</Caption1>
+              </div>
+            )}
             {(state.status === 'idle' || state.status === 'error' || state.status === 'cancelled') && <Button appearance="primary" onClick={() => void generate()} data-testid="dlv-draft-generate">{t('dlv.draft.generate')}</Button>}
             {ready && (
               <>
@@ -605,6 +669,8 @@ export function DraftDialog() {
                 {draftChanged && <p role="alert" data-testid="dlv-draft-changed">{t('dlv.draft.changed')}</p>}
                 <Button onClick={() => void generate()} data-testid="dlv-draft-regenerate">{t('dlv.draft.regenerate')}</Button>
                 <Caption1>{t('dlv.draft.grounding', { entities: draftEntities(ctx, audience).length })}</Caption1>
+                {ready.fillError && <p role="alert" data-testid="dlv-fill-failed">{ready.fillError}</p>}
+                {ready.fills.length > 0 && <FillProposalList proposals={ready.fills} />}
                 <h3>{t('dlv.task.title')}</h3>
                 <p>{t('dlv.task.note')}</p>
                 <ul className="dlv-todo-list">
@@ -652,14 +718,15 @@ export function DraftDialog() {
                   })}
                 </dl>
                 <Checkbox checked={overwrite} onChange={(_, d) => setOverwrite(d.checked === true)} label={t('dlv.draft.overwrite')} />
-                {willApply === 0 && <p role="status">{t('dlv.draft.none')}</p>}
+                {willApply === 0 && !ready.fills.length && <p role="status">{t('dlv.draft.none')}</p>}
+                {applyError && <p role="alert" data-testid="dlv-fill-apply-error">{applyError}</p>}
               </>
             )}
           </DialogContent>
           <DialogActions>
             {state.status === 'working' && state.stage === 'generate'
               ? <Button onClick={cancel} data-testid="dlv-draft-cancel">{t('ai.progress.cancel')}</Button>
-              : <Button appearance="primary" disabled={!ready || draftChanged || willApply === 0} onClick={apply} data-testid="dlv-draft-apply">{t('dlv.draft.apply')}</Button>}
+              : <Button appearance="primary" disabled={!ready || draftChanged || applying || (willApply === 0 && !ready.fills.length)} onClick={() => void apply()} data-testid="dlv-draft-apply">{t('dlv.draft.apply')}</Button>}
             {ready && <Button disabled={draftChanged} onClick={discard} data-testid="dlv-draft-discard">{t('dlv.draft.discard')}</Button>}
             <Button appearance="secondary" onClick={close}>{t('dlv.draft.close')}</Button>
           </DialogActions>

@@ -570,9 +570,11 @@ function rules(lang: Lang): string {
     ? [
       '# この依頼での追加ルール（上の仕様より優先）',
       '- source エンティティと extensions.collection は作らない（アプリが資料から作る）。sourceIds には資料一覧の id だけを書く。',
-      '- 資料に書かれていない値・URL・人物・日付は作らない。根拠がない必須項目があるエンティティは出さない。',
+      '- 資料に書かれていない値・URL・人物・日付は作らない。根拠がない必須項目があるエンティティは出さない。ただし solution の costJpy・annualBenefitJpy、kpi・initiative の ownerId（不明なら ownerRole 表示文）、site の lat・lon・capacityTPerMonth、person・product の siteId、unitPriceJpy は任意で、不明ならその項目だけ省いてエンティティは残し、gaps に書く。',
       '- 企業分析は利用者が入力した要約で、原資料そのものではない。会社が表明した目標と推定を区別し、Project との整合を強制しない。数値は出典抜粋と照合し、人が確認する。',
-      '- 目的・重点（source-brief-1）に利用者が書いた困りごと・現状の問題・その理由は、課題（issue）と原因（cause）として必ず出し、sourceIds に source-brief-1 を書く。例: 「手間がかかりすぎる」→課題、「情報共有が不足」→原因。文に書かれた事実の範囲で、数値や固有名は補わない。',
+      '- 目的に対する解決策の候補は、資料に施策名がなくても、課題に直接つながる仮説として solution に 1〜3 件出す（sourceIds は source-brief-1 と課題の根拠、author は ai、description の先頭に「【仮説】」と書く）。costJpy・annualBenefitJpy は資料にあるときだけ書き、なければ省く。数値・製品名は作らない。',
+      '- 目的・重点（source-brief-1）に利用者が書いた困りごと・現状の問題・その理由は、課題（issue）と原因（cause）として必ず出し、sourceIds に source-brief-1 を書く。例: 「手間がかかりすぎる」→課題、「情報共有が不足」→原因。文に書かれた事実の範囲で、数値や固有名は補わない。impact・feasibility は評価値で資料の数値ではないため、根拠がなければ暫定で 3 とし、description に「【仮評価】」と書く（課題を出さない理由にしない）。kpiIds・causeIds が不明なら [] とする。',
+      '- Work IQの社内資料は出典付きの確定事実と仮説を分ける。資料が具体的な基準値・現在値・目標値・責任者・費用・年間効果・日付を示す場合だけ実数として入れ、示さない項目は省くか「未確認」として collection に記録する。推測で埋めず、資料の未取得を推測の根拠にしない。',
       '- 中心は対象の Project とその目的・業務課題。課題・原因・施策・KPI・グラフのノードは目的に関係するものを優先し、ニュース・公開Web（source-news-* / source-web-*）は周辺の文脈として少しだけ使い、主役にしない。',
       '- ニュースの見出し（source-news-*）は出来事・課題・原因の根拠にだけ使い、顧客・仕入先の取引関係や拠点・製品の値の根拠にしない。目的と関係しない出来事（障害・株価・人事など）をニュースだけを根拠に課題にしない。',
       '- 業種を製造業と決めつけない。営業・サービス・管理の組織なら工場・生産ライン・物流の用語を使わず、その組織の言葉（顧客、案件、提案、イベント、レポート等）で書く。',
@@ -590,9 +592,11 @@ function rules(lang: Lang): string {
     : [
       '# Extra rules for this request (override the specification above)',
       '- Do not create source entities or extensions.collection (the app makes them from the material). sourceIds may only hold ids from the material list.',
-      '- Never invent values, URLs, people or dates the material does not state. Leave out entities whose required fields have no basis.',
+      '- Never invent values, URLs, people or dates the material does not state. Leave out entities whose required fields have no basis. But solution costJpy/annualBenefitJpy, kpi/initiative ownerId (else ownerRole text), site lat/lon/capacityTPerMonth, person/product siteId and unitPriceJpy are optional: when unknown omit only that field, keep the entity and list it in gaps.',
       '- The company analysis is a user-supplied summary, not the original source. Separate stated objectives from inference, do not force project alignment, and have a person check numbers against source excerpts.',
-      '- Problems, current-state pain points and their reasons that the user wrote in the purpose or focus (source-brief-1) must be output as issue and cause entities with sourceIds ["source-brief-1"]. E.g. "too much effort per engagement" → issue; "insufficient information sharing" → cause. Stay within what the text states; add no numbers or names.',
+      '- Problems, current-state pain points and their reasons that the user wrote in the purpose or focus (source-brief-1) must be output as issue and cause entities with sourceIds ["source-brief-1"]. E.g. "too much effort per engagement" → issue; "insufficient information sharing" → cause. Stay within what the text states; add no numbers or names. impact/feasibility are ratings, not sourced figures: without evidence use a provisional 3 and start the description with [Provisional rating]; never omit the issue for that. Use [] when kpiIds/causeIds are unknown.',
+      '- Separate confirmed facts from hypotheses in Work IQ internal material. Enter baseline/current/target, owner, cost, annual benefit and dates only when the material explicitly states them. Omit or mark as unconfirmed when not stated; never infer them or treat missing retrieval as evidence.',
+      '- Propose 1-3 solution candidates for the purpose as hypotheses tied to the issues even when no source names an initiative (sourceIds: source-brief-1 and the issue sources, author ai, description starting with [Hypothesis]). Write costJpy/annualBenefitJpy only when a source states them; otherwise omit. Never invent figures or product names.',
       '- The project, its purpose and its business problem come first. Issues, causes, solutions, KPIs and graph nodes should serve that purpose; news and public web (source-news-*, source-web-*) are light context only and must not dominate.',
       '- News headlines (source-news-*) may support events, issues and causes only; never customer or supplier relationships, or site and product values. Never turn an event unrelated to the purpose (outages, share prices, appointments…) into an issue on news alone.',
       '- Do not assume manufacturing. For a sales, service or administrative organisation, avoid plant, production-line and logistics terms and use its own (customers, engagements, proposals, events, reports…).',
@@ -830,7 +834,11 @@ function keepDistinctEngagements(list: unknown, reserved: Set<string>) {
  * Mechanical repairs that need no model call. Measured 2026-11-12: OKR items without an `id` and workflow stages with
  * `next: "stage-x"` failed the schema, and the fix answer then deleted the whole OKR (13 KPI/OKR items lost).
  */
+/** Link lists the schema requires; a missing one means no known link (measured 2026-11-24: with no KPI stated, the model left kpiIds out and the issue and solution were removed). */
+const LINK_LISTS: Record<string, string[]> = { issue: ['causeIds', 'kpiIds'], solution: ['kpiIds', 'msProducts'], initiative: ['dependsOn'] };
+
 export function repairExtensions(pack: Pack): Pack {
+  for (const e of entitiesOf(pack)) for (const f of LINK_LISTS[String(e.kind)] ?? []) if (e[f] === undefined || e[f] === null) e[f] = [];
   if (!isObj(pack.extensions)) return pack;
   const ext = pack.extensions;
   const ids = (list: unknown, prefix: string, reserved: string[] = []) => {
@@ -988,6 +996,8 @@ export function pruneInvalid(pack: Pack, now: Date): { pack: Pack; verify: Verif
     const dropFlows = new Set<number>();
     const dropExt = new Set<string>();
     const dropRegions = new Set<number>();
+    // A repeated id removes only the later copy: dropping by id used to delete the first, valid one as well.
+    const dropDuplicates = new Set<number>();
     // Indices are those of the verified pack: collect them all, then filter each list once (removing one shifts the rest).
     const dropRefs = new Map<string, { entity: number; field: string; at: Set<number> }>();
     let changed = false;
@@ -1004,6 +1014,8 @@ export function pruneInvalid(pack: Pack, now: Date): { pack: Pack; verify: Verif
         continue;
       }
       if (!err.entityId) continue;
+      const dup = err.code === 'DUPLICATE_ID' ? /^entities\[(\d+)\]\.id$/.exec(err.path) : null;
+      if (dup) { dropDuplicates.add(Number(dup[1])); continue; }
       const ref = /^entities\[(\d+)\]\.(\w+)\[(\d+)\]$/.exec(err.path);
       if (ref && (err.code === 'DANGLING_REF' || err.code === 'SOURCE_KIND')) {
         const field = ref[2]!;
@@ -1029,8 +1041,13 @@ export function pruneInvalid(pack: Pack, now: Date): { pack: Pack; verify: Verif
       p.regions = (p.regions as unknown[]).filter((_, j) => !dropRegions.has(j));
       changed = true;
     }
+    if (dropDuplicates.size) {
+      p.entities = ents.filter((_, j) => !dropDuplicates.has(j));
+      for (const j of dropDuplicates) removed.push({ path: `entities[${j}]`, reason: errors.find((e) => e.path === `entities[${j}].id`)?.cause ?? '' });
+      changed = true;
+    }
     if (drop.size) {
-      p.entities = ents.filter((e) => !drop.has(String(e.id)));
+      p.entities = entitiesOf(p).filter((e) => !drop.has(String(e.id)));
       for (const id of drop) removed.push({ path: `entities.${id}`, reason: errors.find((e) => e.entityId === id)?.cause ?? '' });
       changed = true;
     }
@@ -1210,6 +1227,31 @@ export function fieldTopics(pack: Pack, problems: Problem[], unmet: readonly Rea
   return out;
 }
 
+/**
+ * Facts the schema leaves optional because public sources rarely state them, but a deliverable needs: a solution's cost
+ * and annual benefit, who owns a KPI or initiative, where a site is. An item built without them is kept (a hypothesis)
+ * and the fact is still searched for, so the missing value is not simply accepted.
+ */
+export function unconfirmedTopics(pack: Pack, unmet: readonly ReadinessKey[], lang: Lang): string[] {
+  const ja = lang === 'ja';
+  const out: string[] = [];
+  for (const e of entitiesOf(pack)) {
+    const key = KIND_ITEM[String(e.kind)];
+    if (!key || !unmet.includes(key)) continue;
+    const absent = (f: string) => e[f] === undefined || e[f] === null || e[f] === '';
+    const fields: string[] = [];
+    if (e.kind === 'solution') fields.push(...['costJpy', 'annualBenefitJpy'].filter(absent));
+    if ((e.kind === 'kpi' || e.kind === 'initiative') && absent('ownerId') && absent('ownerRole')) fields.push('ownerId');
+    if (e.kind === 'site' && (absent('lat') || absent('lon'))) fields.push('lat');
+    const words = [...new Set(fields.map((f) => FIELD_WORDS[f]![ja ? 0 : 1]))];
+    if (!words.length) continue;
+    const n = isObj(e.name) ? e.name : {};
+    const name = String((ja ? n.ja : n.en) ?? n.ja ?? n.en ?? e.id).trim();
+    const topic = clip(`${name}: ${words.join(ja ? '・' : ', ')}`.replace(/\s+/g, ' '), 150);
+    if (!out.includes(topic)) out.push(topic);
+  }
+  return out;
+}
 /** The stage's gaps as short questions for Work IQ ("kpi: target, current value"), most specific first. */
 export function gapTopics(gaps: Record<string, unknown>[], lang: Lang): string[] {
   const out: string[] = [];
@@ -1501,7 +1543,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       if (!unmet.length && (round > 1 || !gapTopics(gaps, input.lang).length)) { stopReasons[prefix] = 'satisfied'; break; }
       if (round > wiqRounds) { stopReasons[prefix] = 'roundLimit'; break; }
       if (followUpChars >= MAX_FOLLOWUP_CHARS) { stopReasons[prefix] = 'materialLimit'; break; }
-      const topics = roundTopics(unmet, gaps, asked, input.lang, fieldTopics(view.checked, view.problems, unmet, input.lang));
+      const topics = roundTopics(unmet, gaps, asked, input.lang, [...fieldTopics(view.checked, view.problems, unmet, input.lang), ...unconfirmedTopics(view.checked, unmet, input.lang)]);
       if (!topics.length) { stopReasons[prefix] = 'exhausted'; break; }
       topics.forEach((t) => asked.add(t));
       emit(step, 'running', round / (wiqRounds + 1), { collectRound: round, unmet });

@@ -427,6 +427,15 @@
 .dlv-draft-field dd { margin: 4px 0 0; }
 .dlv-pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: var(--fontSizeBase200); }
 .dlv-kept { display: block; color: var(--colorPaletteMarigoldForeground2); }
+.dlv-fill-option { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.dlv-fill-option-label { display: inline-flex; align-items: center; gap: 6px; }
+.dlv-fill-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.dlv-fill-item { border: 1px solid var(--colorNeutralStroke2); border-radius: 6px; padding: 8px 12px; }
+.dlv-fill-item[data-status="rejected"] { opacity: 0.75; }
+.dlv-fill-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dlv-fill-value { font-weight: 600; margin: 4px 0; }
+.dlv-fill-note { margin: 2px 0; white-space: pre-wrap; }
+.dlv-fill-actions, .dlv-fill-editor { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 6px; }
 
 @media (max-width: 860px) {
   .dlv-band { padding: 8px 12px; }

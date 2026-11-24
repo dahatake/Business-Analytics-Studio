@@ -306,7 +306,6 @@ export function buildSolutionDoc(s: EntityOf<'solution'>, ts: ThreadSolution, th
   const contributions = c.strategy.contributions.filter((x) => x.solutionId === s.id);
   const system = isSystemType(ts.type);
   const money = solutionMoney(s);
-  const money = solutionMoney(s);
   const evidence = evidenceViews(c.pack, c.strategy, lang);
   const systems = systemsOf(c.pack);
   const terms = glossaryOf(c.pack, lang);

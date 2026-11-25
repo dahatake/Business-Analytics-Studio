@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Badge, Button, Field, Input, MessageBar, MessageBarBody, ProgressBar, Select } from '@fluentui/react-components';
-import { Add20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
+import { Add20Regular, ArrowUndo20Regular, CheckmarkCircle20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
@@ -26,6 +26,26 @@ function withOrg(o: Okr, org: KpiOrg | undefined): Okr {
   const next = { ...o };
   delete next.org;
   return org ? { ...next, org } : next;
+}
+
+/** FR-368: a person's inspection of a provisional (AI-drafted) KPI or OKR. */
+function withReview<T extends { reviewedAt?: string }>(item: T, at: string | null): T {
+  const next = { ...item };
+  delete next.reviewedAt;
+  return at ? { ...next, reviewedAt: at } : next;
+}
+
+function ReviewButton({ name, reviewedAt, testId, onChange }: { name: string; reviewedAt?: string; testId: string; onChange: (at: string | null) => void }) {
+  const { t, fmt } = useI18n();
+  if (reviewedAt) {
+    return (
+      <>
+        <span className="muted" data-testid={`${testId}-at`}>{t('sol.review.at', { date: fmt.date(reviewedAt.slice(0, 10)) })}</span>
+        <Button size="small" appearance="subtle" icon={<ArrowUndo20Regular />} onClick={() => onChange(null)} aria-label={t('sol.review.undoNamed', { name })} data-testid={`${testId}-undo`}>{t('sol.review.undo')}</Button>
+      </>
+    );
+  }
+  return <Button size="small" icon={<CheckmarkCircle20Regular />} onClick={() => onChange(new Date().toISOString())} aria-label={t('sol.review.markNamed', { name })} data-testid={testId}>{t('sol.review.mark')}</Button>;
 }
 
 /** An edited organisation is the user's own statement, so the estimate mark is dropped. */
@@ -150,7 +170,7 @@ export function KpiOkrPanel() {
                 const name = loc(k.name, lang);
                 return (
                   <tr key={k.id} id={`proj-kpi-row-${k.id}`} tabIndex={-1}>
-                    <th scope="row">{name} <OriginBadge origin={k.origin} /></th>
+                    <th scope="row">{name} <OriginBadge origin={k.origin} reviewedAt={k.reviewedAt ?? null} /></th>
                     <td><OrgBadge org={k.org} testId={`proj-kpi-org-${k.id}`} /></td>
                     <td>{loc(k.unit, lang)}</td>
                     <td className="num">{k.baseline}</td>
@@ -165,6 +185,7 @@ export function KpiOkrPanel() {
                     <td>
                       <div className="proj-row">
                         <Button size="small" icon={<Edit20Regular />} onClick={() => edit(k)} aria-label={t('proj.kpi.editNamed', { name })}>{t('proj.edit')}</Button>
+                        {k.origin === 'proposed' && <ReviewButton name={name} reviewedAt={k.reviewedAt} testId={`proj-kpi-review-${k.id}`} onChange={(at) => set((v) => ({ ...v, kpis: v.kpis.map((x) => (x.id === k.id ? withReview(x, at) : x)) }))} />}
                         <Button size="small" icon={<Delete20Regular />} onClick={() => remove(k)} aria-label={t('proj.kpi.deleteNamed', { name })}>{t('proj.delete')}</Button>
                       </div>
                     </td>
@@ -202,10 +223,11 @@ export function KpiOkrPanel() {
               <li key={o.id} className="proj-okr" id={`proj-okr-${o.id}`} tabIndex={-1}>
                 <div className="proj-okr-head">
                   <strong>{loc(o.objective, lang)}</strong>
-                  <OriginBadge origin={o.origin} />
+                  <OriginBadge origin={o.origin} reviewedAt={o.reviewedAt ?? null} />
                   <span>{pct === null ? '—' : `${Math.round(pct)}%`}</span>
                   <StatusBadge status={statusForPct(pct)} />
                   <OrgBadge org={o.org} testId={`proj-okr-org-${o.id}`} />
+                  {o.origin === 'proposed' && <ReviewButton name={loc(o.objective, lang)} reviewedAt={o.reviewedAt} testId={`proj-okr-review-${o.id}`} onChange={(at) => set((v) => ({ ...v, okrs: v.okrs.map((x) => (x.id === o.id ? withReview(x, at) : x)) }))} />}
                   <Button size="small" appearance="subtle" icon={<Edit20Regular />} aria-label={t('proj.org.editNamed', { name: loc(o.objective, lang) })} aria-expanded={orgEditing === o.id} onClick={() => setOrgEditing(orgEditing === o.id ? null : o.id)} data-testid={`proj-okr-org-edit-${o.id}`} />
                   <Button size="small" appearance="subtle" icon={<Delete20Regular />} aria-label={t('proj.okr.deleteNamed', { name: loc(o.objective, lang) })} onClick={() => set((v) => ({ ...v, okrs: v.okrs.filter((x) => x.id !== o.id) }))} />
                 </div>

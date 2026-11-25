@@ -552,6 +552,45 @@ describe('step deliverables: validity checks', () => {
     for (const s of IMPROVEMENT_STEPS) expect(progressOf(evaluateStep(s, c)).complete, s).toBe(false);
   });
 
+  it('FR-368: a customer KPI or OKR alone makes the definition valid; AI drafts stay provisional until a person inspects them', () => {
+    const okr = (origin: 'customerDefined' | 'proposed', reviewedAt?: string) => ({ id: `okr-${origin}`, objective: 'Grow the platform', keyResults: [], origin, ...(reviewedAt ? { reviewedAt } : {}) });
+    const kpi = (origin: 'customerDefined' | 'proposed' | undefined, reviewedAt?: string) => ({
+      id: `kpi-${origin ?? 'manual'}`, name: 'Win rate', unit: '%', baseline: 10, current: 12, target: 20, deadline: '2027-06-30',
+      ...(origin ? { origin } : {}), ...(reviewedAt ? { reviewedAt } : {}),
+    });
+    const defined = { definition: { status: 'defined' as const, note: '', at: '2026-11-09T09:00:00Z', by: 'tester' } };
+    const run = (data: CheckContext['kpi'], strategy = emptyStrategy()) => byId('kpi', { ...emptyProjectCtx(), kpi: data, strategy: { ...strategy, ...defined } });
+
+    // OKR only, no KPI: still the customer's own definition.
+    const okrOnly = run({ kpis: [], okrs: [okr('customerDefined')] });
+    expect(okrOnly['kpi-definition']!.outcome).toMatchObject({ ok: true, code: 'definitionImported', vars: { n: 1 } });
+    expect(okrOnly['kpi-review']!.outcome?.code).toBe('reviewNotNeeded');
+
+    // No customer KPI/OKR: AI drafts are placeholders, and the review stays open until each one is inspected.
+    const undefinedStatus = (data: CheckContext['kpi']) => byId('kpi', { ...emptyProjectCtx(), kpi: data, strategy: { ...emptyStrategy(), definition: { status: 'undefined', note: '', at: '2026-11-09T09:00:00Z', by: 'tester' } } });
+    const drafts = undefinedStatus({ kpis: [kpi('proposed')], okrs: [okr('proposed')] });
+    expect(drafts['kpi-definition']!.outcome).toMatchObject({ ok: true, code: 'definitionProvisional', vars: { n: 2 } });
+    expect(drafts['kpi-review']!.outcome).toMatchObject({ ok: false, code: 'provisionalUnreviewed', vars: { n: 2 } });
+    expect(drafts['kpi-review']!.outcome?.refs).toHaveLength(2);
+    const half = undefinedStatus({ kpis: [kpi('proposed', '2026-11-10T09:00:00Z')], okrs: [okr('proposed')] });
+    expect(half['kpi-review']!.outcome).toMatchObject({ ok: false, vars: { n: 1 } });
+    const inspected = undefinedStatus({ kpis: [kpi('proposed', '2026-11-10T09:00:00Z')], okrs: [okr('proposed', '2026-11-10T09:00:00Z')] });
+    expect(inspected['kpi-review']!.outcome).toMatchObject({ ok: true, code: 'provisionalReviewed', vars: { n: 2 } });
+
+    // Hand entry without a source is neither: the definition stays missing, and the customer said it is defined → not imported.
+    expect(undefinedStatus({ kpis: [kpi(undefined)], okrs: [] })['kpi-definition']!.outcome?.code).toBe('definitionMissing');
+    expect(run({ kpis: [kpi('proposed')], okrs: [] })['kpi-definition']!.outcome?.code).toBe('definitionNotImported');
+    expect(byId('kpi', emptyProjectCtx())['kpi-review']!.outcome?.code).toBe('noProjectKpis');
+
+    // The dashboard counts the same inspections.
+    const d = stepDashboard('kpi', { ...emptyProjectCtx(), kpi: { kpis: [kpi('proposed', '2026-11-10T09:00:00Z')], okrs: [okr('proposed')] } });
+    expect(d.tiles.find((t) => t.id === 'provisionalUnreviewed')).toMatchObject({ kind: 'problems', value: 1, total: 2, todoId: 'kpi-review' });
+    expect(d.detail.step === 'kpi' && d.detail.basis).toMatchObject({ basis: 'provisional', unreviewed: 1 });
+    for (const code of ['definitionProvisional', 'provisionalUnreviewed', 'provisionalReviewed', 'reviewNotNeeded']) {
+      for (const lang of ['ja', 'en'] as const) expect(typeof translate(lang, resultKey(code) as MessageKey), `${lang}:${code}`).toBe('string');
+    }
+  });
+
   it('the demo meets every data check; the fields, the sign-offs, the qualification and the strategy work are left', () => {
     const open = (c: CheckContext, s: ImprovementStep) => evaluateStep(s, c).filter((r) => !r.done).map((r) => r.todo.id).sort();
     // Qualifying issues is the person's judgment, like a sign-off: the demo data never decides it.

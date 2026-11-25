@@ -760,6 +760,30 @@ function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
 }
 
 /**
+ * FR-369: a Microsoft 365 sensitivity label of Confidential or higher. The relay joins the label names and cuts the
+ * text at 100 characters, so a cut text may hide a higher label and counts as confidential too.
+ */
+export function isConfidentialLabel(label: string | null | undefined): boolean {
+  if (!label) return false;
+  return label.length >= 100 || /confidential|secret|restricted|機密|社外秘|極秘|秘密/i.test(label);
+}
+
+/** Decides whether confidential Work IQ material may enter the app for a company (and records it when it may). */
+export type WorkIqConfidentialGate = (company: string, labels: string[]) => boolean;
+// Refused until state/confidential.ts registers the user's choice, so nothing confidential slips in by default.
+let confidentialGate: WorkIqConfidentialGate = () => false;
+export function setWorkIqConfidentialGate(gate: WorkIqConfidentialGate) {
+  confidentialGate = gate;
+}
+
+/** A confidential answer the user has not allowed comes back as a failed section; the answer text never leaves here. */
+function gateSections(company: string, sections: WorkIqSectionInfo[]): WorkIqSectionInfo[] {
+  const labels = [...new Set(sections.flatMap((s) => ('error' in s || !isConfidentialLabel(s.sensitivity) ? [] : [s.sensitivity!])))];
+  if (!labels.length || confidentialGate(company, labels)) return sections;
+  return sections.map((s) => ('error' in s || !isConfidentialLabel(s.sensitivity) ? s : { key: s.key, error: 'confidentialNotAllowed' }));
+}
+
+/**
  * One Work IQ search per section and per follow-up topic. With `expand` the relay (Work IQ CLI route) also searches
  * every readiness ladder wording and answers one merged section per readiness item, listing those wordings in
  * `searches`. A failed section comes back as `{ key, error }`; the call itself fails only when none could run (sign-in,
@@ -770,7 +794,7 @@ export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: rea
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const b = (await res.json()) as { sections?: unknown };
   if (!Array.isArray(b.sections)) throw new RelayError(502, 'badRelayAnswer');
-  return b.sections.flatMap((s): WorkIqSectionInfo[] => {
+  return gateSections(q.company, b.sections.flatMap((s): WorkIqSectionInfo[] => {
     if (!s || typeof s !== 'object' || typeof (s as { key?: unknown }).key !== 'string') return [];
     const key = (s as { key: string }).key;
     if (typeof (s as { error?: unknown }).error === 'string') return [{ key, error: (s as { error: string }).error }];
@@ -781,7 +805,7 @@ export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: rea
     const deepRead = dr && typeof dr.files === 'number' && Number.isInteger(dr.files) && dr.files > 0
       ? { files: dr.files, ...(dr.followUp === true ? { followUp: true } : {}), ...(typeof dr.error === 'string' ? { error: dr.error.slice(0, 60) } : {}) } : null;
     return a ? [{ key, ...a, ...(listed.length ? { searches: listed } : {}), ...(deepRead ? { deepRead } : {}) }] : [{ key, error: 'badRelayAnswer' }];
-  });
+  }));
 }
 
 export interface WorkIqAnswerInfo {
@@ -799,5 +823,6 @@ export async function askWorkIq(q: WorkIqQuestionInput & { provider?: WorkIqProv
   const b = (await res.json()) as Partial<WorkIqAnswerInfo>;
   const a = answerInfo(b);
   if (!a) throw new RelayError(502, 'badRelayAnswer');
+  if (isConfidentialLabel(a.sensitivity) && !confidentialGate(q.company, [a.sensitivity!])) throw new RelayError(403, 'confidentialNotAllowed');
   return a;
 }

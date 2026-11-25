@@ -723,6 +723,7 @@ function SavedSummary({ result }: { result: GenResult }) {
           <ReadinessView items={report.readiness} rounds={report.collectionRounds} stopReasons={report.stopReasons} testId="gen-readiness" />
         </section>
       )}
+      {report.retrievalErrors.some((e) => e.what === 'workiq' && e.error.includes('confidentialNotAllowed')) && <p role="status" data-testid="gen-sum-workiq-confidential">{t('workiq.confidentialNotAllowed')}</p>}
       {report.retrievalErrors.some((e) => e.what === 'workiq') && <p className="muted" data-testid="gen-sum-workiq-failed">{t('proj.gen.sum.workIqFailed', { error: report.retrievalErrors.filter((e) => e.what === 'workiq').map((e) => e.error).join(' / ') })}</p>}
       {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}
       <p className="muted" data-testid="gen-auto-draft-hint">{t('proj.gen.sum.autoDraft')}</p>

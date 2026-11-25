@@ -13,6 +13,8 @@ import { hrefFor } from '../state/router.ts';
 import { openAiSettings } from '../modules/ai/uiStore.ts';
 import type { MessageKey } from '../i18n/index.ts';
 import { DataLocationPanel } from './DataLocationPanel.tsx';
+import { ConfidentialPanel } from './ConfidentialPanel.tsx';
+import { useConfidential } from '../state/confidential.ts';
 
 /** D-7 (proposal P-03, approved 2026-11-09): what is kept and how it is deleted. */
 const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageKey; where?: string; aiSettings?: true }[] = [
@@ -24,6 +26,7 @@ const RETENTION: { target: MessageKey; retention: MessageKey; deletion: MessageK
   { target: 'retention.ledger', retention: 'retention.keep.ledger', deletion: 'retention.del.ledger' },
   { target: 'retention.exports', retention: 'retention.keep.outside', deletion: 'retention.del.exports' },
   { target: 'retention.chat', retention: 'retention.keep.notStored', deletion: 'retention.del.none' },
+  { target: 'retention.confidential', retention: 'retention.keep.confidential', deletion: 'retention.del.confidential' },
 ];
 
 /** AI rows open the single AI settings dialog (D-25); other rows link to their screen. */
@@ -69,6 +72,7 @@ export function SettingsScreen() {
   const { t } = useI18n();
   const s = useSettings();
   const kinds = Object.keys(cardSpecs) as EntityKind[];
+  const retentionDays = useConfidential((c) => c.retentionDays);
 
   return (
     <div className="screen screen-settings">
@@ -116,6 +120,7 @@ export function SettingsScreen() {
         </Panel>
       </div>
       <DataLocationPanel />
+      <ConfidentialPanel />
       <Panel title={t('settings.loadTest')}>
         <LoadTest />
       </Panel>
@@ -159,7 +164,7 @@ export function SettingsScreen() {
               {RETENTION.map((r) => (
                 <tr key={r.target}>
                   <th scope="row">{t(r.target)}</th>
-                  <td>{t(r.retention)}</td>
+                  <td>{t(r.retention, { days: retentionDays })}</td>
                   <td>{deletionCell(r, t(r.deletion))}</td>
                 </tr>
               ))}

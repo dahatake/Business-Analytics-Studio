@@ -344,6 +344,8 @@ export interface ObjectiveRun {
   /** Work IQ sections that answered (0 when Work IQ was not used or failed). */
   workIqAnswers: number;
   workIqError: string | null;
+  /** FR-369: Work IQ sections left out because they were labelled Confidential or higher and the user has not allowed that. */
+  workIqWithheld: number;
   workIqUsed: boolean;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -364,6 +366,7 @@ export async function runObjectiveDraft(
   return {
     classified: classifyObjectives(live.text, full, evidence), workIqAnswers: fetched.sections.filter((s) => !('error' in s)).length,
     workIqError: fetched.error, workIqUsed: !!workIq, inputTokens: live.inputTokens, outputTokens: live.outputTokens,
+    workIqWithheld: fetched.sections.filter((s) => 'error' in s && s.error === 'confidentialNotAllowed').length,
   };
 }
 

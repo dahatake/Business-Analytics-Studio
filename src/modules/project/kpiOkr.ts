@@ -164,6 +164,34 @@ export function kpiDefinitionState(pack: CustomerPack): KpiDefinitionState {
   return { status, stated: false, checkedSources, kpis, objectives };
 }
 
+/**
+ * FR-368: what the project's KPI/OKR stands on. `sourced` = at least one KPI or OKR the customer (or the company's
+ * published figures) defined: either one is enough for the step to be valid. `provisional` = only drafts made by the AI
+ * or the app (`proposed`): they are used as placeholders and a person inspects each later. `manual` = entered by hand
+ * without a source. A proposed item counts as inspected once `reviewedAt` is set.
+ */
+export type KpiBasis = 'sourced' | 'provisional' | 'manual' | 'none';
+export interface KpiBasisInfo {
+  basis: KpiBasis;
+  sourced: number;
+  provisional: number;
+  /** Provisional items no person has inspected yet. */
+  unreviewed: number;
+  manual: number;
+}
+export const isSourcedOrigin = (origin: KpiDef['origin']) => origin === 'customerDefined' || origin === 'companyAnchor';
+export const needsReview = (item: Pick<KpiDef, 'origin' | 'reviewedAt'>) => item.origin === 'proposed' && !item.reviewedAt;
+
+export function kpiBasis(data: KpiData): KpiBasisInfo {
+  const items: Pick<KpiDef, 'origin' | 'reviewedAt'>[] = [...data.kpis, ...data.okrs];
+  const sourced = items.filter((i) => isSourcedOrigin(i.origin)).length;
+  const provisional = items.filter((i) => i.origin === 'proposed').length;
+  const unreviewed = items.filter(needsReview).length;
+  const manual = items.filter((i) => !i.origin).length;
+  const basis: KpiBasis = sourced > 0 ? 'sourced' : provisional > 0 ? 'provisional' : manual > 0 ? 'manual' : 'none';
+  return { basis, sourced, provisional, unreviewed, manual };
+}
+
 export interface ProposalInput {
   pack: CustomerPack;
   current: KpiData;

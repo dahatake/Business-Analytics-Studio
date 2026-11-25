@@ -381,7 +381,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   };
   const d = useMemo(() => stepDashboard(step, ctx), [step, ctx]);
   const [objectiveBusy, setObjectiveBusy] = useState(false);
-  const [objectiveResult, setObjectiveResult] = useState<{ registered: number; drafts: number; workIq: 'used' | 'failed' | 'off' } | null>(null);
+  const [objectiveResult, setObjectiveResult] = useState<{ registered: number; drafts: number; workIq: 'used' | 'failed' | 'off'; withheld: number } | null>(null);
   const [objectiveError, setObjectiveError] = useState<string | null>(null);
   const fetchObjectives = async () => {
     setObjectiveBusy(true); setObjectiveResult(null); setObjectiveError(null);
@@ -392,7 +392,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
       if (!alive.current) return;
-      setObjectiveResult({ registered: r.registered.length, drafts: r.drafts, workIq: !r.workIqUsed ? 'off' : r.workIqError || !r.workIqAnswers ? 'failed' : 'used' });
+      setObjectiveResult({ registered: r.registered.length, drafts: r.drafts, workIq: !r.workIqUsed ? 'off' : r.workIqError || !r.workIqAnswers ? 'failed' : 'used', withheld: r.workIqWithheld });
     } catch (e) {
       if (!alive.current) return;
       const message = e instanceof AiLiveError ? e.reasons.map((r) => t(reasonKey(r))).join(', ') + `: ${e.message}` : e instanceof Error ? e.message : String(e);
@@ -422,6 +422,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
         </div>
         {internal && company && <p className="muted">{t('stg.objFetchHint')}</p>}
         {objectiveResult && <p role="status" data-testid="strategy-objectives-result">{t('stg.objFetchDone', { registered: objectiveResult.registered, drafts: objectiveResult.drafts })} {t(`stg.objFetchWorkIq.${objectiveResult.workIq}`)}</p>}
+        {objectiveResult && objectiveResult.withheld > 0 && <p className="muted" data-testid="strategy-objectives-confidential">{t('workiq.confidentialNotAllowed')}</p>}
         {objectiveError && <MessageBar intent="error" data-testid="strategy-objectives-error"><MessageBarBody>{t('stg.objFetchError', { message: objectiveError })}</MessageBarBody></MessageBar>}
         <p>{t('stg.recommended', { axis: t(`stg.axis.${recommended}`) })}</p>
         <p className="muted">{t(`stg.axisHint.${axis}`)}</p>

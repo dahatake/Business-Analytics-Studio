@@ -84,6 +84,8 @@ export const KpiDefSchema = z.object({
   adoptedFrom: z.string().optional(),
   /** FR-341: the organisation the KPI belongs to (全社 / 事業部 …). */
   org: KpiOrgSchema.optional(),
+  /** FR-368: when a person inspected a `proposed` (provisional) KPI; until then it is a placeholder. */
+  reviewedAt: z.string().optional(),
 });
 export type KpiDef = z.infer<typeof KpiDefSchema>;
 
@@ -99,6 +101,8 @@ export const OkrSchema = z.object({
   sourceIds: z.array(z.string()).optional(),
   /** FR-341: the organisation the objective belongs to (全社 / 事業部 …). */
   org: KpiOrgSchema.optional(),
+  /** FR-368: when a person inspected a `proposed` (provisional) OKR. */
+  reviewedAt: z.string().optional(),
 });
 export type Okr = z.infer<typeof OkrSchema>;
 

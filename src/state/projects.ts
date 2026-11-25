@@ -440,6 +440,39 @@ syncDeviceStore(PROJECTS_STORAGE_KEY, () => useProjects.persist.rehydrate());
 // FR-342: packs of one company share its company layer.
 setPackCompanyResolver((projectId) => useProjects.getState().projects.find((p) => p.id === projectId)?.companyId);
 
+/**
+ * FR-370: deletes the working data of a scope ('demo' or a project id) while keeping the project registered. The
+ * imported pack is removed by the deletion listeners in the background; await deleteImportedPack to be sure.
+ */
+export function wipeScopeWorkData(scope: string) {
+  purgeScope(scope);
+  deletionListeners.forEach((fn) => fn(scope));
+}
+
+/**
+ * FR-370: deletes what a company's projects learned (scoped data, packs, ink, the company anchor and alignment
+ * evaluation, project alignments) and keeps the company, its projects, names, briefs and relations registered.
+ */
+export function wipeCompanyWorkData(companyId: string) {
+  const { projects } = useProjects.getState();
+  for (const p of projects) if (p.companyId === companyId) wipeScopeWorkData(p.id);
+  purgeScope(companyId);
+  deleteCompanyAnchor(companyId);
+  localStorage.removeItem(alignmentEvaluationKey(companyId));
+  useProjects.setState((s) => ({
+    companies: s.companies.map((c) => {
+      if (c.id !== companyId || !c.anchorRef) return c;
+      const { anchorRef: _drop, ...rest } = c;
+      return rest;
+    }),
+    projects: s.projects.map((p) => {
+      if (p.companyId !== companyId || !p.alignments) return p;
+      const { alignments: _drop, ...rest } = p;
+      return rest;
+    }),
+  }));
+}
+
 /** 'demo' or the active project id. Every scoped store keys its data by this (G-007: no cross-project mixing). */
 export function scopeOf(target: WorkTarget): string {
   return target.kind === 'demo' ? 'demo' : target.projectId;

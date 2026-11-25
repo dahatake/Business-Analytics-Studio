@@ -1288,6 +1288,7 @@ export const projJa = {
   'proj.dash.tile.issuesTracked': 'プロジェクト KPI で追う課題',
   'proj.dash.tile.okrsLinked': 'KPI につながった OKR',
   'proj.dash.tile.okrsAligned': '経営目標につながった OKR',
+  'proj.dash.tile.provisionalUnreviewed': '人の検査が残る仮置きの KPI・OKR',
   'proj.dash.tile.typesConfirmed': '種類を確定した解決策',
   'proj.dash.tile.solutionsEstimated': '貢献を見積もった解決策',
   'proj.dash.tile.gapsClosed': 'ギャップを埋める見込みの KPI',

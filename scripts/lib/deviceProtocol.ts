@@ -49,6 +49,6 @@ export function isDeviceKey(key: string): boolean {
   return key.length <= 512 && (
     key.startsWith('bas.scope.') || key.startsWith(BINARY_PREFIX) ||
     ['bas.projects', 'bas.settings', 'bas.packs.index', 'bas.ai.settings', 'bas.ai.ledger',
-      'bas.ops.brand', 'bas.show.settings', 'bas.uc.readAloud', 'bas.proj.ui'].includes(key)
+      'bas.ops.brand', 'bas.show.settings', 'bas.uc.readAloud', 'bas.proj.ui', 'bas.confidential'].includes(key)
   );
 }

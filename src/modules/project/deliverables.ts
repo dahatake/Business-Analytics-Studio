@@ -10,7 +10,7 @@ import type { Localizable } from '../../state/text.ts';
 import type { UseCase } from '../usecases/store.ts';
 import type { CatalogItem } from '../usecases/catalogSchema.ts';
 import { categoriesOf } from './analysis.ts';
-import { validateKpi, kpiDefinitionState } from './kpiOkr.ts';
+import { validateKpi, kpiBasis, kpiDefinitionState, needsReview } from './kpiOkr.ts';
 import type { AnalysisData, DiscussionData, KpiData, KpiDef } from './model.ts';
 import { checkAnyLanguage } from './requirementQuality.ts';
 import { buildSolutionDoc } from './solutionDocs.ts';
@@ -784,12 +784,24 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
         id: 'kpi-definition', kind: 'auto', href: '/deliverables?step=kpi',
         check: (c) => {
           const status = c.strategy?.definition?.status ?? kpiDefinitionState(c.pack.pack).status;
-          const customer = c.kpi.kpis.filter((k) => k.origin === 'customerDefined' || k.origin === 'companyAnchor').length;
-          const proposed = c.kpi.kpis.filter((k) => k.origin === 'proposed').length + c.kpi.okrs.filter((o) => o.origin === 'proposed').length;
-          if (status === 'defined' || status === 'partial') {
-            return customer > 0 ? pass('definitionImported', { n: customer, status }) : fail('definitionNotImported', [], { status });
-          }
-          return customer + proposed > 0 ? pass('definitionProposed', { n: customer + proposed, status }) : fail('definitionMissing', [], { status });
+          // FR-368: a customer KPI or a customer OKR is enough; AI drafts are placeholders checked by `kpi-review`.
+          const basis = kpiBasis(c.kpi);
+          if (basis.sourced > 0) return pass('definitionImported', { n: basis.sourced, status });
+          if (status === 'defined' || status === 'partial') return fail('definitionNotImported', [], { status });
+          return basis.provisional > 0 ? pass('definitionProvisional', { n: basis.provisional, status }) : fail('definitionMissing', [], { status });
+        },
+      },
+      {
+        id: 'kpi-review', kind: 'auto', href: '/analysis?tab=kpi',
+        check: (c) => {
+          if (c.kpi.kpis.length + c.kpi.okrs.length === 0) return fail('noProjectKpis');
+          const open: CheckRef[] = [
+            ...c.kpi.kpis.filter(needsReview).map((k) => ({ type: 'text' as const, text: k.name })),
+            ...c.kpi.okrs.filter(needsReview).map((o) => ({ type: 'text' as const, text: o.objective })),
+          ];
+          if (open.length > 0) return fail('provisionalUnreviewed', open, { n: open.length });
+          const basis = kpiBasis(c.kpi);
+          return basis.provisional > 0 ? pass('provisionalReviewed', { n: basis.provisional }) : pass('reviewNotNeeded');
         },
       },
       {

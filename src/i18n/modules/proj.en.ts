@@ -1289,6 +1289,7 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.dash.tile.issuesTracked': 'Issues tracked by a project KPI',
   'proj.dash.tile.okrsLinked': 'OKRs linked to KPIs',
   'proj.dash.tile.okrsAligned': 'OKRs aligned to company objectives',
+  'proj.dash.tile.provisionalUnreviewed': 'Provisional KPIs/OKRs still to be inspected',
   'proj.dash.tile.typesConfirmed': 'Solutions with a confirmed type',
   'proj.dash.tile.solutionsEstimated': 'Solutions with an estimated contribution',
   'proj.dash.tile.gapsClosed': 'KPIs whose gap is expected to close',

@@ -72,7 +72,8 @@ export function EvidencePanel({ ctx }: { ctx: CheckContext }) {
       const key = aspect as 'rules' | 'systems' | 'voice';
       setCandidates({ aspect, items: found.map((f, i) => ({ finding: f, kind: DEFAULT_KIND[key], title: `${t(`sol.ev.aspect.${key}`)} ${i + 1}` })) });
     } catch (e) {
-      setError(t('sol.ev.error', { code: errorCodeOf(e) }));
+      const code = errorCodeOf(e);
+      setError(code === 'confidentialNotAllowed' ? t('workiq.confidentialNotAllowed') : t('sol.ev.error', { code }));
     } finally {
       setBusy(null);
     }

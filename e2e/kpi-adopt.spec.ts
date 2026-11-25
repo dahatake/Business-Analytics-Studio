@@ -104,13 +104,17 @@ test('a pack without KPI/OKR candidates offers missing-only drafts that survive 
   await page.reload();
   await expect(page.getByTestId('proj-kpi-panel').locator('table')).toContainText('出荷所要日数');
   await expect(page.getByTestId('proj-okr-panel')).toContainText('出荷までの流れを改善する');
-  await expect(page.getByTestId('proj-okr-panel')).toContainText('定義案');
+  await expect(page.getByTestId('proj-okr-panel')).toContainText('仮置き（AI ドラフト・要検査）');
   const row = page.getByTestId('proj-kpi-panel').locator('tr', { hasText: '出荷所要日数' });
   await row.getByRole('button', { name: '出荷所要日数 を編集' }).click();
   await page.locator('form.proj-kpi-form').getByLabel('現在値', { exact: true }).fill('4');
   await page.locator('form.proj-kpi-form').getByRole('button', { name: '保存' }).click();
   await page.reload();
-  await expect(row).toContainText('定義案');
+  await expect(row).toContainText('仮置き（AI ドラフト・要検査）');
+  // FR-368: a person marks the provisional OKR as inspected; it stays a BAS proposal, but no longer awaits review.
+  await page.getByTestId('proj-okr-panel').getByRole('button', { name: '「出荷までの流れを改善する」を検査済みにする' }).click();
+  await page.reload();
+  await expect(page.getByTestId('proj-okr-panel')).toContainText('定義案（検査済み）');
   expect(await scan(page)).toEqual([]);
 });
 

@@ -49,6 +49,7 @@ export class DeviceDatabase {
       PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
+      PRAGMA secure_delete = ON;
       ${SCHEMA('')}
       `);
       this.db.prepare('INSERT OR IGNORE INTO metadata VALUES (?, ?)').run('id', randomUUID());
@@ -94,6 +95,10 @@ export class DeviceDatabase {
       }
       const snapshot = this.snapshot(changes.map((change) => change.key));
       this.db.exec('COMMIT');
+      // FR-370: with secure_delete the deleted text is zeroed in the main file; the checkpoint also clears it from the WAL.
+      if (changes.some((change) => change.value === null)) {
+        try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* another process is reading; the next checkpoint clears it */ }
+      }
       return snapshot;
     } catch (error) {
       this.db.exec('ROLLBACK');

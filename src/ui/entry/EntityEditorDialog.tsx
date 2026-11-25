@@ -286,7 +286,8 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
           provider: ai.provider as WorkIqProvider, aspects: [], topics: [[kindLabel, form.name, form.description].filter((x) => typeof x === 'string' && x).join(' ')],
         });
         for (const s of sections) if ('answer' in s && s.answer.trim()) evidence.push({ text: s.answer.slice(0, 1500), source: s.citations.slice(0, 3).map((c) => c.title).join(', ') || 'Work IQ' });
-        if (!evidence.length) setWorkIqNote(t('entry.draft.workIqEmpty'));
+        if (sections.some((s) => 'error' in s && s.error === 'confidentialNotAllowed')) setWorkIqNote(t('workiq.confidentialNotAllowed'));
+        else if (!evidence.length) setWorkIqNote(t('entry.draft.workIqEmpty'));
       } catch {
         setWorkIqNote(t('entry.draft.workIqFailed'));
       }

@@ -23,6 +23,7 @@ import { HandoffPanel } from './HandoffPanel.tsx';
 import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
 import { StrategyOverview } from './StrategyOverview.tsx';
 import { isSystemType } from './strategy.ts';
+import { KpiBasisNote, OriginBadge } from './StrategyPanels.tsx';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
 import { ValueModelPanel } from './ValuePanel.tsx';
@@ -267,7 +268,7 @@ function KpiTable({ rows, label }: { rows: KpiRow[]; label: string }) {
             const unit = loc(k.unit, lang);
             return (
               <tr key={k.id}>
-                <th scope="row">{loc(k.name, lang)}</th>
+                <th scope="row">{loc(k.name, lang)} <OriginBadge origin={k.origin} reviewedAt={k.reviewedAt ?? null} /></th>
                 <td className="num">{fmt.number(k.baseline)} {unit}</td>
                 <td className="num">{fmt.number(k.current)} {unit}</td>
                 <td className="num">{fmt.number(k.target)} {unit}</td>
@@ -298,7 +299,7 @@ function OkrTable({ rows, label }: { rows: OkrRow[]; label: string }) {
         <tbody>
           {rows.map((o) => (
             <tr key={o.id}>
-              <th scope="row">{loc(o.objective, lang)}</th>
+              <th scope="row">{loc(o.objective, lang)} <OriginBadge origin={o.origin} reviewedAt={o.reviewedAt ?? null} /></th>
               <td className="num">{o.keyResults}</td>
               <td><YesNo ok={o.linked} /></td>
               <td><YesNo ok={o.aligned} /></td>
@@ -404,6 +405,7 @@ function KpiDetail({ d }: { d: DetailOf<'kpi'> }) {
       </Panel>
       <Panel title={t('proj.dash.kpi.kpis')} testId="step-dash-kpis" className="span-full">
         <p className="muted">{t('proj.dash.kpi.definition', { status: t(`sol.def.status.${d.definition}` as MessageKey) })}</p>
+        <KpiBasisNote info={d.basis} testId="step-dash-kpi-basis" />
         {d.kpis.length === 0 ? <Empty /> : <KpiTable rows={d.kpis} label={t('proj.dash.kpi.kpis')} />}
       </Panel>
       <Panel title={t('proj.dash.kpi.okrs')} testId="step-dash-okrs" className="span-full">

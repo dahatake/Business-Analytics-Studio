@@ -11,7 +11,7 @@ import type { WorkIqAspect } from '../ai/relayClient.ts';
 import { downloadText, ScrollRegion, useTargetNames } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { threadOf } from './deliverables.ts';
-import { DEFINITION_STATUSES, kpiDefinitionState, proposeKpiDefinition, type DefinitionStatus } from './kpiOkr.ts';
+import { DEFINITION_STATUSES, kpiBasis, kpiDefinitionState, proposeKpiDefinition, type DefinitionStatus, type KpiBasisInfo } from './kpiOkr.ts';
 import { FormDraftReview } from './FormDraftReview.tsx';
 import { requestFormDraft } from './formDraft.ts';
 import { inputLabels } from './handoff.ts';
@@ -35,10 +35,30 @@ import { errorCodeOf, useWorkIqSearch, type WorkIqFinding } from './useWorkIqSea
 
 const ORIGIN_COLOR: Record<KpiOrigin, 'brand' | 'informative' | 'warning'> = { customerDefined: 'brand', companyAnchor: 'informative', proposed: 'warning' };
 
-export function OriginBadge({ origin }: { origin?: KpiOrigin }) {
+/** FR-368: pass `reviewedAt` (or null) to tell a provisional AI draft from one a person has inspected. */
+export function OriginBadge({ origin, reviewedAt }: { origin?: KpiOrigin; reviewedAt?: string | null }) {
   const { t } = useI18n();
   if (!origin) return null;
+  if (origin === 'proposed' && reviewedAt !== undefined) {
+    return (
+      <Badge size="small" appearance="outline" color={reviewedAt ? 'success' : 'warning'} data-origin={origin} data-reviewed={!!reviewedAt}>
+        {t(reviewedAt ? 'sol.origin.reviewed' : 'sol.origin.provisional')}
+      </Badge>
+    );
+  }
   return <Badge size="small" appearance="outline" color={ORIGIN_COLOR[origin]} data-origin={origin}>{t(`sol.origin.${origin}`)}</Badge>;
+}
+
+/** FR-368: says what the KPI/OKR stands on (customer source, provisional AI draft, hand entry). */
+export function KpiBasisNote({ info, testId }: { info: KpiBasisInfo; testId: string }) {
+  const { t } = useI18n();
+  const n = info.basis === 'sourced' ? info.sourced : info.basis === 'provisional' ? info.provisional : info.manual;
+  const intent = info.basis === 'sourced' ? 'success' : info.basis === 'provisional' && info.unreviewed === 0 ? 'info' : 'warning';
+  return (
+    <MessageBar intent={intent} data-testid={testId} data-basis={info.basis} data-unreviewed={info.unreviewed}>
+      <MessageBarBody>{t(`sol.basis.${info.basis}`, { n, open: info.unreviewed })}</MessageBarBody>
+    </MessageBar>
+  );
 }
 
 export const entityName = (id: string, lang: 'ja' | 'en') => {
@@ -225,6 +245,7 @@ export function KpiDefinitionPanel({ ctx }: { ctx: CheckContext }) {
           : t(state.stated ? 'sol.def.stated' : 'sol.def.inferred')}
       </p>
       <p>{t('sol.def.counts', { kpis: state.kpis, objectives: state.objectives })}</p>
+      <KpiBasisNote info={kpiBasis(ctx.kpi)} testId="sol-def-basis" />
       <p className="muted">{state.checkedSources.length ? t('sol.def.checked', { sources: state.checkedSources.join(lang === 'ja' ? '、' : ', ') }) : t('sol.def.checkedNone')}</p>
       <Field label={t('sol.def.confirm')}>
         <Select value={confirmed?.status ?? ''} onChange={(_, d) => confirm(d.value)} data-testid="sol-def-confirm">
@@ -598,7 +619,7 @@ function SectionEditor({ solutionId, id, text, edited, kind, facts, quality, sta
             {found?.state === 'busy' ? t('sol.doc.finding') : t('sol.doc.findEvidence')}
           </Button>
           {!wi.ready && <span className="muted">{t('sol.ev.notReady')}</span>}
-          {found?.state === 'error' && <span role="alert">{t('sol.ev.error', { code: found.code ?? 'unknown' })}</span>}
+          {found?.state === 'error' && <span role="alert">{found.code === 'confidentialNotAllowed' ? t('workiq.confidentialNotAllowed') : t('sol.ev.error', { code: found.code ?? 'unknown' })}</span>}
           {found?.state === 'done' && (found.items.length === 0
             ? <span className="muted">{t('sol.doc.evidenceNone')}</span>
             : (

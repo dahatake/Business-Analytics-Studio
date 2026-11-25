@@ -7,6 +7,7 @@ import { exposeFeedDiagnostics } from './state/feed.ts';
 import { activatePack, packKey, packOrigin } from './data/pack.ts';
 import { deleteImportedPack, importedPackMeta, loadImportedPack } from './data/packStore.ts';
 import { onProjectDeleted, scopeOf, useProjects, type WorkTarget } from './state/projects.ts';
+import { startConfidentialGuard } from './state/confidential.ts';
 import { activateBaseWithEdits, hasPackEdits, setBasePackRaw } from './state/packEdits.ts';
 import './styles.css';
 
@@ -47,6 +48,8 @@ const neededKey = (target: WorkTarget) =>
 onProjectDeleted((projectId) => { void deleteImportedPack(projectId); });
 
 export async function boot() {
+  // FR-370: expired confidential material is deleted before any screen reads it.
+  startConfidentialGuard();
   await loadBasePack();
   await loadProjectPack(useProjects.getState().target);
   // Screens read the pack once at load, so switching to a target with another pack restarts the app at the same URL.

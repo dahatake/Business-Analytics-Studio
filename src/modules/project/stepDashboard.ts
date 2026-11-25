@@ -9,7 +9,7 @@ import {
   cyclicInitiatives, evaluateStep, fieldIsVague, isQualifiedOut, nextTodo, paybackLimit, paybackYears, progressOf, projectHasKpi, pursuedIssues, qualificationOf, rankedIssues, STEP_DEFS, threadOf, valueMismatches,
   type CheckContext, type QualifyVerdict, type TodoResult, type ValueMismatch,
 } from './deliverables.ts';
-import { kpiDefinitionState, validateKpi, type DefinitionStatus } from './kpiOkr.ts';
+import { kpiBasis, kpiDefinitionState, validateKpi, type DefinitionStatus, type KpiBasisInfo } from './kpiOkr.ts';
 import type { KpiOrigin } from './model.ts';
 import { realisedShare, triangularMean, validRange, type KpiSimulation } from './simulate.ts';
 import { isSystemType, type SolutionType } from './strategy.ts';
@@ -127,6 +127,7 @@ export interface KpiRow {
   target: number;
   deadline: string;
   origin?: KpiOrigin;
+  reviewedAt?: string;
   valid: boolean;
   ahead: boolean;
   inOkr: boolean;
@@ -135,6 +136,8 @@ export interface KpiRow {
 export interface OkrRow {
   id: string;
   objective: Localizable;
+  origin?: KpiOrigin;
+  reviewedAt?: string;
   keyResults: number;
   linked: boolean;
   aligned: boolean;
@@ -222,7 +225,7 @@ export type StepDetail =
     /** KPIs and OKRs this project added (origin 'proposed'): hypotheses until the sponsor agrees. */
     proposed: { kpis: KpiRow[]; okrs: OkrRow[] };
   }
-  | { step: 'kpi'; definition: DefinitionStatus; kpis: KpiRow[]; okrs: OkrRow[] }
+  | { step: 'kpi'; definition: DefinitionStatus; basis: KpiBasisInfo; kpis: KpiRow[]; okrs: OkrRow[] }
   | { step: 'solution'; solutions: SolutionRow[]; coverage: CoverageRow[]; sims: SimRow[]; issues: IssueCoverage[]; qualifiedOut: number }
   | { step: 'deliverable'; initiatives: InitiativeRow[]; paybackLimit: number; solutions: SolutionRow[]; gaps: number; trace: TraceRow[] };
 
@@ -436,6 +439,7 @@ function kpiOkrRows(c: CheckContext): { kpis: KpiRow[]; okrs: OkrRow[] } {
   const kpis: KpiRow[] = c.kpi.kpis.map((k) => ({
     id: k.id, name: k.name, unit: k.unit, baseline: k.baseline, current: k.current, target: k.target, deadline: k.deadline,
     ...(k.origin ? { origin: k.origin } : {}),
+    ...(k.reviewedAt ? { reviewedAt: k.reviewedAt } : {}),
     valid: validateKpi({ name: str(k.name), unit: str(k.unit), baseline: String(k.baseline), current: String(k.current), target: String(k.target), deadline: k.deadline }).length === 0 && k.target !== k.baseline,
     ahead: k.deadline >= c.today,
     inOkr: inOkr.has(k.id),
@@ -443,6 +447,8 @@ function kpiOkrRows(c: CheckContext): { kpis: KpiRow[]; okrs: OkrRow[] } {
   const okrs: OkrRow[] = c.kpi.okrs.map((o) => ({
     id: o.id,
     objective: o.objective,
+    ...(o.origin ? { origin: o.origin } : {}),
+    ...(o.reviewedAt ? { reviewedAt: o.reviewedAt } : {}),
     keyResults: o.keyResults.length,
     linked: o.keyResults.every((kr) => ids.has(kr.kpiId)),
     aligned: !thread.gaps.okrsWithoutObjective.includes(o.id) && (c.objectives ?? []).length > 0,
@@ -452,6 +458,7 @@ function kpiOkrRows(c: CheckContext): { kpis: KpiRow[]; okrs: OkrRow[] } {
 
 function kpi(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
   const { kpis: rows, okrs } = kpiOkrRows(c);
+  const basis = kpiBasis(c.kpi);
   const issues = entities(c, 'issue').filter((i) => !isQualifiedOut(c.deliverables, i.id));
   const packKpis = entities(c, 'kpi');
   const consistent = packKpis.filter((k) => {
@@ -466,8 +473,9 @@ function kpi(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
       { id: 'issuesTracked', kind: 'ratio', value: issues.filter((i) => issueKpis(c, i).some((k) => projectHasKpi(c.kpi.kpis, k))).length, total: issues.length, todoId: 'kpi-coverage', href: '/analysis?tab=kpi' },
       { id: 'okrsLinked', kind: 'ratio', value: okrs.filter((o) => o.linked).length, total: okrs.length, todoId: 'kpi-okr', href: '/analysis?tab=kpi' },
       { id: 'okrsAligned', kind: 'ratio', value: okrs.filter((o) => o.aligned).length, total: okrs.length, todoId: 'kpi-company', href: '/deliverables?step=kpi' },
+      { id: 'provisionalUnreviewed', kind: 'problems', value: basis.unreviewed, total: basis.provisional, todoId: 'kpi-review', href: '/analysis?tab=kpi' },
     ],
-    detail: { step: 'kpi', definition: c.strategy?.definition?.status ?? kpiDefinitionState(c.pack.pack).status, kpis: rows, okrs },
+    detail: { step: 'kpi', definition: c.strategy?.definition?.status ?? kpiDefinitionState(c.pack.pack).status, basis, kpis: rows, okrs },
   };
 }
 

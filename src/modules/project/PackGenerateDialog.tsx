@@ -474,7 +474,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                         <Input value={focus} onChange={(_, d) => setFocus(d.value)} data-testid="gen-focus" />
                       </Field>
                       <Field label={t('proj.gen.field.orgUnit')} hint={t('proj.gen.orgUnitHint')} className="gen-wide">
-                        <Input value={orgUnit} maxLength={80} onChange={(_, d) => setOrgUnit(d.value)} data-testid="gen-org-unit" />
+                        <Input value={orgUnit} onChange={(_, d) => setOrgUnit(d.value)} data-testid="gen-org-unit" />
                       </Field>
                     </div>
                   </section>
@@ -485,7 +485,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                       {useNews && (
                         <div className="gen-wide">
                           <Field label={t('proj.anchor.publicTopic')} hint={t('proj.anchor.publicTopicHint')} validationState={topicInvalid ? 'error' : 'none'} validationMessage={topicInvalid ? t('proj.anchor.publicTopicInvalid') : undefined}>
-                            <Input value={publicWebTopic} maxLength={100} onChange={(_, d) => { setPublicWebTopic(d.value); setPublicTopicOk(false); }} data-testid="gen-public-topic" />
+                            <Input value={publicWebTopic} onChange={(_, d) => { setPublicWebTopic(d.value); setPublicTopicOk(false); }} data-testid="gen-public-topic" />
                           </Field>
                           {!!topic && <Checkbox checked={publicTopicOk} onChange={(_, d) => setPublicTopicOk(d.checked === true)} label={t('proj.anchor.publicTopicConsent', { company: companyName, topic })} data-testid="gen-public-topic-consent" />}
                         </div>
@@ -724,6 +724,7 @@ function SavedSummary({ result }: { result: GenResult }) {
         </section>
       )}
       {report.retrievalErrors.some((e) => e.what === 'workiq' && e.error.includes('confidentialNotAllowed')) && <p role="status" data-testid="gen-sum-workiq-confidential">{t('workiq.confidentialNotAllowed')}</p>}
+      {report.retrievalErrors.some((e) => e.what === 'workiq' && e.error.includes('workiqModelLimit')) && <p role="status" data-testid="gen-sum-workiq-model-limit">{t('ai.workiq.msg.workiqModelLimit')}</p>}
       {report.retrievalErrors.some((e) => e.what === 'workiq') && <p className="muted" data-testid="gen-sum-workiq-failed">{t('proj.gen.sum.workIqFailed', { error: report.retrievalErrors.filter((e) => e.what === 'workiq').map((e) => e.error).join(' / ') })}</p>}
       {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}
       <p className="muted" data-testid="gen-auto-draft-hint">{t('proj.gen.sum.autoDraft')}</p>

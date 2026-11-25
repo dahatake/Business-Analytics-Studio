@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { JAPANESE, scan, setup, visibleTextExcludingOtherLang } from './helpers.ts';
+import { METHOD_CATEGORIES } from '../src/modules/project/analysis.ts';
 
 /*
  * FR-311 (D-12): "Create Project pack with Copilot" on the launch screen and in project management, with the AI
@@ -81,6 +82,85 @@ test('Japanese labels on the launch screen', async ({ page }) => {
   await expect(page.getByTestId('launch-ai-settings')).toHaveText('AI 設定');
   await page.getByTestId('launch-generate').click();
   await expect(page.getByRole('alert')).toBeVisible();
+});
+
+test('long Project inputs reach Work IQ and the confirmed public news search without being cut off', async ({ page }) => {
+  const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
+  await page.addInitScript((connection) => {
+    if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
+    sessionStorage.setItem('bas.e2e.ai-seeded', '1');
+    localStorage.setItem('bas.ai.settings', JSON.stringify({
+      version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true },
+    }));
+  }, connection);
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-18T00:00:00Z', keyProtection: 'file',
+    copilot: null, entra: null, workiq: { method: 'cli', account: 'test@example.com', signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  await page.route('**/relay/workiq/ask', (route) => route.fulfill({ json: { sections: [] } }));
+  await page.route('**/relay/news', (route) => route.fulfill({ json: { articles: [], fetchedAt: '2026-11-18T00:00:00Z' } }));
+  await page.route('**/relay/ai', (route) => route.fulfill({ status: 503, json: { error: 'providerUnavailable' } }));
+  await seed(page, 'ja');
+  const company = `${'企業'.repeat(160)}末尾`;
+  const project = `${'案件'.repeat(160)}末尾`;
+  const purpose = `${'目的'.repeat(160)}末尾`;
+  const focus = `${'重点'.repeat(160)}末尾`;
+  const unit = `${'事業部'.repeat(110)}末尾`;
+  const topic = `${'公開情報'.repeat(80)}末尾`;
+  await page.getByTestId('launch-company-name').fill(company);
+  await page.getByTestId('launch-project-name').fill(project);
+  await page.getByTestId('launch-generate').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await dialog.getByTestId('gen-purpose').fill(purpose);
+  await dialog.getByTestId('gen-focus').fill(focus);
+  await dialog.getByTestId('gen-org-unit').fill(unit);
+  await expect(dialog.getByTestId('gen-org-unit')).toHaveValue(unit);
+  await dialog.getByTestId('gen-public-topic').fill(topic);
+  await expect(dialog.getByTestId('gen-public-topic')).toHaveValue(topic);
+  await dialog.getByTestId('gen-public-topic-consent').check();
+  await dialog.getByTestId('gen-check-approved').check();
+  const workiqRequest = page.waitForRequest((req) => req.url().endsWith('/relay/workiq/ask'));
+  const newsRequest = page.waitForRequest((req) => req.url().endsWith('/relay/news'));
+  await dialog.getByTestId('gen-start').click();
+  expect((await workiqRequest).postDataJSON()).toMatchObject({ company, project, purpose, focus, unit, expand: true });
+  expect((await newsRequest).postDataJSON()).toMatchObject({ company, topic, topicConfirmed: true });
+});
+
+test('a Foundry Work IQ model limit is explained in the saved generation report', async ({ page }) => {
+  const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
+  await page.addInitScript((connection) => {
+    if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
+    sessionStorage.setItem('bas.e2e.ai-seeded', '1');
+    localStorage.setItem('bas.ai.settings', JSON.stringify({
+      version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true },
+    }));
+  }, connection);
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-18T00:00:00Z', keyProtection: 'file',
+    copilot: null, entra: null, workiq: { method: 'cli', account: 'test@example.com', signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  await page.route('**/relay/workiq/ask', (route) => route.fulfill({ status: 502, json: { error: 'workiqModelLimit' } }));
+  const text = (s: string) => ({ ja: s, en: s });
+  const foundation = { packId: 'contoso', company: { name: text('Contoso'), industry: text('IT') }, isSample: false, regions: [], entities: [], flows: [] };
+  const analysis = { analyses: Object.entries(METHOD_CATEGORIES).map(([method, categories]) => ({
+    method, items: categories.map((category) => ({ category, text: text(`${method} ${category}`), score: 3 })),
+  })) };
+  await page.route('**/relay/ai', (route) => {
+    const prompt = String(route.request().postDataJSON().prompt);
+    const answer = prompt.includes('# 検査済みProjectパック') ? analysis
+      : prompt.startsWith('次の企業の') ? foundation
+        : prompt.startsWith('同じProjectパック') ? { entities: [] } : { remove: [], replace: [] };
+    return route.fulfill({ json: { text: JSON.stringify(answer), inputTokens: 100, outputTokens: 100 } });
+  });
+  await seed(page, 'ja');
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await dialog.getByTestId('gen-purpose').fill('配送遅延を減らす');
+  await dialog.getByTestId('gen-news').uncheck();
+  await dialog.getByTestId('gen-check-approved').check();
+  await dialog.getByTestId('gen-start').click();
+  await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByTestId('gen-sum-workiq-model-limit')).toContainText('Foundry モデルの入力または出力の上限');
 });
 
 test('a Foundry quota rejection explains the cause and does not retry before the requested wait', async ({ page }) => {

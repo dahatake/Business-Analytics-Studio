@@ -219,7 +219,7 @@ export function FoundryFields() {
 
 const WORKIQ_ERRORS = [
   'invalidSettings', 'notConfigured', 'notSignedIn', 'signInNotStarted', 'signInExpired', 'signInDeclined', 'authFailed', 'workiqForbidden', 'workiqBusy',
-  'workiqTimeout', 'workiqUnavailable', 'badWorkiqResponse', 'workiqNoGrounding', 'outboundNotAllowed', 'relayUnreachable', 'workiqEulaRequired', 'workiqCliMissing',
+  'workiqTimeout', 'workiqUnavailable', 'workiqModelLimit', 'badWorkiqResponse', 'workiqNoGrounding', 'outboundNotAllowed', 'relayUnreachable', 'workiqEulaRequired', 'workiqCliMissing',
   'workiqViaFoundry', 'foundryEntraRequired',
 ] as const;
 type WorkIqMessage = (typeof WORKIQ_ERRORS)[number] | 'failed';

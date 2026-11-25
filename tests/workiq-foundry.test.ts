@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { SecretVault } from '../server/vault.ts';
 import { STRICT_RELAY_CONFIG, foundryWorkIqServiceFor, handleRelay, newRelayToken, type RelayConfig, type RelayContext, type RelayRequest } from '../server/relay.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
-import { FoundryWorkIqService, WORKIQ_MCP_URL, argsForSchema, mcpResultFromOutput, parseProjectEndpoint, type FoundryWorkIqTarget } from '../server/workiqFoundry.ts';
+import { FoundryMcpSession, FoundryWorkIqService, WORKIQ_MCP_URL, argsForSchema, mcpResultFromOutput, parseProjectEndpoint, type FoundryWorkIqTarget } from '../server/workiqFoundry.ts';
 
 const TOKEN = newRelayToken();
 const PORT = 4189;
@@ -25,7 +25,7 @@ const RETRIEVAL = { 'application/vnd.ms-workiq.retrieval': {
   searchMetadata: { searchTerms: ['delivery'] },
 } };
 
-type Mode = 'ok' | 'drift' | 'billing';
+type Mode = 'ok' | 'drift' | 'billing' | 'outputLimit' | 'contextLimit' | 'partialLimit';
 /**
  * A stub of the Foundry project endpoints: the connection lookup and the Responses API with an MCP tool (list, forced
  * call with an approval request, then the mcp_call after the approval). `sent` records what reached Foundry.
@@ -53,6 +53,13 @@ function foundryStub(mode: () => Mode) {
     }
     const choice = body.tool_choice as { name: string };
     const args = JSON.parse(String(body.input).split('Arguments: ')[1]!) as Record<string, unknown>;
+    if (mode() === 'contextLimit' || (mode() === 'partialLimit' && JSON.stringify(args).includes('oversized-only'))) {
+      return Response.json({ error: { code: 'context_length_exceeded' } }, { status: 400 });
+    }
+    if (mode() === 'outputLimit') return Response.json({ id: 'r1', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] });
+    if (typeof body.max_output_tokens === 'number' && JSON.stringify(args).length > body.max_output_tokens) {
+      return Response.json({ id: 'r1', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] });
+    }
     const asked = mode() === 'drift' ? { ...args, query: 'something else' } : args;
     return Response.json({ id: 'r1', output: [{ type: 'mcp_approval_request', id: 'apr-1', server_label: 'workiq', name: choice.name, arguments: JSON.stringify(asked) }] });
   };
@@ -68,6 +75,27 @@ describe('Work IQ through a Microsoft Foundry project connection (transport)', (
     expect(argsForSchema({ query: 'q', strategy: 'grounding', timeZone: 'Asia/Tokyo' }, { properties: { query: {}, strategy: {} } })).toEqual({ query: 'q', strategy: 'grounding' });
     expect(mcpResultFromOutput('{"a":1}', null)).toMatchObject({ structuredContent: { a: 1 } });
     expect(mcpResultFromOutput('The caller tenant does not have a billing policy configured for WorkIQ.', null)).toMatchObject({ isError: true });
+  });
+
+  it('lets the model reproduce long search arguments before approving the exact tool call', async () => {
+    const stub = foundryStub(() => 'ok');
+    const session = new FoundryMcpSession(TARGET, CONN_ID, { token: async () => 'tok', fetch: stub.fetch });
+    const query = `${'長い検索条件'.repeat(100)}末尾`;
+    const result = await session.request('tools/call', { name: 'retrieve', arguments: { query, strategy: 'grounding' } }, 60_000);
+    expect(result).toMatchObject({ structuredContent: RETRIEVAL });
+    const call = stub.sent.find((s) => typeof s.body?.input === 'string' && s.body.tool_choice !== 'none')!;
+    expect(String(call.body!.input)).toContain(query);
+    expect(stub.sent.some((s) => Array.isArray(s.body?.input))).toBe(true);
+    session.close();
+  });
+
+  it.each(['outputLimit', 'contextLimit'] as const)('reports a Foundry model limit (%s) without approving the call', async (mode) => {
+    const stub = foundryStub(() => mode);
+    const session = new FoundryMcpSession(TARGET, CONN_ID, { token: async () => 'tok', fetch: stub.fetch });
+    const result = await session.request('tools/call', { name: 'retrieve', arguments: { query: 'long question' } }, 60_000);
+    expect(result).toMatchObject({ code: 'workiqModelLimit' });
+    expect(stub.sent.some((s) => Array.isArray(s.body?.input))).toBe(false);
+    session.close();
   });
 
   it('approves only the exact call BAS asked for and reads the raw tool output, not the model text', async () => {
@@ -140,6 +168,22 @@ describe('Work IQ through Microsoft Foundry in the relay', () => {
     await call(req('PUT', '/relay/workiq', { method: 'cli' }));
     return { call, stub };
   };
+
+  it('surfaces model limits through verification and Project retrieval', async () => {
+    const { call } = await setup();
+    await call(req('PUT', '/relay/workiq/foundry', { endpoint: PROJECT, connection: 'workiq-mcp' }));
+    mode = 'outputLimit';
+    expect(await call(req('POST', '/relay/workiq/foundry/verify', { provider: 'foundry' }))).toMatchObject({ status: 502, body: { error: 'workiqModelLimit' } });
+    mode = 'ok';
+    expect((await call(req('POST', '/relay/workiq/foundry/verify', { provider: 'foundry' }))).status).toBe(200);
+    mode = 'contextLimit';
+    const input = { provider: 'foundry', company: 'Contoso', project: 'Delivery', purpose: 'Reduce late deliveries', focus: '', asOf: '2026-11-25', lang: 'en', timeZone: 'Asia/Tokyo' };
+    expect(await call(req('POST', '/relay/workiq/ask', input))).toMatchObject({ status: 502, body: { error: 'workiqModelLimit' } });
+    expect(await call(req('POST', '/relay/workiq/ask', { ...input, topics: ['details'] }))).toMatchObject({ status: 502, body: { error: 'workiqModelLimit' } });
+    mode = 'partialLimit';
+    const partial = await call(req('POST', '/relay/workiq/ask', { ...input, topics: ['normal', 'oversized-only'] }));
+    expect(partial.body).toMatchObject({ sections: [expect.objectContaining({ key: 'topic-1' }), { key: 'topic-2', error: 'workiqModelLimit' }] });
+  });
 
   it('uses the Foundry route only after its own check passes, then turns the CLI route off until it is removed', async () => {
     const { call, stub } = await setup();

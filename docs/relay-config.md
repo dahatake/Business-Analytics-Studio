@@ -272,15 +272,18 @@ that names the variable (the value is not printed).
 
 ## Company news endpoint
 
-`POST /relay/news` accepts only `{ "company": "<public company name>", "lang": "ja" | "en" }`.
+`POST /relay/news` accepts a public company name and language, plus an optional public `topic` with
+`topicConfirmed: true`. Company names and topics have no separate character cap; the request-body limit and the
+provider's URL/query limits still apply.
 It uses the same Origin, loopback, Host, JSON-body and per-launch-token checks as the other relay routes.
 No Foundry configuration, credentials or C-03 AI approval is required: this is a metadata search, not an AI call.
-Only the company-name query and language/region parameters go to Google News RSS; project contents are never sent.
+Only the company-name query, language/region parameters, and a public topic explicitly confirmed by the user go to
+Google News RSS; project names, purposes, and other project contents are never sent automatically.
 The host and path cannot be supplied by the client, redirects are refused, the timeout is 10 seconds, and responses
 are limited to 1 MiB. RSS is validated without DTDs or custom entities; article links must be HTTP(S) without credentials.
 Only title, source, publication date and link are returned; article bodies/descriptions are not retrieved or rendered.
 
-The relay caches successful results for five minutes by company and language (up to 50 entries), coalesces identical
+The relay caches successful results for five minutes by company, language, and topic (up to 50 entries), coalesces identical
 in-flight requests and allows up to 10 distinct concurrent searches. It deduplicates titles/URLs, sorts by publication
 date, and returns at most 10 articles with `provider` and `fetchedAt`. Empty search results are successful empty arrays;
 malformed feeds are errors, never fabricated articles. Failure codes are `502 newsUnavailable`, `502 invalidNewsFeed`,
@@ -333,6 +336,15 @@ The Work IQ section is part of the single AI settings dialog (D-25). A refresh t
 sign-in, not service enablement, billing assignment or access to Microsoft 365 data. Foundry customer-pack generation
 requires the separate retrieval check; ordinary Foundry explanations and GitHub Copilot SDK behavior are unchanged.
 The SDK's MCP configuration is not read or modified by BAS.
+
+`POST /relay/workiq/ask` has no per-field character limit on company, project, purpose, focus, business unit or search
+topics; selected purpose and focus searches are not truncated. The relay's existing 12,298,924-byte limit applies to
+the entire UTF-8 request body (`413 tooLarge` when exceeded). Date, language and time-zone formats and the limit of
+eight follow-up topics still apply. The selected AI model and Work IQ service can impose their own input limits;
+pack generation separately bounds its AI prompt to 200,000 characters and 100,000 estimated input tokens.
+For the Foundry Work IQ route, the tool-call request leaves its output-token limit to the provider so long arguments
+can be reproduced; the relay still approves only an exact match. An explicit Foundry context or output-token limit is
+reported as `workiqModelLimit`, rather than as an unreadable Work IQ response.
 
 The relay reaches Work IQ in one of three ways, chosen as one radio group in the Work IQ section (FR-366):
 

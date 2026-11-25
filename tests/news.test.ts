@@ -44,7 +44,7 @@ describe('news normalization', () => {
   it('validates company names, languages and response metadata', () => {
     expect(NewsRequest.safeParse({ company: ' ', lang: 'ja' }).success).toBe(false);
     expect(NewsRequest.safeParse({ company: '"""', lang: 'ja' }).success).toBe(false);
-    expect(NewsRequest.safeParse({ company: 'a'.repeat(201), lang: 'ja' }).success).toBe(false);
+    expect(NewsRequest.safeParse({ company: 'a'.repeat(301), lang: 'ja' }).success).toBe(true);
     expect(NewsRequest.safeParse({ company: 'Acme\ninjected', lang: 'en' }).success).toBe(false);
     expect(NewsRequest.safeParse({ company: 'Acme', lang: 'fr' }).success).toBe(false);
     expect(NewsRequest.safeParse({ company: 'Acme', lang: 'en', endpoint: 'https://example.com' }).success).toBe(false);

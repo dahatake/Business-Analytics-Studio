@@ -24,7 +24,6 @@ export const FOUNDRY_PROJECT_SCOPE = 'https://ai.azure.com/.default';
 const SERVER_LABEL = 'workiq';
 /** After the tool ran, the model only needs to stop: the output is read from the mcp_call item. */
 const AFTER_CALL_TOKENS = 16;
-const CALL_TOKENS = 400;
 const TOOLS_TIMEOUT_MS = 60_000;
 
 type Json = Record<string, unknown>;
@@ -126,6 +125,7 @@ function httpError(status: number, body: unknown): WorkIqError {
   if (status === 408 || status === 504) return new WorkIqError('workiqTimeout');
   // Foundry reports a refusal by the tool server (billing policy, consent, license) as this generic code.
   if (code === 'tool_user_error') return new WorkIqError('workiqForbidden');
+  if (code === 'context_length_exceeded') return new WorkIqError('workiqModelLimit');
   return new WorkIqError('workiqUnavailable');
 }
 
@@ -209,7 +209,7 @@ export class FoundryMcpSession implements McpSessionLike {
       instructions: 'You relay one tool call. Call the named tool exactly once with exactly the JSON arguments given (same keys and values, nothing added or removed), then reply only "done".',
       input: `Tool: ${name}\nArguments: ${JSON.stringify(args)}`,
       tool_choice: { type: 'mcp', server_label: SERVER_LABEL, name },
-      max_output_tokens: CALL_TOKENS, tools: [tool],
+      tools: [tool],
     }, timeoutMs, signal);
     const out = (Array.isArray(first.output) ? first.output : []).filter(isObj);
     const requests = out.filter((o) => o.type === 'mcp_approval_request');
@@ -221,7 +221,10 @@ export class FoundryMcpSession implements McpSessionLike {
       requested = undefined;
     }
     // Only the one call BAS asked for is approved: same server, tool and arguments.
-    if (requests.length !== 1 || request!.server_label !== SERVER_LABEL || request!.name !== name || !sameJson(requested, args)) throw new WorkIqError('badWorkiqResponse');
+    if (requests.length !== 1 || request!.server_label !== SERVER_LABEL || request!.name !== name || !sameJson(requested, args)) {
+      if (first.status === 'incomplete' && isObj(first.incomplete_details) && first.incomplete_details.reason === 'max_output_tokens') throw new WorkIqError('workiqModelLimit');
+      throw new WorkIqError('badWorkiqResponse');
+    }
     const second = await this.responses({
       previous_response_id: first.id, max_output_tokens: AFTER_CALL_TOKENS, tools: [tool],
       input: [{ type: 'mcp_approval_response', approval_request_id: request!.id, approve: true }],

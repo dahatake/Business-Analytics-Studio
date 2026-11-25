@@ -93,6 +93,15 @@ describe('authenticated company news relay', () => {
     expect(new URL(String(doFetch.mock.calls[0]![0])).searchParams.get('q')).toBe('"Acme" "logistics"');
   });
 
+  it('keeps long company names and confirmed public topics in the news search', async () => {
+    const company = `${'会社'.repeat(160)}末尾`;
+    const topic = `${'公開情報'.repeat(80)}末尾`;
+    const doFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response('<rss><channel><title>News</title></channel></rss>'));
+    const result = await call(req('POST', '/relay/news', { company, lang: 'ja', topic, topicConfirmed: true }), { fetch: doFetch });
+    expect(result.status).toBe(200);
+    expect(new URL(String(doFetch.mock.calls[0]![0])).searchParams.get('q')).toBe(`"${company}" "${topic}"`);
+  });
+
   it('returns an explicit failure, never fabricated news or provider content', async () => {
     const result = await call(req('POST', '/relay/news', { company: 'Acme', lang: 'ja' }), {
       fetch: async () => new Response('private provider error', { status: 500 }),
@@ -1171,6 +1180,9 @@ describe('D-14 Work IQ through the relay (Microsoft Foundry only)', () => {
     expect((r.body as { question: string }).question).toBe(text);
     // The access token from the sign-in is reused: no Entra call for this question.
     expect(m.calls.some((c) => c.url.includes('login.microsoftonline.com'))).toBe(false);
+
+    const longPurpose = await call(req('POST', '/relay/workiq/ask', { ...question, purpose: '目的'.repeat(169) }), ctx(m.doFetch, { workiq }));
+    expect(longPurpose.status).toBe(200);
   });
 
   it('is refused for other providers, without a ready provider, with an outbound allowlist lacking its hosts, and for free-form fields', async () => {
@@ -1463,6 +1475,27 @@ process.stdin.on('data', (d) => {
     expect(new Set(asked).size).toBe(6);
   });
 
+  it('passes long input fields and topics through to the planned Work IQ searches', async () => {
+    await call(req('PUT', '/relay/workiq', { method: 'cli' }));
+    vault.set('foundryKey', FAKE_KEY);
+    expect((await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply })).status).toBe(200);
+    const company = `${'企業'.repeat(160)}末尾`;
+    const project = `${'案件'.repeat(160)}末尾`;
+    const purpose = `${'目的'.repeat(160)}末尾`;
+    const focus = `${'重点'.repeat(160)}末尾`;
+    const unit = `${'事業部'.repeat(110)}末尾`;
+    const topic = `${'根拠'.repeat(160)}末尾`;
+    const r = await call(req('POST', '/relay/workiq/ask', {
+      ...question, company, project, purpose, focus, unit, topics: [topic], aspects: ['kpiUnit'], expand: true,
+    }), { workiqCli: cli('byquery') });
+    expect(r.status).toBe(200);
+    const asked = calls().filter((c) => c.name === 'retrieve').map((c) => String(c.arguments.query));
+    expect(asked.some((q) => q.includes(company) && q.includes(project) && q.includes(topic))).toBe(true);
+    expect(asked.some((q) => q.includes(purpose))).toBe(true);
+    expect(asked.some((q) => q.includes(focus))).toBe(true);
+    expect(asked.some((q) => q.includes(unit))).toBe(true);
+  });
+
   it('keeps one CLI session for the searches of a generation and retries a transient failure twice', async () => {
     let spawned = 0;
     const svc = new WorkIqCliService({
@@ -1596,6 +1629,15 @@ process.stdin.on('data', (d) => {
     expect(topics.filter((t) => t.endsWith('課題')).some((t) => /^(Contoso|Innovation Hub) /.test(t))).toBe(false);
     expect(purposeTopics({ ...base, lang: 'en', purpose: 'Reduce late deliveries. Ok.', focus: 'Kansai' })).toEqual(['Reduce late deliveries', 'focus "Kansai": initiatives, examples and figures']);
     expect(purposeTopics({ ...base, purpose: Array.from({ length: 12 }, (_, i) => `目的の文その${i}について`).join('。') })).toHaveLength(MAX_PURPOSE_SEARCHES);
+  });
+
+  it('does not truncate long purpose clauses, focus text or quoted names when planning searches', () => {
+    const base = { company: '企業', project: '案件', lang: 'ja' as const };
+    const purpose = `${'目的'.repeat(170)}末尾`;
+    const focus = `${'重点'.repeat(170)}末尾`;
+    expect(purposeTopics({ ...base, purpose, focus })).toEqual([purpose, `重点「${focus}」に関する取り組み・事例・数値`]);
+    const name = `${'事業'.repeat(90)}末尾`;
+    expect(purposeTopics({ ...base, purpose: `「${name}」の状況を改善する`, focus: '' })[0]).toBe(`${name} の内容・利用状況・関係者・数値・課題`);
   });
 
   it('plans deep reads of files only, purpose first, each file once, and keeps the search text when the read finds nothing or fails', () => {

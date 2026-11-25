@@ -4,10 +4,10 @@ export const NEWS_INTERVAL_MS = 5 * 60 * 1000;
 export const NEWS_MAX_ITEMS = 10;
 
 export const NewsRequest = z.object({
-  company: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/)
+  company: z.string().trim().min(1).regex(/^[^\u0000-\u001f\u007f]+$/)
     .refine((value) => value.replaceAll('"', ' ').trim().length > 0),
   lang: z.enum(['ja', 'en']),
-  topic: z.string().trim().min(1).max(100).regex(/^[^\u0000-\u001f\u007f]+$/)
+  topic: z.string().trim().min(1).regex(/^[^\u0000-\u001f\u007f]+$/)
     .refine((value) => value.replaceAll('"', ' ').trim().length > 0).optional(),
   topicConfirmed: z.literal(true).optional(),
 }).strict().refine((value) => !value.topic || value.topicConfirmed === true, { path: ['topicConfirmed'], message: 'Public topic must be confirmed before sending' });

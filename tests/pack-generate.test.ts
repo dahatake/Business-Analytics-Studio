@@ -5,7 +5,7 @@ import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, par
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import {
-  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, repairExtensions, runPlan, stageAPrompt, stepSpans, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
+  applyFix, fieldTopics, gapTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, repairExtensions, roundTopics, runPlan, stageAPrompt, stepSpans, unconfirmedTopics, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
 } from '../src/modules/project/packGenerate.ts';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
@@ -338,6 +338,18 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(verifyPack(r.pack).ok).toBe(true);
   });
 
+  it('keeps long follow-up topics complete and distinguishes topics that share a long prefix', () => {
+    const name = `${'長い項目名'.repeat(80)}末尾`;
+    const pack = { entities: [base('solution-long', 'solution', 'real', 'operation', [], { name: lt(name) })] };
+    const problems = [{ severity: 'error' as const, code: 'ENTITY_SCHEMA' as const, path: 'costJpy', entityId: 'solution-long', cause: 'costJpy: required', action: '' }];
+    expect(fieldTopics(pack, problems, ['engagements'], 'ja')).toEqual([`${name}: 費用（円）`]);
+    expect(unconfirmedTopics(pack, ['engagements'], 'ja')).toEqual([`${name}: 費用（円）・年間の効果額（円）`]);
+    expect(gapTopics([{ section: 'kpi', missing: [name] }], 'ja')).toEqual([`kpi: ${name}`]);
+
+    const first = `${name}: 最初`, second = `${name}: 次`;
+    expect(roundTopics([], [], new Set([first]), 'ja', [first, second])).toEqual([second]);
+  });
+
   describe('FR-341 company and business-unit KPI/OKR', () => {
     const unitAns = (unit: string) => [{ key: 'kpiUnit', question: `Q-${unit}`, answer: `${unit} の KPI: 出荷リードタイム 3 日`, sensitivity: 'General', fetchedAt: '2026-11-10T02:59:45.000Z', citations: [{ title: 'unit plan', url: 'https://t.example/unit' }] }];
     const okrOf = (r: { pack: Record<string, unknown> }) => (r.pack.extensions as { okr: { orgUnits: Record<string, unknown>[]; kpis: Record<string, unknown>[] } }).okr;
@@ -355,6 +367,26 @@ describe('FR-311 pack generation (D-12)', () => {
         { id: 'org-company', level: 'legalEntity', name: 'Contoso 製作所', basis: 'userInput' },
         { id: 'org-unit', level: 'business', name: '物流事業部', basis: 'userInput' },
       ]);
+    });
+
+    it('keeps a long typed business-unit name in the search, prompt and saved organisation', async () => {
+      const unit = `${'事業部'.repeat(110)}末尾`;
+      const queries: WorkIqQuery[] = [];
+      const d = deps([stageA, stageB], { fetchWorkIq: async (q) => { queries.push(q); return unitAns(q.unit ?? '-'); } });
+      const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true, orgUnit: unit }), d, () => {}, new AbortController().signal);
+      expect(queries[0]).toMatchObject({ unit, aspects: [...WORKIQ_GEN_ASPECTS, 'kpiUnit'] });
+      expect(d.prompts[0]).toContain(unit);
+      expect(okrOf(r).orgUnits).toContainEqual(expect.objectContaining({ id: 'org-unit', name: unit, basis: 'userInput' }));
+    });
+
+    it('uses a long inferred unit when it has a source', async () => {
+      const unit = `${'事業部'.repeat(110)}末尾`;
+      const queries: WorkIqQuery[] = [];
+      const a = { ...stageA, orgEstimate: { level: 'business', name: unit, sourceIds: ['source-doc-1'] } };
+      const d = deps([a, stageB], { fetchWorkIq: async (q) => { queries.push(q); return q.unit ? unitAns(q.unit) : []; } });
+      const r = await generatePack(input({ officialUrl: '', useNews: false, useWorkIq: true }), d, () => {}, new AbortController().signal);
+      expect(queries).toContainEqual(expect.objectContaining({ aspects: ['kpiUnit'], unit }));
+      expect(okrOf(r).orgUnits).toContainEqual(expect.objectContaining({ id: 'org-unit', name: unit, basis: 'inferred' }));
     });
 
     it('AC-945: without a unit, the estimate that cites this run\'s material triggers the unit\'s own Work IQ search and is marked inferred', async () => {
@@ -802,6 +834,16 @@ describe('FR-311 pack generation (D-12)', () => {
 
     const off = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], { fetchWorkIq: async () => { asked++; throw new Error('must not be asked'); } });
     await generatePack(input({ useWorkIq: false }), off, () => {}, new AbortController().signal);
+    expect(asked).toBe(1);
+  });
+
+  it('records a Foundry model limit for the user without retrying the same oversized search', async () => {
+    let asked = 0;
+    const failing = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
+      fetchWorkIq: async () => { asked++; throw new RelayError(502, 'workiqModelLimit'); },
+    });
+    const r = await generatePack(input({ useWorkIq: true }), failing, () => {}, new AbortController().signal);
+    expect(r.report.retrievalErrors).toContainEqual({ what: 'workiq', error: 'workiqModelLimit' });
     expect(asked).toBe(1);
   });
 

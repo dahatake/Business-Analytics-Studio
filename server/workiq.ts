@@ -32,7 +32,6 @@ const AUTH_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_WORKIQ_ANSWER_CHARS = WORKIQ_MAX_ANSWER_CHARS;
 const MAX_CITATIONS = 30;
-const MAX_FIELD_CHARS = 300;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TENANT_DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
@@ -97,7 +96,7 @@ export function removeWorkIqFoundry(dir: string) {
 
 export type WorkIqErrorCode =
   | 'invalidSettings' | 'notConfigured' | 'notSignedIn' | 'signInNotStarted' | 'signInExpired' | 'signInDeclined' | 'authFailed'
-  | 'workiqForbidden' | 'workiqBusy' | 'workiqTimeout' | 'workiqUnavailable' | 'badWorkiqResponse' | 'workiqNoGrounding' | 'invalidQuestion'
+  | 'workiqForbidden' | 'workiqBusy' | 'workiqTimeout' | 'workiqUnavailable' | 'workiqModelLimit' | 'badWorkiqResponse' | 'workiqNoGrounding' | 'invalidQuestion'
   | 'workiqEulaRequired' | 'workiqCliMissing' | 'workiqViaFoundry' | 'foundryEntraRequired';
 
 export class WorkIqError extends Error {
@@ -185,7 +184,6 @@ export const WORKIQ_SCOPED_ASPECTS: readonly WorkIqAspect[] = ['kpiCompany', 'kp
  * round of the measured runs used all 4.
  */
 export const MAX_WORKIQ_TOPICS = 8;
-const MAX_TOPIC_CHARS = 160;
 
 export interface WorkIqQuestion {
   company: string;
@@ -259,7 +257,6 @@ export const SOURCE_FANOUT_TOPICS = 4;
 
 /** Purpose searches per planned fan-out: the clauses and the names the purpose and focus mention. */
 export const MAX_PURPOSE_SEARCHES = 8;
-const MAX_PURPOSE_CLAUSE_CHARS = 120;
 
 /**
  * The concepts of the project purpose, searched one by one with `expand` (2026-11-13: the purpose of a real project named
@@ -271,26 +268,42 @@ export function purposeTopics(q: Pick<WorkIqQuestion, 'company' | 'project' | 'p
   const known = new Set([q.company, q.project].map((s) => s.toLowerCase()));
   const names: string[] = [];
   const addName = (raw: string) => {
-    const t = raw.replace(/\s+/g, ' ').trim().slice(0, MAX_TOPIC_CHARS);
-    if (t.length < 3 || known.has(t.toLowerCase()) || names.some((n) => n.toLowerCase() === t.toLowerCase())) return;
+    const t = raw.replace(/\s+/g, ' ').trim();
+    const key = t.toLowerCase();
+    if (t.length < 3 || known.has(key)) return;
+    known.add(key);
     names.push(t);
   };
   const text = `${q.purpose}\n${q.focus}`;
-  for (const m of text.matchAll(/[「『"“`]([^」』"”`\n]{2,60})[」』"”`]/g)) addName(m[1]!);
+  for (const m of text.matchAll(/[「『"“`]([^「」『』"“”`\n]{2,})[」』"”`]/g)) {
+    addName(m[1]!);
+    if (names.length >= MAX_PURPOSE_SEARCHES) break;
+  }
   // Latin-script names, with a kana suffix kept ("Hubらじお") and capitalised words joined ("Viva Engage"). In Japanese
   // text any Latin word is a name; in English only joined capitalised words and inner capitals ("PowerBI") are. A dot
   // belongs to a name only inside it ("Node.js"), so a sentence end never joins two sentences.
-  for (const m of text.matchAll(/[A-Za-z](?:[\w+&-]|\.(?=\w))*(?:[ \u3000][A-Z](?:[\w+&-]|\.(?=\w))*)*[ぁ-んァ-ヶー]*/g)) {
-    const t = m[0].replace(/-+$/, '');
-    if (/[ぁ-んァ-ヶー]/.test(t) || (/^[A-Z]/.test(t) && /\s/.test(t)) || /.[A-Z]/.test(t) || (q.lang === 'ja' && /[A-Za-z]{3}/.test(t))) addName(t);
+  if (names.length < MAX_PURPOSE_SEARCHES) {
+    for (const m of text.matchAll(/[A-Za-z](?:[\w+&-]|\.(?=\w))*(?:[ \u3000][A-Z](?:[\w+&-]|\.(?=\w))*)*[ぁ-んァ-ヶー]*/g)) {
+      const t = m[0].replace(/-+$/, '');
+      if (/[ぁ-んァ-ヶー]/.test(t) || (/^[A-Z]/.test(t) && /\s/.test(t)) || /.[A-Z]/.test(t) || (q.lang === 'ja' && /[A-Za-z]{3}/.test(t))) addName(t);
+      if (names.length >= MAX_PURPOSE_SEARCHES) break;
+    }
   }
-  const clauses = q.purpose.split(/[。．.!?！？\n]+/).map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => s.length >= 6).map((s) => s.slice(0, MAX_PURPOSE_CLAUSE_CHARS));
   const ja = q.lang === 'ja';
-  const named = names.map((n) => (ja ? `${n} の内容・利用状況・関係者・数値・課題` : `${n}: what it is, usage, people involved, figures and issues`));
-  const focus = q.focus.trim() ? [ja ? `重点「${q.focus.trim().slice(0, MAX_PURPOSE_CLAUSE_CHARS)}」に関する取り組み・事例・数値` : `focus "${q.focus.trim().slice(0, MAX_PURPOSE_CLAUSE_CHARS)}": initiatives, examples and figures`] : [];
-  const out: string[] = [];
-  for (const t of [...named, ...clauses, ...focus]) if (!out.includes(t)) out.push(t);
-  return out.slice(0, MAX_PURPOSE_SEARCHES);
+  const out = names.map((n) => (ja ? `${n} の内容・利用状況・関係者・数値・課題` : `${n}: what it is, usage, people involved, figures and issues`));
+  if (out.length < MAX_PURPOSE_SEARCHES) {
+    for (const m of q.purpose.matchAll(/[^。．.!?！？\n]+/g)) {
+      const clause = m[0].replace(/\s+/g, ' ').trim();
+      if (clause.length >= 6 && !out.includes(clause)) out.push(clause);
+      if (out.length >= MAX_PURPOSE_SEARCHES) break;
+    }
+  }
+  const focus = q.focus.trim();
+  if (focus && out.length < MAX_PURPOSE_SEARCHES) {
+    const topic = ja ? `重点「${focus}」に関する取り組み・事例・数値` : `focus "${focus}": initiatives, examples and figures`;
+    if (!out.includes(topic)) out.push(topic);
+  }
+  return out;
 }
 
 /**
@@ -446,7 +459,7 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
     if (v === undefined && !required) return '';
     if (typeof v !== 'string') return null;
     const t = v.replace(/[\r\n\t]+/g, ' ').trim();
-    if ((required && !t) || t.length > MAX_FIELD_CHARS) return null;
+    if (required && !t) return null;
     return t;
   };
   const company = text('company', true);
@@ -469,7 +482,6 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
   if (o.topics !== undefined) {
     if (!Array.isArray(o.topics) || o.topics.length > MAX_WORKIQ_TOPICS || !o.topics.every((t) => typeof t === 'string')) return null;
     topics = (o.topics as string[]).map((t) => t.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
-    if (topics.some((t) => t.length > MAX_TOPIC_CHARS)) return null;
   }
   if (o.expand !== undefined && typeof o.expand !== 'boolean') return null;
   return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics, expand: o.expand === true, ...(unit ? { unit } : {}) };

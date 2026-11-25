@@ -124,7 +124,7 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.anchor.sendNote': 'The stated objectives, KPIs, scope, sources and supplied excerpts are also sent. Analyst hypotheses are not sent.',
   'proj.anchor.publicTopic': 'Public project search topic (optional)',
   'proj.anchor.publicTopicHint': 'Enter only a public business area or product. The project name and purpose are not sent automatically.',
-  'proj.anchor.publicTopicInvalid': 'Use at most 100 characters without line breaks or control characters.',
+  'proj.anchor.publicTopicInvalid': 'Use search terms that are not empty or only quotation marks; omit line breaks and control characters.',
   'proj.anchor.publicTopicConsent': 'I confirm sending the company name "{company}" and public search topic "{topic}" to Google News.',
 
   'proj.align.open': 'Company alignment',

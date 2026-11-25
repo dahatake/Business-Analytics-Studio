@@ -2,14 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, Switch,
 } from '@fluentui/react-components';
-import { readLedger } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, CopilotSettings, FoundryFields, ProviderChoice } from './AiConnectionForm.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
-import { dailyUsage } from './ledger.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
 import { closeAiSettings, openAiSettings, useAiSettingsDialog } from './uiStore.ts';
 import './mocks.ts';
@@ -51,7 +49,7 @@ function LegacyPanel() {
 }
 
 /**
- * The one AI settings view: Foundry services, broad send consent, live switch and the daily call count.
+ * The one AI settings view: Foundry services, broad send consent and the live switch.
  * It is shown only inside AiSettingsDialog, so every condition of liveReady() is visible wherever settings are opened.
  */
 export function AiSettingsContent() {
@@ -59,7 +57,6 @@ export function AiSettingsContent() {
   const s = useAiSettings();
   const refreshRelay = useAiSettings((x) => x.refreshRelay);
   const configured = isConfigured(s);
-  const usage = dailyUsage(readLedger(), new Date());
   const live = liveReady(s);
 
   useEffect(() => {
@@ -105,18 +102,6 @@ export function AiSettingsContent() {
       </div>
 
       <LegacyPanel />
-
-      <div className="grid-2">
-        <Panel title={t('ai.usage.title')} testId="ai-usage">
-          <div className="ai-stack">
-            <p data-testid="ai-usage-daily">{t('ai.usage.daily', { used: usage.todayCalls, limit: usage.dailyLimit })}</p>
-            <p className="muted">{t('ai.usage.mockFree')}</p>
-            <p className="muted" data-testid="ai-usage-no-content">{t('ai.usage.noContent')}</p>
-          </div>
-        </Panel>
-
-      </div>
-
     </>
   );
 }

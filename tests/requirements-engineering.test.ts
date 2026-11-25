@@ -347,6 +347,17 @@ describe('data dictionary attributes (handbook table 29)', () => {
 describe('Work IQ searches for requirements', () => {
   const q = { company: 'Contoso', project: 'Contoso 納期改善', purpose: 'p', focus: '', asOf: '2026-11-19', lang: 'ja' as const, timeZone: 'Asia/Tokyo', aspects: [...WORKIQ_REQUIREMENT_ASPECTS], topics: [], expand: false };
 
+  it('keeps long values in every Work IQ text field and topic', () => {
+    const text = `${'長い入力'.repeat(800)}末尾`;
+    const fields = {
+      company: `企業${text}`, project: `案件${text}`, purpose: `目的${text}`,
+      focus: `重点${text}`, unit: `事業部${text}`, topics: [`検索${text}`],
+    };
+    expect(parseWorkIqQuestion({ ...q, ...fields, aspects: ['kpiUnit'] })).toMatchObject(fields);
+    const veryLongPurpose = `${'目'.repeat(200_001)}末尾`;
+    expect(parseWorkIqQuestion({ ...q, purpose: veryLongPurpose })?.purpose).toBe(veryLongPurpose);
+  });
+
   it('asks about rules, current systems and user voices as short questions', () => {
     expect(workIqAspectQuery(q, 'rules')).toBe('Contoso 納期改善に適用される規程・ガイドライン・セキュリティ基準・SLAは何ですか?');
     expect(workIqAspectQuery({ ...q, lang: 'en' }, 'systems')).toBe('What are the current systems and operating procedures of Contoso 納期改善?');

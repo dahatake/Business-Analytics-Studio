@@ -846,7 +846,7 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       const ledger = await page.evaluate(() => JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string }[]);
       expect(ledger).toHaveLength(1);
       expect(ledger[0]!.use).toBe('connectionTest');
-      await expect(page.getByTestId('ai-usage-daily')).toBeVisible();
+      await expect(page.getByTestId('ai-usage')).toHaveCount(0);
       await expect(page.getByTestId('ai-usage-month')).toHaveCount(0);
       await page.getByTestId('ai-connection-consent').check();
       await expect(page.getByTestId('ai-connection-save')).toBeEnabled({ timeout: 7000 });
@@ -1058,24 +1058,38 @@ test.describe('legacy Foundry settings (D-6, P-01)', () => {
 });
 
 test.describe('usage log (budget management removed)', () => {
-  test('shows only today\'s call count: no budget, price or retention controls, and old records with a cost still load', async ({ page }) => {
-    await page.addInitScript(() => {
-      if (sessionStorage.getItem('bas.e2e.ledger')) return;
-      sessionStorage.setItem('bas.e2e.ledger', '1');
-      localStorage.setItem('bas.ai.ledger', JSON.stringify([
+  for (const lang of ['ja', 'en'] as const) {
+    test(`${lang}: settings omit today's usage without changing recorded calls`, async ({ page }) => {
+      await page.addInitScript(() => {
+        if (sessionStorage.getItem('bas.e2e.ledger')) return;
+        sessionStorage.setItem('bas.e2e.ledger', '1');
+        localStorage.setItem('bas.ai.ledger', JSON.stringify([
+          { at: '2020-01-01T00:00:00Z', use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 },
+          { at: new Date().toISOString(), use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 },
+        ]));
+      });
+      const settings = await openAiSettings(page, { lang });
+      await expect(settings.getByTestId('ai-usage')).toHaveCount(0);
+      await expect(settings).not.toContainText(lang === 'ja' ? '本日の利用回数' : /daily usage/i);
+      await expect(settings).not.toContainText(lang === 'ja' ? '本日の「現状の説明」とチャットの生成' : 'Explanations and chat generated today');
+      await expect(settings.getByTestId('ai-connection')).toBeVisible();
+      await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
+      await expect(settings.getByTestId('ai-live-switch')).toBeVisible();
+      for (const id of ['ai-budget-input', 'ai-usage-month', 'ai-usage-unpriced', 'ai-prices', 'ai-ledger-prune', 'ai-ledger-expired', 'ai-ledger-prune-button']) {
+        await expect(settings.getByTestId(id)).toHaveCount(0);
+      }
+      expect(await scan(page)).toEqual([]);
+      const ledger = JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as unknown[];
+      expect(ledger).toEqual([
         { at: '2020-01-01T00:00:00Z', use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 },
-        { at: new Date().toISOString(), use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 },
-      ]));
+        expect.objectContaining({ use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 }),
+      ]);
+      await settings.getByTestId('ai-settings-dialog-close').click();
+      await page.getByTestId('nav-ai-settings').click();
+      await expect(settings.getByTestId('ai-usage')).toHaveCount(0);
+      expect(JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]'))).toEqual(ledger);
     });
-    await openAiSettings(page, { lang: 'en' });
-    await expect(page.getByTestId('ai-usage-daily')).toContainText('1 / 30');
-    await expect(page.getByTestId('ai-usage-no-content')).toBeVisible();
-    for (const id of ['ai-budget-input', 'ai-usage-month', 'ai-usage-unpriced', 'ai-prices', 'ai-ledger-prune', 'ai-ledger-expired', 'ai-ledger-prune-button']) {
-      await expect(page.getByTestId(id)).toHaveCount(0);
-    }
-    expect(await scan(page)).toEqual([]);
-    expect(JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]')) as unknown[]).toHaveLength(2);
-  });
+  }
 });
 
 /*
@@ -1164,6 +1178,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(panel.getByTestId('ai-live-label')).toContainText('Live');
     await expect(panel.getByTestId('ai-explain-answer')).toHaveText('Stub live explanation of the screen.');
     await expect(panel.getByTestId('ai-explain-status')).toContainText('Available');
+    await expect(panel.getByTestId('ai-explain-status')).toContainText('1 / 30');
     await expect(panel.getByTestId('ai-explain-mode')).toHaveText('Live');
     expect(received).toHaveLength(1);
     expect(received[0]!.url).toBe('/openai/deployments/gpt-e2e/chat/completions?api-version=2024-10-21');
@@ -1184,7 +1199,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(panel).toBeHidden();
 
     await page.getByTestId('nav-ai-settings').click();
-    await expect(page.getByTestId('ai-usage-daily')).toContainText('1 / 30');
+    await expect(page.getByTestId('ai-usage')).toHaveCount(0);
     await expect(page.getByTestId('ai-budget-input')).toHaveCount(0);
     expect(received).toHaveLength(1);
   });

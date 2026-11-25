@@ -462,7 +462,7 @@ export function workIqOutboundAllowed(config: RelayConfig): boolean {
 
 const WORKIQ_STATUS: Record<WorkIqErrorCode, number> = {
   invalidSettings: 400, invalidQuestion: 400, notConfigured: 409, signInNotStarted: 409, notSignedIn: 401, signInExpired: 410,
-  signInDeclined: 403, workiqForbidden: 403, authFailed: 502, workiqBusy: 429, workiqTimeout: 504, workiqUnavailable: 502, badWorkiqResponse: 502, workiqNoGrounding: 502,
+  signInDeclined: 403, workiqForbidden: 403, authFailed: 502, workiqBusy: 429, workiqTimeout: 504, workiqUnavailable: 502, workiqModelLimit: 502, badWorkiqResponse: 502, workiqNoGrounding: 502,
   workiqEulaRequired: 412, workiqCliMissing: 503, workiqViaFoundry: 409, foundryEntraRequired: 409,
 };
 

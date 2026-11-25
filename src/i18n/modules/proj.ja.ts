@@ -123,7 +123,7 @@ export const projJa = {
   'proj.anchor.sendNote': '企業分析の表明目的・KPI・範囲・出典と入力済み抜粋も送信します。分析者の仮説は送信しません。',
   'proj.anchor.publicTopic': 'Project の公開検索語（任意）',
   'proj.anchor.publicTopicHint': '公開可能な業務領域・製品だけを入力します。Project 名や目的は自動では送られません。',
-  'proj.anchor.publicTopicInvalid': '検索語は 100 文字以下で、改行や制御文字を含めず入力してください。',
+  'proj.anchor.publicTopicInvalid': '検索語は空や引用符だけにせず、改行や制御文字を含めず入力してください。',
   'proj.anchor.publicTopicConsent': 'Google News に企業名「{company}」と公開検索語「{topic}」を送ることを確認しました。',
 
   'proj.align.open': '企業との整合',

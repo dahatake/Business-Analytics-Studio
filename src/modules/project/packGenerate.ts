@@ -552,14 +552,14 @@ export function orgEstimateFrom(raw: unknown, companyName: string, knownSourceId
   const level = o.level === 'business' || o.level === 'department' || o.level === 'legalEntity' ? o.level : null;
   const name = typeof o.name === 'string' ? o.name.replace(/\s+/g, ' ').trim() : '';
   const sourceIds = Array.isArray(o.sourceIds) ? [...new Set(o.sourceIds.filter((s): s is string => typeof s === 'string' && knownSourceIds.has(s)))] : [];
-  if (!level || !name || name.length > 80 || name.toLowerCase() === companyName.trim().toLowerCase() || !sourceIds.length) return null;
+  if (!level || !name || name.toLowerCase() === companyName.trim().toLowerCase() || !sourceIds.length) return null;
   const reason = typeof o.reason === 'string' && o.reason.trim() ? clip(o.reason.trim(), 300) : undefined;
   return { level, name, basis: 'inferred', ...(reason ? { reason } : {}), sourceIds };
 }
 
 function userOrgUnit(input: PackGenInput): OrgUnitChoice | null {
   const name = (input.orgUnit ?? '').replace(/\s+/g, ' ').trim();
-  return name ? { level: 'business', name: clip(name, 80), basis: 'userInput' } : null;
+  return name ? { level: 'business', name, basis: 'userInput' } : null;
 }
 
 function scope(input: PackGenInput, unit: OrgUnitChoice | null = userOrgUnit(input)): string {
@@ -1251,6 +1251,8 @@ const KIND_ITEM: Partial<Record<string, ReadinessKey>> = {
   person: 'org', site: 'locations', customer: 'customers', kpi: 'kpi', deal: 'engagements', deliverable: 'engagements', initiative: 'engagements', solution: 'engagements', issue: 'issues',
 };
 
+const normalizeTopic = (topic: string) => topic.replace(/\s+/g, ' ').trim();
+
 /**
  * Follow-up searches for items the model built but that fail the schema for want of a fact (measured 2026-11-12: four
  * initiatives without progress and five solutions without cost or benefit were all removed, and engagements ended at
@@ -1269,7 +1271,7 @@ export function fieldTopics(pack: Pack, problems: Problem[], unmet: readonly Rea
     if (!words.length) continue;
     const n = isObj(e.name) ? e.name : {};
     const name = String((ja ? n.ja : n.en) ?? n.ja ?? n.en ?? e.id).trim();
-    const topic = clip(`${name}: ${words.join(ja ? '・' : ', ')}`.replace(/\s+/g, ' '), 150);
+    const topic = normalizeTopic(`${name}: ${words.join(ja ? '・' : ', ')}`);
     if (!out.includes(topic)) out.push(topic);
   }
   return out;
@@ -1297,7 +1299,7 @@ export function unconfirmedTopics(pack: Pack, unmet: readonly ReadinessKey[], la
     if (!words.length) continue;
     const n = isObj(e.name) ? e.name : {};
     const name = String((ja ? n.ja : n.en) ?? n.ja ?? n.en ?? e.id).trim();
-    const topic = clip(`${name}: ${words.join(ja ? '・' : ', ')}`.replace(/\s+/g, ' '), 150);
+    const topic = normalizeTopic(`${name}: ${words.join(ja ? '・' : ', ')}`);
     if (!out.includes(topic)) out.push(topic);
   }
   return out;
@@ -1311,7 +1313,7 @@ export function gapTopics(gaps: Record<string, unknown>[], lang: Lang): string[]
     const next = typeof g.nextAction === 'string' ? g.nextAction.trim() : '';
     const what = missing.length ? missing.join(lang === 'ja' ? '、' : ', ') : next;
     if (!what) continue;
-    const topic = clip(`${section ? `${section}: ` : ''}${what}`.replace(/\s+/g, ' '), 150);
+    const topic = normalizeTopic(`${section ? `${section}: ` : ''}${what}`);
     if (!out.includes(topic)) out.push(topic);
     if (out.length >= MAX_GAP_TOPICS) break;
   }
@@ -1326,14 +1328,14 @@ export function gapTopics(gaps: Record<string, unknown>[], lang: Lang): string[]
 export function roundTopics(unmet: ReadinessKey[], gaps: Record<string, unknown>[], asked: ReadonlySet<string>, lang: Lang, fields: readonly string[] = []): string[] {
   const out: string[] = [];
   const add = (t: string) => {
-    const c = clip(t.replace(/\s+/g, ' ').trim(), 150);
+    const c = normalizeTopic(t);
     if (c && !asked.has(c) && !out.includes(c) && out.length < MAX_GAP_TOPICS) out.push(c);
   };
   const fromGaps = gapTopics(gaps, lang);
   fields.slice(0, Math.ceil(MAX_GAP_TOPICS / 2)).forEach(add);
   fromGaps.slice(0, 2).forEach(add);
   for (const key of unmet) {
-    const next = requirementOf(key).ladder[lang].find((w) => !asked.has(clip(w, 150)));
+    const next = requirementOf(key).ladder[lang].find((w) => !asked.has(normalizeTopic(w)));
     if (next) add(next);
   }
   fromGaps.slice(2).forEach(add);
@@ -1503,7 +1505,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       try {
         workiq = await deps.fetchWorkIq({ ...workIqBase, aspects: givenUnit ? [...WORKIQ_GEN_ASPECTS, 'kpiUnit'] : WORKIQ_GEN_ASPECTS, ...(givenUnit ? { unit: givenUnit.name } : {}), expand: true }, signal);
         noteSectionErrors(workiq);
-        for (const s of workIqAnswers(workiq)) for (const w of s.searches ?? []) asked.add(clip(w.replace(/\s+/g, ' ').trim(), 150));
+        for (const s of workIqAnswers(workiq)) for (const w of s.searches ?? []) asked.add(normalizeTopic(w));
         break;
       } catch (err) {
         if (signal.aborted) throw cancelled();

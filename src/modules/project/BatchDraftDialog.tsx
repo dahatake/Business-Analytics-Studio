@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner } from '@fluentui/react-components';
-import { AiLiveError, preflight, readLedger, type Preflight } from '../../ai/client.ts';
+import { AiLiveError, liveErrorCode, preflight, readLedger, type Preflight } from '../../ai/client.ts';
 import { DRAFT_MAX_PROMPT_CHARS, type AiUse } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
@@ -31,6 +31,7 @@ export function BatchDraftDialog() {
   const [busy, setBusy] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState<{ id: string; name: string; message: string }[]>([]);
   const [interrupted, setInterrupted] = useState(false);
   const completed = useRef(new Set<string>());
   const attempts = useRef(new Map<AiUse, number>());
@@ -66,6 +67,7 @@ export function BatchDraftDialog() {
     }
   };
   const errorText = (value: unknown) => {
+    if (liveErrorCode(value) === 'outputLimit') return t('dlv.batch.outputLimit');
     if (value instanceof AiLiveError) {
       return value.reasons.includes('liveFailed')
         ? t('dlv.batch.liveFailed', { detail: value.message })
@@ -92,10 +94,13 @@ export function BatchDraftDialog() {
     running.current = true;
     setBusy(true);
     setError(null);
+    setFailures([]);
     setInterrupted(false);
     const abort = new AbortController();
     controller.current = abort;
     let active: BatchJob | undefined;
+    // D-44: a job the model could not answer is marked failed and the batch goes on; a changed source or a storage error still stops it.
+    const failed: { id: string; name: string; message: string }[] = [];
     try {
       assertCurrent();
       const pending = jobs.filter((job) => !completed.current.has(batchJobId(job)));
@@ -110,7 +115,17 @@ export function BatchDraftDialog() {
         assertCurrent();
         setStatus(job, 'working');
         attempts.current.set(job.request.use, Date.now());
-        const result = await runBatchJob(job, abort.signal).finally(refreshTokens);
+        let result;
+        try {
+          result = await runBatchJob(job, abort.signal).finally(refreshTokens);
+        } catch (value) {
+          if (abort.signal.aborted) throw value;
+          failed.push({ id: batchJobId(job), name: nameOf(job), message: errorText(value) });
+          setFailures([...failed]);
+          setStatus(job, 'failed');
+          active = undefined;
+          continue;
+        }
         if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         assertCurrent();
         saveBatchResult(job, result, ctx, audience, provider);
@@ -122,6 +137,7 @@ export function BatchDraftDialog() {
         setStatus(job, 'done');
         active = undefined;
       }
+      if (failed.length) setError(t('dlv.batch.someFailed', { n: failed.length }));
     } catch (value) {
       if (abort.signal.aborted) {
         if (active) setStatus(active, 'pending');
@@ -157,7 +173,12 @@ export function BatchDraftDialog() {
               {strategySkipped && <p role="status">{t('dlv.batch.strategySkipped')}</p>}
               <ProgressBar value={jobs.length ? done / jobs.length : 0} aria-label={t('dlv.batch.progress', { done, total: jobs.length })} />
               <p role="status" data-testid="dlv-batch-progress">{t('dlv.batch.progress', { done, total: jobs.length })}</p>
-              {error && <p role="alert" data-testid="dlv-batch-error">{error}</p>}
+              {error && (
+                <div role="alert" data-testid="dlv-batch-error">
+                  <p>{error}</p>
+                  {failures.length > 0 && <ul>{failures.map((f) => <li key={f.id} data-testid={`dlv-batch-failure-${f.id}`}>{f.name}{': '}{f.message}</li>)}</ul>}
+                </div>
+              )}
               {interrupted && <p role="status">{t('dlv.batch.interrupted')}</p>}
               {done === jobs.length && !strategySkipped && <p role="status">{t('dlv.batch.complete')}</p>}
               {tokens && <TokenTable summary={tokens} testId="dlv-batch-tokens" caption={t('ai.tokens.job')} />}

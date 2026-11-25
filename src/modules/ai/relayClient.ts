@@ -298,22 +298,31 @@ export class RelayError extends Error {
   readonly status: number;
   readonly code: string;
   readonly retryAfterMs?: number;
+  /** Tokens the provider reported for a failed but billed answer (e.g. outputLimit); absent when it reported none. */
+  readonly usage?: { inputTokens: number | null; outputTokens: number | null; reasoningTokens: number | null };
 
-  constructor(status: number, code: string, retryAfterMs?: number) {
+  constructor(status: number, code: string, retryAfterMs?: number, usage?: RelayError['usage']) {
     super(`relay ${status} ${code}`);
     this.status = status;
     this.code = code;
     this.retryAfterMs = retryAfterMs;
+    if (usage) this.usage = usage;
   }
 }
 
-async function errorDetails(res: Response): Promise<{ code: string; retryAfterMs?: number }> {
+async function errorDetails(res: Response): Promise<{ code: string; retryAfterMs?: number; usage?: RelayError['usage'] }> {
   try {
-    const body = (await res.json()) as { error?: unknown; reasons?: unknown; retryAfterMs?: unknown };
+    const body = (await res.json()) as { error?: unknown; reasons?: unknown; retryAfterMs?: unknown; inputTokens?: unknown; outputTokens?: unknown; reasoningTokens?: unknown };
     const code = typeof body.error === 'string' ? body.error
       : Array.isArray(body.reasons) && typeof body.reasons[0] === 'string' ? body.reasons[0] : 'unknown';
     const retryAfterMs = body.retryAfterMs;
-    return { code, ...(code === 'providerBusy' && typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 && retryAfterMs <= 604_800_000 ? { retryAfterMs } : {}) };
+    const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+    const usage = { inputTokens: count(body.inputTokens), outputTokens: count(body.outputTokens), reasoningTokens: count(body.reasoningTokens) };
+    return {
+      code,
+      ...(code === 'providerBusy' && typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 && retryAfterMs <= 604_800_000 ? { retryAfterMs } : {}),
+      ...(usage.inputTokens !== null || usage.outputTokens !== null ? { usage } : {}),
+    };
   } catch {
     return { code: 'unknown' };
   }
@@ -340,12 +349,14 @@ export const relayTransport: LiveTransport = async (call: LiveCall, signal?: Abo
       body: JSON.stringify({
         use: call.use, provider: call.provider, lang: call.lang, prompt: call.prompt, context: call.context, maxOutputTokens: call.maxOutputTokens, timeoutMs: call.timeoutMs,
         ...(call.media?.length ? { media: call.media } : {}),
+        // Metadata for the relay's diagnostics log of a failed call; the relay accepts only short ids.
+        ...(call.stage && /^[\w:.-]{1,80}$/.test(call.stage) ? { stage: call.stage } : {}),
       }),
       signal: controller.signal,
     });
     if (!res.ok) {
-      const { code, retryAfterMs } = await errorDetails(res);
-      throw new RelayError(res.status, code, retryAfterMs);
+      const { code, retryAfterMs, usage } = await errorDetails(res);
+      throw new RelayError(res.status, code, retryAfterMs, usage);
     }
     const body = (await res.json()) as Partial<LiveResult>;
     const validTokens = (v: unknown): v is number | null => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);

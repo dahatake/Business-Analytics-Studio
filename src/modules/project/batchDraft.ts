@@ -1,4 +1,4 @@
-import { aiLive, readLedger, type AiRequest } from '../../ai/client.ts';
+import { aiLive, liveErrorCode, readLedger, type AiRequest } from '../../ai/client.ts';
 import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, type AiUse, type Provider } from '../../ai/policy.ts';
 import { appStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
@@ -73,15 +73,25 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
 }
 
 export async function runBatchJob(job: BatchJob, signal: AbortSignal): Promise<BatchResult> {
-  const request = job.request;
+  // The job id goes to the relay's diagnostics log, so a failure there names the job it belongs to (D-44).
+  const request: AiRequest = { ...job.request, stage: batchJobId(job) };
   if (job.kind === 'fields') {
     const result = await requestDeliverableDraft(job.input, request, signal);
     return { kind: 'fields', fields: result.fields, tasks: result.tasks };
   }
-  if (job.kind === 'brief') return { kind: 'brief', brief: await requestLiveStepBrief(job.brief, request, signal) };
-  if (job.kind === 'solution') return { kind: 'solution', draft: await requestLiveSolutionDraft(job.input, request, signal) };
   if (job.kind === 'objectives') return { kind: 'objectives', collection: await collectObjectives(loaded.pack, request.lang, signal) };
-  const live = await aiLive(request, signal);
+  // An answer cut off at the output cap varies with the model's reasoning, so one more attempt usually completes (D-44).
+  const once = async <T>(call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call();
+    } catch (err) {
+      if (signal.aborted || liveErrorCode(err) !== 'outputLimit') throw err;
+      return call();
+    }
+  };
+  if (job.kind === 'brief') return { kind: 'brief', brief: await once(() => requestLiveStepBrief(job.brief, request, signal)) };
+  if (job.kind === 'solution') return { kind: 'solution', draft: await once(() => requestLiveSolutionDraft(job.input, request, signal)) };
+  const live = await once(() => aiLive(request, signal));
   return { kind: 'strategy', proposal: parseOverviewResponse(live.text, job.context, request.lang), inputTokens: live.inputTokens, outputTokens: live.outputTokens };
 }
 

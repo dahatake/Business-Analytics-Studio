@@ -66,6 +66,8 @@ export interface LiveCall {
   timeoutMs: number;
   /** Files sent natively to a model that reads them (see src/ai/attachments.ts). */
   media?: MediaPart[];
+  /** The sub-step (e.g. the batch job id), forwarded to the relay's diagnostics log of a failed call. */
+  stage?: string;
 }
 
 export interface LiveResult {
@@ -213,16 +215,30 @@ async function sendLive(req: AiRequest, pf: Preflight, signal?: AbortSignal): Pr
       maxOutputTokens: pf.maxOutputTokens,
       timeoutMs: req.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
       ...(req.media?.length ? { media: req.media } : {}),
+      ...(req.stage ? { stage: req.stage } : {}),
     }, signal);
   } catch (err) {
-    // A cancelled or timed-out call may have consumed tokens; record the app's estimate, marked as such.
-    if (mayHaveBeenBilled(err, signal)) {
+    const failed = failedUsage(err);
+    // A failed answer the provider still billed (e.g. cut off at the output cap) is recorded with its reported tokens.
+    if (failed) {
+      appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: failed.inputTokens, outputTokens: failed.outputTokens, ...attribution, failed: failed.code });
+    } else if (mayHaveBeenBilled(err, signal)) {
+      // A cancelled or timed-out call may have consumed tokens; record the app's estimate, marked as such.
       appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: pf.estimatedInputTokens, outputTokens: 0, ...attribution, estimated: true });
     }
     throw err;
   }
   appendLedger({ at: new Date().toISOString(), use: req.use, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ...attribution });
   return result;
+}
+
+function failedUsage(err: unknown): { code: string; inputTokens: number | null; outputTokens: number | null } | null {
+  const e = err as { code?: unknown; usage?: { inputTokens?: unknown; outputTokens?: unknown } } | null;
+  const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const inputTokens = count(e?.usage?.inputTokens);
+  const outputTokens = count(e?.usage?.outputTokens);
+  if (inputTokens === null && outputTokens === null) return null;
+  return { code: typeof e?.code === 'string' ? e.code : 'failed', inputTokens, outputTokens };
 }
 
 /** Cancelled by the user, timed out in the browser, or the relay reported a provider timeout/abort (504/499). */
@@ -242,6 +258,12 @@ export class AiLiveError extends Error {
     this.reasons = reasons;
     this.budget = budget;
   }
+}
+
+/** The relay's error code behind a failed live call (for example 'outputLimit'), if it reported one. */
+export function liveErrorCode(err: unknown): string | null {
+  const cause = err instanceof AiLiveError ? (err.cause as { code?: unknown } | undefined) : (err as { code?: unknown } | null);
+  return typeof cause?.code === 'string' ? cause.code : null;
 }
 
 /**

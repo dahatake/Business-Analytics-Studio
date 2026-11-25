@@ -2,7 +2,7 @@ export const AI_USES = [
   'structure', 'summarize', 'recommend', 'chat', 'executiveSummary',
   'explain', 'presentation', 'aiUsageAnalysis', 'review', 'import', 'storyVideo', 'connectionTest',
   'research', 'brandResearch', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief', 'strategyOverview', 'kpiOkrDraft',
-  'valueDraft', 'valueExplain', 'objectiveDraft',
+  'valueDraft', 'valueExplain', 'objectiveDraft', 'solutionDraft',
 ] as const;
 
 export type AiUse = (typeof AI_USES)[number];
@@ -26,9 +26,19 @@ export interface PerCallLimits {
   minIntervalMs?: number;
 }
 
+/**
+ * D-44: reasoning effort sent with every model call (Foundry `reasoning_effort`, Copilot `reasoningEffort` when the model
+ * supports it). A deployment that rejects the parameter is retried once without it.
+ */
+export const AI_REASONING_EFFORT = 'medium';
+
+/** D-44: reasoning models spend output tokens on hidden reasoning first, so the all-step batch caps leave room for it. */
+export const DRAFT_MAX_OUTPUT_TOKENS = 32_000;
+export const BRIEF_MAX_OUTPUT_TOKENS = 16_000;
+
 export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
-  // D-41: the all-step batch uses (strategyOverview, deliverableDraft, stepBrief) have no daily count, interval or input cap.
-  strategyOverview: { maxOutputTokens: 8000 },
+  // D-41: the all-step batch uses (strategyOverview, deliverableDraft, solutionDraft, stepBrief) have no daily count, interval or input cap.
+  strategyOverview: { maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS },
   connectionTest: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 200, maxOutputTokens: 256 },
   explain: {
     dailyCalls: AI_LIMITS.dailyCalls,
@@ -41,11 +51,12 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   storyVideo: { maxOutputTokens: 2000 },
   packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
-  deliverableDraft: { maxOutputTokens: 8000 },
+  deliverableDraft: { maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS },
+  solutionDraft: { maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS },
   recommend: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 48_000, maxOutputTokens: 4000 },
-  stepBrief: { maxOutputTokens: 4000 },
+  stepBrief: { maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS },
   // D-42: business objectives are drafted in the all-step batch too, so like D-41 only the output size is fixed.
-  objectiveDraft: { maxOutputTokens: 4000 },
+  objectiveDraft: { maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS },
   kpiOkrDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
   valueDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
   valueExplain: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },

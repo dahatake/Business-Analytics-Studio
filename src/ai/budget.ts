@@ -15,6 +15,8 @@ export interface UsageRecord {
   provider?: 'foundry' | 'copilotSdk';
   /** The provider did not report usage (cancelled, timed out, failed test): the token counts are the app's estimate. */
   estimated?: true;
+  /** The call failed after the provider billed it (e.g. 'outputLimit'); the token counts are the provider's report. */
+  failed?: string;
 }
 
 /** Safety-guard request: per-call token caps, minimum interval and the daily call count. No monetary limit exists. */

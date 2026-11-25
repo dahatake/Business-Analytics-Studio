@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import { MAX_PURPOSE_SEARCHES, WORKIQ_OUTBOUND_HOSTS, WorkIqError, parseWorkIqQuestion, purposeTopics, workIqAspectKeywords, workIqAspectQuery, workIqPlan, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
 import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withAnswer, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
+import { CopilotError } from '../server/copilot.ts';
 import { blankTestImage } from '../server/media.ts';
 import { foundryMediaEndpoint } from '../src/ai/mediaConnection.ts';
 
@@ -422,9 +423,12 @@ describe('relay secrets and connection', () => {
     };
     expect((await call(req('PUT', '/relay/connection', c), { fetch })).status).toBe(200);
     expect((await call(req('POST', '/relay/ai', { use: 'explain', lang: 'en', prompt: 'Synthetic test.', maxOutputTokens: 100, timeoutMs: 1000 }), { fetch })).status).toBe(200);
-    expect(sent).toHaveLength(4);
+    expect(sent).toHaveLength(5);
     expect(sent[1]).toHaveProperty('max_tokens', 256);
-    expect(sent[3]).toHaveProperty('max_tokens', 100);
+    // D-44: the application call tries reasoning effort, then the modern body without it, then the classic body.
+    expect(sent[2]).toHaveProperty('reasoning_effort', 'medium');
+    expect(sent[3]).not.toHaveProperty('reasoning_effort');
+    expect(sent[4]).toHaveProperty('max_tokens', 100);
   });
 
   it.each(['/openai/v1', '/api/projects/project'])('tests %s at the exact v1 route/model, persists proof and invalidates it on edits and key changes', async (path) => {
@@ -532,11 +536,15 @@ describe('relay secrets and connection', () => {
 
   it('rejects unusable successful responses and a key changed during the test', async () => {
     vault.set('foundryKey', FAKE_KEY);
-    for (const body of ['not json', 'null', '[]', '{}', '{"choices":[{"message":{"content":""}}],"usage":{"prompt_tokens":0,"completion_tokens":1}}']) {
+    for (const body of ['not json', 'null', '[]', '{}']) {
       const result = await call(req('PUT', '/relay/connection', c), { fetch: async () => new Response(body) });
       expect(result).toEqual({ status: 502, body: { error: 'badProviderResponse' } });
       expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
     }
+    // An empty answer is still billed, so its reported usage goes back with the error.
+    const empty = await call(req('PUT', '/relay/connection', c), { fetch: async () => new Response('{"choices":[{"message":{"content":""}}],"usage":{"prompt_tokens":0,"completion_tokens":1}}') });
+    expect(empty).toEqual({ status: 502, body: { error: 'badProviderResponse', inputTokens: 0, outputTokens: 1 } });
+    expect(existsSync(join(vault.dir, 'connection.json'))).toBe(false);
     const result = await call(req('PUT', '/relay/connection', c), {
       fetch: async (...args) => { vault.set('foundryKey', 'changed'); return verifiedReply(...args); },
     });
@@ -724,7 +732,23 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect(sent.messages[1]!.content).toContain('Transferring expert skills'); // D-2: internal items may be sent
     expect(sent.messages[1]!.content.startsWith('Explain this screen.\n\n')).toBe(true);
     expect(sent.max_completion_tokens).toBeLessThanOrEqual(1500);
-    expect(Object.keys(sent).sort()).toEqual(['max_completion_tokens', 'messages']);
+    expect(Object.keys(sent).sort()).toEqual(['max_completion_tokens', 'messages', 'reasoning_effort']);
+    expect((sent as unknown as { reasoning_effort: string }).reasoning_effort).toBe('medium');
+  });
+
+  it('D-44: an answer stopped at the output cap is an outputLimit error with the billed usage, logged with its stage', async () => {
+    const cut = (content: string) => ctx({ fetch: async () => new Response(JSON.stringify({
+      choices: [{ message: { content }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 900, completion_tokens: 1500, completion_tokens_details: { reasoning_tokens: 1500 } },
+    })) });
+    for (const content of ['', 'half an answ']) {
+      clock += 60_000;
+      expect(await call(req('POST', '/relay/ai', aiBody({ stage: 'fields-asis:tasks' })), cut(content)))
+        .toEqual({ status: 502, body: { error: 'outputLimit', inputTokens: 900, outputTokens: 1500, reasoningTokens: 1500 } });
+    }
+    const log = readFileSync(join(vault.dir, 'relay-diagnostics.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(log.at(-1)).toMatchObject({ error: 'outputLimit', finishReason: 'length', stage: 'fields-asis:tasks', textChars: 12 });
+    expect((await call(req('POST', '/relay/ai', aiBody({ stage: 'bad stage!' })), ctx())).status).toBe(400);
   });
 
   it('records unknown tokens, never an estimate, when the provider reports no usage or malformed usage', async () => {
@@ -894,7 +918,7 @@ describe('D-12 packBuild through the relay', () => {
     const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[] };
     expect(sent.messages[0]!.content).toContain('仮説');
     expect(sent.messages[0]!.content).toContain('検証方法');
-    expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 8001 }), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 32_001 }), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', { ...body, timeoutMs: 300_001 }), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', { ...body, use: 'explain', maxOutputTokens: 100 }), { config: testConfig })).status).toBe(400);
 
@@ -904,6 +928,18 @@ describe('D-12 packBuild through the relay', () => {
     expect(calls[0]!.system).toContain('hypotheses');
     expect(calls[0]!.system).toContain('Never invent');
     expect(calls[0]!.timeoutMs).toBe(300_000);
+    expect(calls[0]).toMatchObject({ maxOutputTokens: 8000, reasoningEffort: 'medium' });
+    await call(req('DELETE', '/relay/copilot'));
+  });
+
+  it('D-44: a failed Copilot call is written to the diagnostics log with its stage (metadata only)', async () => {
+    const service = { complete: async () => { throw new CopilotError('emptyAnswer'); } } as unknown as NonNullable<RelayContext['copilot']>;
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    const body = { use: 'deliverableDraft', provider: 'copilotSdk', lang: 'ja', prompt: 'SECRET-PROMPT', context: '', maxOutputTokens: 8000, timeoutMs: 300_000, stage: 'fields-kpi' };
+    expect(await call(req('POST', '/relay/ai', body), { copilot: service })).toEqual({ status: 502, body: { error: 'emptyAnswer' } });
+    const log = readFileSync(join(vault.dir, 'relay-diagnostics.log'), 'utf8');
+    expect(JSON.parse(log.trim().split('\n').at(-1)!)).toMatchObject({ provider: 'copilotSdk', error: 'emptyAnswer', deployment: 'gpt-5', stage: 'fields-kpi', use: 'deliverableDraft' });
+    expect(log).not.toContain('SECRET-PROMPT');
     await call(req('DELETE', '/relay/copilot'));
   });
 
@@ -932,13 +968,14 @@ describe('D-12 packBuild through the relay', () => {
     const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[]; max_completion_tokens?: number; response_format?: { type: string } };
     expect(sent.response_format).toEqual({ type: 'json_object' });
     expect(sent.max_completion_tokens).toBe(16000);
+    expect((sent as { reasoning_effort?: string }).reasoning_effort).toBe('medium');
     expect(sent.messages[0]!.content).toContain('JSON');
 
     seen = [];
     mode = 'noJsonMode';
     expect((await call(req('POST', '/relay/ai', packBody()), { config: testConfig })).status).toBe(200);
-    expect(seen).toHaveLength(2);
-    expect(Object.keys(JSON.parse(seen[1]!.body) as object).sort()).toEqual(['max_tokens', 'messages']);
+    expect(seen).toHaveLength(3);
+    expect(Object.keys(JSON.parse(seen[2]!.body) as object).sort()).toEqual(['max_tokens', 'messages']);
   });
 
   it('per-use caps: packBuild may send long material and wait longer; explain keeps its own caps', async () => {

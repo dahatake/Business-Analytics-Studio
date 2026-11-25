@@ -92,6 +92,8 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
   'dlv.batch.confirmScope': '{n} calls (step deliverables, summaries, strategy optimization, and each solution’s type and document)',
   'dlv.batch.unknownCost': 'unknown',
   'dlv.batch.liveFailed': 'The live call failed ({detail}). No mock was substituted for this item.',
+  'dlv.batch.outputLimit': 'The model\'s answer reached the output limit and was cut off (also on the retry), so it was not saved. No mock was substituted for this item. Run it again or check the deployment\'s output limit.',
+  'dlv.batch.someFailed': '{n} item(s) could not be drafted. The other items were drafted. Retry runs only the items that were not drafted.',
   'dlv.batch.note': 'Review the content of each call, destination, data-owner permission, personal information and costs together. All drafts use the data available at the start. Existing deliverables, approved recommendations, source data and human sign-offs are unchanged. Existing unapproved drafts are replaced.',
   'dlv.batch.limits': 'The configured Foundry or GitHub Copilot connection is used sequentially, with no call-count or interval limit. You can run it at any time. Discussion-theme suggestions, company alignment proposals and generation using attachments are not included.',
   'dlv.batch.start': 'Review requests and create drafts',

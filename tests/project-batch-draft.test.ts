@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { preflight, setLiveTransport, setRuntimeSettingsProvider, writeLedger, type LiveCall } from '../src/ai/client.ts';
+import { preflight, readLedger, setLiveTransport, setRuntimeSettingsProvider, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, type Provider } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loadPack } from '../src/data/pack.ts';
@@ -96,7 +96,11 @@ describe('all-step drafts', () => {
       saveBatchResult(job, result, ctx, 'internal', provider);
     }
 
-    expect(calls.map((call) => call.provider)).toEqual(Array(11 + solutions.length).fill(provider));
+    // D-44: asis (22 sections) is drafted as separate fields and tasks calls, so there is one call more than jobs.
+    expect(calls.map((call) => call.provider)).toEqual(Array(12 + solutions.length).fill(provider));
+    expect(calls.filter((call) => call.use === 'deliverableDraft').map((call) => call.stage))
+      .toEqual(['fields-asis:fields', 'fields-asis:tasks', 'fields-tobe', 'fields-kpi', 'fields-solution', 'fields-deliverable']);
+    expect(calls.filter((call) => call.use === 'solutionDraft')).toHaveLength(solutions.length);
     const solutionDrafts = useSolutionDrafts.getState().value;
     for (const id of solutions) expect(solutionDrafts[`internal:${id}`]).toMatchObject({ mock: false, lang: 'ja' });
     expect(useStrategy.getState().value).toEqual(emptyStrategy()); // drafts only: the type and the documents wait for approval
@@ -165,6 +169,46 @@ describe('all-step drafts', () => {
     expect(useStepBriefs.getState().value).toEqual({});
   });
 
+  it('D-44: an answer cut off at the output cap is retried — a deliverable as separate fields and tasks calls', async () => {
+    const ctx = context();
+    const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', { objectiveIssues: [] });
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    const cutOff = () => Object.assign(new Error('relay 502 outputLimit'), { status: 502, code: 'outputLimit', usage: { inputTokens: 900, outputTokens: 32_000, reasoningTokens: 32_000 } });
+    const calls: LiveCall[] = [];
+    let failNext = true;
+    setLiveTransport(async (call) => {
+      calls.push(call);
+      if (failNext) { failNext = false; throw cutOff(); }
+      return { text: response(call, ctx), inputTokens: 10, outputTokens: 10 };
+    });
+    const tobe = jobs.find((job) => job.kind === 'fields' && job.step === 'tobe')!;
+    const result = await runBatchJob(tobe, new AbortController().signal);
+    expect(result.kind === 'fields' && Object.keys(result.fields)).toHaveLength(STEP_DEFS.tobe.fields.length);
+    expect(calls.map((call) => call.stage)).toEqual(['fields-tobe', 'fields-tobe:fields', 'fields-tobe:tasks']);
+    expect(calls[1]!.prompt).toContain('This call covers only the fields');
+    expect(calls[2]!.prompt).toContain('This call covers only the tasks');
+    // The cut-off answer is billed, so the ledger keeps its reported tokens.
+    expect(readLedger().find((entry) => entry.failed)).toMatchObject({ use: 'deliverableDraft', failed: 'outputLimit', inputTokens: 900, outputTokens: 32_000, stage: 'fields-tobe' });
+
+    writeLedger([]);
+    calls.length = 0;
+    failNext = true;
+    const brief = jobs.find((job) => job.kind === 'brief' && job.step === 'tobe')!;
+    await expect(runBatchJob(brief, new AbortController().signal)).resolves.toMatchObject({ kind: 'brief' });
+    expect(calls).toHaveLength(2);
+
+    writeLedger([]);
+    calls.length = 0;
+    setLiveTransport(async (call) => { calls.push(call); throw cutOff(); });
+    await expect(runBatchJob(brief, new AbortController().signal)).rejects.toThrow('outputLimit');
+    expect(calls).toHaveLength(2);
+    writeLedger([]);
+    calls.length = 0;
+    setLiveTransport(async (call) => { calls.push(call); throw Object.assign(new Error('relay 502 providerError'), { status: 502, code: 'providerError' }); });
+    await expect(runBatchJob(brief, new AbortController().signal)).rejects.toThrow('providerError');
+    expect(calls).toHaveLength(1);
+  });
+
   it('waits for the latest ledger or attempt and cancels waiting', async () => {
     const now = Date.now();
     const interval = PER_USE_LIMITS.explain?.minIntervalMs;
@@ -182,7 +226,7 @@ describe('all-step drafts', () => {
     const ctx = context();
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value);
     const uses = [...new Set(jobs.map((job) => job.request.use))];
-    expect(uses.sort()).toEqual(['deliverableDraft', 'stepBrief', 'strategyOverview']);
+    expect(uses.sort()).toEqual(['deliverableDraft', 'solutionDraft', 'stepBrief', 'strategyOverview']);
     // 100 calls of every use today, the last one a moment ago.
     const now = Date.now();
     writeLedger(uses.flatMap((use) => Array.from({ length: 100 }, (_, i) => ({ at: new Date(now - i * 10).toISOString(), use, inputTokens: 1, outputTokens: 1 }))));
@@ -193,7 +237,7 @@ describe('all-step drafts', () => {
       expect(preflight(job.request).allowed).toBe(true);
       expect(preflight({ ...job.request, prompt: `${job.request.prompt}${huge}` })).toMatchObject({ allowed: true, reasons: [] });
     }
-    for (const job of jobs.filter((item) => item.request.use !== 'deliverableDraft')) expect(job.request.timeoutMs).toBe(STEP_DRAFT_TIMEOUT_MS);
+    for (const job of jobs.filter((item) => item.request.use !== 'deliverableDraft' && item.request.use !== 'solutionDraft')) expect(job.request.timeoutMs).toBe(STEP_DRAFT_TIMEOUT_MS);
     setLiveTransport(async (call) => ({ text: response(call, ctx), inputTokens: 10, outputTokens: 10 }));
     const signal = new AbortController().signal;
     for (const job of jobs) saveBatchResult(job, await runBatchJob(job, signal), ctx, 'internal', 'foundry');

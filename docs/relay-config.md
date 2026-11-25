@@ -14,9 +14,9 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | `Origin` header | Must be exactly `http://127.0.0.1:<listening port>`. Requests without `Origin` are refused, except `GET /relay/status`. |
 | Fetch Metadata | `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`. |
 | Per-launch token | 32 random bytes per server start, handed out by `POST /relay/session` (browsers always send `Origin` on POST) and required in `X-BAS-Relay` on every other route. Compared in constant time; kept in browser memory only. |
-| Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`), prompt + context ≤ 32 000 characters (200 000 for "packBuild" and the all-step batch uses "deliverableDraft", "stepBrief", "strategyOverview", "objectiveDraft", D-41, D-42), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild", "deliverableDraft", "stepBrief", "strategyOverview" and "objectiveDraft"). |
+| Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`, `stage`), prompt + context ≤ 32 000 characters (200 000 for "packBuild" and the all-step batch uses "deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft", D-41, D-42, D-44), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild", "stepBrief" and "objectiveDraft", 32 000 for "deliverableDraft", "solutionDraft" and "strategyOverview"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild", "deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview" and "objectiveDraft"). |
 | C-03 | `/relay/ai` validates the request-use identifier and provider-specific technical limits, then re-checks the broad AI-settings consent, configured connection, live switch, and safety-limit gates (token caps, interval, daily calls; no monetary budget). There is no per-use approval table. A connection test remains a separate fixed synthetic request through `PUT /relay/connection`; it never includes customer or project data. |
-| Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. The all-step batch uses ("deliverableDraft", "stepBrief", "strategyOverview", "objectiveDraft") have no interval (D-41, D-42). |
+| Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. The all-step batch uses ("deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft") have no interval (D-41, D-42, D-44). |
 | Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Work IQ (D-14: Microsoft Foundry, or GitHub Copilot when the user opts in) uses the fixed `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/{devicecode,token}` and `https://workiq.svc.cloud.microsoft/rest/conversations` endpoints. Redirects are not followed. |
 | Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status and an optional numeric retry delay are returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
 
@@ -70,7 +70,7 @@ Foundry and GitHub billing for GitHub Copilot.
 
 What remains are safety guards, not budgets: per-call input/output token caps, the minimum interval between calls and
 the per-use daily call count (`PER_USE_LIMITS`), plus consent and timeouts. The uses of the all-step batch draft
-("deliverableDraft", "stepBrief", "strategyOverview", and "objectiveDraft" for business objectives, D-42) keep only their output cap: no daily count, interval or input-token cap (D-41).
+("deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", and "objectiveDraft" for business objectives, D-42) keep only their output cap: no daily count, interval or input-token cap (D-41, D-44).
 
 ### Token usage per job
 
@@ -299,6 +299,18 @@ For "packBuild" the Foundry call asks for JSON mode (`response_format: json_obje
 (required by reasoning deployments); a deployment that rejects that body with HTTP 400 (not billed) is retried once with
 the classic `max_tokens` body. The system prompt is the pack builder's: answer with one JSON object from the given
 material only.
+
+**Reasoning effort and the output cap (D-44).** Every Foundry application call first sends `reasoning_effort: "medium"`
+(`AI_REASONING_EFFORT`). A deployment that rejects it with HTTP 400 (not billed; a content-filter 400 is not retried) is
+retried without it, then with the classic `max_tokens` body. Reasoning models spend output tokens on hidden reasoning
+before the answer, so the all-step batch caps are 32 000 output tokens ("deliverableDraft", "solutionDraft",
+"strategyOverview") and 16 000 ("stepBrief", "objectiveDraft"). An answer stopped at the cap (`finish_reason: "length"`)
+is `502 outputLimit` with the billed `inputTokens`, `outputTokens` and `reasoningTokens`, never a partial draft; the
+browser records those tokens in the ledger as a failed call. GitHub Copilot sessions get the same cap (never above the
+model's own `max_output_tokens`) and the same effort when the model lists it (`supportedReasoningEfforts`).
+`/relay/ai` also accepts `stage` (`[A-Za-z0-9_:.-]{1,80}`, e.g. `fields-asis:tasks`), written to
+`relay-diagnostics.log` with the use, provider, deployment, error, `finishReason`, token counts and answer length —
+never the prompt or the answer. Failed Copilot calls are logged the same way.
 
 **GitHub Copilot** runs through `@github/copilot-sdk` in the relay process, signed in as the Copilot CLI user on this PC
 (`copilot` → `/login`). The relay never sees or stores a GitHub token. Each call creates a session with **no tools**

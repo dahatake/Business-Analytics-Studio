@@ -197,7 +197,7 @@ export const useAiSettings = create<AiSettingsState>()(
         if (!precheck.budget.allowed) return { ok: false, error: 'budget' };
         const target = { endpoint: s.endpoint.trim(), deployment: s.deployment.trim(), apiVersion: s.apiVersion.trim() || DEFAULT_API_VERSION };
         const r = await saveRelayConnection(s.authMethod === 'entraId' ? { ...target, auth: 'entraId', tenantId: s.entraTenantId.trim() } : target);
-        if (r.usage || (!r.ok && ['timeout', 'aborted', 'networkError', 'providerError', 'badProviderResponse', 'failed'].includes(r.error))) {
+        if (r.usage || (!r.ok && ['timeout', 'aborted', 'networkError', 'providerError', 'badProviderResponse', 'outputLimit', 'failed'].includes(r.error))) {
           appendLedger({
             at: new Date().toISOString(), use: 'connectionTest', inputTokens: r.usage?.inputTokens ?? 200,
             outputTokens: r.usage?.outputTokens ?? 0,

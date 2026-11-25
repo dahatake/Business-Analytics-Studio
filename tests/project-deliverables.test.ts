@@ -859,7 +859,7 @@ describe('Draft with Copilot', () => {
       const result = expect(requestDeliverableDraft(input, {
         ...draftRequest(input),
       })).resolves.toMatchObject({ response: { mode: 'live' }, fields: { problem: 'field' } });
-      await Promise.all([result, vi.advanceTimersByTimeAsync(75_000)]);
+      await Promise.all([result, vi.advanceTimersByTimeAsync(150_000)]);
     } finally {
       vi.useRealTimers();
     }

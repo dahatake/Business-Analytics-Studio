@@ -62,7 +62,7 @@ export interface SdkClient {
   start(): Promise<void>;
   stop(): Promise<unknown>;
   getAuthStatus(): Promise<{ isAuthenticated: boolean; login?: string }>;
-  listModels(): Promise<{ id: string; name?: string; billing?: { multiplier?: number }; policy?: { state?: string }; capabilities?: unknown }[]>;
+  listModels(): Promise<{ id: string; name?: string; billing?: { multiplier?: number }; policy?: { state?: string }; capabilities?: unknown; supportedReasoningEfforts?: unknown }[]>;
   createSession(config: Record<string, unknown>): Promise<SdkSession>;
   deleteSession?(sessionId: string): Promise<void>;
   rpc?: { mcp?: { discover?(params: { workingDirectory?: string }): Promise<{ servers?: { name?: unknown }[] }> } };
@@ -93,6 +93,29 @@ const mediaOf = (m: { capabilities?: unknown }) => {
   const media = copilotMediaCapability(m.capabilities);
   return media ? { media } : {};
 };
+
+interface ModelLimits {
+  capabilities?: unknown;
+  supportedReasoningEfforts?: unknown;
+}
+
+/**
+ * D-44: the same output cap and reasoning effort as Microsoft Foundry, within what the model reports. The cap never goes
+ * above the model's own limit, and the effort is only set on a model that reports it supports that level.
+ */
+export function sessionLimits(model: ModelLimits | undefined, input: { maxOutputTokens?: number; reasoningEffort?: string }): Record<string, unknown> {
+  const caps = (model?.capabilities ?? {}) as { supports?: { reasoningEffort?: unknown }; limits?: { max_output_tokens?: unknown } };
+  const own = caps.limits?.max_output_tokens;
+  const cap = input.maxOutputTokens === undefined ? undefined
+    : typeof own === 'number' && Number.isFinite(own) && own > 0 ? Math.min(input.maxOutputTokens, own) : input.maxOutputTokens;
+  const efforts = Array.isArray(model?.supportedReasoningEfforts) ? model.supportedReasoningEfforts : null;
+  const effort = input.reasoningEffort !== undefined && caps.supports?.reasoningEffort === true && (efforts === null || efforts.includes(input.reasoningEffort))
+    ? input.reasoningEffort : undefined;
+  return {
+    ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+    ...(cap !== undefined ? { modelCapabilities: { limits: { max_output_tokens: cap } } } : {}),
+  };
+}
 
 export class CopilotService {
   private client: Promise<SdkClient> | null = null;
@@ -148,7 +171,7 @@ export class CopilotService {
     }
   }
 
-  async complete(input: { model: string; system: string; prompt: string; timeoutMs: number; signal?: AbortSignal; media?: MediaPart[] }): Promise<CopilotCompletion> {
+  async complete(input: { model: string; system: string; prompt: string; timeoutMs: number; signal?: AbortSignal; media?: MediaPart[]; maxOutputTokens?: number; reasoningEffort?: string }): Promise<CopilotCompletion> {
     const client = await this.getClient();
     const auth = await client.getAuthStatus().catch(() => ({ isAuthenticated: false }));
     if (!auth.isAuthenticated) throw new CopilotError('notSignedIn');
@@ -161,6 +184,7 @@ export class CopilotService {
     const disabledMcpServers = await mcpServersToDisable(client, this.workDir);
     const session = await client.createSession({
       model: input.model,
+      ...sessionLimits(model, input),
       systemMessage: { mode: 'replace', content: input.system },
       availableTools: [],
       disabledMcpServers,

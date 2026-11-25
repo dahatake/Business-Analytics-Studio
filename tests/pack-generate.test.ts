@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
-import { CopilotError, CopilotService, type CopilotSdk, type SdkSession } from '../server/copilot.ts';
+import { CopilotError, CopilotService, sessionLimits, type CopilotSdk, type SdkSession } from '../server/copilot.ts';
 import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, parseSiteUrl, purposeLinks, SITE_MAX_PAGES, SITE_PURPOSE_PAGES, SiteError } from '../server/site.ts';
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
@@ -1183,6 +1183,21 @@ describe('GitHub Copilot adapter (server/copilot.ts)', () => {
     expect(slow.aborted).toBe(1);
     expect(slow.deleted).toEqual(['s1']);
     await expect(new CopilotService(async () => fakeSdk({ answer: ' ' }).sdk).complete({ model: 'gpt-5', system: 'S', prompt: 'P', timeoutMs: 1000 })).rejects.toMatchObject({ code: 'emptyAnswer' });
+  });
+
+  it('D-44: passes the output cap (never above the model\'s own) and the reasoning effort only where the model supports it', async () => {
+    const reasoning = { capabilities: { supports: { reasoningEffort: true }, limits: { max_output_tokens: 16_000 } }, supportedReasoningEfforts: ['low', 'medium', 'high'] };
+    expect(sessionLimits(reasoning, { maxOutputTokens: 32_000, reasoningEffort: 'medium' }))
+      .toEqual({ reasoningEffort: 'medium', modelCapabilities: { limits: { max_output_tokens: 16_000 } } });
+    expect(sessionLimits({ ...reasoning, supportedReasoningEfforts: ['high'] }, { maxOutputTokens: 8000, reasoningEffort: 'medium' }))
+      .toEqual({ modelCapabilities: { limits: { max_output_tokens: 8000 } } });
+    expect(sessionLimits({ capabilities: { supports: { reasoningEffort: false } } }, { maxOutputTokens: 8000, reasoningEffort: 'medium' }))
+      .toEqual({ modelCapabilities: { limits: { max_output_tokens: 8000 } } });
+    expect(sessionLimits(undefined, {})).toEqual({});
+    const f = fakeSdk();
+    await new CopilotService(async () => f.sdk).complete({ model: 'gpt-5', system: 'S', prompt: 'P', timeoutMs: 1000, maxOutputTokens: 4000, reasoningEffort: 'medium' });
+    expect(f.created[0]).toMatchObject({ modelCapabilities: { limits: { max_output_tokens: 4000 } } });
+    expect(f.created[0]).not.toHaveProperty('reasoningEffort');
   });
 });
 

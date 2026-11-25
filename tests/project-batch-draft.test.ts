@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { setLiveTransport, setRuntimeSettingsProvider, writeLedger, type LiveCall } from '../src/ai/client.ts';
-import { PER_USE_LIMITS, type Provider } from '../src/ai/policy.ts';
+import { preflight, setLiveTransport, setRuntimeSettingsProvider, writeLedger, type LiveCall } from '../src/ai/client.ts';
+import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, type Provider } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loadPack } from '../src/data/pack.ts';
 import { samplePack } from '../src/data/sample.ts';
@@ -167,15 +167,37 @@ describe('all-step drafts', () => {
 
   it('waits for the latest ledger or attempt and cancels waiting', async () => {
     const now = Date.now();
-    const interval = PER_USE_LIMITS.deliverableDraft?.minIntervalMs;
+    const interval = PER_USE_LIMITS.explain?.minIntervalMs;
     if (interval === undefined) throw new Error('Missing fixture interval');
-    writeLedger([{ at: new Date(now - 2000).toISOString(), use: 'deliverableDraft', inputTokens: 1, outputTokens: 1 }]);
-    expect(batchIntervalMs('deliverableDraft', new Map(), now)).toBe(interval - 2000);
-    expect(batchIntervalMs('deliverableDraft', new Map([['deliverableDraft', now - 1000]]), now)).toBe(interval - 1000);
+    writeLedger([{ at: new Date(now - 2000).toISOString(), use: 'explain', inputTokens: 1, outputTokens: 1 }]);
+    expect(batchIntervalMs('explain', new Map(), now)).toBe(interval - 2000);
+    expect(batchIntervalMs('explain', new Map([['explain', now - 1000]]), now)).toBe(interval - 1000);
     const abort = new AbortController();
     const waiting = waitForBatchInterval(interval, abort.signal);
     abort.abort();
     await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('D-41: runs at any time — no daily count, interval or input-size limit on any batch job', async () => {
+    const ctx = context();
+    const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value);
+    const uses = [...new Set(jobs.map((job) => job.request.use))];
+    expect(uses.sort()).toEqual(['deliverableDraft', 'stepBrief', 'strategyOverview']);
+    // 100 calls of every use today, the last one a moment ago.
+    const now = Date.now();
+    writeLedger(uses.flatMap((use) => Array.from({ length: 100 }, (_, i) => ({ at: new Date(now - i * 10).toISOString(), use, inputTokens: 1, outputTokens: 1 }))));
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    const huge = 'あ'.repeat(100_000);
+    for (const job of jobs) {
+      expect(batchIntervalMs(job.request.use, new Map([[job.request.use, now]]), now)).toBe(0);
+      expect(preflight(job.request).allowed).toBe(true);
+      expect(preflight({ ...job.request, prompt: `${job.request.prompt}${huge}` })).toMatchObject({ allowed: true, reasons: [] });
+    }
+    for (const job of jobs.filter((item) => item.request.use !== 'deliverableDraft')) expect(job.request.timeoutMs).toBe(STEP_DRAFT_TIMEOUT_MS);
+    setLiveTransport(async (call) => ({ text: response(call, ctx), inputTokens: 10, outputTokens: 10 }));
+    const signal = new AbortController().signal;
+    for (const job of jobs) saveBatchResult(job, await runBatchJob(job, signal), ctx, 'internal', 'foundry');
+    expect(Object.keys(useFieldDrafts.getState().value)).toHaveLength(IMPROVEMENT_STEPS.length);
   });
 
   it('detects an independently changed saved draft', () => {

@@ -27,7 +27,8 @@ export interface PerCallLimits {
 }
 
 export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
-  strategyOverview: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
+  // D-41: the all-step batch uses (strategyOverview, deliverableDraft, stepBrief) have no daily count, interval or input cap.
+  strategyOverview: { maxOutputTokens: 8000 },
   connectionTest: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 200, maxOutputTokens: 256 },
   explain: {
     dailyCalls: AI_LIMITS.dailyCalls,
@@ -40,9 +41,9 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   storyVideo: { maxOutputTokens: 2000 },
   packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
-  deliverableDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
+  deliverableDraft: { maxOutputTokens: 8000 },
   recommend: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 48_000, maxOutputTokens: 4000 },
-  stepBrief: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
+  stepBrief: { maxOutputTokens: 4000 },
   kpiOkrDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
   valueDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
   valueExplain: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
@@ -54,6 +55,10 @@ export const DELIVERABLE_DRAFT_TIMEOUT_MS = 300_000;
 export const PACK_BUILD_MAX_CALLS = 16;
 export const PACK_BUILD_TIMEOUT_MS = 600_000;
 export const PACK_BUILD_MAX_PROMPT_CHARS = 200_000;
+/** D-41: the all-step batch uses accept the same prompt size as pack generation (only the relay's 1 MiB body bounds it). */
+export const DRAFT_MAX_PROMPT_CHARS = PACK_BUILD_MAX_PROMPT_CHARS;
+/** D-41: summaries and strategy optimization get the deliverable-draft time so large projects do not time out. */
+export const STEP_DRAFT_TIMEOUT_MS = DELIVERABLE_DRAFT_TIMEOUT_MS;
 
 export const WORKIQ_SOURCE = {
   use: 'packBuild' as const,

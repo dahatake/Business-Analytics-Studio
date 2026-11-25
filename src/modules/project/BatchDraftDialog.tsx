@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner } from '@fluentui/react-components';
 import { AiLiveError, preflight, readLedger, type Preflight } from '../../ai/client.ts';
-import { PER_USE_LIMITS, type AiUse } from '../../ai/policy.ts';
+import { DRAFT_MAX_PROMPT_CHARS, type AiUse } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { currentScope, useProjects } from '../../state/projects.ts';
@@ -73,19 +73,15 @@ export function BatchDraftDialog() {
     return value instanceof Error ? value.message : String(value);
   };
 
+  // D-41: only consent and the connection are checked; there is no daily count, interval or input-size limit.
   const prepare = (pending: BatchJob[]): Preflight[] => {
     const checks = pending.map((job) => preflight(job.request));
     for (let i = 0; i < pending.length; i += 1) {
       const job = pending[i]!;
       const check = checks[i]!;
-      const reasons = check.reasons.filter((reason) => reason !== 'budget' || check.budget.reasons.some((item) => item !== 'tooSoon'));
+      const reasons = check.reasons.filter((reason) => reason !== 'budget');
       if (reasons.length) throw new Error(`${nameOf(job)}: ${reasons.map((reason) => t(reasonKey(reason))).join(' ')}`);
-      if (job.request.prompt.length + check.context.length > 32_000) throw new Error(`${nameOf(job)}: ${t('dlv.draft.tooLarge')}`);
-      const limit = PER_USE_LIMITS[job.request.use]?.dailyCalls;
-      const needed = pending.filter((item) => item.request.use === job.request.use).length;
-      if (limit !== undefined && check.budget.todayCalls + needed > limit) {
-        throw new Error(t('dlv.batch.dailyLimit', { name: nameOf(job), remaining: Math.max(0, limit - check.budget.todayCalls), needed }));
-      }
+      if (job.request.prompt.length + check.context.length > DRAFT_MAX_PROMPT_CHARS) throw new Error(`${nameOf(job)}: ${t('dlv.draft.tooLarge')}`);
     }
     return checks;
   };

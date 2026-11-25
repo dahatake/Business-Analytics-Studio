@@ -121,8 +121,7 @@ test.describe('Strategic overview optimization', () => {
     await page.reload();
     const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
     await expect(page.getByTestId('ai-review-button')).toHaveCount(0);
-    for (const [index, step] of steps.entries()) {
-      if (index) await page.waitForTimeout(5_100);
+    for (const step of steps) {
       await page.goto(`/#/step?step=${step}`);
       await page.getByTestId('strategy-optimize').click();
       await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);

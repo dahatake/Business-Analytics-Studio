@@ -1,5 +1,5 @@
 import { aiLive, readLedger, type AiRequest } from '../../ai/client.ts';
-import { PER_USE_LIMITS, type AiUse, type Provider } from '../../ai/policy.ts';
+import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, type AiUse, type Provider } from '../../ai/policy.ts';
 import { appStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
 import type { Lang } from '../../i18n/core.ts';
@@ -53,7 +53,7 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
   const context = overviewContext(ctx, audience);
   const state = audience === 'internal' ? overview : { ...overview, objectiveIssues: [] };
   if (strategyMap(context, state, recommendedAxis(context), lang).nodes.length) {
-    jobs.push({ kind: 'strategy', context, request: { use: 'strategyOverview', lang, prompt: overviewPrompt(context, state, lang, audience), scope } });
+    jobs.push({ kind: 'strategy', context, request: { use: 'strategyOverview', lang, prompt: overviewPrompt(context, state, lang, audience), scope, timeoutMs: STEP_DRAFT_TIMEOUT_MS } });
   }
   // The last phase: each solution's type and every open section of its requirements definition, specification or plan.
   for (const solution of draftableSolutions(ctx, audience)) {

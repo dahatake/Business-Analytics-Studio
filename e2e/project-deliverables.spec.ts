@@ -203,9 +203,6 @@ test.describe('Copilot task resolution', () => {
 
   test('lets the reviewer write a direction under Other and regenerate data drafts with it, never recording it as data', async ({ page }) => {
     const { requests, todo } = await prepare(page, 'ja');
-    // The 5 s send interval is judged on Date; freeze it so a slow axe scan cannot outlast the interval before the refusal check.
-    const sentAt = Date.now();
-    await page.clock.setFixedTime(sentAt);
     await todo.getByTestId('dlv-resolve-define-kpi-link').click();
     await generate(page);
     await page.getByTestId('dlv-resolve-radio-other').check();
@@ -215,13 +212,18 @@ test.describe('Copilot task resolution', () => {
     await page.getByTestId('dlv-resolve-other-text').fill(own);
     await expect(page.getByTestId('dlv-resolve-radio-other')).toBeChecked();
     expect(await scan(page)).toEqual([]);
-    // Back-to-back calls hit the live interval limit; the shown choices and the reviewer's text must survive the refusal.
+    // A failed regeneration must keep the shown choices and the reviewer's text.
+    let failNext = true;
+    await page.route('**/relay/ai', async (route) => {
+      if (!failNext) return route.fallback();
+      failNext = false;
+      await route.fulfill({ status: 502, json: { error: 'synthetic regeneration failure' } });
+    });
     await page.getByTestId('dlv-resolve-regenerate').click();
     await expect(page.getByTestId('dlv-resolve-error')).toBeVisible();
     await expect(page.getByTestId('dlv-resolve-choice-link-all')).toBeVisible();
     await expect(page.getByTestId('dlv-resolve-other-text')).toHaveValue(own);
     expect(requests).toHaveLength(1);
-    await page.clock.setFixedTime(sentAt + 5_100);
     await page.getByTestId('dlv-resolve-regenerate').click();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(page.getByTestId('dlv-resolve-radio-link-all')).toBeChecked();
@@ -776,7 +778,7 @@ test.describe('step deliverables and to-do band', () => {
     await expect(toggle).toBeChecked();
     await expect(dialog).toContainText('データ欠損時に Copilot にドラフトを作成してもらう（欠損 3 件）');
     await dialog.getByTestId('dlv-draft-generate').click();
-    // The text draft waits out the per-use send interval after the fill request.
+    // The fill request and the text draft are sent back to back (D-41: no send interval).
     await expect(page.getByTestId('dlv-draft-mode')).toHaveAttribute('data-mode', 'live', { timeout: 20_000 });
     expect(fillPrompts).toHaveLength(1);
     expect(fillPrompts[0]).toContain(`${INIT}:ownerRole`);

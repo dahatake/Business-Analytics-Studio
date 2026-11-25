@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { Checkmark20Regular, Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
+import { STEP_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded, loadPack } from '../../data/pack.ts';
 import type { LText } from '../../data/schema.ts';
@@ -315,7 +316,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     setBusy(true); setError(null); setSaved(null);
     const provider = useAiSettings.getState().provider;
     const previousDraft = JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]);
-    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience, step), scope };
+    const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience, step), scope, timeoutMs: STEP_DRAFT_TIMEOUT_MS };
     try {
       const pf = preflight(request);
       if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);

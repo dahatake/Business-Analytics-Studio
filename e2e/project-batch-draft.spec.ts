@@ -79,6 +79,19 @@ async function confirmBatch(page: Page) {
   await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
 }
 
+/** Holds the To-Be deliverable request in flight (D-41: there is no interval wait to stop in any more). */
+async function holdTobe(page: Page) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/relay/ai', async (route) => {
+    const request = route.request().postDataJSON() as RelayRequest;
+    if (!request.prompt.includes('[bas-proj:deliverable:tobe]')) return route.fallback();
+    await gate;
+    await route.fulfill({ json: { text: answer(request), inputTokens: 100, outputTokens: 100 } }).catch(() => undefined);
+  });
+  return release;
+}
+
 test.describe('all-step live drafts', () => {
   test.setTimeout(180_000);
 
@@ -139,6 +152,21 @@ test.describe('all-step live drafts', () => {
     });
   }
 
+  test('D-41: runs to the end at any time, even after many calls today and with no interval', async ({ page }) => {
+    const requests = await setupBatch(page, 'copilotSdk');
+    const now = Date.now();
+    const ledger = ['deliverableDraft', 'stepBrief', 'strategyOverview'].flatMap((use) =>
+      Array.from({ length: 40 }, (_, i) => ({ at: new Date(now - i * 100).toISOString(), use, inputTokens: 1, outputTokens: 1, scope: 'demo' })));
+    await seedDeviceData(page, { 'bas.ai.ledger': JSON.stringify(ledger) });
+    await page.reload();
+    await expect(page.locator('main#main')).toBeVisible();
+    await openBatch(page);
+    await confirmBatch(page);
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 60_000 });
+    await expect(page.getByTestId('dlv-batch-error')).toHaveCount(0);
+    expect(requests).toHaveLength(16);
+  });
+
   test('failure keeps completed drafts and retries only unfinished jobs', async ({ page }) => {
     const requests = await setupBatch(page, 'foundry', '[bas-proj:deliverable:tobe]');
     await openBatch(page);
@@ -154,12 +182,14 @@ test.describe('all-step live drafts', () => {
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:tobe]'))).toHaveLength(2);
   });
 
-  test('stopping during a rate-limit wait preserves completed drafts', async ({ page }) => {
+  test('stopping while a job is in flight preserves completed drafts', async ({ page }) => {
     const requests = await setupBatch(page, 'foundry');
+    const release = await holdTobe(page);
     await openBatch(page);
     await confirmBatch(page);
-    await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'waiting', { timeout: 30_000 });
+    await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'working', { timeout: 30_000 });
     await page.getByTestId('dlv-batch-stop').click();
+    release();
     await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/16');
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'pending');
     expect(requests).toHaveLength(2);
@@ -182,14 +212,22 @@ test.describe('all-step live drafts', () => {
 
   test('stops rather than overwriting a draft changed in another device session', async ({ page }) => {
     const requests = await setupBatch(page, 'foundry');
+    const release = await holdTobe(page);
     await openBatch(page);
     await confirmBatch(page);
-    await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'waiting', { timeout: 30_000 });
+    await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'working', { timeout: 30_000 });
     const key = 'bas.scope.demo.proj.fieldDrafts';
     const current = JSON.parse((await deviceSnapshot(page)).records[key]!.value!);
     current['internal:asis'].fields.problem = '別の作業で更新';
+    await page.evaluate((changedKey) => {
+      window.addEventListener('bas-device-change', (event) => {
+        if (event instanceof CustomEvent && event.detail === changedKey) document.body.dataset.e2eDraftChanged = 'true';
+      });
+    }, key);
     await seedDeviceData(page, { [key]: JSON.stringify(current) });
     await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'bas.device.saved' })));
+    await expect(page.locator('body')).toHaveAttribute('data-e2e-draft-changed', 'true');
+    release();
     await expect(page.getByTestId('dlv-batch-error')).toContainText('変更されたため停止', { timeout: 30_000 });
     await expect(page.getByTestId('dlv-batch-generate')).toBeDisabled();
     expect(requests).toHaveLength(2);

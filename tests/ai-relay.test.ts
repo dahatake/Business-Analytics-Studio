@@ -898,6 +898,22 @@ describe('D-12 packBuild through the relay', () => {
     await call(req('DELETE', '/relay/copilot'));
   });
 
+  it('D-41 all-step batch uses: no interval, 200,000 characters and 300 s on the relay', async () => {
+    vault.set('foundryKey', FAKE_KEY);
+    await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig });
+    seen = [];
+    const fixed = { config: testConfig, now: () => 1_000_000, lastCall: new Map<string, number>() };
+    const big = 'あ'.repeat(40_000);
+    for (const [use, maxOutputTokens] of [['deliverableDraft', 8000], ['stepBrief', 4000], ['strategyOverview', 8000]] as const) {
+      const body = { use, provider: 'foundry', lang: 'ja', prompt: 'synthetic', context: big, maxOutputTokens, timeoutMs: 300_000 };
+      expect((await call(req('POST', '/relay/ai', body), fixed)).status, use).toBe(200);
+      expect((await call(req('POST', '/relay/ai', body), fixed)).status, `${use} back-to-back`).toBe(200);
+      expect((await call(req('POST', '/relay/ai', { ...body, context: 'x'.repeat(200_001 - body.prompt.length) }), fixed)).status).toBe(400);
+      expect((await call(req('POST', '/relay/ai', { ...body, timeoutMs: 300_001 }), fixed)).status).toBe(400);
+    }
+    expect(seen).toHaveLength(6);
+  });
+
   it('Foundry: JSON mode with max_completion_tokens and the pack system prompt; a deployment rejecting it is retried once classically', async () => {
     vault.set('foundryKey', FAKE_KEY);
     expect((await call(req('PUT', '/relay/connection', { endpoint: stubUrl, deployment: 'gpt-test' }), { config: testConfig })).status).toBe(200);

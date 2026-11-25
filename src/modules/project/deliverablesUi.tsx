@@ -19,11 +19,10 @@ import { useUseCases } from '../usecases/store.ts';
 import { catalogForScope, useCatalogImport } from '../usecases/catalog.ts';
 import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
-import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
+import { DELIVERABLE_DRAFT_TIMEOUT_MS, DRAFT_MAX_PROMPT_CHARS } from '../../ai/policy.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
 import { fillChanges, fillRequest, findGaps, mergeFills, previewFillContext, requestFill, savedProposals, type FillProposal } from './dataFill.ts';
-import { batchIntervalMs, waitForBatchInterval } from './batchDraft.ts';
 import { FillProposalList } from './DataFillPanel.tsx';
 import {
   applyDraft, evaluateStep, threadOf, fieldKey, nextTodo, normalizeDeliverables, openFirst, PAYBACK_MAX_YEARS, paybackLimit, progressOf, resultKey, setSignOff, STEP_DEFS, todoKey, todoWhyKey,
@@ -501,7 +500,7 @@ export function DraftDialog() {
       setState({ status: 'error', message: [...new Set([...pf.reasons, ...(fillPf?.reasons ?? [])])].map((r) => t(reasonKey(r))).join(' ') });
       return;
     }
-    if (request.prompt.length + pf.context.length > 32_000 || (fillReq && fillPf && fillReq.prompt.length + fillPf.context.length > 32_000)) {
+    if (request.prompt.length + pf.context.length > DRAFT_MAX_PROMPT_CHARS || (fillReq && fillPf && fillReq.prompt.length + fillPf.context.length > DRAFT_MAX_PROMPT_CHARS)) {
       setState({ status: 'error', message: t('dlv.draft.tooLarge') });
       return;
     }
@@ -528,8 +527,6 @@ export function DraftDialog() {
           proposals = [];
           fillError = t('dlv.fill.failed', { detail: error instanceof AiLiveError ? error.reasons.map((r) => t(reasonKey(r))).join(' ') || error.message : error instanceof Error ? error.message : String(error) });
         }
-        // Both calls share the deliverableDraft send interval; wait it out rather than fail the text draft.
-        await waitForBatchInterval(batchIntervalMs('deliverableDraft', new Map()), controller.signal);
       }
       const r = await requestDeliverableDraft(input, input.ctx === ctx ? request : draftRequest(input), controller.signal);
       if (targetCurrent()) {

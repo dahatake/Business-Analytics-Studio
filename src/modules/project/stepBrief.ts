@@ -1,4 +1,5 @@
 import { aiComplete, aiLive, registerMock, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { STEP_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import type { Entity } from '../../data/schema.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { DEFAULT_WEIGHTS } from '../../domain/summary.ts';
@@ -714,7 +715,7 @@ export const briefEntities = (brief: StepBrief, ctx: CheckContext): Entity[] =>
   brief.refs.map((id) => ctx.pack.byId.get(id)).filter((e): e is Entity => !!e && e.kind !== 'person');
 
 export function stepBriefRequest(brief: StepBrief, ctx: CheckContext, lang: Lang, scope?: string): AiRequest {
-  return { use: 'stepBrief', lang, prompt: briefPrompt(brief, lang), entities: briefEntities(brief, ctx), ...(scope ? { scope } : {}) };
+  return { use: 'stepBrief', lang, prompt: briefPrompt(brief, lang), entities: briefEntities(brief, ctx), timeoutMs: STEP_DRAFT_TIMEOUT_MS, ...(scope ? { scope } : {}) };
 }
 
 function generatedBrief(brief: StepBrief, lang: Lang, response: AiResponse): GeneratedBrief {

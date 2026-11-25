@@ -14,9 +14,9 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | `Origin` header | Must be exactly `http://127.0.0.1:<listening port>`. Requests without `Origin` are refused, except `GET /relay/status`. |
 | Fetch Metadata | `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`. |
 | Per-launch token | 32 random bytes per server start, handed out by `POST /relay/session` (browsers always send `Origin` on POST) and required in `X-BAS-Relay` on every other route. Compared in constant time; kept in browser memory only. |
-| Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`), prompt + context ≤ 32 000 characters (200 000 for "packBuild"), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild"). |
+| Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`), prompt + context ≤ 32 000 characters (200 000 for "packBuild" and the all-step batch uses "deliverableDraft", "stepBrief", "strategyOverview", D-41), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild", "deliverableDraft", "stepBrief" and "strategyOverview"). |
 | C-03 | `/relay/ai` validates the request-use identifier and provider-specific technical limits, then re-checks the broad AI-settings consent, configured connection, live switch, and safety-limit gates (token caps, interval, daily calls; no monetary budget). There is no per-use approval table. A connection test remains a separate fixed synthetic request through `PUT /relay/connection`; it never includes customer or project data. |
-| Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. |
+| Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. The all-step batch uses ("deliverableDraft", "stepBrief", "strategyOverview") have no interval (D-41). |
 | Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Work IQ (D-14: Microsoft Foundry, or GitHub Copilot when the user opts in) uses the fixed `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/{devicecode,token}` and `https://workiq.svc.cloud.microsoft/rest/conversations` endpoints. Redirects are not followed. |
 | Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status and an optional numeric retry delay are returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
 
@@ -69,7 +69,8 @@ Charges are never calculated or capped by the app: check Azure billing (and conf
 Foundry and GitHub billing for GitHub Copilot.
 
 What remains are safety guards, not budgets: per-call input/output token caps, the minimum interval between calls and
-the per-use daily call count (`PER_USE_LIMITS`), plus consent and timeouts.
+the per-use daily call count (`PER_USE_LIMITS`), plus consent and timeouts. The uses of the all-step batch draft
+("deliverableDraft", "stepBrief", "strategyOverview") keep only their output cap: no daily count, interval or input-token cap (D-41).
 
 ### Token usage per job
 

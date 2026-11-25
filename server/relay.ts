@@ -5,7 +5,7 @@ import { Agent, fetch as undiciFetch } from 'undici';
 import { replaceFileSync } from './files.ts';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
-import { AI_LIMITS, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, isAiUse, workIqAllowedFor, type AiUse, type Provider } from '../src/ai/policy.ts';
+import { AI_LIMITS, DELIVERABLE_DRAFT_TIMEOUT_MS, DRAFT_MAX_PROMPT_CHARS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, STEP_DRAFT_TIMEOUT_MS, isAiUse, workIqAllowedFor, type AiUse, type Provider } from '../src/ai/policy.ts';
 import { MAX_SECRET_LENGTH, SecretVault, isSecretName } from './vault.ts';
 import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
@@ -51,8 +51,14 @@ export const MAX_AI_CHARS = 32_000;
 /** Upper bound of the per-call timeout a client may ask for. */
 export const MAX_TIMEOUT_MS = 120_000;
 /** Uses with their own caps (D-12: pack generation reads attached material and writes long JSON; D-20: suggestions with attachments). */
-export const MAX_AI_CHARS_BY_USE: Partial<Record<AiUse, number>> = { packBuild: PACK_BUILD_MAX_PROMPT_CHARS, recommend: RECOMMEND_MAX_PROMPT_CHARS };
-export const MAX_TIMEOUT_MS_BY_USE: Partial<Record<AiUse, number>> = { packBuild: PACK_BUILD_TIMEOUT_MS, deliverableDraft: DELIVERABLE_DRAFT_TIMEOUT_MS };
+export const MAX_AI_CHARS_BY_USE: Partial<Record<AiUse, number>> = {
+  packBuild: PACK_BUILD_MAX_PROMPT_CHARS, recommend: RECOMMEND_MAX_PROMPT_CHARS,
+  // D-41: the all-step batch uses.
+  deliverableDraft: DRAFT_MAX_PROMPT_CHARS, stepBrief: DRAFT_MAX_PROMPT_CHARS, strategyOverview: DRAFT_MAX_PROMPT_CHARS,
+};
+export const MAX_TIMEOUT_MS_BY_USE: Partial<Record<AiUse, number>> = {
+  packBuild: PACK_BUILD_TIMEOUT_MS, deliverableDraft: DELIVERABLE_DRAFT_TIMEOUT_MS, stepBrief: STEP_DRAFT_TIMEOUT_MS, strategyOverview: STEP_DRAFT_TIMEOUT_MS,
+};
 export const DEFAULT_API_VERSION = DEFAULT_FOUNDRY_API_VERSION;
 const CONNECTION_FILE = 'connection.json';
 const COPILOT_FILE = 'copilot.json';

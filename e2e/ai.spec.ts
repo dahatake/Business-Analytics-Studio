@@ -295,7 +295,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       subscriptionName: 'Test', tenantId, endpoint: 'https://decision-resource.openai.azure.com/openai/v1', keyAuthDisabled: false,
     }] } }));
     await page.route('**/relay/entra/inspect', (route) => route.fulfill({ json: {
-      deployments: [{ name: 'chat', model: 'gpt-chat-latest', version: '', sku: 'GlobalStandard' }],
+      deployments: [{ name: 'chat', model: 'gpt-6.2-sol', version: '', sku: 'GlobalStandard' }],
       access: { canCall: true, canAssign: false },
     } }));
     await page.route('**/relay/foundry/services', (route) => route.fulfill({ json: {
@@ -379,7 +379,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       }] } });
     });
     await page.route('**/relay/entra/inspect', (route) => route.fulfill({ json: {
-      deployments: [{ name: 'gpt-chat-latest', model: 'gpt-chat-latest', version: '', sku: 'Standard' }],
+      deployments: [{ name: 'gpt-6.2-sol', model: 'gpt-6.2-sol', version: '', sku: 'Standard' }],
       access: { canCall: true, canAssign: false },
     } }));
     await openAiSettings(page, { lang: 'en' });
@@ -394,7 +394,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(page.getByTestId('ai-entra-instance')).toContainText('guest-resource');
     await expect(page.getByTestId('ai-entra-instance')).not.toContainText('home-resource');
     await page.getByTestId('ai-entra-instance').selectOption({ label: 'guest-resource — guest-resource / rg (eastus)' });
-    await expect(page.getByTestId('ai-entra-deployment')).toHaveValue('gpt-chat-latest');
+    await expect(page.getByTestId('ai-entra-deployment')).toHaveValue('gpt-6.2-sol');
     expect(requests).toContain(guest);
   });
 

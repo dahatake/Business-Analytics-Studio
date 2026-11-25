@@ -173,7 +173,7 @@ describe('connection test action', () => {
       if (String(url).endsWith('/relay/entra/tenants')) return new Response(JSON.stringify({ tenants: [{ tenantId, name: 'Test directory', signedIn: true }] }));
       if (String(url).endsWith('/relay/entra/instances')) return new Response(JSON.stringify({ instances: [instance], tenants: [] }));
       if (String(url).endsWith('/relay/entra/inspect')) return new Response(JSON.stringify({
-        deployments: [{ name: 'gpt-chat-latest', model: 'gpt-chat-latest', version: '', sku: 'GlobalStandard' }],
+        deployments: [{ name: 'gpt-6.2-sol', model: 'gpt-6.2-sol', version: '', sku: 'GlobalStandard' }],
         access: { canCall: true, canAssign: false },
       }));
       return new Response('{}', { status: 404 });
@@ -183,7 +183,7 @@ describe('connection test action', () => {
     expect(screen.getByText(/Standalone Azure OpenAI resources are not listed/)).toBeTruthy();
     fireEvent.change(select, { target: { value: instance.id } });
     await waitFor(() => expect(useAiSettings.getState()).toMatchObject({
-      endpoint: instance.endpoint, entraTenantId: tenantId, deployment: 'gpt-chat-latest', relayConnection: connection,
+      endpoint: instance.endpoint, entraTenantId: tenantId, deployment: 'gpt-6.2-sol', relayConnection: connection,
     }));
   });
 
@@ -277,7 +277,7 @@ describe('connection test action', () => {
     await waitFor(() => expect(finishInspect).toBeTypeOf('function'));
     fireEvent.change(screen.getByTestId('ai-entra-directory'), { target: { value: guest } });
     await act(async () => finishInspect(new Response(JSON.stringify({
-      deployments: [{ name: 'old-deployment', model: 'gpt-chat-latest', version: '', sku: 'Standard' }],
+      deployments: [{ name: 'old-deployment', model: 'gpt-6.2-sol', version: '', sku: 'Standard' }],
       access: { canCall: true, canAssign: false },
     }))));
     expect(useAiSettings.getState()).toMatchObject({ endpoint: '', entraTenantId: '', deployment: '' });

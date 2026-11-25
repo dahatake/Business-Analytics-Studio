@@ -918,7 +918,7 @@ describe('D-12 packBuild through the relay', () => {
     const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[] };
     expect(sent.messages[0]!.content).toContain('仮説');
     expect(sent.messages[0]!.content).toContain('検証方法');
-    expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 32_001 }), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', { ...body, maxOutputTokens: 128_001 }), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', { ...body, timeoutMs: 300_001 }), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', { ...body, use: 'explain', maxOutputTokens: 100 }), { config: testConfig })).status).toBe(400);
 
@@ -985,7 +985,7 @@ describe('D-12 packBuild through the relay', () => {
     expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(150_000) })), { config: testConfig })).status).toBe(200);
     expect((await call(req('POST', '/relay/ai', packBody({ prompt: 'x'.repeat(200_001) })), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', packBody({ timeoutMs: 600_001 })), { config: testConfig })).status).toBe(400);
-    expect((await call(req('POST', '/relay/ai', packBody({ maxOutputTokens: 32_001 })), { config: testConfig })).status).toBe(400);
+    expect((await call(req('POST', '/relay/ai', packBody({ maxOutputTokens: 128_001 })), { config: testConfig })).status).toBe(400);
     expect((await call(req('POST', '/relay/ai', packBody({ provider: 'openai' })), { config: testConfig })).status).toBe(400);
   });
 
@@ -2431,7 +2431,7 @@ describe('read-only Foundry resource checks and Decision model selection', () =>
         return new Response(JSON.stringify({ value: [
           deployment,
           { ...deployment, name: 'creating', properties: { ...deployment.properties, provisioningState: 'Creating' } },
-          { ...deployment, name: 'chat', properties: { ...deployment.properties, model: { name: 'gpt-chat-latest' } } },
+          { ...deployment, name: 'chat', properties: { ...deployment.properties, model: { name: 'gpt-6.2-sol' } } },
         ] }));
       }
       expect(init?.headers).toEqual({ 'Ocp-Apim-Subscription-Key': FAKE_KEY });

@@ -32,9 +32,16 @@ export interface PerCallLimits {
  */
 export const AI_REASONING_EFFORT = 'medium';
 
+/**
+ * D-45: the largest output (reasoning plus text) one `gpt-6.2-sol` call can return (Foundry catalog: 128k output; its
+ * context window is 1,050k tokens and is fixed by the model, not set on the deployment). The cap is only an upper
+ * bound, not a reservation, so the long-text uses always ask for the maximum. A smaller model limit is applied by the
+ * provider (Copilot: the model's own `max_output_tokens`).
+ */
+export const MODEL_MAX_OUTPUT_TOKENS = 128_000;
 /** D-44: reasoning models spend output tokens on hidden reasoning first, so the all-step batch caps leave room for it. */
-export const DRAFT_MAX_OUTPUT_TOKENS = 32_000;
-export const BRIEF_MAX_OUTPUT_TOKENS = 16_000;
+export const DRAFT_MAX_OUTPUT_TOKENS = MODEL_MAX_OUTPUT_TOKENS;
+export const BRIEF_MAX_OUTPUT_TOKENS = MODEL_MAX_OUTPUT_TOKENS;
 
 export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   // D-41: the all-step batch uses (strategyOverview, deliverableDraft, solutionDraft, stepBrief) have no daily count, interval or input cap.
@@ -49,7 +56,7 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   chat: { dailyCalls: AI_LIMITS.dailyCalls },
   presentation: { maxOutputTokens: 4000 },
   storyVideo: { maxOutputTokens: 2000 },
-  packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: 32_000 },
+  packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
   deliverableDraft: { maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS },
   solutionDraft: { maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS },

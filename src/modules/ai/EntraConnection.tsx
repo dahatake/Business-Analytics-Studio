@@ -20,8 +20,8 @@ const entraMessage = (error: unknown): EntraMessage => {
 const POLL_MS = 2_000;
 const POLL_LIMIT_MS = 10 * 60_000;
 const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Deployments the app prefers when a resource has several (the router first, then the latest chat model). */
-const PREFERRED = [/^model-router/i, /gpt-chat-latest/i, /chat-latest/i];
+/** Deployments the app prefers when a resource has several (`gpt-6.2-sol` first: D-45, then the router and the latest chat model). */
+const PREFERRED = [/^gpt-6\.2-sol/i, /^model-router/i, /chat-latest/i];
 const preferredDeployment = (d: FoundryInstanceDetail['deployments']) =>
   PREFERRED.map((re) => d.find((x) => re.test(x.model) || re.test(x.name))).find(Boolean) ?? d[0];
 

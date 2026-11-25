@@ -127,7 +127,7 @@ FR-323. In AI Settings → Microsoft Foundry, choose **Microsoft Entra ID** inst
    Only resources with a custom subdomain can use Entra ID; their endpoint is
    `https://<subdomain>.openai.azure.com/openai/v1`. Others are listed but disabled.
 3. **Pick a deployment.** `POST /relay/entra/inspect { resourceId, tenantId }` returns the succeeded chat deployments
-   (model-router and gpt-chat-latest are suggested first) and `access: { canCall, canAssign }` from the ARM permissions
+   (`gpt-6.2-sol` first, then `model-router`, then other `chat-latest` models) and `access: { canCall, canAssign }` from the ARM permissions
    API. Being Owner/Contributor does **not** allow data-plane calls. If `canCall` is false and `canAssign` is true,
    **Assign role** (`POST /relay/entra/role`) assigns *Cognitive Services OpenAI User* to the signed-in user on that
    resource only, then re-checks. Nothing is assigned without that click; Azure can take up to ~5 minutes to apply it.
@@ -303,14 +303,33 @@ material only.
 **Reasoning effort and the output cap (D-44).** Every Foundry application call first sends `reasoning_effort: "medium"`
 (`AI_REASONING_EFFORT`). A deployment that rejects it with HTTP 400 (not billed; a content-filter 400 is not retried) is
 retried without it, then with the classic `max_tokens` body. Reasoning models spend output tokens on hidden reasoning
-before the answer, so the all-step batch caps are 32 000 output tokens ("deliverableDraft", "solutionDraft",
-"strategyOverview") and 16 000 ("stepBrief", "objectiveDraft"). An answer stopped at the cap (`finish_reason: "length"`)
+before the answer, so the all-step batch caps are 128 000 output tokens (D-45; D-44 had 32 000 and 16 000) for
+"deliverableDraft", "solutionDraft", "strategyOverview", "stepBrief", "objectiveDraft" and "packBuild". An answer stopped at the cap (`finish_reason: "length"`)
 is `502 outputLimit` with the billed `inputTokens`, `outputTokens` and `reasoningTokens`, never a partial draft; the
 browser records those tokens in the ledger as a failed call. GitHub Copilot sessions get the same cap (never above the
 model's own `max_output_tokens`) and the same effort when the model lists it (`supportedReasoningEfforts`).
 `/relay/ai` also accepts `stage` (`[A-Za-z0-9_:.-]{1,80}`, e.g. `fields-asis:tasks`), written to
 `relay-diagnostics.log` with the use, provider, deployment, error, `finishReason`, token counts and answer length —
 never the prompt or the answer. Failed Copilot calls are logged the same way.
+
+**Model used by the app: `gpt-6.2-sol` (D-45).** The Microsoft Foundry deployment is named `gpt-6.2-sol` (model
+`gpt-6.2-sol` version `2026-11-17`, SKU `GlobalStandard`, capacity 2 000 = the subscription quota, i.e. 2 000 requests
+and 2 000 000 tokens per minute). Requirements the app relies on:
+
+- **Context window.** 1 050 000 tokens (up to 922 000 input and 128 000 output). It is a property of the model, not a
+  deployment setting, so there is nothing to raise in the portal. The app asks for the full 128 000 output tokens
+  (`MODEL_MAX_OUTPUT_TOKENS`, `src/ai/policy.ts`) and accepts prompts up to 200 000 characters (D-41).
+- **Chat Completions with `max_completion_tokens`, `reasoning_effort: "medium"` and JSON mode** (`response_format:
+  json_object`) are accepted (checked 2026-11-25). The model is a reasoning model, so the retry order above still applies.
+- **Price.** Pay-as-you-go: US$2.00 / 1M input, US$10.00 / 1M output, US$0.10 / 1M cached input. A request with more
+  than 272 000 input tokens doubles the input rate and multiplies the output rate by 1.5 for the whole request. Capacity
+  is a rate limit, not a charge. The output cap is an upper bound only.
+- **Access.** Entra ID with "Cognitive Services OpenAI User" (or an API key). The deployment is listed first by the
+  connection picker. Create it with `az cognitiveservices account deployment create -g <rg> -n <account>
+  --deployment-name gpt-6.2-sol --model-name gpt-6.2-sol --model-version 2026-11-17 --model-format OpenAI --sku-name
+  GlobalStandard --sku-capacity <quota>` and save it in **AI settings** (the relay verifies it with a real call).
+- **Retirement.** The catalog lists inference retirement on 2027-11-17; `versionUpgradeOption` is
+  `OnceNewDefaultVersionAvailable`. Re-check the model before then.
 
 **GitHub Copilot** runs through `@github/copilot-sdk` in the relay process, signed in as the Copilot CLI user on this PC
 (`copilot` → `/login`). The relay never sees or stores a GitHub token. Each call creates a session with **no tools**

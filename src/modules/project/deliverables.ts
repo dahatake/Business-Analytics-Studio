@@ -79,6 +79,22 @@ export const QualificationSchema = z.object({
 export type Qualification = z.infer<typeof QualificationSchema>;
 
 /**
+ * FR-365: a person's estimate of the two Cost of Delay inputs for one issue: value lost per month while it stays unsolved (yen)
+ * and months left until it is solved. Each is a low / most likely / high range; a person's estimate overrides the pack's.
+ */
+const EstimateRangeSchema = z.object({ low: z.number().positive(), mode: z.number().positive(), high: z.number().positive() })
+  .refine((r) => r.low <= r.mode && r.mode <= r.high);
+export const DelayEstimateSchema = z.object({
+  valuePerMonthJpy: EstimateRangeSchema.optional(),
+  durationMonths: EstimateRangeSchema.optional(),
+  /** How the numbers were reached (who said it, which document). */
+  note: z.string().trim().min(1),
+  at: z.string(),
+  by: z.string(),
+}).refine((e) => e.valuePerMonthJpy !== undefined || e.durationMonths !== undefined);
+export type DelayEstimate = z.infer<typeof DelayEstimateSchema>;
+
+/**
  * Missing-data fill: a value Copilot (or a person) put into a field that the Project pack left empty, with its label.
  * - evidence: a cited source states the value (verified locally: the quote is in the source and states the value)
  * - estimate: Copilot's estimate; it counts toward the exit criteria only after a person approves it
@@ -155,6 +171,13 @@ export const DeliverableDataSchema = z.object({
     .transform((r): Record<string, Qualification> => Object.fromEntries(Object.entries(r).flatMap(([id, v]) => {
       const q = QualificationSchema.safeParse(v);
       return q.success ? [[id, q.data]] : [];
+    })))
+    .optional().catch(undefined),
+  /** FR-365: issue id → a person's Cost of Delay estimate. A broken entry is dropped alone. */
+  delayEstimates: z.record(z.string(), z.unknown())
+    .transform((r): Record<string, DelayEstimate> => Object.fromEntries(Object.entries(r).flatMap(([id, v]) => {
+      const e = DelayEstimateSchema.safeParse(v);
+      return e.success ? [[id, e.data]] : [];
     })))
     .optional().catch(undefined),
   /** `entityId:field` → how a missing pack value was filled and whether a person reviewed it. A broken entry is dropped alone. */
@@ -448,6 +471,14 @@ export function setQualification(data: DeliverableData, issueId: string, value: 
   if (value === null) delete qualifications[issueId];
   else qualifications[issueId] = QualificationSchema.parse(value);
   return { ...data, qualifications };
+}
+
+/** FR-365: store (or with null remove) a person's Cost of Delay estimate for one issue. */
+export function setDelayEstimate(data: DeliverableData, issueId: string, value: DelayEstimate | null): DeliverableData {
+  const delayEstimates = { ...(data.delayEstimates ?? {}) };
+  if (value === null) delete delayEstimates[issueId];
+  else delayEstimates[issueId] = DelayEstimateSchema.parse(value);
+  return { ...data, delayEstimates };
 }
 
 /** Issues still on the path to a solution, in priority order: every issue except those qualified out. */

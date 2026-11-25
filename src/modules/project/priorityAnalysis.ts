@@ -1,5 +1,7 @@
 import { rankIssues, type PriorityWeights } from '../../domain/priority.ts';
 import type { EntityOf } from '../../data/schema.ts';
+import { analyzeRobustness, summarizeRobustness, type RobustnessSummary } from './priorityRobustness.ts';
+import { analyzeCostOfDelay, methodReadiness, summarizeCostOfDelay, type CostOfDelaySummary, type DelayEntity, type ReadinessRow } from './costOfDelay.ts';
 
 /**
  * FR-358: prioritisation aids for every step and for the Project pack run.
@@ -33,7 +35,14 @@ export const PRIORITY_SOURCES: readonly PrioritySource[] = [
   { id: 'tversky1974', kind: 'paper', cite: 'Amos Tversky and Daniel Kahneman, "Judgment under Uncertainty: Heuristics and Biases", Science 185(4157), 1974, 1124–1131', url: 'https://doi.org/10.1126/science.185.4157.1124' },
   { id: 'rittel1973', kind: 'paper', cite: 'Horst W. J. Rittel and Melvin M. Webber, "Dilemmas in a general theory of planning", Policy Sciences 4, 1973, 155–169', url: 'https://doi.org/10.1007/BF01405730' },
   { id: 'khalsa1999', kind: 'book', cite: 'Mahan Khalsa and Randy Illig, "Let\'s Get Real or Let\'s Not Play", 1999' },
+  { id: 'kahneman2016', kind: 'hbr', cite: 'Daniel Kahneman, Andrew M. Rosenfield, Linnea Gandhi and Tom Blaser, "Noise: How to Overcome the High, Hidden Cost of Inconsistent Decision Making", Harvard Business Review, October 2016', url: 'https://hbr.org/2016/10/noise' },
+  { id: 'lahdelma1998', kind: 'paper', cite: 'Risto Lahdelma, Joonas Hokkanen and Pekka Salminen, "SMAA - Stochastic multiobjective acceptability analysis", European Journal of Operational Research 106(1), 1998, 137–143', url: 'https://doi.org/10.1016/S0377-2217(97)00163-X' },
+  { id: 'howard1966', kind: 'paper', cite: 'Ronald A. Howard, "Information Value Theory", IEEE Transactions on Systems Science and Cybernetics 2(1), 1966, 22–26', url: 'https://doi.org/10.1109/TSSC.1966.300074' },
+  { id: 'coyle2008', kind: 'paper', cite: 'Doug Coyle and Jeremy Oakley, "Estimating the expected value of partial perfect information: a review of methods", The European Journal of Health Economics 9, 2008, 251–259', url: 'https://doi.org/10.1007/s10198-007-0069-y' },
   { id: 'rice', kind: 'practice', cite: 'Intercom, "RICE: Simple prioritization for product managers" (practitioner blog, not peer reviewed)', url: 'https://www.intercom.com/blog/rice-simple-prioritization-for-product-managers/' },
+  { id: 'smith1956', kind: 'paper', cite: 'Wayne E. Smith, "Various optimizers for single-stage production", Naval Research Logistics Quarterly 3(1-2), 1956, 59–66', url: 'https://doi.org/10.1002/nav.3800030106' },
+  { id: 'rothkopf1966', kind: 'paper', cite: 'Michael H. Rothkopf, "Scheduling with Random Service Times", Management Science 12(9), 1966, 707–713', url: 'https://doi.org/10.1287/mnsc.12.9.707' },
+  { id: 'reinertsen2009', kind: 'book', cite: 'Donald G. Reinertsen, "The Principles of Product Development Flow: Second Generation Lean Product Development", 2009' },
 ];
 
 export const PRIORITY_METHODS = {
@@ -45,6 +54,8 @@ export const PRIORITY_METHODS = {
   forces: ['porter2008'],
   scorecard: ['kaplanNorton1992', 'kaplanNorton2000'],
   outsideView: ['lovallo2003', 'kahneman2011', 'buehler1994'],
+  robustness: ['kahneman2016', 'lahdelma1998', 'howard1966', 'coyle2008'],
+  costOfDelay: ['reinertsen2009', 'smith1956', 'rothkopf1966', 'buehler1994'],
 } as const satisfies Record<string, readonly string[]>;
 export type PriorityMethodId = keyof typeof PRIORITY_METHODS;
 
@@ -53,8 +64,8 @@ export type PriorityStep = (typeof PRIORITY_STEPS)[number];
 
 /** The methods worth reading at each step, most useful first. */
 export const STEP_METHODS: Record<PriorityStep, readonly PriorityMethodId[]> = {
-  asis: ['qualify', 'impactEffort', 'framing', 'jobs', 'anchoring'],
-  tobe: ['jobs', 'impactEffort', 'forces', 'anchoring'],
+  asis: ['qualify', 'impactEffort', 'robustness', 'costOfDelay', 'framing', 'jobs', 'anchoring'],
+  tobe: ['jobs', 'impactEffort', 'robustness', 'costOfDelay', 'forces', 'anchoring'],
   kpi: ['scorecard', 'qualify', 'anchoring'],
   solution: ['impactEffort', 'outsideView', 'anchoring'],
   deliverable: ['outsideView', 'qualify', 'impactEffort'],
@@ -113,6 +124,12 @@ export interface PriorityAnalysis {
   candidates: PriorityCandidate[];
   methods: PriorityMethodId[];
   sourceIds: string[];
+  /** FR-364: how firm the first pick is and which rating to check next. Absent in packs saved before it existed. */
+  robustness?: RobustnessSummary;
+  /** FR-365: Cost of Delay order and the next number worth confirming. Absent in packs saved before it existed. */
+  costOfDelay?: CostOfDelaySummary;
+  /** FR-365: which prioritisation methods the data now held can support, recomputed at every ingest. */
+  readiness?: ReadinessRow[];
 }
 
 export const PRIORITY_WEIGHTS: PriorityWeights = { impact: 60, feasibility: 40 };
@@ -141,8 +158,8 @@ export function analyzeCandidates(inputs: PriorityInput[]): { candidates: Priori
   };
 }
 
-/** The analysis run on the issues a Project pack run has just produced. */
-export function analyzePackPriority(entities: readonly { kind?: unknown; id?: unknown; impact?: unknown; feasibility?: unknown; sourceIds?: unknown; kpiIds?: unknown }[]): PriorityAnalysis {
+/** The analysis run on the issues a Project pack run has just produced (or a pack being imported). */
+export function analyzePackPriority(entities: readonly (DelayEntity & { sourceIds?: unknown; kpiIds?: unknown })[], extensions?: Readonly<Record<string, unknown>>): PriorityAnalysis {
   const inputs: PriorityInput[] = entities.flatMap((e) =>
     e.kind === 'issue' && typeof e.id === 'string' && typeof e.impact === 'number' && typeof e.feasibility === 'number'
       ? [{
@@ -152,6 +169,11 @@ export function analyzePackPriority(entities: readonly { kind?: unknown; id?: un
       }]
       : []);
   const { candidates, stats } = analyzeCandidates(inputs);
-  const methods: PriorityMethodId[] = ['qualify', 'impactEffort', 'anchoring'];
-  return { version: 1, basis: 'pack', stats, candidates, methods, sourceIds: sourcesOf(methods).map((s) => s.id) };
+  const methods: PriorityMethodId[] = ['qualify', 'impactEffort', 'robustness', 'costOfDelay', 'anchoring'];
+  const robustness = summarizeRobustness(analyzeRobustness(inputs));
+  const cod = analyzeCostOfDelay(entities, { extension: extensions?.delayCost });
+  return {
+    version: 1, basis: 'pack', stats, candidates, methods, sourceIds: sourcesOf(methods).map((s) => s.id), robustness,
+    costOfDelay: summarizeCostOfDelay(cod), readiness: methodReadiness(inputs.length, cod, robustness),
+  };
 }

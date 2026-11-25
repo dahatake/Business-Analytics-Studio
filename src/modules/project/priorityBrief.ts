@@ -31,15 +31,19 @@ export interface PriorityBrief {
 
 const TOP = 3;
 
+/** The issues still being pursued, with whether each cites a source and is measured by a KPI (as the As-is step counts them). */
+export function priorityInputs(c: CheckContext): PriorityInput[] {
+  const asis = stepDashboard('asis', c).detail;
+  const evidence = new Map((asis.step === 'asis' ? asis.issues : []).map((i) => [i.id, i]));
+  return rankedIssues(c.pack)
+    .filter((i) => !isQualifiedOut(c.deliverables, i.id))
+    .map((i) => ({ id: i.id, impact: i.impact, feasibility: i.feasibility, sourced: evidence.get(i.id)?.sourced ?? false, measured: evidence.get(i.id)?.measured ?? false }));
+}
+
 export function priorityBrief(step: PriorityStep, c: CheckContext): PriorityBrief {
   const dash = stepDashboard(step, c);
   const d = dash.detail;
-  const asis = step === 'asis' ? d : stepDashboard('asis', c).detail;
-  const evidence = new Map((asis.step === 'asis' ? asis.issues : []).map((i) => [i.id, i]));
-  const inputs: PriorityInput[] = rankedIssues(c.pack)
-    .filter((i) => !isQualifiedOut(c.deliverables, i.id))
-    .map((i) => ({ id: i.id, impact: i.impact, feasibility: i.feasibility, sourced: evidence.get(i.id)?.sourced ?? false, measured: evidence.get(i.id)?.measured ?? false }));
-  const { candidates, stats } = analyzeCandidates(inputs);
+  const { candidates, stats } = analyzeCandidates(priorityInputs(c));
 
   const tile = (id: string) => dash.tiles.find((t) => t.id === id);
   const open = (id: string) => { const t = tile(id); return t && t.total > 0 ? t.total - t.value : 0; };

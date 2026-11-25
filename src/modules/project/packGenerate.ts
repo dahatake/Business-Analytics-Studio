@@ -212,11 +212,37 @@ export interface ProgressEvent {
   errors?: number;
   /** Input + output tokens the provider reported for the calls finished so far. */
   tokens: number | null;
+  /** Collect step: each source's own state, reported when that read actually ends. */
+  sources?: Partial<Record<CollectSource, StepStatus>>;
 }
 
-const STEP_SPAN: Record<StepId, [number, number]> = {
-  collect: [0, 0.1], foundation: [0.1, 0.45], business: [0.45, 0.8], verify: [0.8, 0.9], analysis: [0.9, 0.95], priority: [0.95, 0.97], finalize: [0.97, 1],
+export type CollectSource = 'site' | 'news' | 'workiq';
+
+const STEP_ORDER: StepId[] = ['collect', 'foundation', 'business', 'verify', 'analysis', 'priority', 'finalize'];
+/*
+ * Share of the run's wall time per step. With Work IQ: logs/workiq-bench/pipeline-*.json (10 live runs 2026-11-12〜24,
+ * 435〜1335 s) put collect at 18〜53% (median ≈ 38%), foundation 24〜53%, business 1〜46%, verify 0〜9%, analysis ≈ 3%.
+ * Without Work IQ the public reads take seconds and the model calls are the whole run (docs/workiq-agentic-retrieval-study.md §15).
+ */
+const STEP_WEIGHTS: Record<'workiq' | 'plain', Record<StepId, number>> = {
+  workiq: { collect: 0.4, foundation: 0.32, business: 0.16, verify: 0.05, analysis: 0.05, priority: 0.005, finalize: 0.015 },
+  plain: { collect: 0.05, foundation: 0.42, business: 0.3, verify: 0.1, analysis: 0.1, priority: 0.01, finalize: 0.02 },
 };
+
+/** Where each step starts and ends on the 0..1 bar, so the bar's segments and the reported ratio agree. */
+export function stepSpans(input: Pick<PackGenInput, 'useWorkIq'>): Record<StepId, [number, number]> {
+  const w = STEP_WEIGHTS[input.useWorkIq ? 'workiq' : 'plain'];
+  const total = STEP_ORDER.reduce((n, s) => n + w[s], 0);
+  let at = 0;
+  return Object.fromEntries(STEP_ORDER.map((s, i) => {
+    const start = at;
+    at = i === STEP_ORDER.length - 1 ? 1 : at + w[s] / total;
+    return [s, [start, at]];
+  })) as Record<StepId, [number, number]>;
+}
+
+/** Work IQ dominates the collect step (minutes against seconds), so its end moves the bar most. */
+const SOURCE_WEIGHT: Record<CollectSource, number> = { site: 1, news: 1, workiq: 8 };
 
 export interface RetrievedItem {
   sourceId: string;
@@ -586,6 +612,8 @@ function rules(lang: Lang): string {
       '- extensions.okr の対象組織: 全社の KPI/OKR（source-workiq-kpi-company など会社全体の資料）と対象の事業部の KPI/OKR（source-workiq-kpi-unit など）は両方記録し、事業部だけに絞らない（BPR の範囲と効果を小さく見積もらないため）。各 KPI・objective に orgUnitId を書く: "org-company"=全社、"org-unit"=対象の事業部。資料に他の組織（別の事業部・事業会社・部門）の KPI があれば extensions.okr.orgUnits に {id:"org-…",level:"group|legalEntity|business|department",name,basis:"stated",sourceIds} を足してその id を使う。どの組織の KPI か資料から分からなければ orgUnitId は書かない。org-company と org-unit の定義はアプリが書く。',
       '- 実施した案件・取り組みは extensions.engagements.items に保存する。各項目に id・name・sourceIds（1 件以上）、および period・customer・status の少なくとも 1 つを資料どおりに書く。任意: type（workshop/briefing/poc/programme/deliverable/deal/other）、customerId（既存の customer の id）、owner（氏名と役職のみ）、count・outcome。name は文字列または ja/en、他の事実は原文の文字列。金額・進捗・日付を補わない。deal は金額・製品・顧客・日付・担当が、initiative は進捗・期間・担当と費用・効果のある solution が資料にそろう時だけ。同じ実施情報をエンティティと engagements の両方に書かない。',
       '- extensions.dataCatalog.items: 組織が管理・利用するデータ（Power BI レポート、ダッシュボード、CRM、リスト、Excel 等）を name・description・domain・columns（分かる列）・url（引用の URL）で書く。',
+      '- 課題（issue）: 資料に書かれた課題は、目的に関係するものをすべて別々の issue として出す（着手順を比べるには 2 件以上が必要）。資料にない課題は作らない。',
+      '- extensions.delayCost.items: 資料が課題ごとに「解決しない間に失う金額（月・年あたり）」または「解決までの期間」を数字で述べている時だけ、{issueId（既存の issue の id）, valuePerMonthJpy?:{low,mode,high}（円/月。年額は 12 で割る）, durationMonths?:{low,mode,high}（か月）, quote（その数字を含む原文）, sourceIds} を書く。資料に幅がなければ low=mode=high。数字を推定・補完しない。1 つの課題に 1 項目。',
       `- 1 回の回答は ${MAX_STAGE_ENTITIES} エンティティまで。`,
       '- 回答は JSON オブジェクト 1 つだけ（説明文・コードブロックなし）。',
     ].join('\n')
@@ -608,6 +636,8 @@ function rules(lang: Lang): string {
       '- Organisation of extensions.okr: record both the company-wide KPIs/OKRs (source-workiq-kpi-company and other company-level material) and those of the business unit (source-workiq-kpi-unit and the like); never narrow them to the unit alone, which would understate the scope and benefit of BPR. Give each KPI and objective an orgUnitId: "org-company" = the whole company, "org-unit" = the business unit. When the material states KPIs of another organisation (another division, operating company or department), add {id:"org-…",level:"group|legalEntity|business|department",name,basis:"stated",sourceIds} to extensions.okr.orgUnits and use that id. Omit orgUnitId when the material does not say whose KPI it is. The app writes org-company and org-unit itself.',
       '- Work records go in extensions.engagements.items. Each item needs id, name, sourceIds (at least one), and at least one of period, customer or status stated in the material. Optional: type (workshop/briefing/poc/programme/deliverable/deal/other), customerId (an existing customer id), owner (name and title only), count, outcome. name is a string or ja/en; other facts are verbatim strings. Never fill in amounts, progress or dates. Use deal only when value, products, customer, date and owner are known; initiative only when progress, dates, owner and a solution with cost and benefit are known. Do not duplicate the same work in entities and engagements.',
       '- extensions.dataCatalog.items: data the organisation owns or uses (Power BI reports, dashboards, CRM, lists, workbooks…) with name, description, domain, columns (when known) and url (the cited URL).',
+      '- Issues: output every issue the material states that bears on the purpose as its own issue entity (ordering needs at least 2). Never create issues the material does not state.',
+      '- extensions.delayCost.items: only when the material states, per issue, a number for the money lost while it stays unsolved (per month or year) or the time until it is solved, write {issueId (an existing issue id), valuePerMonthJpy?:{low,mode,high} (JPY per month; divide yearly figures by 12), durationMonths?:{low,mode,high} (months), quote (the wording with the number), sourceIds}. With no stated range use low=mode=high. Never estimate or fill in numbers. One item per issue.',
       `- At most ${MAX_STAGE_ENTITIES} entities per answer.`,
       '- Answer with a single JSON object only (no prose, no code fences).',
     ].join('\n');
@@ -1329,8 +1359,9 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const now = deps.now ?? (() => new Date());
   const startedAt = now().toISOString();
   const calls: GenerationReport['calls'] = [];
+  const spans = stepSpans(input);
   const emit = (step: StepId, status: StepStatus, within = status === 'done' ? 1 : 0, extra: Partial<ProgressEvent> = {}) => {
-    const [a, b] = STEP_SPAN[step];
+    const [a, b] = spans[step];
     onProgress({ step, status, ratio: a + (b - a) * within, tokens: calls.reduce<number | null>((n, c) => n === null || c.inputTokens === null || c.outputTokens === null ? null : n + c.inputTokens + c.outputTokens, 0), ...extra });
   };
   const cancelled = () => new PackGenError('cancelled', 'cancelled');
@@ -1399,7 +1430,17 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   };
 
   /* 1. Public material */
-  emit('collect', 'running');
+  const sources: Partial<Record<CollectSource, StepStatus>> = {};
+  if (input.officialUrl.trim() && deps.fetchSite) sources.site = 'running';
+  if (input.useNews && deps.fetchNews) sources.news = 'running';
+  if (input.useWorkIq && deps.fetchWorkIq) sources.workiq = 'running';
+  const sourceWeight = (keys: CollectSource[]) => keys.reduce((n, k) => n + SOURCE_WEIGHT[k], 0);
+  const sourceEnded = (key: CollectSource, status: StepStatus) => {
+    sources[key] = status;
+    const keys = Object.keys(sources) as CollectSource[];
+    emit('collect', 'running', sourceWeight(keys.filter((k) => sources[k] !== 'running')) / sourceWeight(keys), { sources: { ...sources } });
+  };
+  emit('collect', 'running', 0, { sources: { ...sources } });
   const retrievalErrors: GenerationReport['retrievalErrors'] = [];
   let pages: SitePageLike[] = [];
   let news: NewsLike[] = [];
@@ -1411,13 +1452,14 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       const r = await deps.fetchSite(input.officialUrl.trim(), signal, purposeTerms(input));
       pages = r.pages;
       for (const f of r.failed) retrievalErrors.push({ what: 'site', url: f.url, error: f.error });
+      sourceEnded('site', pages.length ? 'done' : 'failed');
     } catch (err) {
       if (signal.aborted) throw cancelled();
       retrievalErrors.push({ what: 'site', url: input.officialUrl.trim(), error: (err as { code?: string }).code ?? (err as Error).message });
+      sourceEnded('site', 'failed');
     }
   }
   })();
-  emit('collect', 'running', 0.6);
   const offPurposeNews: { title: string; url: string }[] = [];
   const newsTask = (async () => {
   if (input.useNews && deps.fetchNews) {
@@ -1430,9 +1472,11 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
       news = [...kept, ...dropped.slice(0, OFF_PURPOSE_NEWS_KEPT)].slice(0, 10);
       offPurposeNews.push(...dropped.filter((a) => !news.includes(a)).map((a) => ({ title: a.title, url: a.url })));
       newsFetchedAt = r.fetchedAt;
+      sourceEnded('news', 'done');
     } catch (err) {
       if (signal.aborted) throw cancelled();
       retrievalErrors.push({ what: 'news', error: (err as { code?: string }).code ?? (err as Error).message });
+      sourceEnded('news', 'failed');
     }
   }
   })();
@@ -1451,7 +1495,6 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const givenUnit = userOrgUnit(input);
   const workIqTask = (async () => {
   if (input.useWorkIq && deps.fetchWorkIq) {
-    emit('collect', 'running', 0.8);
     // Planned fan-out (docs/workiq-agentic-retrieval-study.md): the section searches, every readiness ladder wording and
     // the purpose concepts at once, merged per readiness item, so the follow-up rounds below are left with the model's
     // own gaps. A transient failure of the whole fan-out (Work IQ down, a CLI process without its search tool) is tried
@@ -1471,11 +1514,12 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
         await pause(deps.retryDelayMs ?? 5_000);
       }
     }
+    sourceEnded('workiq', workiq ? 'done' : 'failed');
   }
   })();
   await Promise.all([siteTask, newsTask, workIqTask]);
   const entries = materialSources(input, pages, news, newsFetchedAt, now(), workiq);
-  emit('collect', 'done');
+  emit('collect', 'done', 1, { sources: { ...sources } });
 
   /** A re-run that fails keeps the previous answer: the follow-up only ever adds. */
   const rerun = async (stage: GenStage, build: (material: MaterialEntry[]) => string, first: Pack): Promise<Pack> => {
@@ -1683,7 +1727,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
 
   // Rule-based (no model call): rank the issues the run produced by impact × feasibility and how well each is evidenced.
   emit('priority', 'running');
-  const priority = analyzePackPriority(Array.isArray(finalPack.entities) ? finalPack.entities : []);
+  const priority = analyzePackPriority(Array.isArray(finalPack.entities) ? finalPack.entities : [], isObj(finalPack.extensions) ? finalPack.extensions : undefined);
   emit('priority', 'done');
 
   /* 6. Collection report, number check, generation record */

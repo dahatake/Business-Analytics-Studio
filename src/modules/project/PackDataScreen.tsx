@@ -34,6 +34,9 @@ import { PackGenerateDialog } from './PackGenerateDialog.tsx';
 import { AUTO_GENERATE_KEY } from './packAutoGenerate.ts';
 import { SharedDataMerge } from './ProjectPackImportDialog.tsx';
 import { downloadProjectFile } from './ProjectMergeDialog.tsx';
+import { analyzePackPriority } from './priorityAnalysis.ts';
+import { packEntityName } from './priorityRobustness.ts';
+import { DelayCostSummary } from './CostOfDelay.tsx';
 import { ReadinessView } from './ReadinessView.tsx';
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from './companyAlignment.ts';
 import './project.css';
@@ -548,6 +551,7 @@ function ResultView({ analysis, picked }: { analysis: ImportAnalysis; picked: Pi
             <dd>{KIND_ORDER.filter((k) => summary.byKind[k]).map((k) => t('proj.pack.kindCount', { kind: t(`proj.pack.kind.${k}`), count: fmt.integer(summary.byKind[k]!) })).join(' · ') || '—'}</dd>
           </div>
           <div><dt>{t('proj.pack.extras')}</dt><dd>{t('proj.pack.extrasValue', { regions: summary.regions, flows: summary.flows, optimization: t(summary.hasOptimization ? 'proj.pack.yes' : 'proj.pack.no') })}</dd></div>
+          {analysis.pack && <PackRobustness pack={analysis.pack} />}
         </dl>
       )}
       {analysis.pack && <CollectionCoverage raw={analysis.pack} />}
@@ -761,5 +765,28 @@ function ConfirmAndImport({ analysis, picked }: { analysis: ImportAnalysis; pick
       </Button>
       {basePack.isSample && toDemo && <p className="muted">{t('proj.pack.demoStays')}</p>}
     </section>
+  );
+}
+
+/** Firmness of the issue order (SMAA rank acceptability, FR-364) and the Cost of Delay order (FR-365) in the pack being imported. */
+function PackRobustness({ pack }: { pack: Record<string, unknown> }) {
+  const { t, lang, fmt } = useI18n();
+  const analysis = useMemo(() => analyzePackPriority(Array.isArray(pack.entities) ? pack.entities : [], typeof pack.extensions === 'object' && pack.extensions !== null ? pack.extensions as Record<string, unknown> : undefined), [pack]);
+  const rob = analysis.robustness;
+  return (
+    <>
+      {rob && rob.verdict !== 'none' && (
+        <div>
+          <dt>{t('proj.gen.sum.robust')}</dt>
+          <dd data-testid="pack-robust" data-verdict={rob.verdict}>
+            {t('proj.gen.sum.robustValue', { share: fmt.percent(rob.pickShare), verdict: t(`proj.rob.badge.${rob.verdict === 'robust' ? 'robust' : 'contested'}`) })}
+            {rob.weightDriven
+              ? <><br />{t('proj.gen.sum.robustWeight')}</>
+              : rob.next && <><br />{t('proj.gen.sum.robustNext', { name: packEntityName(pack, rob.next.id, lang), rating: t(`proj.rob.rating.${rob.next.rating}`) })}</>}
+          </dd>
+        </div>
+      )}
+      {analysis.costOfDelay && <div><DelayCostSummary summary={analysis.costOfDelay} pack={pack} testId="pack-cod" /></div>}
+    </>
   );
 }

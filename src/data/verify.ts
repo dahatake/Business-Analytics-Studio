@@ -3,7 +3,7 @@ import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
-import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, RequirementEvidenceExtension, WorkflowExtension } from './extensionSchemas.ts';
+import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, DelayCostExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, RequirementEvidenceExtension, WorkflowExtension } from './extensionSchemas.ts';
 import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } from './companyAnchor.ts';
@@ -202,7 +202,7 @@ export function verifyPack(raw: unknown): VerifyResult {
     glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
     workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension, requirementEvidence: RequirementEvidenceExtension,
-    decisionReport: DecisionReportExtension,
+    decisionReport: DecisionReportExtension, delayCost: DelayCostExtension,
     companyAnchor: CompanyAnchorVersionSchema,
     companyAlignment: CompanyAlignmentSnapshotSchema,
   };
@@ -292,6 +292,17 @@ export function verifyPack(raw: unknown): VerifyResult {
       sourceRefs(item.sourceIds, `${path}.sourceIds`);
     });
     if (evidenceExt.data.items.length) add({ severity: 'warning', code: 'INTERNAL', path: 'extensions.requirementEvidence', cause: 'Rules, user voices and evaluation data are internal.', action: 'Hidden for an external audience. Review sources before sharing the pack.' });
+  }
+  const delayCost = DelayCostExtension.safeParse(pack.extensions?.delayCost);
+  if (delayCost.success) {
+    const seenIssues = new Set<string>();
+    delayCost.data.items.forEach((item, i) => {
+      const path = `extensions.delayCost.items[${i}]`;
+      if (byId.get(item.issueId)?.kind !== 'issue') add({ severity: 'error', code: 'DANGLING_REF', path: `${path}.issueId`, cause: `"${item.issueId}" is not an existing issue.`, action: 'Use an existing issue id, or remove only this item.' });
+      if (seenIssues.has(item.issueId)) add({ severity: 'error', code: 'DUPLICATE_ID', path: `${path}.issueId`, cause: `Issue "${item.issueId}" has more than one delay-cost item.`, action: 'Keep one item per issue.' });
+      seenIssues.add(item.issueId);
+      sourceRefs(item.sourceIds, `${path}.sourceIds`);
+    });
   }
   const engagements = EngagementsExtension.safeParse(pack.extensions?.engagements);
   if (engagements.success) {

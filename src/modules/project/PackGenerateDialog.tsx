@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, MessageBar, MessageBarBody,
-  ProgressBar, Spinner, Textarea,
+  Spinner, Textarea,
 } from '@fluentui/react-components';
 import {
   ArrowUpload20Regular, BotSparkle20Regular, CheckmarkCircle20Filled, Delete20Regular, DismissCircle20Filled, Open20Regular, Settings20Regular,
@@ -26,11 +26,14 @@ import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import { saveAnalysisForProject, useProjUi } from './stores.ts';
 import {
-  DEFAULT_WORKIQ_ROUNDS, generatePack, materialSources, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt,
+  DEFAULT_WORKIQ_ROUNDS, generatePack, materialSources, MAX_MATERIAL_CHARS, MAX_WORKIQ_ROUNDS, missingRequired, PackGenError, prefillFromPack, runPlan, stageAPrompt, stepSpans,
   type GenResult, type Material, type PackGenInput, type ProgressEvent, type RequiredField, type StepId, type StepStatus,
 } from './packGenerate.ts';
 import { ReadinessView } from './ReadinessView.tsx';
+import { CollectSources, GenProgressBar } from './GenProgressBar.tsx';
 import { invalidateProjectEvidence } from './companyAlignment.ts';
+import { packEntityName } from './priorityRobustness.ts';
+import { DelayCostSummary } from './CostOfDelay.tsx';
 
 /** Where the generated pack goes: an existing project, or a company/project created when the pack is saved. */
 export type PackGenTarget =
@@ -118,6 +121,10 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
   const [phase, setPhase] = useState<Phase>({ kind: 'form' });
   const [steps, setSteps] = useState<Record<StepId, StepStatus>>(() => Object.fromEntries(STEPS.map((s) => [s, 'pending'])) as Record<StepId, StepStatus>);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  const [collectSources, setCollectSources] = useState<NonNullable<ProgressEvent['sources']>>({});
+  const [spans, setSpans] = useState(() => stepSpans({ useWorkIq: false }));
+  /** The step the last progress event named and when (seconds into the run) it was first reported. */
+  const [stepStart, setStepStart] = useState<{ step: StepId | null; at: number }>({ step: null, at: 0 });
   const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -301,8 +308,12 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
     const runTokens = () => summarizeTokens(recordsOfScope(readLedger(), runScope)).total;
     setSteps(Object.fromEntries(STEPS.map((s) => [s, 'pending'])) as Record<StepId, StepStatus>);
     setProgress(null);
+    setCollectSources({});
+    setSpans(stepSpans(input));
+    setStepStart({ step: null, at: 0 });
     setElapsed(0);
-    setPhase({ kind: 'running', startedAt: Date.now() });
+    const runStartedAt = Date.now();
+    setPhase({ kind: 'running', startedAt: runStartedAt });
     const settings = useAiSettings.getState();
     let result: GenResult;
     try {
@@ -321,6 +332,8 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
       }, (e) => {
         setProgress(e);
         setSteps((s) => ({ ...s, [e.step]: e.status }));
+        if (e.sources) setCollectSources(e.sources);
+        setStepStart((p) => (p.step === e.step ? p : { step: e.step, at: Math.round((Date.now() - runStartedAt) / 1000) }));
       }, controller.signal);
     } catch (err) {
       const e = err instanceof PackGenError ? err : null;
@@ -384,7 +397,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
 
   const labelOf = (f: RequiredField) => t(`proj.gen.field.${f}`);
   const running = phase.kind === 'running';
-  const stepIcon = (s: StepStatus) => (s === 'done' ? <CheckmarkCircle20Filled className="gen-ok" /> : s === 'failed' ? <DismissCircle20Filled className="gen-fail" /> : s === 'running' ? <Spinner size="extra-tiny" /> : <span className="gen-dot" aria-hidden />);
+  const stepIcon = (s: StepStatus) => (s === 'done' ? <CheckmarkCircle20Filled className="gen-ok" /> : s === 'failed' ? <DismissCircle20Filled className="gen-fail" /> : s === 'running' ? <Spinner size="extra-tiny" aria-hidden /> : <span className="gen-dot" aria-hidden />);
 
   return (
     <>
@@ -575,11 +588,22 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
               )}
 
               {(phase.kind === 'running' || phase.kind === 'error') && (
-                <div className="gen-progress" data-testid="gen-progress" aria-live="polite">
-                  <ProgressBar value={progress?.ratio ?? 0} thickness="large" aria-label={t('proj.gen.progressLabel')} data-testid="gen-progress-bar" />
-                  <p className="muted">
+                <div className="gen-progress" data-testid="gen-progress">
+                  <GenProgressBar
+                    order={STEPS}
+                    steps={steps}
+                    spans={spans}
+                    ratio={progress?.ratio ?? 0}
+                    current={progress?.step ?? null}
+                    stepElapsed={Math.max(0, elapsed - stepStart.at)}
+                  />
+                  <p className="muted gen-progress-now">
                     {t('proj.gen.progressNow', { percent: fmt.percent(progress?.ratio ?? 0), elapsed: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`, tokens: progress?.tokens === null ? t('ai.tokens.unavailable') : fmt.integer(progress?.tokens ?? 0) })}
                   </p>
+                  {/* Only step changes are announced; the clocks above tick every second and would be read out each time. */}
+                  <span className="visually-hidden" aria-live="polite" data-testid="gen-announce">
+                    {progress ? t(progress.status === 'done' ? 'proj.gen.announceDone' : 'proj.gen.announce', { step: t(`proj.gen.stepShort.${progress.step}`) }) : ''}
+                  </span>
                   <ol className="gen-steps">
                     {STEPS.map((s) => (
                       <li key={s} data-step={s} data-status={steps[s]}>
@@ -587,6 +611,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                         <span>{t(`proj.gen.step.${s}`)}</span>
                         {s === 'verify' && progress?.step === 'verify' && progress.round ? <span className="muted">{t('proj.gen.round', { round: progress.round, errors: progress.errors ?? 0 })}</span> : null}
                         {s === progress?.step && progress.collectRound ? <span className="muted" data-testid="gen-collect-round">{t('proj.gen.collectRound', { round: progress.collectRound, unmet: progress.unmet?.length ?? 0 })}</span> : null}
+                        {s === 'collect' && <CollectSources sources={collectSources} waitingSec={steps.collect === 'running' ? Math.max(0, elapsed - stepStart.at) : 0} />}
                       </li>
                     ))}
                   </ol>
@@ -637,7 +662,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
 }
 
 function SavedSummary({ result }: { result: GenResult }) {
-  const { t } = useI18n();
+  const { t, lang, fmt } = useI18n();
   const { summary, report } = result;
   const kinds = Object.entries(summary.byKind).filter(([, n]) => (n ?? 0) > 0);
   const tokens = summarizeTokens(report.calls.map((c) => ({ at: report.finishedAt, use: 'packBuild', stage: c.stage, inputTokens: c.inputTokens, outputTokens: c.outputTokens })));
@@ -655,6 +680,18 @@ function SavedSummary({ result }: { result: GenResult }) {
         <dd data-testid="gen-checks">{t('proj.gen.sum.checksValue', { rounds: report.fixRounds, removed: report.removed.length, dropped: report.droppedSources.length })}</dd>
         <dt>{t('proj.gen.sum.priority')}</dt>
         <dd data-testid="gen-priority">{t('proj.gen.sum.priorityValue', { n: result.priority.stats.n, quick: result.priority.stats.quickWin, big: result.priority.stats.bigBet, unproven: result.priority.stats.unproven })}</dd>
+        {result.priority.robustness && result.priority.robustness.verdict !== 'none' && (
+          <>
+            <dt>{t('proj.gen.sum.robust')}</dt>
+            <dd data-testid="gen-robust" data-verdict={result.priority.robustness.verdict}>
+              {t('proj.gen.sum.robustValue', { share: fmt.percent(result.priority.robustness.pickShare), verdict: t(`proj.rob.badge.${result.priority.robustness.verdict === 'robust' ? 'robust' : 'contested'}`) })}
+              {result.priority.robustness.weightDriven
+                ? <><br />{t('proj.gen.sum.robustWeight')}</>
+                : result.priority.robustness.next && <><br />{t('proj.gen.sum.robustNext', { name: packEntityName(result.pack, result.priority.robustness.next.id, lang), rating: t(`proj.rob.rating.${result.priority.robustness.next.rating}`) })}</>}
+            </dd>
+          </>
+        )}
+        {result.priority.costOfDelay && <DelayCostSummary summary={result.priority.costOfDelay} pack={result.pack} testId="gen-cod" />}
       </dl>
       <TokenTable summary={tokens} testId="gen-tokens" caption={t('proj.gen.sum.tokens')} />
       {report.ungrounded.length > 0 && (

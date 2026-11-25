@@ -213,6 +213,9 @@ test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('pack-files')).toContainText('source.xlsx');
     await expect(page.getByTestId('pack-files')).toContainText('この形式は読めません');
     await expect(page.getByTestId('pack-summary')).toContainText('Fabrikam 精工');
+    // FR-364: the order of the incoming issues is analysed before import (one issue → certain).
+    await expect(page.getByTestId('pack-robust')).toHaveAttribute('data-verdict', 'robust');
+    await expect(page.getByTestId('pack-robust')).toContainText('100%');
     // The preview and current-pack panels each expose coverage independently.
     const previewCoverage = page.getByTestId('pack-coverage').last();
     await previewCoverage.locator('summary').click();

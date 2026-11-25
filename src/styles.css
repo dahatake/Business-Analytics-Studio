@@ -2,7 +2,8 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; }
-html { scroll-padding-top: var(--chrome-h, 0px); }
+/* +1px: content above a target can sit at a half pixel while scrollTop is whole, which would leave the target 0.5px under the header. */
+html { scroll-padding-top: calc(var(--chrome-h, 0px) + 1px); }
 body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino Sans', 'Meiryo', system-ui, sans-serif; }
 
 .app {

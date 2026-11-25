@@ -509,8 +509,49 @@
 .gen-estimate dt { color: var(--colorNeutralForeground3); }
 .gen-estimate dd { margin: 0; }
 .gen-progress { display: grid; gap: 12px; }
+.gen-bar-wrap { display: grid; gap: 8px; }
+.gen-bar-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.gen-bar-percent { font-size: var(--fontSizeHero700); line-height: var(--lineHeightHero700); font-weight: var(--fontWeightSemibold); font-variant-numeric: tabular-nums; color: var(--colorBrandForeground1); }
+.gen-bar-now { font-size: var(--fontSizeBase400); font-weight: var(--fontWeightSemibold); }
+.gen-bar-time { color: var(--colorNeutralForeground3); font-variant-numeric: tabular-nums; }
+/* One segment per step, as wide as the step's measured share of a run; the running one keeps moving. */
+.gen-bar { display: flex; gap: 3px; height: 14px; }
+.gen-seg { position: relative; flex: 1 1 0; min-width: 8px; border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground6); overflow: hidden; }
+.gen-seg-fill { position: absolute; inset: 0 auto 0 0; background-color: var(--colorBrandBackground); transition: width 400ms var(--curveDecelerateMid); }
+.gen-seg[data-status='running'] { box-shadow: inset 0 0 0 1px var(--colorBrandStroke1); }
+.gen-seg[data-status='running'] .gen-seg-fill {
+  min-width: 6px;
+  background-image: linear-gradient(-45deg, rgba(255, 255, 255, 0.3) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.3) 50%, rgba(255, 255, 255, 0.3) 75%, transparent 75%);
+  background-size: 16px 16px;
+  animation: gen-stripes 0.8s linear infinite;
+}
+.gen-seg[data-status='running']::after {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 35%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--colorBrandBackground) 45%, transparent), transparent);
+  animation: gen-sweep 1.8s ease-in-out infinite;
+}
+.gen-seg[data-status='failed'] .gen-seg-fill { background-color: var(--colorPaletteRedBackground3); min-width: 100%; }
+@keyframes gen-stripes { to { background-position: 16px 0; } }
+@keyframes gen-sweep { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@media (prefers-reduced-motion: reduce) {
+  .gen-seg[data-status='running'] .gen-seg-fill { animation: none; }
+  .gen-seg[data-status='running']::after { display: none; }
+}
+[data-motion='reduced'] .gen-seg[data-status='running'] .gen-seg-fill { animation: none; }
+[data-motion='reduced'] .gen-seg[data-status='running']::after { display: none; }
+@media (forced-colors: active) {
+  .gen-seg { forced-color-adjust: none; background: Canvas; border: 1px solid CanvasText; }
+  .gen-seg-fill, .gen-seg[data-status='running'] .gen-seg-fill { background: Highlight; }
+  .gen-seg[data-status='running']::after { display: none; }
+}
+.gen-sources { display: grid; gap: 4px; flex-basis: 100%; padding-left: 28px; }
+.gen-source-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.gen-source { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--borderRadiusCircular); border: 1px solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground2); font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground1); }
+.gen-source[data-status='running'] { border-color: var(--colorBrandStroke1); }
+.gen-wait { margin: 0; font-size: var(--fontSizeBase200); }
 .gen-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.gen-steps li { display: flex; align-items: center; gap: 8px; }
+.gen-steps li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gen-steps li[data-status='running'] { font-weight: var(--fontWeightSemibold); }
 .gen-steps li[data-status='pending'] { color: var(--colorNeutralForeground3); }
 .gen-ok { color: var(--colorPaletteGreenForeground1); }
 .gen-fail { color: var(--colorPaletteRedForeground1); }

@@ -5,7 +5,7 @@ import { decodeHtml, factLinks, fetchSitePages, htmlToText, isPublicAddress, par
 import { CollectionReport } from '../src/data/collection.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import {
-  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, repairExtensions, runPlan, stageAPrompt, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
+  applyFix, fieldTopics, generatePack, missingRequired, newsOnPurpose, numbersIn, packSpec, PackGenError, prefillFromPack, pruneInvalid, purposeTerms, repairExtensions, runPlan, stageAPrompt, stepSpans, MAX_GAP_TOPICS, WORKIQ_GEN_ASPECTS, type GenDeps, type PackGenInput, type ProgressEvent, type WorkIqQuery,
 } from '../src/modules/project/packGenerate.ts';
 import { summarizeTokens } from '../src/ai/tokenUsage.ts';
 import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
@@ -762,12 +762,39 @@ describe('FR-311 pack generation (D-12)', () => {
     }
   });
 
+  it('FR-311: the collect step moves only when a read ends, Work IQ weighs most, and the bar follows the measured shares', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const events: ProgressEvent[] = [];
+    const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
+      fetchWorkIq: async (q) => { if (q.expand) await gate; return []; },
+    });
+    const run = generatePack(input({ useWorkIq: true }), d, (e) => events.push(e), new AbortController().signal);
+    await vi.waitFor(() => expect(events.at(-1)?.sources).toEqual({ site: 'done', news: 'done', workiq: 'running' }));
+    const spans = stepSpans({ useWorkIq: true });
+    const [a, b] = spans.collect;
+    expect(events[0]).toMatchObject({ step: 'collect', status: 'running', ratio: 0, sources: { site: 'running', news: 'running', workiq: 'running' } });
+    // While Work IQ is still out, only the site and news reads (2 of 10 weight) have moved the bar.
+    expect(Math.max(...events.map((e) => e.ratio))).toBeCloseTo(a + (b - a) * 0.2);
+    release();
+    await run;
+    expect(events.find((e) => e.step === 'collect' && e.status === 'done')).toMatchObject({ ratio: b, sources: { workiq: 'done' } });
+    expect(events.map((e) => e.ratio)).toEqual([...events.map((e) => e.ratio)].sort((x, y) => x - y));
+
+    // logs/workiq-bench: collecting with Work IQ took 18〜53% of a run; without it the public reads take seconds.
+    expect(b - a).toBeGreaterThanOrEqual(0.35);
+    expect(stepSpans({ useWorkIq: false }).collect[1]).toBeLessThan(0.1);
+    expect(spans.finalize[1]).toBe(1);
+  });
+
   it('D-14: a Work IQ failure is recorded and the run continues; without the opt-in Work IQ is never asked', async () => {
     let asked = 0;
+    const failEvents: ProgressEvent[] = [];
     const failing = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }], {
       fetchWorkIq: async () => { asked++; throw Object.assign(new Error('relay 401'), { code: 'notSignedIn' }); },
     });
-    const r = await generatePack(input({ useWorkIq: true }), failing, () => {}, new AbortController().signal);
+    const r = await generatePack(input({ useWorkIq: true }), failing, (e) => failEvents.push(e), new AbortController().signal);
+    expect(failEvents.find((e) => e.step === 'collect' && e.status === 'done')?.sources).toEqual({ site: 'done', news: 'done', workiq: 'failed' });
     expect(r.report.retrievalErrors).toContainEqual({ what: 'workiq', error: 'notSignedIn' });
     expect(r.report.retrieved.some((x) => x.kind === 'workiq')).toBe(false);
     expect(r.report.stopReasons).toEqual({ a: 'workIqUnavailable', b: 'workIqUnavailable' });

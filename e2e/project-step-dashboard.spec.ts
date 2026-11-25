@@ -229,6 +229,65 @@ test.describe('issue qualification (FR-347)', () => {
   });
 });
 
+test.describe('Order by cost of delay, the data each method needs, and a person\'s estimate (FR-365)', () => {
+  test('As-is compares CD3 with impact × feasibility, and an estimate changes the order and is kept', async ({ page }) => {
+    await go(page, '/step?step=asis');
+    const panel = page.getByTestId('step-cod');
+    await expect(panel).toBeVisible();
+    const verdict = panel.getByTestId('step-cod-verdict');
+    await expect(verdict).toHaveAttribute('data-verdict', 'differs');
+    await expect(verdict).toHaveAttribute('data-pick', 'issue-cash');
+    await expect(panel.getByTestId('step-cod-ifpick')).toBeVisible();
+    await expect(panel.getByTestId('step-cod-row-issue-cash')).toBeVisible();
+    await expect(panel.getByTestId('step-cod-saving')).toHaveText(/16,508,48\d/);
+    await expect(panel.getByTestId('step-cod-ready-costOfDelay')).toHaveAttribute('data-status', 'ready');
+    await expect(panel.getByTestId('step-cod-ready-costOfDelay')).toHaveAttribute('data-changes', 'yes');
+    await expect(panel.getByTestId('step-cod-ready-kano')).toHaveAttribute('data-status', 'notStored');
+
+    await panel.getByTestId('step-cod-sim').locator('summary').click();
+    await panel.getByTestId('step-cod-exclude-issue-cash').check();
+    await expect(verdict).toHaveAttribute('data-pick', 'issue-lead-time');
+    await panel.getByTestId('step-cod-reset').click();
+    await expect(verdict).toHaveAttribute('data-pick', 'issue-cash');
+
+    await panel.getByTestId('step-cod-estimate-issue-lead-time').click();
+    const dialog = page.getByTestId('cod-est-dialog');
+    await dialog.getByTestId('cod-est-duration-low').fill('0.5');
+    await dialog.getByTestId('cod-est-duration-mode').fill('0.5');
+    await dialog.getByTestId('cod-est-duration-high').fill('0.5');
+    await dialog.getByTestId('cod-est-save').click();
+    await expect(dialog.getByTestId('cod-est-note')).toHaveAttribute('aria-invalid', 'true');
+    await dialog.getByTestId('cod-est-note').fill('Plant manager interview');
+    await dialog.getByTestId('cod-est-save').click();
+    await expect(dialog).toHaveCount(0);
+    await expect(verdict).toHaveAttribute('data-pick', 'issue-lead-time');
+    await expect(verdict).toHaveAttribute('data-verdict', 'agree');
+
+    await page.reload();
+    await expect(page.getByTestId('step-cod-verdict')).toHaveAttribute('data-pick', 'issue-lead-time');
+    await page.getByTestId('step-cod-estimate-issue-lead-time').click();
+    await page.getByTestId('cod-est-clear').click();
+    await expect(page.getByTestId('step-cod-verdict')).toHaveAttribute('data-pick', 'issue-cash');
+    await page.goto('/#/step?step=kpi');
+    await expect(page.getByTestId('step-priority')).toBeVisible();
+    await expect(page.getByTestId('step-cod')).toHaveCount(0);
+  });
+
+  test('the panel and the estimate dialog pass axe, in English with no Japanese', async ({ page }) => {
+    await go(page, '/step?step=asis', 'en');
+    const panel = page.getByTestId('step-cod');
+    await expect(panel).toContainText('Order by cost of delay');
+    await panel.getByTestId('step-cod-sim').locator('summary').click();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+    await panel.getByTestId('step-cod-estimate-issue-cash').click();
+    await expect(page.getByTestId('cod-est-dialog')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+  });
+});
+
 test.describe('Khalsa advice on every step screen (FR-351)', () => {
   test('each step shows its advice and priority aids (FR-358) on the dashboard and on the deliverable screen', async ({ page }) => {
     await go(page, '/step?step=asis');
@@ -287,5 +346,46 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
       expect(await scan(page), step).toEqual([]);
       expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
     }
+  });
+});
+
+test.describe('Firmness of the issue order and the one check worth making next (FR-364)', () => {
+  test('As-is and To-be show rank acceptability, and the simulation re-ranks without saving', async ({ page }) => {
+    await go(page, '/step?step=asis');
+    const panel = page.getByTestId('step-robust');
+    await expect(panel).toBeVisible();
+    const verdict = panel.getByTestId('step-robust-verdict');
+    await expect(verdict).toHaveAttribute('data-verdict', /^(robust|contested)$/);
+    await expect(verdict).toHaveAttribute('data-pick', 'issue-lead-time');
+    await expect(panel.getByTestId('step-robust-row-issue-lead-time')).toBeVisible();
+    await expect(panel.getByTestId('step-robust-next')).toBeVisible();
+
+    await panel.getByTestId('step-robust-sim').locator('summary').click();
+    await panel.getByTestId('step-robust-exclude-issue-lead-time').check();
+    await expect(verdict).not.toHaveAttribute('data-pick', 'issue-lead-time');
+    await expect(panel.getByTestId('step-robust-row-issue-lead-time')).toHaveCount(0);
+    await panel.getByTestId('step-robust-reset').click();
+    await expect(verdict).toHaveAttribute('data-pick', 'issue-lead-time');
+
+    await page.reload();
+    await expect(page.getByTestId('step-robust-verdict')).toHaveAttribute('data-pick', 'issue-lead-time');
+    await page.goto('/#/step?step=tobe');
+    await expect(page.getByTestId('step-robust')).toBeVisible();
+    await page.goto('/#/deliverables?step=asis');
+    await expect(page.getByTestId('step-robust')).toBeVisible();
+    await page.goto('/#/step?step=kpi');
+    await expect(page.getByTestId('step-priority')).toBeVisible();
+    await expect(page.getByTestId('step-robust')).toHaveCount(0);
+  });
+
+  test('the panel passes axe with the simulation open, in English with no Japanese', async ({ page }) => {
+    await go(page, '/step?step=asis', 'en');
+    const panel = page.getByTestId('step-robust');
+    await expect(panel).toContainText('How firm the ranking is');
+    await panel.getByTestId('step-robust-sim').locator('summary').click();
+    await expect(panel.getByTestId('step-robust-weight')).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
   });
 });

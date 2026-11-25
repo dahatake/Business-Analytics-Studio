@@ -20,6 +20,8 @@ import { inputCount } from './stepDashboard.ts';
 import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
 import { DataFillPanel } from './DataFillPanel.tsx';
 import { PriorityBriefPanel } from './PriorityBrief.tsx';
+import { PriorityRobustnessPanel } from './PriorityRobustness.tsx';
+import { CostOfDelayPanel } from './CostOfDelay.tsx';
 import { useDeliverables, useFieldDrafts, useProjTransient, useProjUi } from './stores.ts';
 import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
 import { ChangeLogPanel, EvidencePanel, IssueSignalsPanel, RequirementLedgerPanel } from './RequirementsPanels.tsx';
@@ -269,6 +271,8 @@ export function DeliverablesScreen() {
       </section>
 
       <PriorityBriefPanel step={step} ctx={ctx} />
+      {(step === 'asis' || step === 'tobe') && <PriorityRobustnessPanel step={step} ctx={ctx} />}
+      {(step === 'asis' || step === 'tobe') && <CostOfDelayPanel step={step} ctx={ctx} />}
       <DiscoveryAdvicePanel step={step} ctx={ctx} />
       <DataFillPanel ctx={ctx} />
 

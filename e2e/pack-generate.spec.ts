@@ -116,6 +116,50 @@ test('a Foundry quota rejection explains the cause and does not retry before the
   expect(sends).toBe(1);
 });
 
+test('FR-311: progress is a segmented bar weighted by measured step times; collect moves only when a source finishes', async ({ page }) => {
+  const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
+  await page.addInitScript((connection) => {
+    if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
+    sessionStorage.setItem('bas.e2e.ai-seeded', '1');
+    localStorage.setItem('bas.ai.settings', JSON.stringify({
+      version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true },
+    }));
+  }, connection);
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-18T00:00:00Z', keyProtection: 'file',
+    copilot: null, entra: null, workiq: { method: 'cli', account: 'test@example.com', signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  await page.route('**/relay/site', (route) => route.fulfill({ status: 502, json: { error: 'siteUnreachable' } }));
+  await page.route('**/relay/news', (route) => route.fulfill({ json: { provider: 'test', fetchedAt: '2026-11-18T00:00:00Z', articles: [] } }));
+  await page.route('**/relay/workiq/ask', () => { /* Work IQ never answers: the run stays in the collect step */ });
+  await seed(page, 'ja', true);
+  await page.getByTestId('launch-generate-pj-c').click();
+  const dialog = page.getByTestId('gen-dialog');
+  await expect(dialog.getByTestId('gen-workiq')).toBeChecked();
+  await dialog.getByTestId('gen-check-approved').check();
+  await dialog.getByTestId('gen-start').click();
+
+  const bar = dialog.getByTestId('gen-progress-bar');
+  await expect(bar).toHaveAttribute('role', 'progressbar');
+  await expect(bar.locator('.gen-seg')).toHaveCount(7);
+  await expect(bar.locator('.gen-seg[data-step="collect"]')).toHaveAttribute('data-status', 'running');
+  const sources = dialog.getByTestId('gen-sources');
+  await expect(sources.locator('[data-source="site"]')).toHaveAttribute('data-status', 'failed');
+  await expect(sources.locator('[data-source="news"]')).toHaveAttribute('data-status', 'done');
+  await expect(sources.locator('[data-source="workiq"]')).toHaveAttribute('data-status', 'running');
+  // Collect is about 40% of a Work IQ run; site + news are 2 of the 10 source weights, so the bar shows 8% honestly.
+  const now = Number(await bar.getAttribute('aria-valuenow'));
+  expect(now).toBeGreaterThan(5);
+  expect(now).toBeLessThan(11);
+  const collectWidth = await bar.locator('.gen-seg[data-step="collect"]').evaluate((el) => el.getBoundingClientRect().width);
+  const barWidth = await bar.evaluate((el) => el.getBoundingClientRect().width);
+  expect(collectWidth / barWidth).toBeGreaterThan(0.33);
+  await expect(dialog.getByTestId('gen-step-elapsed')).toContainText('0:0');
+  await expect(dialog.getByTestId('gen-wait-workiq')).toBeVisible({ timeout: 25_000 });
+  expect(await scan(page)).toEqual([]);
+  await dialog.screenshot({ path: test.info().outputPath('gen-progress.png') });
+});
+
 test('generator fits narrow screens and can be resized in both directions', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await seed(page, 'ja');

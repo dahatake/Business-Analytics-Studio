@@ -17,9 +17,9 @@ import {
   removeWorkIqFoundry, removeWorkIqSettings, validateWorkIqInput, type SavedWorkIqFoundry, type StoredWorkIq, type WorkIqErrorCode,
 } from './workiq.ts';
 import { WorkIqCliService } from './workiqCli.ts';
-import { CONNECTION_NAME, FOUNDRY_PROJECT_SCOPE, FoundryWorkIqService, parseProjectEndpoint, type FoundryWorkIqTarget } from './workiqFoundry.ts';
+import { CONNECTION_NAME, FOUNDRY_PROJECT_SCOPE, FoundryWorkIqService, parseProjectEndpoint, workIqCandidates, type FoundryWorkIqTarget } from './workiqFoundry.ts';
 import {
-  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryTenants, parseFoundryDeployments, saveEntraState,
+  ENTRA_OUTBOUND_HOSTS, EntraError, FOUNDRY_SCOPE, MsalEntraTokens, assignFoundryRole, inspectFoundryInstance, inspectMediaResource, isFoundryResourceId, isTenantId, listFoundryInstances, listFoundryInstancesForTenant, listFoundryProjectConnections, listFoundryTenants, parseFoundryDeployments, saveEntraState,
   type EntraErrorCode, type EntraTokens,
 } from './entra.ts';
 import {
@@ -867,7 +867,7 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
   const workiqStatus = () => {
     const f = foundrySaved();
     const fAt = f && workIqFoundryTarget(vault, config) ? foundryVerifiedAt(vault, f) : null;
-    const foundry = f ? { endpoint: f.endpoint, connection: f.connection, verifiedAt: fAt } : null;
+    const foundry = f ? { endpoint: f.endpoint, connection: f.connection, verifiedAt: fAt, refusedAt: f.refusedAt ?? null } : null;
     const extra = foundry ? { foundry } : {};
     if (fAt) return { method: 'foundry', tenantId: null, clientId: null, account: null, signedIn: true, verifiedAt: fAt, foundry };
     const s = workiqSettings();
@@ -1061,7 +1061,22 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
     }
   }
 
-  if (path === '/relay/workiq/foundry' || path === '/relay/workiq/foundry/verify') {
+  if (path === '/relay/workiq/foundry' || path === '/relay/workiq/foundry/verify' || path === '/relay/workiq/foundry/discover') {
+    if (path === '/relay/workiq/foundry/discover') {
+      if (method !== 'POST') return json(405, { error: 'methodNotAllowed' });
+      if (!entraOutboundAllowed(config)) return json(403, { error: 'outboundNotAllowed' });
+      const conn = connection();
+      if (conn?.auth !== 'entraId' || !conn.tenantId) return json(409, { error: 'foundryEntraRequired' });
+      const account = foundrySubdomain(conn.endpoint);
+      if (!account) return json(409, { error: 'foundryEntraRequired' });
+      try {
+        const projects = await listFoundryProjectConnections({ tokens: entra, fetch: ctx.fetch ?? fetch, signal: ctx.signal }, conn.tenantId, account);
+        const candidates = workIqCandidates(projects, account).filter((c) => endpointHostAllowed(new URL(c.endpoint), config));
+        return json(200, { account, projects: projects.length, candidates });
+      } catch (error) {
+        return entraFailure(error);
+      }
+    }
     if (path === '/relay/workiq/foundry' && method === 'PUT') {
       const body = parseBody(req.body);
       const p = parseProjectEndpoint(body?.endpoint);
@@ -1103,6 +1118,11 @@ export async function handleRelay(req: RelayRequest, ctx: RelayContext): Promise
         workiqCli.closeSession();
         return json(200, { workiq: workiqStatus() });
       } catch (error) {
+        // Work IQ itself refused (tenant billing policy, license, consent): remembered so the screen stops offering this route.
+        const now = foundrySaved();
+        if (error instanceof WorkIqError && error.code === 'workiqForbidden' && now?.endpoint === f.endpoint && now.connection === f.connection) {
+          writeJsonAtomic(vault.dir, WORKIQ_FOUNDRY_SETTINGS_FILE, { endpoint: f.endpoint, connection: f.connection, refusedAt: new Date((ctx.now ?? Date.now)()).toISOString() });
+        }
         return workiqFailure(error);
       }
     }

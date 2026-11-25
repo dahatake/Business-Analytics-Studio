@@ -333,10 +333,11 @@ sign-in, not service enablement, billing assignment or access to Microsoft 365 d
 requires the separate retrieval check; ordinary Foundry explanations and GitHub Copilot SDK behavior are unchanged.
 The SDK's MCP configuration is not read or modified by BAS.
 
-The relay reaches Work IQ in one of two ways, chosen in the Work IQ section:
+The relay reaches Work IQ in one of three ways, chosen as one radio group in the Work IQ section (FR-366):
 
 | Route | Who signs in | What the tenant must allow | When to use |
 | --- | --- | --- | --- |
+| **Through Microsoft Foundry** (Work IQ MCP project connection, FR-361) | The Foundry Entra ID sign-in (Foundry holds the user's Work IQ token in a `UserEntraToken` connection whose audience is the Work IQ app ID) | A Work IQ billing policy (Copilot Credits) for the tenant; without it Work IQ answers "The caller tenant does not have a billing policy configured for WorkIQ." | The Foundry connection uses Entra ID and a project of that resource has a Work IQ MCP connection. `POST /relay/workiq/foundry/discover` lists those connections from ARM (projects and connections of the saved resource only, api-version 2025-06-01; nothing is sent to a model or Work IQ). The option is disabled with the reason when the connection is not Entra ID, ARM cannot be read, no usable connection exists, or the last check was refused (`refusedAt` in `workiq-foundry.json`, kept until the route is removed or verified) |
 | **Work IQ CLI** (default) | Microsoft's [Work IQ CLI](https://github.com/microsoft/work-iq) (`@microsoft/workiq`) with its own Microsoft-published client and the user's Windows (WAM) or browser sign-in | Whatever the CLI already needs in that tenant; BAS adds no app registration or admin consent | The tenant will not consent to a custom app for `WorkIQAgent.Ask` (D-14, 2026-11-11), or the user's Microsoft 365 home tenant differs from the Azure subscription tenant |
 | **My own app registration** (REST) | Device code with the user's public-client app | Work IQ enablement, billing assignment and admin consent for `WorkIQAgent.Ask` in the user's **home** tenant | The organisation manages its own app registration |
 

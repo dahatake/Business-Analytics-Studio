@@ -126,7 +126,9 @@ npm run workiq:check
 
 1. `run.cmd` で BAS を起動し、最初の画面の **AI 設定** ボタン（またはアプリの左のメニューの **AI 設定**）を押し、AI 設定ダイアログを開きます。
 2. 「接続先」が **Microsoft Foundry** になっていることを確認します。下のほうに「Work IQ（Microsoft 365 の社内情報。Microsoft Foundry のときだけ）」の欄があります。
-3. 「中継プロセスから Work IQ への接続方法」で **この PC の Work IQ CLI（推奨…）** を選び、**Work IQ CLI を使う** を押します。「Work IQ CLI を選びました。…」と表示され、状態（「Work IQ のサインイン」の横の表示）が「Work IQ CLI を選択済み（未検証）」になります。すでにこの表示になっている場合は保存済みなので、ボタンを押す必要はありません（押せない状態になっています）。
+3. 「中継プロセスから Work IQ への接続方法」で **この PC の Work IQ CLI（推奨…）** を選び、**Work IQ CLI を使う** を押します。「Work IQ CLI を選びました。…」と表示され、状態（「Work IQ のサインイン」の横の表示）が「Work IQ CLI を選択済み（未検証）」になります。すでに保存済みのときも押せます。押しても検証の結果は消えません。
+
+   接続方法の一番上の **Microsoft Foundry 経由** は、上で保存した Foundry の接続が Microsoft Entra ID で、そのリソースのプロジェクトに Work IQ MCP（`https://workiq.svc.cloud.microsoft/mcp`）への接続があるときだけ選べます。BAS が Azure Resource Manager から接続を探し（モデルや Work IQ には何も送りません）、選べないときは灰色になり、その下に理由が表示されます。テナントに Work IQ の課金ポリシーがなく、検証で Work IQ が拒否したときも「選択できません: … Work IQ がこのテナントからの利用を拒否しました …」と表示され、Work IQ CLI を使います。テナント側を設定した後は **もう一度判定する** を押します。Foundry 経由を使用中でも、Work IQ CLI を選んで **Work IQ CLI を使う** を押せば、Foundry 経由が解除されて CLI に切り替わります。
 
 #### 4. EULA を読んで同意する（PC ごとに 1 回）
 
@@ -233,6 +235,7 @@ Work IQ が返すのは、あなたがもともとアクセスできる情報だ
 | BAS を更新したのに表示や動作が変わらない | 起動中の中継プロセスは更新前のコードのまま動き続ける | 起動中の BAS のコンソールで Ctrl+C を押して止め、`run.cmd` で起動し直します（ブラウザーの再読み込みだけでは中継プロセスは更新されません） |
 | 「Work IQ が混み合っています」 | 連続した検証（5 秒以内）や混雑 | しばらく待ってから押します |
 | 「接続テストの本日の回数または送信間隔の制限に達しています。…」 | 前回のテストから 5 秒以内、または本日の回数の上限 | 5 秒以上待ってから検証します |
+| 「Microsoft Foundry 経由」が灰色で選べない | Foundry の接続が API キー、プロジェクトに Work IQ MCP の接続がない、接続の認証・対象者が違う、または検証で Work IQ がテナントを拒否した（課金ポリシー未設定） | 下に表示される理由を確認します。Work IQ CLI はそのまま使えます。テナント側やプロジェクトの接続を直した後は **もう一度判定する** を押します |
 | 「Work IQ の情報取得を検証」が押せない | 同意のチェックがない、接続方法を切り替えたが保存していない、検証中 | 課金の同意にチェックを入れ直します。接続方法を変えた場合は先に **Work IQ CLI を使う** を押します |
 | 「外部接続先の許可リストに … がありません」 | `BAS_RELAY_OUTBOUND_HOSTS` を設定している | `login.microsoftonline.com` と `workiq.svc.cloud.microsoft` を加えます（[中継の設定](../docs/relay-config.md)） |
 | 違うアカウントの情報が出る | CLI が別のアカウントでサインインしている | `npx -y @microsoft/workiq@1 auth logout` のあと `npx -y @microsoft/workiq@1 auth login` で正しいアカウントにサインインし、BAS で再検証します |

@@ -91,7 +91,7 @@ export interface WorkIqStatus {
   signedIn: boolean;
   verifiedAt: string | null;
   /** The Foundry route's saved project and connection, and its own check (null when not saved). */
-  foundry?: { endpoint: string; connection: string; verifiedAt: string | null } | null;
+  foundry?: { endpoint: string; connection: string; verifiedAt: string | null; refusedAt?: string | null } | null;
 }
 
 const UNREACHABLE: RelayStatus = { reachable: false, secrets: { foundryKey: false }, connection: null, connectionVerifiedAt: null, keyProtection: null, copilot: null, workiq: null, entra: null,
@@ -134,7 +134,7 @@ function asWorkIq(v: unknown): WorkIqStatus | null {
   const w = v as Partial<Omit<WorkIqStatus, 'foundry'>> & { foundry?: unknown };
   const f = w.foundry && typeof w.foundry === 'object' ? (w.foundry as Record<string, unknown>) : null;
   const foundry = f && typeof f.endpoint === 'string' && typeof f.connection === 'string'
-    ? { endpoint: f.endpoint, connection: f.connection, verifiedAt: typeof f.verifiedAt === 'string' ? f.verifiedAt : null } : null;
+    ? { endpoint: f.endpoint, connection: f.connection, verifiedAt: typeof f.verifiedAt === 'string' ? f.verifiedAt : null, refusedAt: typeof f.refusedAt === 'string' ? f.refusedAt : null } : null;
   const common = { account: typeof w.account === 'string' ? w.account : null, signedIn: w.signedIn === true, verifiedAt: typeof w.verifiedAt === 'string' ? w.verifiedAt : null, foundry };
   if (w.method === 'foundry') return foundry ? { method: 'foundry', tenantId: null, clientId: null, ...common } : null;
   if (w.method === 'cli') return { method: 'cli', tenantId: null, clientId: null, ...common };
@@ -693,6 +693,23 @@ export async function acceptWorkIqEula(provider: WorkIqProvider = 'foundry'): Pr
 
 /** A settings-screen step that reports success by resolving and failure by throwing RelayError. */
 export type RelayStep = () => Promise<unknown>;
+
+export interface WorkIqFoundryCandidate {
+  endpoint: string;
+  project: string;
+  connection: string;
+  problem: 'auth' | 'audience' | null;
+}
+
+/** Projects of the saved Foundry resource and their connections to the Work IQ MCP server (read from ARM; nothing is sent to a model). */
+export async function discoverWorkIqFoundry(signal?: AbortSignal): Promise<{ account: string; projects: number; candidates: WorkIqFoundryCandidate[] }> {
+  const res = await relayFetch('/relay/workiq/foundry/discover', { ...jsonInit('POST', {}), signal: signal ?? AbortSignal.timeout(90_000) });
+  if (!res.ok) throw new RelayError(res.status, await errorCode(res));
+  const body = (await res.json()) as { account?: unknown; projects?: unknown; candidates?: unknown };
+  const candidates = (Array.isArray(body.candidates) ? body.candidates : []).filter((c): c is WorkIqFoundryCandidate =>
+    !!c && typeof c === 'object' && typeof (c as WorkIqFoundryCandidate).endpoint === 'string' && typeof (c as WorkIqFoundryCandidate).connection === 'string');
+  return { account: typeof body.account === 'string' ? body.account : '', projects: typeof body.projects === 'number' ? body.projects : 0, candidates };
+}
 
 /** Saves the Foundry route's project endpoint and connection name (not used until verified). */
 export async function saveWorkIqFoundry(endpoint: string, connection: string): Promise<WorkIqStatus | null> {

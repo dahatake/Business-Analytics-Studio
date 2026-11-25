@@ -70,6 +70,8 @@ export interface SavedWorkIqFoundry {
   connection: string;
   verifiedAt?: string;
   verification?: string;
+  /** When Work IQ refused this project connection (tenant billing policy, license, consent); the screen then offers the CLI. */
+  refusedAt?: string;
 }
 const FOUNDRY_SETTINGS_FILE = 'workiq-foundry.json';
 export const WORKIQ_FOUNDRY_SETTINGS_FILE = FOUNDRY_SETTINGS_FILE;
@@ -82,7 +84,8 @@ export function loadWorkIqFoundry(dir: string): SavedWorkIqFoundry | null {
     if (typeof v.endpoint !== 'string' || typeof v.connection !== 'string') return null;
     const verified = typeof v.verifiedAt === 'string' && Number.isFinite(Date.parse(v.verifiedAt)) && typeof v.verification === 'string' && /^[a-f0-9]{64}$/.test(v.verification)
       ? { verifiedAt: v.verifiedAt, verification: v.verification } : {};
-    return { endpoint: v.endpoint, connection: v.connection, ...verified };
+    const refused = !verified.verifiedAt && typeof v.refusedAt === 'string' && Number.isFinite(Date.parse(v.refusedAt)) ? { refusedAt: v.refusedAt } : {};
+    return { endpoint: v.endpoint, connection: v.connection, ...verified, ...refused };
   } catch {
     return null;
   }

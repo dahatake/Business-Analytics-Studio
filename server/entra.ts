@@ -468,6 +468,54 @@ export async function listFoundryInstances(deps: ArmDeps): Promise<{ instances: 
   return { instances: results.flatMap((r) => r.instances), tenants: results.map((r) => r.tenant) };
 }
 
+export interface FoundryProjectConnection {
+  name: string;
+  target: string;
+  authType: string;
+  audience: string;
+}
+
+export interface FoundryProjectInfo {
+  /** The project's "AI Foundry API" endpoint as ARM reports it. */
+  endpoint: string;
+  name: string;
+  connections: FoundryProjectConnection[];
+}
+
+const ProjectList = z.object({ value: z.array(z.object({ id: z.string(), name: z.string(), properties: z.object({ endpoints: z.record(z.string(), z.unknown()).optional() }).passthrough().optional() }).passthrough()) }).passthrough();
+const ConnectionList = z.object({ value: z.array(z.object({ name: z.string(), properties: z.object({
+  target: z.unknown().optional(), authType: z.unknown().optional(), audience: z.unknown().optional(),
+}).passthrough().optional() }).passthrough()) }).passthrough();
+const PROJECTS_API = '2025-06-01';
+
+/**
+ * Projects of the Foundry resource whose custom subdomain is `subdomain` (the saved Foundry connection) and each
+ * project's connections, read with the user's own ARM rights. Only the resource the user already picked is read.
+ */
+export async function listFoundryProjectConnections(deps: ArmDeps, tenantId: string, subdomain: string): Promise<FoundryProjectInfo[]> {
+  const sub = subdomain.toLowerCase();
+  const instance = (await listFoundryInstancesForTenant(deps, tenantId)).find((i) => i.endpoint === `https://${sub}.openai.azure.com/openai/v1`);
+  if (!instance) return [];
+  const listed = await arm<unknown>(deps, tenantId, `${instance.id}/projects?api-version=${PROJECTS_API}`);
+  if (listed.status === 401 || listed.status === 403) throw new EntraError('armForbidden');
+  if (listed.status !== 200) throw new EntraError('armError');
+  const projects = ProjectList.safeParse(listed.body);
+  if (!projects.success) throw new EntraError('armError');
+  const prefix = `${instance.id.toLowerCase()}/projects/`;
+  return Promise.all(projects.data.value.filter((p) => p.id.toLowerCase().startsWith(prefix)).map(async (p) => {
+    const conns = await arm<unknown>(deps, tenantId, `${p.id}/connections?api-version=${PROJECTS_API}`);
+    if (conns.status === 401 || conns.status === 403) throw new EntraError('armForbidden');
+    if (conns.status !== 200) throw new EntraError('armError');
+    const parsed = ConnectionList.safeParse(conns.body);
+    if (!parsed.success) throw new EntraError('armError');
+    return {
+      endpoint: str(p.properties?.endpoints?.['AI Foundry API']),
+      name: p.name.split('/').pop() ?? p.name,
+      connections: parsed.data.value.map((c) => ({ name: c.name, target: str(c.properties?.target), authType: str(c.properties?.authType), audience: str(c.properties?.audience) })),
+    };
+  }));
+}
+
 const actionMatches = (pattern: string, action: string) =>
   new RegExp(`^${pattern.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(action);
 

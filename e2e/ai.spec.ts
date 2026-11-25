@@ -627,6 +627,82 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       expect(await scan(page)).toEqual([]);
     });
 
+    test(`${lang}: with Microsoft Foundry, Work IQ via Foundry is not selectable after Work IQ refused the tenant; the saved CLI stays usable`, async ({ page }) => {
+      const tenantId = '11111111-2222-3333-4444-555555555555';
+      const project = 'https://bas-foundry.services.ai.azure.com/api/projects/bas-proj';
+      const cli = { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: true, verifiedAt: '2026-11-20T00:00:00.000Z' };
+      let foundry: Record<string, unknown> | null = { endpoint: project, connection: 'workiq-mcp', verifiedAt: null, refusedAt: '2026-11-25T01:02:03.000Z' };
+      const calls: string[] = [];
+      const state = () => (foundry?.verifiedAt
+        ? { method: 'foundry', tenantId: null, clientId: null, account: null, signedIn: true, verifiedAt: foundry.verifiedAt, foundry }
+        : { ...cli, ...(foundry ? { foundry } : {}) });
+      await page.route('**/relay/status', async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({ json: { ...await response.json(),
+          secrets: { foundryKey: false },
+          connection: { endpoint: 'https://bas-foundry.openai.azure.com/openai/v1', deployment: 'model-router', apiVersion: '2025-04-01-preview', auth: 'entraId', tenantId },
+          connectionVerifiedAt: '2026-11-19T00:00:00.000Z',
+          entra: { signedIn: true, account: 'user@example.test', tenantId, signIn: { status: 'signedIn' } },
+          workiq: state(),
+        } });
+      });
+      await page.route('**/relay/entra/tenants', (route) => route.fulfill({ json: { tenants: [{ tenantId, name: 'Directory', signedIn: true }] } }));
+      await page.route('**/relay/entra/instances', (route) => route.fulfill({ json: { instances: [] } }));
+      await page.route('**/relay/workiq/foundry/discover', async (route) => {
+        calls.push('discover');
+        await route.fulfill({ json: { account: 'bas-foundry', projects: 1, candidates: [{ endpoint: project, project: 'bas-proj', connection: 'workiq-mcp', problem: null }] } });
+      });
+      await page.route('**/relay/workiq/foundry', async (route) => {
+        expect(route.request().method()).toBe('DELETE');
+        calls.push('deleteFoundry');
+        foundry = null;
+        await route.fulfill({ json: { workiq: state() } });
+      });
+      await page.route('**/relay/workiq', async (route) => {
+        expect(route.request().method()).toBe('PUT');
+        expect(route.request().postDataJSON()).toEqual({ method: 'cli' });
+        calls.push('saveCli');
+        await route.fulfill({ json: { workiq: state() } });
+      });
+      await openAiSettings(page, { lang });
+      const foundryRoute = page.getByTestId('ai-workiq-route-foundry');
+      await expect(foundryRoute).toBeDisabled();
+      await expect(page.getByTestId('ai-workiq-foundry-unavailable')).toHaveAttribute('data-reason', 'refused');
+      await expect(page.getByTestId('ai-workiq-foundry-unavailable')).toContainText('2026-11-25T01:02:03.000Z');
+      await expect(page.getByTestId('ai-workiq-route-cli')).toBeChecked();
+      await expect(page.getByTestId('ai-workiq-state')).toContainText(lang === 'en' ? 'Work IQ CLI ready' : 'Work IQ CLI を利用可能');
+      // The CLI route is already saved and verified; saving it again is allowed and keeps the check.
+      await expect(page.getByTestId('ai-workiq-save')).toBeEnabled();
+      await page.getByTestId('ai-workiq-save').click();
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'Work IQ CLI is selected' : 'Work IQ CLI を選びました');
+      await expect(page.getByTestId('ai-workiq-verification')).toContainText('2026-11-20T00:00:00.000Z');
+      expect(await scan(page)).toEqual([]);
+
+      // Asking again removes the recorded refusal; the connection found in the Foundry resource becomes selectable.
+      await page.getByTestId('ai-workiq-foundry-recheck').click();
+      await expect(foundryRoute).toBeEnabled();
+      await expect(page.getByTestId('ai-workiq-foundry-unavailable')).toHaveCount(0);
+      await foundryRoute.check();
+      await expect(page.getByTestId('ai-workiq-foundry-connection')).toHaveValue(`${project}|workiq-mcp`);
+      await expect(page.getByTestId('ai-workiq-foundry-connection')).toContainText('bas-proj / workiq-mcp');
+      await expect(page.getByTestId('ai-workiq-local')).toHaveCount(0);
+
+      // While the Foundry route is in use, the CLI button removes it first (the relay refuses the CLI until then).
+      foundry = { endpoint: project, connection: 'workiq-mcp', verifiedAt: '2026-11-26T00:00:00.000Z', refusedAt: null };
+      await page.reload();
+      await page.getByTestId('nav-ai-settings').click();
+      await expect(foundryRoute).toBeChecked();
+      await expect(page.getByTestId('ai-workiq-foundry-state')).toContainText('2026-11-26T00:00:00.000Z');
+      await page.getByTestId('ai-workiq-route-cli').check();
+      await expect(page.getByTestId('ai-workiq-cli-off')).toBeVisible();
+      calls.length = 0;
+      await page.getByTestId('ai-workiq-save').click();
+      await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'Work IQ CLI is selected' : 'Work IQ CLI を選びました');
+      expect(calls.filter((c) => c !== 'discover')).toEqual(['deleteFoundry', 'saveCli']);
+      await expect(page.getByTestId('ai-workiq-cli-off')).toHaveCount(0);
+      await expect(page.getByTestId('ai-workiq-route-cli')).toBeChecked();
+    });
+
     test(`${lang}: launch settings explains blocked tests instead of disabling the action`, async ({ page }) => {
       await page.setViewportSize({ width: 768, height: 920 });
       await seedLaunch(page, lang);

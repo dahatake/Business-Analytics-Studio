@@ -5,7 +5,7 @@ import {
 } from '@fluentui/react-components';
 import { ArrowSync20Regular, Delete20Regular, Key20Regular, PersonKey20Regular, PlugConnected20Regular, Save20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
-import { RelayError, acceptWorkIqEula, deleteWorkIqFoundry, pollWorkIqSignIn, saveWorkIqFoundry, startWorkIqSignIn, verifyWorkIq, verifyWorkIqFoundry, type ConnectionSaveError, type RelayStep, type SecretName, type WorkIqDeviceCode, type WorkIqProvider } from './relayClient.ts';
+import { RelayError, acceptWorkIqEula, deleteWorkIqFoundry, discoverWorkIqFoundry, pollWorkIqSignIn, saveWorkIqFoundry, startWorkIqSignIn, verifyWorkIq, verifyWorkIqFoundry, type ConnectionSaveError, type RelayStep, type SecretName, type WorkIqDeviceCode, type WorkIqFoundryCandidate, type WorkIqProvider, type WorkIqStatus } from './relayClient.ts';
 import { connectionTestPreflight, isConfigured, useAiSettings, workIqReady, type AiProvider, type AuthMethod } from './settingsStore.ts';
 import { EntraConnection } from './EntraConnection.tsx';
 import { DecisionSettings } from './DecisionSettings.tsx';
@@ -227,27 +227,91 @@ const workIqMessage = (code: string | undefined): WorkIqMessage => ((WORKIQ_ERRO
 export const WORKIQ_EULA_URL = 'https://github.com/microsoft/work-iq';
 const workIqProviderOf = (p: AiProvider): WorkIqProvider => (p === 'copilotSdk' ? 'copilotSdk' : 'foundry');
 
+type WorkIqRoute = 'foundry' | 'cli' | 'app';
+const ENTRA_ERRORS = ['notSignedIn', 'interactionRequired', 'authFailed', 'invalidTenant', 'armForbidden', 'armError', 'armTimeout', 'outboundNotAllowed'] as const;
+const entraMessage = (code: string | undefined) => `ai.entra.err.${ENTRA_ERRORS.find((c) => c === code) ?? 'failed'}` as const;
+
+/** Why the Foundry route cannot be chosen now (null: it can). */
+type FoundryBlock =
+  | { kind: 'needsEntra' } | { kind: 'checking' } | { kind: 'failed'; code: string | undefined }
+  | { kind: 'noConnection'; account: string; projects: number } | { kind: 'badConnection'; account: string; connection: string }
+  | { kind: 'refused'; at: string };
+
 /**
- * Work IQ through a Microsoft Foundry project connection to the Work IQ MCP server (server/workiqFoundry.ts). Saved apart
- * from the CLI route; once its own check passes, the relay uses it and the CLI route below is turned off.
+ * Whether Work IQ can be reached through the saved Microsoft Foundry resource: the resource's projects must hold a
+ * connection to the Work IQ MCP server (read from ARM, nothing sent to a model), and Work IQ must not have refused it.
  */
-function WorkIqFoundrySettings() {
-  const { t } = useI18n();
+function useWorkIqFoundry() {
+  const reachable = useAiSettings((s) => s.relayReachable);
+  const conn = useAiSettings((s) => s.relayConnection);
   const workiq = useAiSettings((s) => s.workiq);
+  const entra = conn?.auth === 'entraId';
+  const [found, setFound] = useState<{ key: string; account: string; projects: number; candidates: WorkIqFoundryCandidate[] } | { key: string; error: string | undefined } | null>(null);
+  const [round, setRound] = useState(0);
+  const key = entra && reachable ? `${conn.endpoint}|${conn.tenantId ?? ''}|${round}` : '';
+  useEffect(() => {
+    if (!key) return;
+    const controller = new AbortController();
+    discoverWorkIqFoundry(controller.signal)
+      .then((r) => setFound({ key, ...r }))
+      .catch((error: unknown) => { if (!controller.signal.aborted) setFound({ key, error: error instanceof RelayError ? error.code : undefined }); });
+    return () => controller.abort();
+  }, [key]);
+  const saved = workiq?.foundry ?? null;
+  const inUse = workiq?.method === 'foundry' && !!workiq.verifiedAt;
+  const current = found && found.key === key ? found : null;
+  const usable = current && 'candidates' in current ? current.candidates.filter((c) => c.problem === null) : [];
+  const block: FoundryBlock | null = !entra ? { kind: 'needsEntra' }
+    : saved?.refusedAt ? { kind: 'refused', at: saved.refusedAt }
+      : !current ? { kind: 'checking' }
+        : 'error' in current ? (current.error === 'foundryEntraRequired' ? { kind: 'needsEntra' } : { kind: 'failed', code: current.error })
+          : usable.length > 0 ? null
+            : current.candidates.length > 0 ? { kind: 'badConnection', account: current.account, connection: current.candidates[0]!.connection }
+              : { kind: 'noConnection', account: current.account, projects: current.projects };
+  return { inUse, saved, usable, block: inUse ? null : block, recheck: () => setRound((r) => r + 1) };
+}
+
+function FoundryBlockReason({ block, onRecheck, busy }: { block: FoundryBlock; onRecheck: () => void; busy: boolean }) {
+  const { t } = useI18n();
+  const text = block.kind === 'failed'
+    ? t('ai.workiq.foundry.block.failed', { reason: t(entraMessage(block.code)) })
+    : t(`ai.workiq.foundry.block.${block.kind}`, block.kind === 'refused' ? { at: block.at } : block.kind === 'noConnection' ? { account: block.account, projects: block.projects } : block.kind === 'badConnection' ? { account: block.account, connection: block.connection } : {});
+  return (
+    <div className="ai-stack" data-testid="ai-workiq-foundry-unavailable" data-reason={block.kind}>
+      <p className="muted">{text}</p>
+      {block.kind !== 'checking' && block.kind !== 'needsEntra' && (
+        <div className="ai-row">
+          <Button size="small" icon={<ArrowSync20Regular />} onClick={onRecheck} disabled={busy} data-testid="ai-workiq-foundry-recheck">{t('ai.workiq.foundry.recheck')}</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Work IQ through a project connection of the saved Microsoft Foundry resource to the Work IQ MCP server
+ * (server/workiqFoundry.ts). The project and connection come from that resource; once its own check passes, the relay
+ * uses this route and the CLI and app-registration routes are not used.
+ */
+function WorkIqFoundrySettings({ usable, saved, inUse }: { usable: WorkIqFoundryCandidate[]; saved: WorkIqStatus['foundry'] | null; inUse: boolean }) {
+  const { t } = useI18n();
   const provider = useAiSettings((s) => s.provider);
   const reachable = useAiSettings((s) => s.relayReachable);
   const { refreshRelay } = useAiSettings.getState();
-  const saved = workiq?.foundry ?? null;
-  const [endpoint, setEndpoint] = useState(saved?.endpoint ?? '');
-  const [connection, setConnection] = useState(saved?.connection ?? 'workiq-mcp');
+  const options = [...usable];
+  if (saved && !options.some((c) => c.endpoint === saved.endpoint && c.connection === saved.connection)) {
+    options.unshift({ endpoint: saved.endpoint, connection: saved.connection, project: saved.endpoint.split('/').pop() ?? '', problem: null });
+  }
+  const valueOf = (c: { endpoint: string; connection: string }) => `${c.endpoint}|${c.connection}`;
+  const [choice, setChoice] = useState(saved ? valueOf(saved) : options[0] ? valueOf(options[0]) : '');
   const [message, setMessage] = useState<'foundrySaved' | 'foundryDeleted' | 'foundryVerified' | WorkIqMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const [consent, setConsent] = useState(false);
   useEffect(() => {
-    setEndpoint((v) => v || saved?.endpoint || '');
-    if (saved?.connection) setConnection((v) => (v === 'workiq-mcp' ? saved.connection : v));
-  }, [saved?.endpoint, saved?.connection]);
-  const changed = saved?.endpoint !== endpoint.trim() || saved?.connection !== connection.trim();
+    setChoice((v) => v || (saved ? valueOf(saved) : options[0] ? valueOf(options[0]) : ''));
+  }, [saved?.endpoint, saved?.connection, options.length]);
+  const picked = options.find((c) => valueOf(c) === choice) ?? null;
+  const changed = !saved || !picked || valueOf(saved) !== choice;
   const run = async (fn: RelayStep, ok: 'foundrySaved' | 'foundryDeleted' | 'foundryVerified') => {
     setBusy(true);
     setMessage(null);
@@ -264,16 +328,14 @@ function WorkIqFoundrySettings() {
   };
   return (
     <div className="ai-stack" data-testid="ai-workiq-foundry">
-      <p className="ai-label">{t('ai.workiq.foundry.title')}</p>
       <p className="muted">{t('ai.workiq.foundry.info')}</p>
-      <Field label={t('ai.workiq.foundry.endpoint')} hint={t('ai.workiq.foundry.endpointHint')}>
-        <Input value={endpoint} spellCheck={false} onChange={(_, d) => setEndpoint(d.value)} disabled={!reachable || busy} data-testid="ai-workiq-foundry-endpoint" />
-      </Field>
       <Field label={t('ai.workiq.foundry.connection')} hint={t('ai.workiq.foundry.connectionHint')}>
-        <Input value={connection} spellCheck={false} onChange={(_, d) => setConnection(d.value)} disabled={!reachable || busy} data-testid="ai-workiq-foundry-connection" />
+        <Select value={choice} onChange={(_, d) => setChoice(d.value)} disabled={!reachable || busy} data-testid="ai-workiq-foundry-connection">
+          {options.map((c) => <option key={valueOf(c)} value={valueOf(c)}>{t('ai.workiq.foundry.option', { project: c.project, connection: c.connection })}</option>)}
+        </Select>
       </Field>
       <div className="ai-row">
-        <Button appearance="primary" icon={<Save20Regular />} onClick={() => void run(() => saveWorkIqFoundry(endpoint, connection), 'foundrySaved')} disabled={!reachable || busy || !changed || !endpoint.trim() || !connection.trim()} data-testid="ai-workiq-foundry-save">
+        <Button appearance="primary" icon={<Save20Regular />} onClick={() => void run(() => saveWorkIqFoundry(picked!.endpoint, picked!.connection), 'foundrySaved')} disabled={!reachable || busy || !changed || !picked} data-testid="ai-workiq-foundry-save">
           {t('ai.workiq.foundry.save')}
         </Button>
         <Button icon={<Delete20Regular />} onClick={() => void run(() => deleteWorkIqFoundry(), 'foundryDeleted')} disabled={!reachable || busy || !saved} data-testid="ai-workiq-foundry-delete">
@@ -281,8 +343,8 @@ function WorkIqFoundrySettings() {
         </Button>
       </div>
       <p className="ai-status" data-testid="ai-workiq-foundry-state">
-        <Badge appearance="tint" color={saved?.verifiedAt ? 'success' : 'warning'}>
-          {saved?.verifiedAt ? t('ai.workiq.foundry.inUse', { at: saved.verifiedAt }) : saved ? t('ai.workiq.foundry.notVerified') : t('ai.conn.notSaved')}
+        <Badge appearance="tint" color={inUse ? 'success' : 'warning'}>
+          {inUse && saved?.verifiedAt ? t('ai.workiq.foundry.inUse', { at: saved.verifiedAt }) : saved ? t('ai.workiq.foundry.notVerified') : t('ai.conn.notSaved')}
         </Badge>
       </p>
       <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={busy} label={t('ai.workiq.testConsent')} data-testid="ai-workiq-foundry-consent" />
@@ -295,35 +357,67 @@ function WorkIqFoundrySettings() {
 }
 
 /**
- * D-14: Microsoft Work IQ for the Project pack: required with Microsoft Foundry, optional with GitHub Copilot. Three routes, all run by the relay:
- * a Microsoft Foundry project connection to the Work IQ MCP server (used once verified, which turns the others off),
- * Microsoft's Work IQ CLI on this PC (its own sign-in; no app registration or admin consent in BAS), or the user's own
- * public-client app registration (delegated WorkIQAgent.Ask) signed in by device code. This screen never sees a token.
+ * D-14: Microsoft Work IQ for the Project pack: required with Microsoft Foundry, optional with GitHub Copilot. One choice
+ * of three routes, all run by the relay: a project connection of the saved Microsoft Foundry resource to the Work IQ MCP
+ * server (selectable only while that resource has one and Work IQ has not refused it; used once verified), Microsoft's
+ * Work IQ CLI on this PC (its own sign-in; always selectable), or the user's own public-client app registration
+ * (delegated WorkIQAgent.Ask) signed in by device code. This screen never sees a token.
  */
 export function WorkIqSettings() {
   const { t } = useI18n();
   const workiq = useAiSettings((s) => s.workiq);
-  const viaFoundry = workiq?.method === 'foundry' && !!workiq.verifiedAt;
+  const reachable = useAiSettings((s) => s.relayReachable);
+  const { refreshRelay } = useAiSettings.getState();
+  const foundry = useWorkIqFoundry();
+  const initial = (): WorkIqRoute => (foundry.inUse || workiq?.method === 'foundry' ? 'foundry' : workiq?.method === 'app' ? 'app' : 'cli');
+  const [route, setRoute] = useState<WorkIqRoute>(initial);
+  const [resetting, setResetting] = useState(false);
+  useEffect(() => setRoute(initial()), [foundry.inUse, workiq?.method]);
+  // A route that became unavailable (e.g. Work IQ refused the check) falls back to the local routes.
+  useEffect(() => {
+    if (route === 'foundry' && foundry.block && foundry.block.kind !== 'checking') setRoute(workiq?.method === 'app' ? 'app' : 'cli');
+  }, [route, foundry.block?.kind]);
+  const recheck = async () => {
+    setResetting(true);
+    try {
+      // A recorded refusal belongs to the saved route: removing it lets the user try again.
+      if (foundry.saved?.refusedAt) await deleteWorkIqFoundry();
+    } catch {
+      // The listing below still runs; the refusal stays visible if it could not be removed.
+    } finally {
+      await refreshRelay();
+      foundry.recheck();
+      setResetting(false);
+    }
+  };
   return (
     <section className="ai-stack" aria-labelledby="ai-workiq-title" data-testid="ai-workiq">
       <h3 id="ai-workiq-title" className="ai-h3">{t('ai.workiq.title')}</h3>
       <p className="muted">{t('ai.workiq.lead')}</p>
-      <WorkIqFoundrySettings />
-      {viaFoundry
-        ? <MessageBar intent="success" data-testid="ai-workiq-cli-off"><MessageBarBody>{t('ai.workiq.foundry.cliOff')}</MessageBarBody></MessageBar>
-        : <WorkIqLocalSettings />}
+      <p id="ai-workiq-lbl-route" className="ai-label">{t('ai.workiq.route')}</p>
+      <RadioGroup value={route} onChange={(_, d) => setRoute(d.value as WorkIqRoute)} aria-labelledby="ai-workiq-lbl-route" disabled={!reachable || resetting} data-testid="ai-workiq-route">
+        <Radio value="foundry" label={t('ai.workiq.route.foundry')} disabled={foundry.block !== null} data-testid="ai-workiq-route-foundry" />
+        {foundry.block && <FoundryBlockReason block={foundry.block} onRecheck={() => void recheck()} busy={resetting} />}
+        <Radio value="cli" label={t('ai.workiq.route.cli')} data-testid="ai-workiq-route-cli" />
+        <Radio value="app" label={t('ai.workiq.route.app')} data-testid="ai-workiq-route-app" />
+      </RadioGroup>
+      {route === 'foundry'
+        ? <WorkIqFoundrySettings usable={foundry.usable} saved={foundry.saved} inUse={foundry.inUse} />
+        : <WorkIqLocalSettings route={route} viaFoundry={foundry.inUse} />}
     </section>
   );
 }
 
-/** The Work IQ CLI and app-registration routes (not shown while the Foundry route is in use). */
-function WorkIqLocalSettings() {
+/**
+ * The Work IQ CLI or app-registration route. While the Foundry route is in use only the button that switches to this
+ * route is offered: the relay refuses the CLI and app endpoints until the Foundry route is removed.
+ */
+function WorkIqLocalSettings({ route, viaFoundry }: { route: 'cli' | 'app'; viaFoundry: boolean }) {
   const { t } = useI18n();
   const workiq = useAiSettings((s) => s.workiq);
   const provider = useAiSettings((s) => s.provider);
   const reachable = useAiSettings((s) => s.relayReachable);
   const { saveWorkIq, deleteWorkIq, refreshRelay } = useAiSettings.getState();
-  const [route, setRoute] = useState<'cli' | 'app'>(workiq?.method === 'app' ? 'app' : 'cli');
   const [tenantId, setTenantId] = useState(workiq?.tenantId ?? '');
   const [clientId, setClientId] = useState(workiq?.clientId ?? '');
   const [code, setCode] = useState<WorkIqDeviceCode | null>(null);
@@ -335,17 +429,28 @@ function WorkIqLocalSettings() {
   const polling = useRef(0);
 
   useEffect(() => {
-    if (workiq && workiq.method !== 'foundry') setRoute(workiq.method);
     setTenantId((v) => v || workiq?.tenantId || '');
     setClientId((v) => v || workiq?.clientId || '');
   }, [workiq?.method, workiq?.tenantId, workiq?.clientId]);
   useEffect(() => () => { polling.current++; }, []);
   useEffect(() => { setConsent(false); setMessage(null); }, [tenantId, clientId, route]);
 
-  const appChanged = workiq?.method !== 'app' || workiq.tenantId !== tenantId.trim().toLowerCase() || workiq.clientId !== clientId.trim().toLowerCase();
-  const changed = route === 'cli' ? workiq?.method !== 'cli' : appChanged;
+  const appChanged = viaFoundry || workiq?.method !== 'app' || workiq.tenantId !== tenantId.trim().toLowerCase() || workiq.clientId !== clientId.trim().toLowerCase();
+  const changed = route === 'cli' ? viaFoundry || workiq?.method !== 'cli' : appChanged;
   const save = async () => {
     setBusy(true);
+    setMessage(null);
+    if (viaFoundry) {
+      try {
+        // The relay keeps using the Foundry route while it is saved and verified.
+        await deleteWorkIqFoundry();
+      } catch (error) {
+        setBusy(false);
+        setMessage(workIqMessage(error instanceof RelayError ? error.code : undefined));
+        return;
+      }
+    }
+    // Saving the CLI again keeps its sign-in check (the relay treats it as unchanged).
     const r = await saveWorkIq(route === 'cli' ? { method: 'cli' } : { method: 'app', tenantId, clientId });
     setBusy(false);
     setCode(null);
@@ -423,27 +528,23 @@ function WorkIqLocalSettings() {
   const canVerify = cliSaved ? route === 'cli' : workiq?.signedIn === true;
   return (
     <div className="ai-stack" data-testid="ai-workiq-local">
-      <p id="ai-workiq-lbl-route" className="ai-label">{t('ai.workiq.route')}</p>
-      <RadioGroup value={route} onChange={(_, d) => setRoute(d.value === 'app' ? 'app' : 'cli')} aria-labelledby="ai-workiq-lbl-route" disabled={!reachable || busy || checking} data-testid="ai-workiq-route">
-        <Radio value="cli" label={t('ai.workiq.route.cli')} data-testid="ai-workiq-route-cli" />
-        <Radio value="app" label={t('ai.workiq.route.app')} data-testid="ai-workiq-route-app" />
-      </RadioGroup>
-      <p className="ai-status" data-testid="ai-workiq-state">
+      {viaFoundry && <MessageBar intent="info" data-testid="ai-workiq-cli-off"><MessageBarBody>{t('ai.workiq.foundry.cliOff')}</MessageBarBody></MessageBar>}
+      {!viaFoundry && <p className="ai-status" data-testid="ai-workiq-state">
         <span>{t('ai.workiq.state')}</span>
         <Badge appearance="tint" color={workiq?.signedIn ? 'success' : 'informative'}>
           {workiq === null ? t('ai.conn.notSaved')
             : cliSaved ? t(workiq.verifiedAt ? 'ai.workiq.cliReady' : 'ai.workiq.cliSaved')
               : workiq.signedIn ? t('ai.workiq.signedIn', { account: workiq.account ?? '—' }) : t('ai.workiq.notSignedIn')}
         </Badge>
-      </p>
+      </p>}
       {route === 'cli' ? (
         <>
           <p className="muted">{t('ai.workiq.cliInfo')}</p>
           <div className="ai-row">
-            <Button appearance="primary" icon={<Save20Regular />} onClick={() => void save()} disabled={!reachable || busy || checking || !changed} data-testid="ai-workiq-save">
+            <Button appearance="primary" icon={<Save20Regular />} onClick={() => void save()} disabled={!reachable || busy || checking} data-testid="ai-workiq-save">
               {t('ai.workiq.saveCli')}
             </Button>
-            <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!reachable || busy || checking || workiq === null} data-testid="ai-workiq-delete">{t('ai.workiq.delete')}</Button>
+            <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!reachable || busy || checking || workiq === null || workiq.method === 'foundry'} data-testid="ai-workiq-delete">{t('ai.workiq.delete')}</Button>
           </div>
           {cliSaved && (
             <div className="ai-stack" data-testid="ai-workiq-eula">
@@ -474,7 +575,7 @@ function WorkIqLocalSettings() {
             <Button icon={<PersonKey20Regular />} onClick={() => void signIn()} disabled={!reachable || busy || checking || workiq?.method !== 'app' || changed || code !== null} data-testid="ai-workiq-signin">
               {t(workiq?.signedIn ? 'ai.workiq.signInAgain' : 'ai.workiq.signIn')}
             </Button>
-            <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!reachable || busy || checking || workiq === null} data-testid="ai-workiq-delete">{t('ai.workiq.delete')}</Button>
+            <Button icon={<Delete20Regular />} onClick={() => void remove()} disabled={!reachable || busy || checking || workiq === null || workiq.method === 'foundry'} data-testid="ai-workiq-delete">{t('ai.workiq.delete')}</Button>
           </div>
         </>
       )}
@@ -491,16 +592,20 @@ function WorkIqLocalSettings() {
       {message && (
         <p role="status" className="muted" data-testid="ai-workiq-msg">{t(`ai.workiq.msg.${message}`)}</p>
       )}
-      <p className="ai-status" data-testid="ai-workiq-verification">
-        <Badge appearance="tint" color={workiq?.signedIn && workiq.verifiedAt ? 'success' : 'warning'}>
-          {workiq?.signedIn && workiq.verifiedAt ? t('ai.workiq.verifiedAt', { at: workiq.verifiedAt }) : t('ai.workiq.unverified')}
-        </Badge>
-      </p>
-      <p className="muted">{t('ai.workiq.testInfo')}</p>
-      <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={checking} label={t('ai.workiq.testConsent')} data-testid="ai-workiq-consent" />
-      <Button icon={checking ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void check()} disabled={!reachable || busy || checking || changed || !canVerify || !consent || code !== null} data-testid="ai-workiq-check">
-        {t(checking ? 'ai.workiq.testing' : 'ai.workiq.test')}
-      </Button>
+      {!viaFoundry && (
+        <>
+          <p className="ai-status" data-testid="ai-workiq-verification">
+            <Badge appearance="tint" color={workiq?.signedIn && workiq.verifiedAt ? 'success' : 'warning'}>
+              {workiq?.signedIn && workiq.verifiedAt ? t('ai.workiq.verifiedAt', { at: workiq.verifiedAt }) : t('ai.workiq.unverified')}
+            </Badge>
+          </p>
+          <p className="muted">{t('ai.workiq.testInfo')}</p>
+          <Checkbox checked={consent} onChange={(_, d) => setConsent(d.checked === true)} disabled={checking} label={t('ai.workiq.testConsent')} data-testid="ai-workiq-consent" />
+          <Button icon={checking ? <Spinner size="tiny" /> : <PlugConnected20Regular />} onClick={() => void check()} disabled={!reachable || busy || checking || changed || !canVerify || !consent || code !== null} data-testid="ai-workiq-check">
+            {t(checking ? 'ai.workiq.testing' : 'ai.workiq.test')}
+          </Button>
+        </>
+      )}
     </div>
   );
 }

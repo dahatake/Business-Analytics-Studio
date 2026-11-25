@@ -123,9 +123,10 @@ describe('Work IQ through Microsoft Foundry in the relay', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const setup = async (auth: 'entraId' | 'apiKey' = 'entraId') => {
+  const setup = async (auth: 'entraId' | 'apiKey' = 'entraId', arm: typeof globalThis.fetch = async () => new Response('{}', { status: 404 })) => {
     const stub = foundryStub(() => mode);
-    const fetch: typeof globalThis.fetch = (url, init) => (String(url).includes('.openai.azure.com') ? verifiedReply(url, init) : stub.fetch(url, init));
+    const fetch: typeof globalThis.fetch = (url, init) => (String(url).startsWith('https://management.azure.com/') ? arm(url, init)
+      : String(url).includes('.openai.azure.com') ? verifiedReply(url, init) : stub.fetch(url, init));
     let clock = Date.parse('2026-11-25T00:00:00Z');
     const workiqFoundry = foundryWorkIqServiceFor(vault, entra, config, fetch, () => (clock += 10_000));
     const ctx: Partial<RelayContext> = { config, entra, fetch, workiqFoundry, now: () => Date.parse('2026-11-25T00:00:00Z') };
@@ -149,12 +150,14 @@ describe('Work IQ through Microsoft Foundry in the relay', () => {
     // A refused check (no billing policy) keeps the CLI route in use and changeable.
     mode = 'billing';
     expect(await call(req('POST', '/relay/workiq/foundry/verify', { provider: 'foundry' }))).toMatchObject({ status: 403, body: { error: 'workiqForbidden' } });
-    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ workiq: { method: 'cli', foundry: { verifiedAt: null } } });
+    // The refusal is kept so the settings screen can disable the Foundry route until the user asks to check again.
+    expect((await call(req('GET', '/relay/status'))).body).toMatchObject({ workiq: { method: 'cli', foundry: { verifiedAt: null, refusedAt: '2026-11-25T00:00:00.000Z' } } });
     expect((await call(req('PUT', '/relay/workiq', { method: 'cli' }))).status).toBe(200);
+    expect((await call(req('PUT', '/relay/workiq/foundry', { endpoint: PROJECT, connection: 'workiq-mcp' }))).body).toMatchObject({ workiq: { foundry: { refusedAt: '2026-11-25T00:00:00.000Z' } } });
 
     mode = 'ok';
     const ok = await call(req('POST', '/relay/workiq/foundry/verify', { provider: 'foundry' }));
-    expect(ok.body).toMatchObject({ workiq: { method: 'foundry', signedIn: true, verifiedAt: '2026-11-25T00:00:00.000Z' } });
+    expect(ok.body).toMatchObject({ workiq: { method: 'foundry', signedIn: true, verifiedAt: '2026-11-25T00:00:00.000Z', foundry: { refusedAt: null } } });
     expect(stub.sent.filter((s) => s.url.endsWith('/responses')).every((s) => s.auth === 'Bearer project-token')).toBe(true);
     // The CLI (and app) settings are off while the Foundry route is in use.
     for (const [m, p, b] of [['PUT', '/relay/workiq', { method: 'cli' }], ['POST', '/relay/workiq/verify', { provider: 'foundry' }], ['POST', '/relay/workiq/eula', { provider: 'foundry', accept: true }], ['DELETE', '/relay/workiq', undefined]] as const) {
@@ -181,5 +184,48 @@ describe('Work IQ through Microsoft Foundry in the relay', () => {
   it('needs an Entra ID Foundry connection: an API-key connection cannot carry the user\'s Work IQ token', async () => {
     const { call } = await setup('apiKey');
     expect(await call(req('PUT', '/relay/workiq/foundry', { endpoint: PROJECT, connection: 'workiq-mcp' }))).toMatchObject({ status: 409, body: { error: 'foundryEntraRequired' } });
+  });
+
+  it('lists the Work IQ MCP connections of the saved Foundry resource from ARM and says why one cannot be used', async () => {
+    const account = '/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/bas-foundry';
+    const conn = (name: string, target: string, authType: string, audience?: string) => ({ name, properties: { target, authType, ...(audience ? { audience } : {}) } });
+    const armCalls: string[] = [];
+    const arm: typeof globalThis.fetch = async (url, init) => {
+      const u = new URL(String(url));
+      armCalls.push(`${init?.method ?? 'GET'} ${u.pathname}`);
+      if (u.pathname === '/providers/Microsoft.ResourceGraph/resources') {
+        return Response.json({ data: [
+          { id: account, name: 'bas-foundry', kind: 'AIServices', customSubDomain: 'bas-foundry', tenantId: TENANT, subscriptionId: 's1', resourceGroup: 'rg', location: 'japaneast' },
+          { id: '/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/other', name: 'other', kind: 'AIServices', customSubDomain: 'other', tenantId: TENANT, subscriptionId: 's1' },
+        ] });
+      }
+      if (u.pathname === `${account}/projects`) {
+        return Response.json({ value: [
+          { id: `${account}/projects/bas-proj`, name: 'bas-foundry/bas-proj', properties: { endpoints: { 'AI Foundry API': PROJECT } } },
+          { id: `${account}/projects/p2`, name: 'p2', properties: { endpoints: { 'AI Foundry API': 'https://bas-foundry.services.ai.azure.com/api/projects/p2' } } },
+        ] });
+      }
+      if (u.pathname === `${account}/projects/bas-proj/connections`) {
+        return Response.json({ value: [conn('workiq-mcp', WORKIQ_MCP_URL, 'UserEntraToken', 'fdcc1f02-fc51-4226-8753-f668596af7f7'), conn('other-mcp', 'https://example.com/mcp', 'UserEntraToken', 'x')] });
+      }
+      if (u.pathname === `${account}/projects/p2/connections`) return Response.json({ value: [conn('workiq-key', `${WORKIQ_MCP_URL}/`, 'UserEntraToken', '00000000-0000-0000-0000-000000000000')] });
+      return new Response('{}', { status: 404 });
+    };
+    const { call, stub } = await setup('entraId', arm);
+    const found = await call(req('POST', '/relay/workiq/foundry/discover'));
+    expect(found).toMatchObject({ status: 200, body: { account: 'bas-foundry', projects: 2 } });
+    expect((found.body as { candidates: unknown[] }).candidates).toEqual([
+      { endpoint: PROJECT, project: 'bas-proj', connection: 'workiq-mcp', problem: null },
+      { endpoint: 'https://bas-foundry.services.ai.azure.com/api/projects/p2', project: 'p2', connection: 'workiq-key', problem: 'audience' },
+    ]);
+    // Only ARM is read: nothing reaches a model or Work IQ, and the other resource's projects are not listed.
+    expect(stub.sent).toEqual([]);
+    expect(armCalls.some((c) => c.includes('/accounts/other/'))).toBe(false);
+    expect((await call(req('GET', '/relay/workiq/foundry/discover'))).status).toBe(405);
+  });
+
+  it('cannot discover a Work IQ connection without an Entra ID Foundry connection', async () => {
+    const { call } = await setup('apiKey');
+    expect(await call(req('POST', '/relay/workiq/foundry/discover'))).toMatchObject({ status: 409, body: { error: 'foundryEntraRequired' } });
   });
 });

@@ -48,6 +48,31 @@ export function parseProjectEndpoint(raw: unknown): { endpoint: string; account:
 
 export const CONNECTION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
+export interface WorkIqConnectionCandidate {
+  endpoint: string;
+  project: string;
+  connection: string;
+  /** Why this connection cannot carry Work IQ (null: it can). */
+  problem: 'auth' | 'audience' | null;
+}
+
+/**
+ * The project connections that point at the Work IQ MCP server, among the projects of the saved Foundry resource.
+ * Work IQ accepts only a UserEntraToken connection whose audience is the Work IQ app ID (measured 2026-11-25, §19.5).
+ */
+export function workIqCandidates(projects: { endpoint: string; name: string; connections: { name: string; target: string; authType: string; audience: string }[] }[], account: string): WorkIqConnectionCandidate[] {
+  return projects.flatMap((p) => {
+    const parsed = parseProjectEndpoint(p.endpoint);
+    if (!parsed || parsed.account !== account.toLowerCase()) return [];
+    return p.connections
+      .filter((c) => c.target.replace(/\/+$/, '') === WORKIQ_MCP_URL && CONNECTION_NAME.test(c.name))
+      .map((c) => ({
+        endpoint: parsed.endpoint, project: parsed.project, connection: c.name,
+        problem: c.authType !== 'UserEntraToken' ? 'auth' as const : c.audience.toLowerCase() !== WORKIQ_APP_ID ? 'audience' as const : null,
+      }));
+  });
+}
+
 export interface FoundryWorkIqTarget {
   /** Project endpoint (parseProjectEndpoint). */
   endpoint: string;

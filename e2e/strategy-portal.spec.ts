@@ -128,6 +128,52 @@ test('drafts appear dashed on the map; a draft objective is checked and saved in
   await expect(page.locator('[id="stg-node-objective:obj-reach"]')).toBeVisible();
 });
 
+test('FR-367: Copilot gets the business objectives, registering stated ones and keeping the rest as drafts', async ({ page }) => {
+  await seedProject(page);
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' },
+  } }));
+  const prompts: string[] = [];
+  await page.route('**/relay/ai', async (route) => {
+    const prompt = (route.request().postDataJSON() as { prompt: string }).prompt;
+    prompts.push(prompt);
+    const data = JSON.parse(prompt.split('\n')[2]!) as { evidence: { ref: string; kind: string; text: string }[] };
+    // A source line quoted word for word (stated) and one objective built from related data (drafted).
+    const source = data.evidence.find((e) => e.kind === 'source' && e.text.split('\n')[1]!.split(/\s+/).length > 4)!;
+    const line = source.text.split('\n')[1]!;
+    const objectives = [
+      { tier: 'stated', text: line, horizon: line.split(/\s+/)[0], scope: 'legalEntity', evidence: [{ ref: source.ref, excerpt: line }], reason: '' },
+      { tier: 'drafted', text: 'Run more high-quality engagements with the same team', horizon: '', scope: 'business', scopeName: 'Hub', evidence: [], reason: 'Built from the issues.' },
+    ];
+    await route.fulfill({ json: { text: JSON.stringify({ objectives }), inputTokens: 100, outputTokens: 100 } });
+  });
+  await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
+  await page.reload();
+  await expect(page.getByTestId('strategy-map')).toBeVisible();
+
+  await page.getByTestId('strategy-objectives-fetch').click();
+  await expect(page.getByTestId('strategy-objectives-result')).toContainText('Saved 1 business objectives and made 1 drafts.');
+  await expect(page.getByTestId('strategy-objectives-result')).toContainText('Work IQ is not connected');
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]).toMatch(/^\[bas-proj:objectiveDraft\]/);
+  await expect(page.locator('[id^="stg-node-objective:OBJ-"]')).toHaveCount(1);
+  const draft = page.locator('[id^="stg-node-objective:draft:objd-"]');
+  await expect(draft).toHaveCount(1);
+  expect(await scan(page)).toEqual([]);
+
+  await draft.click();
+  await expect(page.getByTestId('strategy-objective-tier')).toContainText('Draft built from related data (no evidence): Built from the issues.');
+  await expect(page.getByTestId('strategy-objective-text')).toHaveValue('Run more high-quality engagements with the same team');
+  expect(await scan(page)).toEqual([]);
+  await page.getByTestId('strategy-objective-discard').click();
+  await expect(page.getByTestId('strategy-objective-dialog')).toBeHidden();
+  await expect(draft).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('[id^="stg-node-objective:OBJ-"]')).toHaveCount(1);
+  await expect(page.locator('[id^="stg-node-objective:draft:objd-"]')).toHaveCount(0);
+});
+
 test('the external view shows confirmed data only and keeps company objectives non-interactive', async ({ page }) => {
   await open(page, '/', { lang: 'en', audience: 'external' });
   await expect(page.getByTestId('strategy-map')).toBeVisible();

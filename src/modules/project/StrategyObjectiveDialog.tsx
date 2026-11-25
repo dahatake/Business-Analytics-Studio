@@ -6,6 +6,7 @@ import { useI18n } from '../../i18n/index.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useProjects, type Company } from '../../state/projects.ts';
 import { todayIn } from './deliverablesUi.tsx';
+import type { ObjectiveDraft } from './objectiveDraft.ts';
 import { appendObjective, type ObjectiveBasis, type ObjectiveField, type ObjectiveInput, type ObjectiveScope } from './strategyPortal.ts';
 
 const SCOPES: ObjectiveScope[] = ['legalEntity', 'group', 'business', 'department'];
@@ -20,7 +21,9 @@ const blank = (today: string): ObjectiveInput => ({
  * FR-347: company objectives have no form of their own (the company anchor is edited as JSON), so the strategy map adds
  * one in a popup. Every objective keeps a source (company anchor schema), and saving creates a new anchor version.
  */
-export function ObjectiveDialog({ company, draft, onClose }: { company: Company; draft: ObjectiveInput | null; onClose: (savedId?: string) => void }) {
+export function ObjectiveDialog({ company, draft, note = null, onClose }: {
+  company: Company; draft: ObjectiveInput | null; note?: ObjectiveDraft | null; onClose: (savedId?: string, discarded?: boolean) => void;
+}) {
   const { t } = useI18n();
   const today = todayIn();
   const [form, setForm] = useState<ObjectiveInput>(() => draft ? { ...draft, source: { ...draft.source, accessedDate: draft.source.accessedDate || today } } : blank(today));
@@ -52,6 +55,15 @@ export function ObjectiveDialog({ company, draft, onClose }: { company: Company;
             <DialogContent className="proj-edit-form">
               <p id="stg-obj-lead" className="muted">{t('stg.obj.lead', { company: company.name })}</p>
               {draft && <p className="muted">{t('stg.obj.fromDraft')}</p>}
+              {note && (
+                <MessageBar intent="warning" data-testid="strategy-objective-tier">
+                  <MessageBarBody>
+                    <strong>{t(`stg.obj.tier.${note.tier}`)}</strong> {note.reason}
+                    {note.unverified.length > 0 && <> {t('stg.obj.unverified', { numbers: note.unverified.join(', ') })}</>}
+                    {note.evidence.length > 0 && <ul>{note.evidence.map((e) => <li key={e.ref}>{e.title}{e.excerpt && <> — “{e.excerpt}”</>}</li>)}</ul>}
+                  </MessageBarBody>
+                </MessageBar>
+              )}
               <Field label={t('stg.obj.text')} required {...err('text')}>
                 <Textarea value={form.text} onChange={(_, d) => set({ text: d.value })} data-testid="strategy-objective-text" />
               </Field>
@@ -97,6 +109,7 @@ export function ObjectiveDialog({ company, draft, onClose }: { company: Company;
             <DialogActions>
               <Button type="submit" appearance="primary" data-testid="strategy-objective-save">{t('proj.save')}</Button>
               <Button onClick={() => onClose()}>{t('proj.cancel')}</Button>
+              {note && <Button onClick={() => onClose(undefined, true)} data-testid="strategy-objective-discard">{t('stg.obj.discard')}</Button>}
             </DialogActions>
           </DialogBody>
         </form>

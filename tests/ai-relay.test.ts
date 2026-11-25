@@ -15,7 +15,7 @@ import {
   relayConfigFromEnv, relayDir, validateConnection, workIqServiceFor, pruneDiagnostics, type RelayConfig, type RelayContext, type RelayRequest, type RelayResponse,
 } from '../server/relay.ts';
 import { spawn } from 'node:child_process';
-import { MAX_PURPOSE_SEARCHES, WORKIQ_OUTBOUND_HOSTS, WorkIqError, purposeTopics, workIqAspectKeywords, workIqAspectQuery, workIqPlan, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
+import { MAX_PURPOSE_SEARCHES, WORKIQ_OUTBOUND_HOSTS, WorkIqError, parseWorkIqQuestion, purposeTopics, workIqAspectKeywords, workIqAspectQuery, workIqPlan, workIqTopicQuery, type WorkIqQuestion } from '../server/workiq.ts';
 import { WORKIQ_CLI_PACKAGE, WORKIQ_EULA_URL, AdaptiveLimit, WorkIqCliService, askAsRetrieval, deepReadPlan, deepReadText, inAdaptivePool, isM365FileUrl, mergeByItem, queryTerms, termCoverage, withAnswer, withDeepRead, workIqCliCommand, type SpawnLike } from '../server/workiqCli.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
 import { blankTestImage } from '../server/media.ts';
@@ -1553,6 +1553,11 @@ process.stdin.on('data', (d) => {
     // FR-341: a unit that already names the company is not prefixed twice.
     expect(workIqAspectQuery({ ...hub, unit: 'Microsoft 日本法人 営業本部' }, 'kpiUnit')).toBe('Microsoft 日本法人 営業本部のKPI/OKRは何ですか?');
     expect(workIqAspectQuery(hub, 'kpiCompany')).toBe('Microsoftの全社のKPI/OKRは何ですか?');
+    // FR-367: business objectives are searched by organisation as well, and a unit search needs the unit.
+    expect(workIqAspectQuery(hub, 'objectivesCompany')).toBe('Microsoftの経営目標・中期経営計画・ビジョンは何ですか?');
+    expect(workIqAspectQuery({ ...hub, unit: 'Microsoft Innovation Hub' }, 'objectivesUnit')).toBe('Microsoft Innovation Hubの事業目標・年度目標・重点施策は何ですか?');
+    expect(workIqAspectKeywords({ ...other, unit: 'Logistics Division' }, 'objectivesUnit')).toBe('Contoso Logistics Division division objectives annual goals priorities plan');
+    expect(parseWorkIqQuestion({ ...hub, aspects: ['objectivesUnit'] })).toBeNull();
     const plan = workIqPlan(hub, { sources: true, answers: true });
     expect(plan.filter((p) => p.kind === 'answer').map((p) => [p.key, p.items])).toEqual([['kpi-answer', ['kpi']], ['org-answer', ['org']], ['process-answer', ['workflow']]]);
     expect(plan.find((p) => p.key === 'org-answer')?.alt).toBe('Microsoft Innovation Hub FY27 organization team structure roles');

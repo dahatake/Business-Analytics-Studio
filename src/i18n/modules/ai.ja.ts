@@ -260,6 +260,7 @@ export const aiJa = {
   'ai.use.decisionTest': 'Decision の接続テスト',
   'ai.use.valueDraft': '事業効果のドラフト作成',
   'ai.use.valueExplain': '事業効果の数値の説明',
+  'ai.use.objectiveDraft': '事業目標の取得とドラフト',
   'ai.use.packBuild': 'Projectパックの作成',
   'ai.use.alignmentProposal': '企業と Project の整合案',
   'ai.usage.title': '本日の利用回数',

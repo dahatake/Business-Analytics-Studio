@@ -164,7 +164,7 @@ export function settingsSignature(s: WorkIqSettings): string {
  * hits that all answered "what is this about"; one targeted search per section brings KPI definitions, process
  * hand-offs, data assets and locations that a combined question never reaches.
  */
-export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice'] as const;
+export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice', 'objectivesCompany', 'objectivesUnit'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
 /**
  * Searches for a requirements definition (IPA requirements handbook 8.1, 12, 13): the rules a solution must obey, the
@@ -176,9 +176,10 @@ export const WORKIQ_REQUIREMENT_ASPECTS: readonly WorkIqAspect[] = ['rules', 'sy
  * FR-341: KPI/OKR searches scoped to one organisation — the company as a whole (company name only, never the project)
  * and the business unit (`unit`). They stay sections of their own even with `expand`, so the pack can tell which
  * organisation a KPI belongs to; merged into the kpi section they would lose it. The requirement searches stay sections
- * of their own for the same reason: they feed no readiness item.
+ * of their own for the same reason: they feed no readiness item. FR-367: the business objectives of the company and of
+ * the unit (the strategy map's top lane) are scoped too, so each objective keeps the organisation it was stated for.
  */
-export const WORKIQ_SCOPED_ASPECTS: readonly WorkIqAspect[] = ['kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice'];
+export const WORKIQ_SCOPED_ASPECTS: readonly WorkIqAspect[] = ['kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice', 'objectivesCompany', 'objectivesUnit'];
 /**
  * Follow-up searches built from the generator's own "what is missing" list (one round per stage). D-15: 4 → 8, every
  * round of the measured runs used all 4.
@@ -228,7 +229,7 @@ export function workIqSearches(q: WorkIqQuestion): { key: string; query: string 
 export const ASPECT_ITEMS: Record<WorkIqAspect, readonly ReadinessKey[]> = {
   org: ['org'], people: ['org'], locations: ['locations'], process: ['workflow'], data: ['dataCatalog'],
   kpi: ['kpi'], engagements: ['customers', 'engagements'], issues: ['issues'], kpiCompany: ['kpi'], kpiUnit: ['kpi'],
-  rules: [], systems: [], voice: [],
+  rules: [], systems: [], voice: [], objectivesCompany: [], objectivesUnit: [],
 };
 
 export interface PlannedSearch {
@@ -365,6 +366,8 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
       rules: `${s}に適用される規程・ガイドライン・セキュリティ基準・SLAは何ですか?`,
       systems: `${s}の現行システムと運用手順は何ですか?`,
       voice: `${s}の問い合わせ・クレーム・障害・監査指摘は何ですか?`,
+      objectivesCompany: `${q.company}の経営目標・中期経営計画・ビジョンは何ですか?`,
+      objectivesUnit: `${unit}の事業目標・年度目標・重点施策は何ですか?`,
     }
     : {
       org: `What is the organisation structure of ${s} and its roles?`,
@@ -380,6 +383,8 @@ export function workIqAspectQuery(q: WorkIqQuestion, aspect: WorkIqAspect): stri
       rules: `What policies, guidelines, security standards and SLAs apply to ${s}?`,
       systems: `What are the current systems and operating procedures of ${s}?`,
       voice: `What are the inquiries, complaints, incidents and audit findings of ${s}?`,
+      objectivesCompany: `What are the business objectives, mid-term plan and vision of ${q.company}?`,
+      objectivesUnit: `What are the business objectives, annual goals and priorities of ${unit}?`,
     };
   return text[aspect];
 }
@@ -405,7 +410,9 @@ export function workIqAspectKeywords(q: Pick<WorkIqQuestion, 'company' | 'projec
   if (aspect === 'rules') return `${workIqSubject(q)} policy guideline security standard SLA compliance AI usage policy`;
   if (aspect === 'systems') return `${workIqSubject(q)} current systems applications operations runbook`;
   if (aspect === 'voice') return `${workIqSubject(q)} inquiries complaints incidents audit findings feedback`;
-  const words: Record<Exclude<WorkIqAspect, 'kpiCompany' | 'kpiUnit' | 'rules' | 'systems' | 'voice'>, string> = {
+  if (aspect === 'objectivesCompany') return `${q.company} business objectives mid-term plan vision strategy goals`;
+  if (aspect === 'objectivesUnit') return `${workIqUnitSubject(q)} division objectives annual goals priorities plan`;
+  const words: Record<Exclude<WorkIqAspect, 'kpiCompany' | 'kpiUnit' | 'rules' | 'systems' | 'voice' | 'objectivesCompany' | 'objectivesUnit'>, string> = {
     org: 'organization team structure roles',
     kpi: 'KPI OKR targets scorecard',
     process: 'engagement process request intake delivery handoff',
@@ -457,7 +464,7 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
     aspects = [...new Set(o.aspects as WorkIqAspect[])];
   }
   // A unit search without a unit would silently search the project again under the unit's name.
-  if (aspects.includes('kpiUnit') && !unit) return null;
+  if ((aspects.includes('kpiUnit') || aspects.includes('objectivesUnit')) && !unit) return null;
   let topics: string[] = [];
   if (o.topics !== undefined) {
     if (!Array.isArray(o.topics) || o.topics.length > MAX_WORKIQ_TOPICS || !o.topics.every((t) => typeof t === 'string')) return null;

@@ -14,6 +14,7 @@ import { emptyStrategy, type StrategyData } from './strategy.ts';
 import { demoValue, emptyValue, type ValueData } from './valueModel.ts';
 import type { DecisionInputs } from './decisionSupport.ts';
 import type { SavedSolutionDraft } from './solutionDraft.ts';
+import type { ObjectiveDraft } from './objectiveDraft.ts';
 import type { ImprovementStep } from '../../state/projects.ts';
 import type { Lang } from '../../i18n/core.ts';
 import { useUseCases, type UseCase } from '../usecases/store.ts';
@@ -39,6 +40,8 @@ export function useScopeKpis(): KpiData {
 export const useAnalyses = createScopedStore<AnalysisData>('proj.analysis', (scope) => (scope === 'demo' ? demoAnalyses(loaded.pack) : { analyses: [], activeId: null }));
 /** FR-325: KPI/OKR drafts adopted from the internal list (or chosen by Copilot), kept until the user saves or discards them. */
 export const useKpiDrafts = createScopedStore<KpiDrafts>('proj.kpiDrafts', () => emptyDrafts());
+/** FR-367: business objectives Copilot could not confirm word for word (unclear) or built from related data (drafted). */
+export const useObjectiveDrafts = createScopedStore<ObjectiveDraft[]>('proj.objectiveDrafts', () => []);
 /** Save generated analysis results to their project even when the user has not opened that project yet. */
 export function saveAnalysisForProject(projectId: string, value: AnalysisData) {
   const store = useAnalyses.getState();

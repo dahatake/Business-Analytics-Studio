@@ -261,6 +261,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.use.decisionTest': 'Decision connection test',
   'ai.use.valueDraft': 'Business value drafts',
   'ai.use.valueExplain': 'Business value explanations',
+  'ai.use.objectiveDraft': 'Business objectives (gathering and drafting)',
   'ai.use.packBuild': 'Project pack creation',
   'ai.use.alignmentProposal': 'Company-project alignment proposal',
   'ai.usage.title': 'Daily usage',

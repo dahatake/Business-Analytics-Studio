@@ -73,11 +73,12 @@ async function openStepDraft(page: Page) {
 }
 
 test.describe('Copilot task resolution', () => {
-  async function prepare(page: Page, lang: Lang, mode: 'repair' | 'newKpi' | 'invalid' | 'invalidJson' | 'missingRationale' | 'failure' = 'repair') {
+  async function prepare(page: Page, lang: Lang, mode: 'repair' | 'newKpi' | 'linearScale' | 'invalid' | 'invalidJson' | 'missingRationale' | 'failure' = 'repair') {
     await go(page, '/deliverables?step=asis', lang);
     await fakeAi(page);
+    const newKpi = mode === 'newKpi' || mode === 'linearScale';
     // newKpi: no existing KPI shares a source with the issues, so the only grounded drafts are new KPIs.
-    const upserts = samplePack.entities.flatMap((e): object[] => e.kind === 'issue' ? [{ ...e, kpiIds: [] }] : mode === 'newKpi' && e.kind === 'kpi' ? [{ ...e, sourceIds: [] }] : []);
+    const upserts = samplePack.entities.flatMap((e): object[] => e.kind === 'issue' ? [{ ...e, kpiIds: [] }] : newKpi && e.kind === 'kpi' ? [{ ...e, sourceIds: [] }] : []);
     await seedDeviceData(page, { 'bas.scope.demo.pack.edits': JSON.stringify({ upserts, deleted: [], regions: [] }) });
     await page.reload();
     const requests: string[] = [];
@@ -91,20 +92,20 @@ test.describe('Copilot task resolution', () => {
       const creates = options.filter((o) => o.kind === 'create');
       const kpiDraft = {
         name: { ja: '受注から出荷までの日数', en: 'Order-to-shipment days' }, description: { ja: '出典の課題を測る指標です。', en: 'Measures the sourced issue.' },
-        unit: { ja: '日', en: 'days' }, period: { ja: '月次', en: 'Monthly' }, direction: 'decrease', scale: 'ratio',
+        unit: { ja: '日', en: 'days' }, period: { ja: '月次', en: 'Monthly' }, direction: 'decrease', scale: mode === 'linearScale' ? 'linear' : 'ratio',
         baseline: 20, current: 18, target: 10, estimateNote: { ja: '20・18・10 は推定です。月次の実績で確認してください。', en: '20, 18 and 10 are estimates; confirm with monthly actuals.' },
       };
       const leadTime = creates.find((o) => o.kind === 'create' && o.issueId === 'issue-lead-time')!.id;
       const choices = [
-        ...(mode === 'newKpi' ? [] : [{ id: 'link-all', label: ja ? '根拠のあるKPIをすべて関連付ける' : 'Link every sourced KPI', optionIds: links, rationale: ja ? '各KPIは課題と同じ出典に記載されています。' : 'Each KPI is documented in the same source as its issue.', tradeoffs: ja ? '共通の出典は因果を証明しません。' : 'A shared source does not prove causation.' }]),
+        ...(newKpi ? [] : [{ id: 'link-all', label: ja ? '根拠のあるKPIをすべて関連付ける' : 'Link every sourced KPI', optionIds: links, rationale: ja ? '各KPIは課題と同じ出典に記載されています。' : 'Each KPI is documented in the same source as its issue.', tradeoffs: ja ? '共通の出典は因果を証明しません。' : 'A shared source does not prove causation.' }]),
         { id: 'new-kpi', label: ja ? 'リードタイムのKPIを新規に下書きする' : 'Draft a new lead-time KPI', optionIds: [leadTime], drafts: { [leadTime]: kpiDraft }, rationale: ja ? '課題の出典に測定対象が記載されています。' : 'The issue source names what to measure.' },
-        ...(mode === 'newKpi' ? [{ id: 'new-all', label: ja ? 'すべての課題にKPIを下書きする' : 'Draft a KPI for every issue', optionIds: creates.map((o) => o.id), drafts: Object.fromEntries(creates.map((o) => [o.id, kpiDraft])), rationale: ja ? '各課題の出典に基づきます。' : 'Based on each issue source.' }] : []),
+        ...(newKpi ? [{ id: 'new-all', label: ja ? 'すべての課題にKPIを下書きする' : 'Draft a KPI for every issue', optionIds: creates.map((o) => o.id), drafts: Object.fromEntries(creates.map((o) => [o.id, kpiDraft])), rationale: ja ? '各課題の出典に基づきます。' : 'Based on each issue source.' }] : []),
       ];
       await route.fulfill({ json: {
         text: mode === 'invalidJson' ? '{"choices":[' : JSON.stringify({
           choices: mode === 'missingRationale' ? choices.map(({ rationale: _rationale, ...rest }) => rest) : choices, recommendedId: choices[0]!.id,
           reasoning: ja ? '既存の出典を確認し、KPIのドラフトを承認してください。他案より検証可能です。' : 'Check the existing sources and approve the KPI draft; this is more verifiable than the other choice.',
-          missingInformation: mode === 'newKpi' ? [ja ? '基準値・現在値・目標値と責任者の確認が必要です。' : 'Baseline, current, target and owner must be confirmed.'] : [],
+          missingInformation: newKpi ? [ja ? '基準値・現在値・目標値と責任者の確認が必要です。' : 'Baseline, current, target and owner must be confirmed.'] : [],
         }), inputTokens: 100, outputTokens: 100,
       } });
     });
@@ -198,7 +199,33 @@ test.describe('Copilot task resolution', () => {
     if (typeof saved !== 'string') throw new Error('Expected saved deliverables');
     const text = (JSON.parse(saved) as { recommendations: Record<string, { approved: { text: string } }> }).recommendations['internal:define-kpi-link']!.approved.text;
     expect(text).toContain('新しい KPI「受注から出荷までの日数」を作成し');
-    expect(text).toMatch(/人が承認した値（出どころ）:\n基準値: 20 \(Copilot の推定値[^)]*\) \/ 現在値: 18 \(Copilot の推定値[^)]*\) \/ 目標値: 12 \(あなたが入力\) \/ 責任者: .+ \((あなたが入力|課題に関係する KPI の責任者から選択)\)/);
+    expect(text).toMatch(/人が承認した値（出どころ）:\n尺度: 比率[^)]*\(Copilot の提案\) \/ 望ましい方向: 減少 \(Copilot の提案\) \/ 基準値: 20 \(Copilot の推定値[^)]*\) \/ 現在値: 18 \(Copilot の推定値[^)]*\) \/ 目標値: 12 \(あなたが入力\) \/ 責任者: .+ \((あなたが入力|課題に関係する KPI の責任者から選択)\)/);
+  });
+
+  test('keeps a proposal whose KPI scale Copilot answered as "linear", and asks the reviewer to choose it instead of guessing', async ({ page }) => {
+    const { todo } = await prepare(page, 'ja', 'linearScale');
+    await todo.getByTestId('dlv-resolve-define-kpi-link').click();
+    await generate(page);
+    await expect(page.getByTestId('dlv-resolve-error')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-resolve-radio-new-kpi')).toBeChecked();
+    const field = (name: string) => page.getByTestId(`dlv-resolve-human-kpi-draft-lead-time-${name}`);
+    await expect(page.getByTestId('dlv-resolve-edits-new-kpi')).toContainText('Copilot は尺度を「linear」と回答しましたが');
+    await expect(field('scale')).toHaveValue('');
+    await expect(field('scale-field')).toContainText('推測で決めません');
+    await expect(field('direction')).toHaveValue('decrease');
+    await expect(field('direction-field')).toHaveAttribute('data-basis', 'proposed');
+    await expect(page.getByTestId('dlv-resolve-preview')).toContainText('承認の前に入力が必要です: 尺度');
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeDisabled();
+    expect(await scan(page)).toEqual([]);
+    await field('scale').selectOption('ratio');
+    await expect(field('scale-field')).toHaveAttribute('data-basis', 'human');
+    await expect(page.getByTestId('dlv-resolve-preview')).toContainText('承認するとこの変更を保存します');
+    await page.getByTestId('dlv-resolve-apply').click();
+    await expect(page.getByTestId('dlv-resolve-result')).toBeVisible();
+    const edits = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits']?.value;
+    if (typeof edits !== 'string') throw new Error('Expected saved pack edits');
+    const kpi = (JSON.parse(edits) as { upserts: { id: string }[] }).upserts.find((e) => e.id === 'kpi-draft-lead-time');
+    expect(kpi).toMatchObject({ kind: 'kpi', scale: 'ratio', direction: 'decrease' });
   });
 
   test('lets the reviewer write a direction under Other and regenerate data drafts with it, never recording it as data', async ({ page }) => {

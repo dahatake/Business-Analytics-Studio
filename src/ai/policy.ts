@@ -2,7 +2,7 @@ export const AI_USES = [
   'structure', 'summarize', 'recommend', 'chat', 'executiveSummary',
   'explain', 'presentation', 'aiUsageAnalysis', 'review', 'import', 'storyVideo', 'connectionTest',
   'research', 'brandResearch', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief', 'strategyOverview', 'kpiOkrDraft',
-  'valueDraft', 'valueExplain',
+  'valueDraft', 'valueExplain', 'objectiveDraft',
 ] as const;
 
 export type AiUse = (typeof AI_USES)[number];
@@ -44,6 +44,8 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   deliverableDraft: { maxOutputTokens: 8000 },
   recommend: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 48_000, maxOutputTokens: 4000 },
   stepBrief: { maxOutputTokens: 4000 },
+  // D-42: business objectives are drafted in the all-step batch too, so like D-41 only the output size is fixed.
+  objectiveDraft: { maxOutputTokens: 4000 },
   kpiOkrDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
   valueDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
   valueExplain: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },

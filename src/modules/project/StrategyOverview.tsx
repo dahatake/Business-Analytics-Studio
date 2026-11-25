@@ -21,7 +21,8 @@ import { useAiSettings } from '../ai/settingsStore.ts';
 import { openAiSettings } from '../ai/uiStore.ts';
 import { ScrollRegion } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
-import { todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
+import { todayIn, todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
+import { collectObjectives, objectiveDraftInput, storeObjectives } from './objectiveDraft.ts';
 import {
   availableAxes, itemNames, overviewBaseline, overviewContext, overviewPrompt, parseOverviewResponse, proposalEntities, recommendedAxis, strategyMap,
   useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyDrafts, type StrategyMap, type StrategyNode,
@@ -29,7 +30,7 @@ import {
 import { BriefBody } from './StepBriefPanel.tsx';
 import { buildStepBrief } from './stepBrief.ts';
 import { stepDashboard } from './stepDashboard.ts';
-import { useKpiDrafts, useProjUi } from './stores.ts';
+import { useKpiDrafts, useObjectiveDrafts, useProjUi } from './stores.ts';
 import { ObjectiveDialog } from './StrategyObjectiveDialog.tsx';
 import {
   emptyDestination, emptyDomId, laneDomId, laneHref, nodeDestination, nodeDomId, packObjectiveDrafts, type Destination, type Lane,
@@ -253,16 +254,20 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   const [showShared, setShowShared] = useState(route.query.get('draft') === 'shared');
   const draft = showShared ? sharedDraft ?? stepDraft : stepDraft ?? sharedDraft;
   const kpiDrafts = useKpiDrafts((s) => s.value);
+  const objectiveDrafts = useObjectiveDrafts((s) => s.value);
   const { company } = useActiveProject();
   const internal = audience === 'internal';
   // FR-350: unsaved drafts are internal working data, so the external view keeps showing confirmed data only.
   const drafts = useMemo((): StrategyDrafts => internal ? {
-    objectives: packObjectiveDrafts(loaded.pack.extensions, ctx.objectives.map((o) => o.id)).map((o) => ({ id: o.id!, text: o.text })),
+    objectives: [
+      ...packObjectiveDrafts(loaded.pack.extensions, ctx.objectives.map((o) => o.id)).map((o) => ({ id: o.id!, text: o.text })),
+      ...objectiveDrafts.map((o) => ({ id: o.id, text: o.text })),
+    ],
     okrs: kpiDrafts.okrs.map((o) => ({ id: o.id, objective: o.objective.trim() || t('stg.untitled'), kpiIds: o.keyResults.map((kr) => kr.kpiId).filter(Boolean), objectiveIds: o.companyObjectiveIds })),
     kpis: kpiDrafts.kpis.map((k) => ({ id: k.id, name: k.name.trim() || t('stg.untitled') })),
     changed: draft ? draft.proposal.patches.map((p) => p.id) : [],
     objectiveIssues: draft?.proposal.objectiveIssues ?? [],
-  } : {}, [internal, ctx, kpiDrafts, draft, t]);
+  } : {}, [internal, ctx, kpiDrafts, objectiveDrafts, draft, t]);
   const map = useMemo(() => strategyMap(ctx, internal ? state : { objectiveIssues: [] }, axis, lang, descending, drafts), [ctx, state, axis, lang, descending, internal, drafts]);
   const [objectiveDialog, setObjectiveDialog] = useState<{ draftId?: string } | null>(null);
   const [objectiveSaved, setObjectiveSaved] = useState(false);
@@ -277,11 +282,16 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       setPortalReturn({ path: route.path, href: hrefFor(route.path, q), label });
     },
   }), [company, internal, route]);
-  const objectiveDraft = objectiveDialog?.draftId
+  const storedDraft = objectiveDialog?.draftId ? objectiveDrafts.find((o) => o.id === objectiveDialog.draftId) ?? null : null;
+  const objectiveDraft = storedDraft ? objectiveDraftInput(storedDraft) : objectiveDialog?.draftId
     ? packObjectiveDrafts(loaded.pack.extensions, ctx.objectives.map((o) => o.id)).find((o) => o.id === objectiveDialog.draftId) ?? null
     : null;
-  const closeObjective = (savedId?: string) => {
-    const returnTo = savedId ? nodeDomId(`objective:${savedId}`) : objectiveDialog?.draftId ? nodeDomId(`objective:draft:${objectiveDialog.draftId}`) : emptyDomId('objective');
+  const closeObjective = (savedId?: string, discarded?: boolean) => {
+    const draftId = objectiveDialog?.draftId;
+    if ((savedId || discarded) && draftId && objectiveDrafts.some((o) => o.id === draftId)) {
+      useObjectiveDrafts.getState().set((list) => list.filter((o) => o.id !== draftId));
+    }
+    const returnTo = savedId ? nodeDomId(`objective:${savedId}`) : draftId && !discarded ? nodeDomId(`objective:draft:${draftId}`) : emptyDomId('objective');
     setObjectiveDialog(null);
     if (savedId) setObjectiveSaved(true);
     // Fluent restores focus to the opener; once the map re-renders the saved node replaces it, so focus that instead.
@@ -370,6 +380,25 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     finally { if (alive.current) setBusy(false); }
   };
   const d = useMemo(() => stepDashboard(step, ctx), [step, ctx]);
+  const [objectiveBusy, setObjectiveBusy] = useState(false);
+  const [objectiveResult, setObjectiveResult] = useState<{ registered: number; drafts: number; workIq: 'used' | 'failed' | 'off' } | null>(null);
+  const [objectiveError, setObjectiveError] = useState<string | null>(null);
+  const fetchObjectives = async () => {
+    setObjectiveBusy(true); setObjectiveResult(null); setObjectiveError(null);
+    abort.current = new AbortController();
+    try {
+      const c = await collectObjectives(loaded.pack, lang, abort.current.signal, todayIn());
+      const r = { ...c, ...storeObjectives(c) };
+      await flushDeviceStorage();
+      if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
+      if (!alive.current) return;
+      setObjectiveResult({ registered: r.registered.length, drafts: r.drafts, workIq: !r.workIqUsed ? 'off' : r.workIqError || !r.workIqAnswers ? 'failed' : 'used' });
+    } catch (e) {
+      if (!alive.current) return;
+      const message = e instanceof AiLiveError ? e.reasons.map((r) => t(reasonKey(r))).join(', ') + `: ${e.message}` : e instanceof Error ? e.message : String(e);
+      setObjectiveError(message === 'stale' ? t('stg.stale') : message);
+    } finally { if (alive.current) setObjectiveBusy(false); }
+  };
   const briefs = useMemo(() => (analysis ? IMPROVEMENT_STEPS.map((s) => buildStepBrief(stepDashboard(s, ctx), ctx, lang, audience)) : []), [analysis, ctx, lang, audience]);
   const limit = usePaybackLimit();
   const linked = new Set(map.links.flatMap((l) => [l.source, l.target]));
@@ -389,7 +418,11 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
             <option value="desc">{t('stg.desc')}</option><option value="asc">{t('stg.asc')}</option>
           </Select></label>
           <Button icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} appearance="primary" onClick={() => void generate()} disabled={busy || !map.nodes.length} data-testid="strategy-optimize">{t('stg.optimize')}</Button>
+          {internal && company && <Button icon={objectiveBusy ? <Spinner size="tiny" /> : <Sparkle20Regular />} onClick={() => void fetchObjectives()} disabled={objectiveBusy} data-testid="strategy-objectives-fetch">{t('stg.objFetch')}</Button>}
         </div>
+        {internal && company && <p className="muted">{t('stg.objFetchHint')}</p>}
+        {objectiveResult && <p role="status" data-testid="strategy-objectives-result">{t('stg.objFetchDone', { registered: objectiveResult.registered, drafts: objectiveResult.drafts })} {t(`stg.objFetchWorkIq.${objectiveResult.workIq}`)}</p>}
+        {objectiveError && <MessageBar intent="error" data-testid="strategy-objectives-error"><MessageBarBody>{t('stg.objFetchError', { message: objectiveError })}</MessageBarBody></MessageBar>}
         <p>{t('stg.recommended', { axis: t(`stg.axis.${recommended}`) })}</p>
         <p className="muted">{t(`stg.axisHint.${axis}`)}</p>
         <p className="muted">{t('stg.mapWhy')}</p>
@@ -413,7 +446,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
         <p className="muted">{t('stg.liveHint')} <Link inline className="text-action" onClick={openAiSettings}>{t('ai.nav.settings')}</Link></p>
         {error && <MessageBar intent="error" data-testid="strategy-error"><MessageBarBody>{t('stg.error', { message: error })}</MessageBarBody></MessageBar>}
         {saved && <p role="status" data-testid="strategy-saved">{t(saved === 'draft' ? 'stg.draftSaved' : 'stg.saved')}</p>}
-        {objectiveDialog && company && <ObjectiveDialog key={objectiveDialog.draftId ?? ''} company={company} draft={objectiveDraft} onClose={closeObjective} />}
+        {objectiveDialog && company && <ObjectiveDialog key={objectiveDialog.draftId ?? ''} company={company} draft={objectiveDraft} note={storedDraft} onClose={closeObjective} />}
       </Panel>
       <Panel title={t('stg.issues')} testId="strategy-ranking" className="span-full">
         <ol>{map.nodes.filter((n) => n.lane === 'issue').map((n) => {

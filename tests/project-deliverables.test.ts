@@ -21,7 +21,7 @@ import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContr
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
 import { stepDashboard } from '../src/modules/project/stepDashboard.ts';
-import { humanDescription, parseResolution, previewResolution, repairOptions, requestResolution, resolutionRequest, suggestOwner, unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
+import { humanDescription, parseResolution, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, suggestOwner, unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -244,6 +244,9 @@ describe('Copilot task repairs', () => {
     const backwards = parse(response([choice('a', [ids[0]!], { drafts: { [ids[0]!]: { ...kpiDraft, baseline: 10, current: 12, target: 20 } } }), choice('b', ids, { drafts })]));
     expect(backwards.choices[0]!.drafts![ids[0]!]).toMatchObject({ baseline: 10, current: 12 });
     expect(backwards.choices[0]!.drafts![ids[0]!]!.target).toBeUndefined(); // a "decrease" target above the baseline is left for the reviewer
+    const fields = (extra: object) => parse(response([choice('a', [ids[0]!], { drafts: { [ids[0]!]: { ...kpiDraft, ...extra } as EntityDraft } }), choice('b', ids, { drafts })])).choices[0]!.drafts![ids[0]!]!;
+    expect(fields({ unit: '%', period: '月次' })).toMatchObject({ unit: { ja: '%', en: '%' }, period: { ja: '月次', en: '月次' } });
+    expect(() => fields({ unit: undefined })).toThrow(/incomplete/);
     const owner = suggestOwner(input, options[0]!)!;
     expect(owner.basis).toBe('relatedKpi');
     expect(input.ctx.pack.pack.entities.some((e) => e.kind === 'kpi' && e.ownerId === owner.id)).toBe(true);
@@ -255,7 +258,7 @@ describe('Copilot task repairs', () => {
     expect(suggestOwner(bareInput, bareOption, ` ${approver.name.en.toUpperCase()} `)).toEqual({ id: approver.id, basis: 'editor' });
     expect(suggestOwner(bareInput, bareOption, 'Someone Else')).toBeUndefined();
     expect(humanDescription(options[0]!, input, proposed, { current: 61, ownerId: owner.id }, owner))
-      .toMatch(/^基準値: 777 \(Copilot の推定値.*\) \/ 現在値: 61 \(あなたが入力\) \/ 目標値: 500 \(Copilot の推定値.*\) \/ 責任者: .+ \(課題に関係する KPI の責任者から選択\)$/);
+      .toMatch(/^尺度: 比率.* \(Copilot の提案\) \/ 望ましい方向: 減少 \(Copilot の提案\) \/ 基準値: 777 \(Copilot の推定値.*\) \/ 現在値: 61 \(あなたが入力\) \/ 目標値: 500 \(Copilot の推定値.*\) \/ 責任者: .+ \(課題に関係する KPI の責任者から選択\)$/);
     const human = Object.fromEntries(options.map((o) => [o.id, o.issueId === 'issue-cash'
       ? { baseline: 68, current: 61, target: 45, ownerId: 'person-sato-yui' }
       : { baseline: 20, current: 18, target: 10, ownerId: 'person-sato-yui' }]));
@@ -275,6 +278,64 @@ describe('Copilot task repairs', () => {
       expect(issue?.kind === 'issue' && issue.kpiIds).toEqual([option.newId]);
     }
     expect(input.ctx.pack.byId.has(options[0]!.newId)).toBe(false);
+  });
+
+  it('never guesses a KPI scale or direction the model did not state exactly; the reviewer chooses it before approval', () => {
+    const input = missingLinks();
+    const options = creates(repairOptions(input));
+    const ids = options.map((o) => o.id);
+    const owner = 'person-sato-yui';
+    const numbers = { baseline: 20, current: 18, target: 12, ownerId: owner };
+    // Reproduction of a real Foundry answer (names and numbers replaced): two KPI drafts said "linear", the others "ratio".
+    // Before the fix the whole proposal was rejected with "choices.N.drafts.<id>.scale".
+    const real = response([
+      choice('a', [ids[0]!], { drafts: { [ids[0]!]: { ...kpiDraft, scale: 'linear', direction: 'increase', baseline: 10, current: 10, target: 12 } } }),
+      choice('b', [ids[1]!, ids[2]!], { drafts: { [ids[1]!]: { ...kpiDraft, scale: 'linear' }, [ids[2]!]: kpiDraft } }),
+      choice('c', [ids[0]!, ids[1]!], { drafts: { [ids[0]!]: { ...kpiDraft, scale: 'linear', direction: 'increase', baseline: 10, current: 10, target: 12 }, [ids[1]!]: { ...kpiDraft, scale: 'linear' } } }),
+    ]);
+    const parsed = parseResolution(JSON.stringify(real), options);
+    const linear = parsed.choices[0]!.drafts![ids[0]!]!;
+    expect(linear.scale).toBeUndefined();
+    expect(linear.unrecognized).toEqual({ scale: 'linear' });
+    expect(parsed.choices[1]!.drafts![ids[2]!]).toMatchObject({ scale: 'ratio' });
+    expect(parsed.choices[1]!.drafts![ids[2]!]!.unrecognized).toBeUndefined();
+    expect(repairDescription(options[0]!, input, linear)).toContain('Copilot は尺度を「linear」と回答しましたが');
+    const pending = previewResolution(input, { optionIds: [ids[0]!], drafts: { [ids[0]!]: linear }, human: { [ids[0]!]: { ownerId: owner } } }, options, 'now');
+    expect(pending.missing).toEqual([{ optionId: ids[0], field: 'scale' }]);
+    expect(pending.changes).toEqual([]);
+    const chosen = previewResolution(input, { optionIds: [ids[0]!], drafts: { [ids[0]!]: linear }, human: { [ids[0]!]: { ownerId: owner, scale: 'interval' } } }, options, 'now');
+    expect(chosen.missing).toEqual([]);
+    expect(chosen.changes.find((c) => c.op === 'upsert' && c.entity.kind === 'kpi')).toMatchObject({ entity: { scale: 'interval', direction: 'increase' } });
+    expect(humanDescription(options[0]!, input, linear, { scale: 'interval', ownerId: owner })).toMatch(/^尺度: 間隔.* \(あなたが入力\) \/ 望ましい方向: 増加 \(Copilot の提案\)/);
+
+    const draftWith = (extra: object) => parseResolution(JSON.stringify(response([
+      choice('a', [ids[0]!], { drafts: { [ids[0]!]: { ...kpiDraft, ...extra } } }), choice('b', [ids[1]!], { drafts: { [ids[1]!]: kpiDraft } }),
+    ])), options).choices[0]!.drafts![ids[0]!]!;
+    const missingOf = (draft: EntityDraft, human: object = {}) => previewResolution(input, { optionIds: [ids[0]!], drafts: { [ids[0]!]: draft }, human: { [ids[0]!]: { ...numbers, ...human } } }, options, 'now').missing.map((m) => m.field);
+    // Exact values, in either language and with "scale" spelled out, are accepted.
+    for (const [said, scale] of [['Ratio', 'ratio'], [' interval_scale ', 'interval'], ['比率尺度', 'ratio'], ['間隔', 'interval']] as const) expect(draftWith({ scale: said }).scale).toBe(scale);
+    for (const [said, direction] of [['Decrease', 'decrease'], ['higher is better', 'increase'], ['減少', 'decrease'], ['増やす', 'increase']] as const) expect(draftWith({ direction: said }).direction).toBe(direction);
+    // Unknown, ambiguous, negated or structured answers are never mapped; each becomes a field the reviewer must choose.
+    for (const said of ['linear', 'ordinal', 'nominal', 'log', 'ratio or interval', '比率または間隔', 'not ratio', '比率ではない', '', null, 0, { ja: '比率', en: 'ratio' }]) {
+      const draft = draftWith({ scale: said });
+      expect(draft.scale, JSON.stringify(said)).toBeUndefined();
+      expect(draft.unrecognized?.scale, JSON.stringify(said)).toBeDefined();
+      expect(missingOf(draft), JSON.stringify(said)).toEqual(['scale']);
+    }
+    for (const said of ['Do not increase', '増加させない', 'increase or decrease', '増減', 'up', 'down', 'reduce', '向上', '高いほど良い', 'maintain', '維持']) {
+      const draft = draftWith({ direction: said });
+      expect(draft.direction, said).toBeUndefined();
+      expect(draft.unrecognized?.direction, said).toBe(said);
+      expect(missingOf(draft), said).toEqual(['direction']);
+    }
+    // Without a stated direction the proposed target is kept, not judged; it must be re-entered if it does not improve under the reviewer's choice.
+    const undirected = draftWith({ direction: 'Do not increase', baseline: 20, current: 18, target: 12 });
+    expect(undirected.target).toBe(12);
+    expect(missingOf(undirected, { target: undefined, direction: 'increase' })).toEqual(['target']);
+    expect(missingOf(undirected, { target: undefined, direction: 'decrease' })).toEqual([]);
+    // A cleared choice never falls back to the proposal, and a model cannot pre-fill the local "unrecognized" record.
+    expect(missingOf(kpiDraft, { scale: '' })).toEqual(['scale']);
+    expect(draftWith({ unrecognized: { scale: 'ratio' } }).unrecognized).toBeUndefined();
   });
 
   it('drafts a sourced cause for each issue without one and links it on approval', () => {

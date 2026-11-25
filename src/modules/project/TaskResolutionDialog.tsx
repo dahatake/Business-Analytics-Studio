@@ -16,8 +16,8 @@ import { evaluateStep, normalizeDeliverables, resultKey, STEP_DEFS, todoKey } fr
 import { Refs, todoHref, useCheckContext } from './deliverablesUi.tsx';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
 import {
-  HUMAN_FIELDS, humanDescription, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
-  RESOLUTION_GUIDANCE_MAX, ResolutionResponseError, type HumanField, type HumanValues, type NumberField, type OwnerSuggestion, type RepairOption,
+  CHOICE_FIELDS, CHOICE_VALUES, chosenValue, humanDescription, NUMBER_FIELDS, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
+  RESOLUTION_GUIDANCE_MAX, ResolutionResponseError, type HumanField, type HumanValues, type OwnerSuggestion, type RepairOption,
   type ResolutionInput, type ResolutionProposal,
 } from './taskResolution.ts';
 
@@ -25,11 +25,10 @@ type ReadyResolution = { input: ResolutionInput; options: RepairOption[]; propos
 /** What the reviewer typed for a KPI draft, kept as text so partial input such as "1." survives re-rendering. */
 type HumanInput = Partial<Record<HumanField, string>>;
 const OTHER = '__other';
-const NUMBER_FIELDS = HUMAN_FIELDS.filter((f): f is NumberField => f !== 'ownerId');
 
 /**
- * An emptied field is NaN (still missing) rather than undefined, so it never silently falls back to the AI value; an owner the
- * reviewer cleared stays '' instead of falling back to the preselected one.
+ * An emptied field is NaN (still missing) rather than undefined, so it never silently falls back to the AI value; an owner,
+ * scale or direction the reviewer cleared stays '' instead of falling back to the preselected or proposed one.
  */
 type HumanByOption = Record<string, HumanValues>;
 type RawByOption = Record<string, HumanInput>;
@@ -41,6 +40,7 @@ function humanValues(raw: RawByOption, owners: OwnerByOption): HumanByOption {
     const ownerId = values.ownerId ?? owners[id]?.id;
     return [id, {
       ...Object.fromEntries(NUMBER_FIELDS.flatMap((f) => values[f] === undefined ? [] : [[f, values[f]!.trim() ? Number(values[f]!.normalize('NFKC').trim()) : Number.NaN]])),
+      ...Object.fromEntries(CHOICE_FIELDS.flatMap((f) => values[f] === undefined ? [] : [[f, values[f]]])),
       ...(ownerId !== undefined ? { ownerId } : {}),
     }];
   }));
@@ -264,6 +264,27 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                                         {t('dlv.resolve.human.estimateNote', { note: draft.estimateNote[lang] })}
                                       </p>
                                     )}
+                                    {CHOICE_FIELDS.map((field) => {
+                                      const value = humanRaw[option.id]?.[field] ?? draft?.[field] ?? '';
+                                      const chosen = chosenValue(draft, human[option.id], field);
+                                      const raw = draft?.unrecognized?.[field];
+                                      const basis = !chosen ? undefined : value !== (draft?.[field] ?? '') ? 'human' : 'proposed';
+                                      return (
+                                        <Field key={field} label={t(`dlv.resolve.human.${field}`)} required
+                                          validationState={raw !== undefined && !chosen ? 'warning' : 'none'}
+                                          validationMessage={raw !== undefined && !chosen ? t('dlv.resolve.human.unrecognized', { field: t(`dlv.resolve.human.${field}`), value: raw }) : undefined}
+                                          hint={basis ? t(`dlv.resolve.human.basis.${basis}`) : undefined} data-basis={basis ?? ''}
+                                          data-testid={`dlv-resolve-human-${option.newId}-${field}-field`}>
+                                          <Select disabled={busy} value={value} onChange={(_, d) => setHuman(option.id, field, d.value)}
+                                            data-testid={`dlv-resolve-human-${option.newId}-${field}`}>
+                                            <option value="">{t('dlv.resolve.human.noOwner')}</option>
+                                            {field === 'scale'
+                                              ? CHOICE_VALUES.scale.map((v) => <option key={v} value={v}>{t(`entry.scale.${v}`)}</option>)
+                                              : CHOICE_VALUES.direction.map((v) => <option key={v} value={v}>{t(`dlv.resolve.new.${v}`)}</option>)}
+                                          </Select>
+                                        </Field>
+                                      );
+                                    })}
                                     {NUMBER_FIELDS.map((field) => {
                                       const basis = valueBasis(ready.input, option, draft, human[option.id], field);
                                       const basisText = basis ? t(`dlv.resolve.human.basis.${basis}`) : undefined;

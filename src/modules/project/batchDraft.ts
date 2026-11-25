@@ -21,28 +21,36 @@ import {
   draftableSolutions, requestLiveSolutionDraft, solutionBaseline, solutionDraftKey, solutionDraftRequest,
   type SavedSolutionDraft, type SolutionDraft, type SolutionDraftInput,
 } from './solutionDraft.ts';
+import { collectObjectives, objectivePlanRequest, storeObjectives, type ObjectiveCollection } from './objectiveDraft.ts';
 import { normalizeStrategy } from './strategy.ts';
 import { loc } from '../../state/text.ts';
-import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpis, useSolutionDrafts, useStrategy } from './stores.ts';
+import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpis, useObjectiveDrafts, useSolutionDrafts, useStrategy } from './stores.ts';
 
 type FieldJob = { kind: 'fields'; step: ImprovementStep; input: DraftInput; request: AiRequest };
 type BriefJob = { kind: 'brief'; step: ImprovementStep; brief: StepBrief; request: AiRequest };
 type StrategyJob = { kind: 'strategy'; context: AppCheckContext; request: AiRequest };
 type SolutionJob = { kind: 'solution'; solutionId: string; name: string; input: SolutionDraftInput; request: AiRequest };
-export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob;
+/** FR-367: the company and unit objectives (Work IQ is searched when the job runs; the request here is for the checks). */
+type ObjectivesJob = { kind: 'objectives'; request: AiRequest };
+export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob;
 export type BatchResult =
   | { kind: 'fields'; fields: Record<string, string>; tasks: Record<string, string> }
   | { kind: 'brief'; brief: GeneratedBrief }
   | { kind: 'strategy'; proposal: OverviewProposal; inputTokens: number | null; outputTokens: number | null }
-  | { kind: 'solution'; draft: SolutionDraft };
+  | { kind: 'solution'; draft: SolutionDraft }
+  | { kind: 'objectives'; collection: ObjectiveCollection };
 
 export function batchJobId(job: BatchJob): string {
   if (job.kind === 'solution') return `solution-${job.solutionId}`;
+  if (job.kind === 'objectives') return 'objectives';
   return job.kind === 'strategy' ? 'strategy' : `${job.kind}-${job.step}`;
 }
 
 export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audience, scope: string, overview: OverviewState): BatchJob[] {
   const jobs: BatchJob[] = [];
+  // First, so the objectives are in place before the rest is reviewed. Internal only: they are the customer's own goals.
+  const objectives = audience === 'internal' ? objectivePlanRequest(ctx.pack.pack, lang, scope) : null;
+  if (objectives) jobs.push({ kind: 'objectives', request: objectives });
   const briefCtx = stepBriefContext(ctx, audience);
   for (const step of IMPROVEMENT_STEPS) {
     const input: DraftInput = { step, ctx, lang, audience };
@@ -72,6 +80,7 @@ export async function runBatchJob(job: BatchJob, signal: AbortSignal): Promise<B
   }
   if (job.kind === 'brief') return { kind: 'brief', brief: await requestLiveStepBrief(job.brief, request, signal) };
   if (job.kind === 'solution') return { kind: 'solution', draft: await requestLiveSolutionDraft(job.input, request, signal) };
+  if (job.kind === 'objectives') return { kind: 'objectives', collection: await collectObjectives(loaded.pack, request.lang, signal) };
   const live = await aiLive(request, signal);
   return { kind: 'strategy', proposal: parseOverviewResponse(live.text, job.context, request.lang), inputTokens: live.inputTokens, outputTokens: live.outputTokens };
 }
@@ -88,7 +97,7 @@ export function batchSourceStamp(includePack = true): string {
     pack: includePack ? loaded.pack : null, packVersion: includePack ? usePackVersion.getState().version : null,
     discussion: useDiscussion.getState().value, kpi: useKpis.getState().value, analysis: useAnalyses.getState().value,
     useCases: useUseCases.getState().value, deliverables: useDeliverables.getState().value, strategy: useStrategy.getState().value,
-    fieldDrafts: useFieldDrafts.getState().value, solutionDrafts: useSolutionDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,
+    fieldDrafts: useFieldDrafts.getState().value, objectiveDrafts: useObjectiveDrafts.getState().value, solutionDrafts: useSolutionDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,
     audience: useSettings.getState().audience, lang: useSettings.getState().lang,
     provider: ai.provider, liveEnabled: ai.liveEnabled, model: ai.copilotModel, connection: ai.relayConnection,
     relayReachable: ai.relayReachable, foundryKeySaved: ai.foundryKeySaved,
@@ -143,6 +152,8 @@ export function saveBatchResult(
       baseline: solutionBaseline(normalizeStrategy(useStrategy.getState().value), job.solutionId),
     };
     useSolutionDrafts.getState().set((value) => ({ ...value, [solutionDraftKey(audience, job.solutionId)]: draft }));
+  } else if (job.kind === 'objectives' && result.kind === 'objectives') {
+    storeObjectives(result.collection);
   } else {
     throw new Error('Batch result does not match its request');
   }

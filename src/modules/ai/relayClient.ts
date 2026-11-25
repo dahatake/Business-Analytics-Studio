@@ -746,7 +746,7 @@ export interface WorkIqQuestionInput {
 }
 
 /** Sections the relay can search one by one (server/workiq.ts WORKIQ_ASPECTS). */
-export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice'] as const;
+export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice', 'objectivesCompany', 'objectivesUnit'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
 
 export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };

@@ -130,6 +130,9 @@ interface ProjTransient {
   draftStep: ImprovementStep | null;
   batchDraftOpen: boolean;
   resolutionTodoId: string | null;
+  /** FR-376: the task whose saved draft is being reviewed, and whether the list of every task draft is open. */
+  taskDraftTodoId: string | null;
+  taskReviewOpen: boolean;
   /** Last applied draft, announced by the to-do band. */
   draftApplied: DraftApplied | null;
   openExport: (themeId?: string | null) => void;
@@ -141,6 +144,10 @@ interface ProjTransient {
   closeBatchDraft: () => void;
   openResolution: (todoId: string) => void;
   closeResolution: () => void;
+  openTaskDraft: (todoId: string) => void;
+  closeTaskDraft: () => void;
+  openTaskReview: () => void;
+  closeTaskReview: () => void;
 }
 
 export const useProjTransient = create<ProjTransient>()((set) => ({
@@ -151,6 +158,8 @@ export const useProjTransient = create<ProjTransient>()((set) => ({
   draftStep: null,
   batchDraftOpen: false,
   resolutionTodoId: null,
+  taskDraftTodoId: null,
+  taskReviewOpen: false,
   draftApplied: null,
   openExport: (themeId = null) => set({ exportOpen: true, exportThemeId: themeId }),
   closeExport: () => set({ exportOpen: false }),
@@ -161,6 +170,10 @@ export const useProjTransient = create<ProjTransient>()((set) => ({
   closeBatchDraft: () => set({ batchDraftOpen: false }),
   openResolution: (resolutionTodoId) => set({ resolutionTodoId }),
   closeResolution: () => set({ resolutionTodoId: null }),
+  openTaskDraft: (taskDraftTodoId) => set({ taskDraftTodoId }),
+  closeTaskDraft: () => set({ taskDraftTodoId: null }),
+  openTaskReview: () => set({ taskReviewOpen: true }),
+  closeTaskReview: () => set({ taskReviewOpen: false }),
 }));
 
 /** One editor (undo stack + history) per scope; rebuilt when the work target changes so projects never share undo. */

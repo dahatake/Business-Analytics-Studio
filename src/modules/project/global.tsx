@@ -20,6 +20,8 @@ export { StepTodoBand as StepBand };
 
 const BatchDraftDialog = lazy(() => import('./BatchDraftDialog.tsx').then((m) => ({ default: m.BatchDraftDialog })));
 const TaskResolutionDialog = lazy(() => import('./TaskResolutionDialog.tsx').then((m) => ({ default: m.TaskResolutionDialog })));
+const TaskDraftDialog = lazy(() => import('./TaskDraftDialogs.tsx').then((m) => ({ default: m.TaskDraftDialog })));
+const TaskReviewDialog = lazy(() => import('./TaskDraftDialogs.tsx').then((m) => ({ default: m.TaskReviewDialog })));
 
 /** FR-148 / FR-176: the work-target menu (demo or company → project) at the top of every screen. */
 function WorkTargetMenu() {
@@ -143,6 +145,8 @@ export function Overlay() {
   const openExport = useProjTransient((s) => s.openExport);
   const batchOpen = useProjTransient((s) => s.batchDraftOpen);
   const resolutionTodoId = useProjTransient((s) => s.resolutionTodoId);
+  const taskDraftTodoId = useProjTransient((s) => s.taskDraftTodoId);
+  const taskReviewOpen = useProjTransient((s) => s.taskReviewOpen);
   const target = useProjects((s) => s.target);
   const queued = useProjUi((s) => s.autoDraftProjects);
   const openBatchDraft = useProjTransient((s) => s.openBatchDraft);
@@ -171,6 +175,8 @@ export function Overlay() {
       <DraftDialog />
       {batchOpen && <Suspense fallback={null}><BatchDraftDialog /></Suspense>}
       {resolutionTodoId && <Suspense fallback={null}><TaskResolutionDialog key={resolutionTodoId} todoId={resolutionTodoId} /></Suspense>}
+      {taskReviewOpen && <Suspense fallback={null}><TaskReviewDialog /></Suspense>}
+      {taskDraftTodoId && <Suspense fallback={null}><TaskDraftDialog key={taskDraftTodoId} todoId={taskDraftTodoId} /></Suspense>}
     </>
   );
 }

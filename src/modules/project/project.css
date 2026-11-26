@@ -399,6 +399,26 @@
 .dlv-todo-why { margin: 0; color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
 .dlv-fix { justify-self: start; font-size: var(--fontSizeBase200); color: var(--colorBrandForegroundLink); }
 .dlv-todo-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* FR-376: task drafts and the data-state vocabulary (icon + label; colour only reinforces). */
+.dlv-td { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px dashed var(--colorNeutralStroke2); }
+.dlv-td-caption { color: var(--colorNeutralForeground2); }
+.dlv-td-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.dlv-td-error { margin: 0; color: var(--colorPaletteRedForeground1); font-size: var(--fontSizeBase200); }
+.dlv-state-counts { display: flex; gap: 4px; flex-wrap: wrap; }
+.dlv-state { max-width: 100%; white-space: nowrap; }
+.dlv-state-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; margin: 8px 0; }
+.dlv-state-legend > div { display: flex; flex-direction: column; gap: 2px; }
+.dlv-state-legend dd { margin: 0; color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+.dlv-td-lines, .dlv-td-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dlv-td-lines > li, .dlv-td-list > li { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.dlv-td-list > li > strong { flex: 1 1 240px; }
+.dlv-td-verdict { padding: 8px 12px; border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground3); }
+.dlv-td-verdict-ready { background: var(--colorPaletteGreenBackground1); }
+.dlv-td-verdict-open, .dlv-td-verdict-invalid { background: var(--colorPaletteYellowBackground1); }
+.dlv-td-note { padding: 8px 12px; border-left: 4px solid var(--colorPaletteMarigoldBorder2); background: var(--colorNeutralBackground2); }
+.dlv-td-edit fieldset { border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); margin: 0 0 8px; }
+.dlv-td-step { margin-top: 12px; }
+.dlv-band-awaiting { white-space: nowrap; color: var(--colorBrandForeground1); font-weight: var(--fontWeightSemibold); }
 .dlv-refs { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; font-size: var(--fontSizeBase200); }
 .dlv-field-ref { background: none; border: 0; padding: 0; color: var(--colorBrandForegroundLink); text-decoration: underline; cursor: pointer; font: inherit; }
 

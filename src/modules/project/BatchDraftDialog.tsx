@@ -14,6 +14,7 @@ import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob, type BatchJobProgress } from './batchDraft.ts';
 import { useCheckContext } from './deliverablesUi.tsx';
+import { PAYBACK_MAX_YEARS, todoKey } from './deliverables.ts';
 import type { ObjectiveSearch } from './objectiveDraft.ts';
 import { useOverview } from './overviewModel.ts';
 import { useProjTransient, useProjUi } from './stores.ts';
@@ -28,6 +29,7 @@ export function BatchDraftDialog() {
   const audience = useSettings((s) => s.audience);
   const close = useProjTransient((s) => s.closeBatchDraft);
   const openDraft = useProjTransient((s) => s.openDraft);
+  const openTaskReview = useProjTransient((s) => s.openTaskReview);
   const [scope] = useState(currentScope);
   const [provider] = useState(() => useAiSettings.getState().provider);
   const [jobs] = useState(() => createBatchPlan(ctx, lang, audience, scope, useOverview.getState().value));
@@ -39,6 +41,7 @@ export function BatchDraftDialog() {
   const [interrupted, setInterrupted] = useState(false);
   const [activeProgress, setActiveProgress] = useState<ActiveProgress | null>(null);
   const [objectiveNotice, setObjectiveNotice] = useState<string | null>(null);
+  const [taskSummary, setTaskSummary] = useState<{ drafts: number; failed: string[] } | null>(null);
   const completed = useRef(new Set<string>());
   const attempts = useRef(new Map<AiUse, number>());
   const [startedAt] = useState(() => new Date().toISOString());
@@ -59,6 +62,7 @@ export function BatchDraftDialog() {
     if (job.kind === 'objectives') return t('dlv.batch.objectives');
     if (job.kind === 'kpiOkr') return t('dlv.batch.kpiOkr');
     if (job.kind === 'solution') return t('dlv.batch.solution', { name: job.name });
+    if (job.kind === 'tasks') return t('dlv.batch.tasks');
     return t(job.kind === 'fields' ? 'dlv.batch.fields' : 'dlv.batch.brief', { step: t(`proj.step.${job.step}`) });
   };
   const tokenNameOf = (line: TokenLine): string => {
@@ -67,6 +71,7 @@ export function BatchDraftDialog() {
       && (stage === batchJobId(candidate) || (!stage && candidate.kind === 'objectives')));
     if (!job) return tokenLineLabel(line, lang);
     let partKey: MessageKey | undefined;
+    if (job.kind === 'tasks' && part) return `${nameOf(job)} — ${t(todoKey(part), { max: PAYBACK_MAX_YEARS })}`;
     if (job.kind === 'fields' && part === 'fields') partKey = 'dlv.batch.tokenFields';
     else if (job.kind === 'fields' && part === 'tasks') partKey = 'dlv.batch.tokenTasks';
     else if (job.kind === 'kpiOkr' && part === 'pick') partKey = 'dlv.batch.tokenPick';
@@ -171,6 +176,7 @@ export function BatchDraftDialog() {
         if (deviceStatus() !== 'saved') throw new Error(t('dlv.batch.storageError'));
         assertCurrent();
         if (result.kind === 'objectives') setObjectiveNotice(searchNotice(result.collection));
+        if (result.kind === 'tasks') setTaskSummary({ drafts: result.drafts.length, failed: result.failed.map((f) => `${t(todoKey(f.todoId), { max: PAYBACK_MAX_YEARS })}: ${f.message}`) });
         completed.current.add(batchJobId(job));
         setStatus(job, 'done');
         setActiveProgress(null);
@@ -250,6 +256,13 @@ export function BatchDraftDialog() {
                       {!busy && status === 'done' && job.kind === 'objectives' && <a href={hrefFor('/')} onClick={close}>{t('dlv.batch.objectivesLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'kpiOkr' && <a href={hrefFor('/analysis', { tab: 'kpi' })} onClick={close}>{t('dlv.batch.kpiOkrLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'solution' && <a href={`${hrefFor('/deliverables', { step: 'deliverable' })}`} onClick={close}>{t('dlv.batch.solutionLink')}</a>}
+                      {job.kind === 'tasks' && taskSummary && (
+                        <div role="status" data-testid="dlv-batch-tasks-summary">
+                          <p>{t('dlv.batch.tasksSummary', { n: taskSummary.drafts })}</p>
+                          {taskSummary.failed.length > 0 && <ul>{taskSummary.failed.map((f) => <li key={f}>{f}</li>)}</ul>}
+                        </div>
+                      )}
+                      {!busy && status === 'done' && job.kind === 'tasks' && <Button size="small" onClick={() => { close(); openTaskReview(); }} data-testid="dlv-batch-tasks-review">{t('dlv.batch.tasksLink')}</Button>}
                     </li>
                   );
                 })}

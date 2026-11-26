@@ -22,6 +22,8 @@ function answer(request: RelayRequest): string {
     const type = Object.keys(context.types)[0]!;
     return JSON.stringify({ type, reason: '仮説', sections: Object.fromEntries(context.types[type]!.open.map((id) => [id, '提案（仮説）'])) });
   }
+  // FR-376: the task phase (and the resolution it reuses) gets no usable answer here, so every task draft is BAS's labelled rule.
+  if (request.prompt.startsWith('[bas-proj:task:') || request.prompt.startsWith('[bas-proj:resolve')) return '{}';
   if (request.use === 'deliverableDraft') {
     const step = /\[bas-proj:deliverable:([a-z]+)\]/.exec(request.prompt)?.[1] as ImprovementStep;
     return [
@@ -49,7 +51,8 @@ async function setupBatch(page: Page, provider: Provider, failOnce?: string, aud
   } }));
   await page.route('**/relay/ai', async (route) => {
     const request = route.request().postDataJSON() as RelayRequest;
-    requests.push(request);
+    // FR-376: the task phase's calls (stage tasks:<todo>) are counted by the task-draft test, not here.
+    if (!request.stage?.startsWith('tasks:')) requests.push(request);
     if (shouldFail && request.prompt.includes(failOnce!)) {
       shouldFail = false;
       await route.fulfill({ status: 504, json: { error: 'fixtureTimeout' } });
@@ -111,7 +114,7 @@ test.describe('all-step live drafts', () => {
       }
       await confirmBatch(page);
       await expect(page.getByRole('dialog', { name: '全ステップのドラフトを一括作成' })).toBeVisible();
-      await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('17/17', { timeout: 110_000 });
       // D-44: the As-Is deliverable (22 sections) is drafted as a fields call and a tasks call.
       expect(requests).toHaveLength(17);
       expect(requests.every((request) => request.provider === provider)).toBe(true);
@@ -173,8 +176,10 @@ test.describe('all-step live drafts', () => {
       if (lang === 'ja') await openBatch(page);
       else await page.getByTestId('dlv-draft').click();
       await confirmBatch(page);
-      await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
-      await expect(page.getByTestId('dlv-batch-tokens-row')).toHaveCount(17);
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('17/17', { timeout: 110_000 });
+      // FR-376: the task phase adds one row per task it asked Copilot about (tasks:<todo>).
+      expect(calls.filter((call) => !call.stage.startsWith('tasks:'))).toHaveLength(17);
+      await expect(page.getByTestId('dlv-batch-tokens-row')).toHaveCount(calls.length);
 
       const unknown = lang === 'ja' ? '不明' : 'unknown';
       const num = (n: number | null) => n === null ? unknown : n.toLocaleString(lang === 'ja' ? 'ja-JP' : 'en-US');
@@ -191,7 +196,7 @@ test.describe('all-step live drafts', () => {
       await expect(page.locator('[data-testid="dlv-batch-tokens-row"][data-step="fields-asis:tasks"] th'))
         .toContainText(lang === 'ja' ? 'タスク別の推奨案' : 'Task recommendations');
       await expect(page.getByTestId('dlv-batch-tokens-total').locator('td')).toHaveText([
-        '17', num(calls.reduce((sum, call) => sum + call.input, 0)), unknown, unknown,
+        String(calls.length), num(calls.reduce((sum, call) => sum + call.input, 0)), unknown, unknown,
       ]);
 
       const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
@@ -213,11 +218,11 @@ test.describe('all-step live drafts', () => {
       await dialog.getByRole('button', { name: lang === 'ja' ? '閉じる' : 'Close', exact: true }).click();
       await page.getByTestId('proj-export-all').click();
       await expect(page.getByTestId('proj-export-dialog')).toBeVisible();
-      await expect(page.getByTestId('proj-export-tokens-table-row')).toHaveCount(18);
+      await expect(page.getByTestId('proj-export-tokens-table-row')).toHaveCount(calls.length + 1);
       await expect(page.getByTestId('proj-export-preview'))
         .toContainText(lang === 'ja' ? '成果物のドラフト作成' : 'Deliverable drafts');
       await expect(page.getByTestId('proj-export-tokens-table-total').locator('td')).toHaveText([
-        '17', num(calls.reduce((sum, call) => sum + call.input, 0)), unknown, unknown,
+        String(calls.length), num(calls.reduce((sum, call) => sum + call.input, 0)), unknown, unknown,
       ]);
     });
   }
@@ -232,16 +237,67 @@ test.describe('all-step live drafts', () => {
     await expect(page.locator('main#main')).toBeVisible();
     await openBatch(page);
     await confirmBatch(page);
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 60_000 });
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('17/17', { timeout: 60_000 });
     await expect(page.getByTestId('dlv-batch-error')).toHaveCount(0);
     expect(requests).toHaveLength(17);
+  });
+
+  test('FR-376: every open task gets a checked draft; the person only edits or approves, and each value shows its data state', async ({ page }) => {
+    await setupBatch(page, 'foundry');
+    await openBatch(page);
+    await confirmBatch(page);
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('17/17', { timeout: 110_000 });
+    await expect(page.getByTestId('dlv-batch-tasks-summary')).toContainText('件のタスクにドラフトを保存しました');
+    // Nothing is applied by the batch: the sign-off still waits.
+    let saved = JSON.parse((await deviceSnapshot(page)).records['bas.scope.demo.proj.deliverables']!.value!);
+    expect(saved.signOffs['define-agree']).toBeUndefined();
+    await page.getByTestId('dlv-batch-tasks-review').click();
+    const review = page.getByTestId('dlv-td-review');
+    await expect(review).toBeVisible();
+    await expect(review.getByTestId('dlv-state-legend')).toContainText('BAS の仮置き');
+    await expect(page.getByTestId('dlv-td-row-define-agree')).toHaveAttribute('data-state', 'ready');
+    const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .exclude('[data-tabster-dummy]').analyze();
+    expect(scan.violations.map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target) }))).toEqual([]);
+
+    // A sign-off record is edited to what the person confirmed, then approved: that is the sign-off.
+    await page.getByTestId('dlv-td-row-review-define-agree').click();
+    const dialog = page.getByTestId('dlv-td-dialog');
+    await expect(dialog.getByTestId('dlv-td-verdict')).toContainText('承認すると、このタスクは完了します');
+    await expect(dialog.getByTestId('dlv-td-signoff-note')).toContainText('Copilot は聞き取りや合意を行っていません');
+    await expect(dialog.getByTestId('dlv-td-lines').locator('li').first()).toHaveAttribute('data-state', 'estimate');
+    await dialog.getByTestId('dlv-td-edit-start').click();
+    await dialog.getByTestId('dlv-td-edit-0-text').fill('2026-11-20 スポンサーと課題・範囲・成功の定義に合意');
+    await expect(dialog.getByTestId('dlv-td-lines').locator('li').first()).toHaveAttribute('data-state', 'human');
+    await dialog.getByTestId('dlv-td-approve').click();
+    await expect(dialog.getByTestId('dlv-td-done')).toBeVisible();
+    await dialog.getByTestId('dlv-td-close').click();
+    saved = JSON.parse((await deviceSnapshot(page)).records['bas.scope.demo.proj.deliverables']!.value!);
+    expect(saved.signOffs['define-agree']).toBeTruthy();
+    expect(saved.recommendations['internal:define-agree'].approved.text).toContain('[人が入力] 2026-11-20 スポンサーと課題・範囲・成功の定義に合意');
+    await expect(page.getByTestId('dlv-td-row-define-agree')).toHaveAttribute('data-state', 'done');
+
+    // Approving the rest leaves no task that a draft could complete.
+    await page.getByTestId('dlv-td-approve-all').click();
+    await expect(page.getByTestId('dlv-td-review-message')).toContainText('件のドラフトを承認して保存しました');
+    await expect(review.locator('li[data-state="ready"], li[data-state="viaOther"]')).toHaveCount(0);
+    for (const id of ['asis-qualify', 'define-decision', 'define-agree', 'kpi-measure', 'plan-approve']) {
+      await expect(page.getByTestId(`dlv-td-row-${id}`)).toHaveAttribute('data-state', 'done');
+    }
+    saved = JSON.parse((await deviceSnapshot(page)).records['bas.scope.demo.proj.deliverables']!.value!);
+    expect(Object.keys(saved.qualifications ?? {}).length).toBeGreaterThan(0);
+    expect(saved.docs.asis.problem.text).toBe('人が入力した成果物');
+    expect(saved.signOffs['asis-field'].by).toBe('担当者');
+    await page.getByTestId('dlv-td-review-close').click();
+    await expect(page.getByTestId('dlv-td-state-define-agree').first()).toHaveAttribute('data-state', 'confirmed');
   });
 
   test('D-44: a failure keeps completed drafts, the batch goes on, and retry runs only unfinished jobs', async ({ page }) => {
     const requests = await setupBatch(page, 'foundry', '[bas-proj:deliverable:tobe]');
     await openBatch(page);
     await confirmBatch(page);
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('15/16', { timeout: 110_000 });
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/17', { timeout: 110_000 });
     await expect(page.getByTestId('dlv-batch-error')).toContainText('1 件を作成できませんでした');
     await expect(page.getByTestId('dlv-batch-failure-fields-tobe')).toContainText('実接続に失敗');
     await expect(page.getByTestId('dlv-batch-fields-asis')).toHaveAttribute('data-status', 'done');
@@ -249,7 +305,7 @@ test.describe('all-step live drafts', () => {
     await expect(page.getByTestId('dlv-batch-fields-kpi')).toHaveAttribute('data-status', 'done');
     await page.getByTestId('dlv-batch-generate').click();
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('17/17', { timeout: 110_000 });
     await expect(page.getByTestId('dlv-batch-error')).toHaveCount(0);
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:asis]'))).toHaveLength(2);
     expect(requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:tobe]'))).toHaveLength(2);
@@ -265,7 +321,7 @@ test.describe('all-step live drafts', () => {
     });
     await openBatch(page);
     await confirmBatch(page);
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('15/16', { timeout: 110_000 });
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/17', { timeout: 110_000 });
     await expect(page.getByTestId('dlv-batch-failure-fields-kpi')).toContainText('出力上限');
     const kpi = requests.filter((request) => request.prompt.includes('[bas-proj:deliverable:kpi]'));
     expect(kpi).toHaveLength(2);
@@ -306,7 +362,7 @@ test.describe('all-step live drafts', () => {
       await expect(progress).toContainText('成果物の各項目を作成しています');
       await expect(progress.getByTestId('dlv-batch-current-progress-detail')).toContainText('2 回のうち 1 回目');
       await expect(progress.getByTestId('dlv-batch-current-progress-status')).toContainText('この処理の開始から 0:02 経過', { timeout: 5000 });
-      await expect(page.getByTestId('dlv-batch-progress')).toContainText('0/16');
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('0/17');
       await expect(page.getByTestId('dlv-batch-progress-bar')).toHaveAttribute('aria-valuenow', '0');
       await expect(progress.getByTestId('dlv-batch-current-progress-bar')).toHaveAttribute('aria-valuetext', '3 段階中 1 段階完了');
       const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
@@ -318,7 +374,7 @@ test.describe('all-step live drafts', () => {
       await expect(progress).toHaveAttribute('data-activity', 'tasks');
       await expect(progress).toContainText('タスク別の推奨案を作成しています');
       await expect(progress.getByTestId('dlv-batch-current-progress-detail')).toContainText('2 回のうち 2 回目');
-      await expect(page.getByTestId('dlv-batch-progress')).toContainText('0/16');
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('0/17');
 
       await page.setViewportSize({ width: 390, height: 844 });
       const mobile = await dialog.boundingBox();
@@ -336,7 +392,7 @@ test.describe('all-step live drafts', () => {
       await expect(cancelled.locator('th')).toContainText('推定を含む');
 
       await page.getByTestId('dlv-batch-generate').click();
-      await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('17/17', { timeout: 110_000 });
       await expect(page.getByTestId('dlv-batch-progress-bar')).toHaveAttribute('aria-valuenow', '1');
       await expect(page.getByTestId('dlv-batch-progress-bar')).toHaveAttribute('aria-valuemax', '1');
     } finally {
@@ -353,7 +409,7 @@ test.describe('all-step live drafts', () => {
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'working', { timeout: 30_000 });
     await page.getByTestId('dlv-batch-stop').click();
     release();
-    await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/16');
+    await expect(page.getByTestId('dlv-batch-progress')).toContainText('2/17');
     await expect(page.getByTestId('dlv-batch-fields-tobe')).toHaveAttribute('data-status', 'pending');
     expect(requests).toHaveLength(3);
     await page.getByTestId('dlv-batch-fields-asis').getByRole('button', { name: 'この成果物のドラフトを確認' }).click();

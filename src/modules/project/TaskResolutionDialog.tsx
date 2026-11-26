@@ -1,14 +1,14 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Radio, RadioGroup, Select, Textarea } from '@fluentui/react-components';
 import { CheckmarkCircle48Filled } from '@fluentui/react-icons';
-import { AiLiveError, aiLive, aiRequestFits, preflight, type AiRequest } from '../../ai/client.ts';
+import { AiLiveError, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
-import { focusRouteTarget, hrefFor } from '../../state/router.ts';
+import { focusRouteTarget, hrefFor, parseHash } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { reasonKey } from '../ai/AiCommon.tsx';
@@ -18,10 +18,12 @@ import { evaluateStep, normalizeDeliverables, resultKey, STEP_DEFS, todoKey } fr
 import { Refs, todoHref, useCheckContext } from './deliverablesUi.tsx';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
 import {
-  CHOICE_FIELDS, CHOICE_VALUES, choiceBasis, chosenValue, completeResolution, humanDescription, ownerRoleBasis, NUMBER_FIELDS, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
+  CHOICE_FIELDS, CHOICE_VALUES, choiceBasis, chosenValue, completeResolution, generateResolution, humanDescription, ownerRoleBasis, NUMBER_FIELDS, previewResolution, repairDescription, repairOptions, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
   RESOLUTION_GUIDANCE_MAX, ResolutionResponseError, type HumanField, type HumanValues, type OwnerSuggestion, type RepairOption,
   type CompletedProposal, type ResolutionInput, type ResolutionProposal,
 } from './taskResolution.ts';
+import { resolutionTransport } from './taskDrafts.ts';
+import { discardTaskDraft } from './taskDraftCommit.ts';
 
 type ReadyResolution = { input: ResolutionInput; options: RepairOption[]; proposal: CompletedProposal; stamp: string };
 /** What the reviewer typed for a KPI draft, kept as text so partial input such as "1." survives re-rendering. */
@@ -131,7 +133,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
     try {
       const stamp = batchSourceStamp();
       const options = repairOptions(input);
-      const transport = resolutionTransport(scope, abort.signal, t);
+      const transport = resolutionTransport(scope, abort.signal, (reasons) => reasons.map((reason) => t(reasonKey(reason as Parameters<typeof reasonKey>[0]))).join(' '), () => t('dlv.draft.tooLarge'));
       transport.fits(resolutionRequest(input, options, guidance));
       assertStamp(stamp);
       // For unusually large task sets, bounded option chunks are generated and merged into a small set of distinct drafts.
@@ -208,6 +210,8 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       });
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('dlv.batch.storageError'));
+      // The saved batch draft of this task is superseded by what the reviewer just approved here.
+      discardTaskDraft(todoId, audience);
       setApplied({ inputHref });
     } catch (value) {
       setError(errorText(value));
@@ -232,6 +236,17 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const setHuman = (optionId: string, field: HumanField, value: string) =>
     setHumanRaw((prev) => ({ ...prev, [optionId]: { ...prev[optionId], [field]: value } }));
 
+  const openInput = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const href = event.currentTarget.getAttribute('href');
+    const target = href === window.location.hash ? parseHash(href).query.get('target') : null;
+    if (target) {
+      event.preventDefault();
+      requestAnimationFrame(() => focusRouteTarget(target));
+    }
+    close();
+  };
+
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open && !busy) close(); }}>
       <DialogSurface className={success ? 'dlv-resolve-success-surface' : 'dlv-draft-surface'} data-testid="dlv-resolve-dialog">
@@ -251,17 +266,10 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                 <p>{t('dlv.resolve.successNote')}</p>
                 <div className="dlv-resolve-success-links">
                   <Button as="a" appearance="primary" href={hrefFor('/deliverables', { step, target: 'dlv-fields' })}
-                    onClick={(event) => {
-                      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-                      if (event.currentTarget.getAttribute('href') === window.location.hash) {
-                        event.preventDefault();
-                        requestAnimationFrame(() => focusRouteTarget('dlv-fields'));
-                      }
-                      close();
-                    }} data-testid="dlv-resolve-input-link">
+                    onClick={openInput} data-testid="dlv-resolve-input-link">
                     {t('dlv.resolve.openInputs')}
                   </Button>
-                  <a href={success.inputHref} onClick={close} data-testid="dlv-resolve-task-link">{t('dlv.task.openAction')}</a>
+                  <a href={success.inputHref} onClick={openInput} data-testid="dlv-resolve-task-link">{t('dlv.task.openAction')}</a>
                 </div>
               </div>
             ) : (

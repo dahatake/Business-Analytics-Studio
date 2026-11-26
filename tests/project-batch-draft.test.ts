@@ -18,6 +18,7 @@ import { useDeliverables, useFieldDrafts, useKpiDrafts, useSolutionDrafts, useSt
 import { emptyKpiFields } from '../src/modules/project/kpiAdopt.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
 import { mockSolutionDraft } from '../src/modules/project/solutionDraft.ts';
+import { useTaskDrafts } from '../src/modules/project/taskDrafts.ts';
 
 function context(data = samplePack): AppCheckContext {
   const pack = loadPack(data);
@@ -78,11 +79,12 @@ describe('all-step drafts', () => {
     const ctx = context();
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value);
     const solutions = ctx.pack.pack.entities.filter((e) => e.kind === 'solution').map((e) => e.id);
-    expect(jobs).toHaveLength(11 + solutions.length);
+    expect(jobs).toHaveLength(12 + solutions.length);
     expect(jobs.filter((job) => job.kind === 'fields').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.filter((job) => job.kind === 'brief').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.at(10)?.kind).toBe('strategy');
-    expect(jobs.slice(11).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
+    expect(jobs.slice(11, -1).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
+    expect(jobs.at(-1)?.kind).toBe('tasks'); // FR-376: last, after the drafts its sign-off records and fields come from
 
     setRuntimeSettingsProvider(() => ({ provider, liveEnabled: true, sendConsent: true, configured: true }));
     const calls: LiveCall[] = [];
@@ -98,13 +100,20 @@ describe('all-step drafts', () => {
     }
 
     // D-44: asis (22 sections) is drafted as separate fields and tasks calls, so there is one call more than jobs.
-    expect(calls.map((call) => call.provider)).toEqual(Array(12 + solutions.length).fill(provider));
-    expect(calls.filter((call) => call.use === 'deliverableDraft').map((call) => call.stage))
+    // FR-376: the task phase's calls are tagged tasks:<todo> and counted separately.
+    const before = calls.filter((call) => !call.stage?.startsWith('tasks:'));
+    expect(before.map((call) => call.provider)).toEqual(Array(12 + solutions.length).fill(provider));
+    expect(calls.every((call) => call.provider === provider)).toBe(true);
+    expect(before.filter((call) => call.use === 'deliverableDraft').map((call) => call.stage))
       .toEqual(['fields-asis:fields', 'fields-asis:tasks', 'fields-tobe', 'fields-kpi', 'fields-solution', 'fields-deliverable']);
     expect(calls.filter((call) => call.use === 'solutionDraft')).toHaveLength(solutions.length);
     const solutionDrafts = useSolutionDrafts.getState().value;
     for (const id of solutions) expect(solutionDrafts[`internal:${id}`]).toMatchObject({ mock: false, lang: 'ja' });
     expect(useStrategy.getState().value).toEqual(emptyStrategy()); // drafts only: the type and the documents wait for approval
+    const taskDrafts = useTaskDrafts.getState().value;
+    expect(Object.keys(taskDrafts).length).toBeGreaterThan(0);
+    expect(taskDrafts['internal:asis-field']).toBeUndefined(); // already signed off
+    expect(taskDrafts['internal:define-agree']?.ops[0]).toMatchObject({ op: 'signOff', todoId: 'define-agree' });
     const saved = useDeliverables.getState().value;
     expect(saved.docs.asis?.problem).toEqual(field);
     expect(saved.signOffs['asis-field']).toEqual(signOff);
@@ -154,7 +163,7 @@ describe('all-step drafts', () => {
     ctx.kpi = { kpis: [], okrs: [] };
     ctx.objectives = [];
     expect(createBatchPlan(ctx, 'ja', 'internal', 'demo', { objectiveIssues: [] }).map((job) => job.kind))
-      .toEqual(Array(5).fill(['fields', 'brief']).flat());
+      .toEqual([...Array(5).fill(['fields', 'brief']).flat(), 'tasks']);
   });
 
   it('surfaces failures and incomplete live results without saving a mock', async () => {

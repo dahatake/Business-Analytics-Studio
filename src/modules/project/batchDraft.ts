@@ -25,7 +25,10 @@ import { collectObjectives, objectivePlanRequest, storeObjectives, type Objectiv
 import { normalizeStrategy } from './strategy.ts';
 import { kpiOkrPlanRequest, kpiOkrTarget, runKpiOkrDraft, type KpiOkrRun } from './kpiAutoDraft.ts';
 import { loc } from '../../state/text.ts';
-import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpiDrafts, useKpis, useObjectiveDrafts, useSolutionDrafts, useStrategy } from './stores.ts';
+import { translate } from '../../i18n/core.ts';
+import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
+import { draftAllTasks, normalizeTaskDrafts, resolutionTransport, taskDraftKey, useTaskDrafts, type TaskDraft } from './taskDrafts.ts';
+import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpiDrafts, useKpis, useObjectiveDrafts, useProjUi, useSolutionDrafts, useStrategy } from './stores.ts';
 
 type FieldJob = { kind: 'fields'; step: ImprovementStep; input: DraftInput; request: AiRequest };
 type BriefJob = { kind: 'brief'; step: ImprovementStep; brief: StepBrief; request: AiRequest };
@@ -35,14 +38,17 @@ type SolutionJob = { kind: 'solution'; solutionId: string; name: string; input: 
 type ObjectivesJob = { kind: 'objectives'; request: AiRequest };
 /** D-46: the project's KPI/OKR drafts from the internal candidates, every empty field estimated (the request is the first call, for the checks). */
 type KpiOkrJob = { kind: 'kpiOkr'; request: AiRequest; today: string };
-export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob | KpiOkrJob;
+/** FR-376: the last phase, a draft for every open task built on the data as it is when the job runs (the request is for the checks). */
+type TasksJob = { kind: 'tasks'; request: AiRequest; ctx: AppCheckContext; audience: Audience };
+export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob | KpiOkrJob | TasksJob;
 export type BatchResult =
   | { kind: 'fields'; fields: Record<string, string>; tasks: Record<string, string> }
   | { kind: 'brief'; brief: GeneratedBrief }
   | { kind: 'strategy'; proposal: OverviewProposal; inputTokens: number | null; outputTokens: number | null }
   | { kind: 'solution'; draft: SolutionDraft }
   | { kind: 'objectives'; collection: ObjectiveCollection }
-  | { kind: 'kpiOkr'; run: KpiOkrRun };
+  | { kind: 'kpiOkr'; run: KpiOkrRun }
+  | { kind: 'tasks'; drafts: TaskDraft[]; failed: { todoId: string; message: string }[] };
 
 export interface BatchJobProgress {
   activity: 'workiq' | 'generate' | 'fields' | 'tasks';
@@ -53,7 +59,7 @@ export interface BatchJobProgress {
 
 export function batchJobId(job: BatchJob): string {
   if (job.kind === 'solution') return `solution-${job.solutionId}`;
-  if (job.kind === 'objectives' || job.kind === 'kpiOkr') return job.kind;
+  if (job.kind === 'objectives' || job.kind === 'kpiOkr' || job.kind === 'tasks') return job.kind;
   return job.kind === 'strategy' ? 'strategy' : `${job.kind}-${job.step}`;
 }
 
@@ -85,6 +91,8 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
     const request = solutionDraftRequest(input);
     if (request) jobs.push({ kind: 'solution', solutionId: solution.id, name: loc(solution.name, lang), input, request: { ...request, scope } });
   }
+  // FR-376: last, so each task is drafted after the deliverable drafts its sign-off records and fields come from.
+  jobs.push({ kind: 'tasks', ctx, audience, request: { use: 'deliverableDraft', lang, prompt: '[bas-proj:task:all]', scope, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS } });
   return jobs;
 }
 
@@ -110,6 +118,27 @@ export async function runBatchJob(job: BatchJob, signal: AbortSignal, onProgress
     if (!target) throw new Error('The Project pack of this project is no longer active');
     onProgress?.({ activity: 'generate' });
     return { kind: 'kpiOkr', run: await runKpiOkrDraft(target, loaded.pack, request.lang, job.today, signal, (step) => onProgress?.({ activity: 'generate', part: { current: step === 'pick' ? 1 : 2, total: 2 } })) };
+  }
+  if (job.kind === 'tasks') {
+    const lang = request.lang;
+    const deliverables = normalizeDeliverables(useDeliverables.getState().value);
+    const ctx: AppCheckContext = { ...job.ctx, pack: loaded, deliverables, discussion: useDiscussion.getState().value };
+    let current = '';
+    const transport = resolutionTransport(job.request.scope ?? '', signal, (reasons) => reasons.join(' '), () => translate(lang, 'dlv.draft.tooLarge'), () => `tasks:${current}`);
+    const fieldDrafts = useFieldDrafts.getState().value;
+    const result = await draftAllTasks(
+      { ctx, lang, audience: job.audience, editor: useProjUi.getState().editor },
+      {
+        recommendation: (todoId) => deliverables.recommendations?.[`${job.audience}:${todoId}`]?.draft?.text,
+        fieldDraft: (step) => fieldDrafts[`${job.audience}:${step}`]?.fields,
+      },
+      { transport, aborted: () => signal.aborted },
+      (progress) => {
+        current = progress.todoId;
+        onProgress?.({ activity: 'generate', part: { current: progress.current, total: progress.total } });
+      },
+    );
+    return { kind: 'tasks', ...result };
   }
   // An answer cut off at the output cap varies with the model's reasoning, so one more attempt usually completes (D-44).
   const once = async <T>(call: () => Promise<T>): Promise<T> => {
@@ -141,6 +170,7 @@ export function batchSourceStamp(includePack = true): string {
     discussion: useDiscussion.getState().value, kpi: useKpis.getState().value, analysis: useAnalyses.getState().value,
     useCases: useUseCases.getState().value, deliverables: useDeliverables.getState().value, strategy: useStrategy.getState().value,
     fieldDrafts: useFieldDrafts.getState().value, objectiveDrafts: useObjectiveDrafts.getState().value, kpiDrafts: useKpiDrafts.getState().value, solutionDrafts: useSolutionDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,
+    taskDrafts: useTaskDrafts.getState().value,
     audience: useSettings.getState().audience, lang: useSettings.getState().lang,
     provider: ai.provider, liveEnabled: ai.liveEnabled, model: ai.copilotModel, connection: ai.relayConnection,
     relayReachable: ai.relayReachable, foundryKeySaved: ai.foundryKeySaved,
@@ -199,6 +229,12 @@ export function saveBatchResult(
     storeObjectives(result.collection);
   } else if (job.kind === 'kpiOkr' && result.kind === 'kpiOkr') {
     useKpiDrafts.getState().set(result.run.drafts);
+  } else if (job.kind === 'tasks' && result.kind === 'tasks') {
+    // A new batch replaces this audience's task drafts; the other audience's stay.
+    useTaskDrafts.getState().set((value) => ({
+      ...Object.fromEntries(Object.entries(normalizeTaskDrafts(value)).filter(([key]) => !key.startsWith(`${audience}:`))),
+      ...Object.fromEntries(result.drafts.map((draft) => [taskDraftKey(audience, draft.todoId), draft])),
+    }));
   } else {
     throw new Error('Batch result does not match its request');
   }

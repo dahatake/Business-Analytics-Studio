@@ -254,7 +254,7 @@ test.describe('Copilot task resolution', () => {
   });
 
   test('opens the resolved deliverable field so its AI draft can be reviewed and approved', async ({ page }) => {
-    await go(page, '/deliverables?step=asis');
+    await go(page, '/deliverables?step=asis&target=dlv-field-problem');
     await fakeAi(page);
     let data = emptyDeliverables();
     for (const field of STEP_DEFS.asis.fields.filter((item) => item.id !== 'problem')) {
@@ -291,6 +291,49 @@ test.describe('Copilot task resolution', () => {
     await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
     await page.reload();
     await expect(page.getByTestId('dlv-approved-problem')).toBeVisible();
+    await expect(todo).toHaveAttribute('data-done', 'true');
+  });
+
+  test('shows success for resolved cause hypotheses and opens the affected issue for editing', async ({ page }) => {
+    await go(page, '/deliverables?step=asis');
+    await fakeAi(page);
+    const issue = samplePack.entities.find((entity) => entity.kind === 'issue' && entity.id === 'issue-lead-time');
+    if (!issue || issue.kind !== 'issue') throw new Error('Expected the lead-time issue');
+    await seedDeviceData(page, { 'bas.scope.demo.pack.edits': JSON.stringify({ upserts: [{ ...issue, causeIds: [] }], deleted: [], regions: [] }) });
+    await page.reload();
+    await page.route('**/relay/ai', async (route) => {
+      const request = route.request().postDataJSON() as { prompt: string };
+      const options = JSON.parse(request.prompt.split('Allowed repair options: ')[1]!) as RepairOption[];
+      const link = options.find((option) => option.kind === 'link' && option.field === 'causeIds');
+      if (!link) throw new Error('Expected a sourced cause link');
+      await route.fulfill({ json: { text: JSON.stringify({
+        choices: [
+          { id: 'a', label: '出典に基づく案', optionIds: [link.id], rationale: '課題と原因に共通する出典を確認します。' },
+          { id: 'b', label: '確認を優先する案', optionIds: [link.id], rationale: '業務担当者による原因の確認を優先します。', tradeoffs: '確認に時間がかかります。' },
+        ],
+        recommendedId: 'a', reasoning: '出典を確認しやすい案を推奨します。', missingInformation: [],
+      }), inputTokens: 100, outputTokens: 100 } });
+    });
+    const todo = page.getByTestId('dlv-exit').getByTestId('dlv-todo-define-causes');
+    await expect(todo).toHaveAttribute('data-done', 'false');
+    await todo.getByTestId('dlv-resolve-define-causes').click();
+    await generate(page);
+    await expect(page.getByTestId('dlv-resolve-apply')).toBeEnabled();
+    await page.getByTestId('dlv-resolve-apply').click();
+    await expect(page.getByTestId('dlv-resolve-success-icon')).toBeVisible();
+    await expect(page.getByTestId('dlv-resolve-result')).toContainText('課題すべてに原因の仮説があります');
+    const taskLink = page.getByTestId('dlv-resolve-task-link');
+    await expect(taskLink).toHaveAttribute('href', /#\/relations\?.*edit=issue-lead-time.*field=causeIds/);
+    await taskLink.click();
+    const editor = page.getByTestId('entry-dialog');
+    await expect(editor).toBeVisible();
+    await expect(editor.getByTestId('entry-field-causeIds')).toBeVisible();
+    await editor.getByTestId('entry-field-description').fill('原因を確認した後に課題を編集しました。');
+    await editor.getByTestId('entry-save').click();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+    await page.evaluate(() => { window.location.hash = '/deliverables?step=asis'; });
+    await page.reload();
     await expect(todo).toHaveAttribute('data-done', 'true');
   });
 

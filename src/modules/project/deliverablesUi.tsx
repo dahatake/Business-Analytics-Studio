@@ -31,6 +31,7 @@ import {
 } from './deliverables.ts';
 import { kpisForScope, useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpis, useProjTransient, useProjUi, useStrategy, type SavedFieldDraft } from './stores.ts';
 import { gapCount, normalizeStrategy } from './strategy.ts';
+import { TaskDraftLine, useTaskStatuses } from './taskDraftsUi.tsx';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import './project.css';
 
@@ -250,6 +251,8 @@ function approveTask(id: string) {
 export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: boolean }) {
   const { t, fmt } = useI18n();
   const checkboxId = useId();
+  const ctx = useCheckContext();
+  const { drafts: taskDrafts } = useTaskStatuses(ctx);
   const audience = useSettings((s) => s.audience);
   const openResolution = useProjTransient((s) => s.openResolution);
   const recommendation = useDeliverables((s) => s.value.recommendations?.[`${audience}:${r.todo.id}`] ?? (audience === 'internal' ? s.value.recommendations?.[r.todo.id] : undefined));
@@ -287,7 +290,7 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
           <p className="proj-prewrap">{recommendation.approved.text}</p>
         </div>
       )}
-      {detailed && recommendation?.draft && (
+      {detailed && recommendation?.draft && !taskDrafts[`${audience}:${r.todo.id}`] && (
         <div data-testid={`dlv-task-draft-${r.todo.id}`}>
           <strong>{t('dlv.task.draft')}</strong>{' '}{recommendation.draft.mock && <MockBadge />}
           <p className="proj-prewrap">{recommendation.draft.text}</p>
@@ -313,6 +316,7 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
           {t('dlv.task.simulate')}
         </a>
       )}
+      <TaskDraftLine r={r} ctx={ctx} />
     </li>
   );
 }
@@ -366,6 +370,10 @@ export function StepTodoBand() {
   const collapsed = preference ?? !room;
   const setCollapsed = useProjUi((s) => s.setTodoCollapsed);
   const openBatchDraft = useProjTransient((s) => s.openBatchDraft);
+  const openTaskReview = useProjTransient((s) => s.openTaskReview);
+  const { statuses } = useTaskStatuses(ctx);
+  const awaiting = [...statuses.values()].filter((s) => s.state === 'ready' || s.state === 'open' || s.state === 'viaOther');
+  const awaitingHere = awaiting.filter((s) => s.step === step).length;
   const applied = useProjTransient((s) => s.draftApplied);
   const listId = useId();
   const n = IMPROVEMENT_STEPS.indexOf(step) + 1;
@@ -380,6 +388,7 @@ export function StepTodoBand() {
         <div className="dlv-band-progress">
           <ProgressBar value={p.total ? p.done / p.total : 0} thickness="large" color={p.complete ? 'success' : 'brand'} aria-hidden className="dlv-progressbar" />
           <span data-testid="dlv-progress">{p.complete ? t('dlv.band.complete') : t('dlv.band.progress', { done: p.done, total: p.total })}</span>
+          {awaitingHere > 0 && <span className="dlv-band-awaiting" data-testid="dlv-band-awaiting">{t('dlv.td.awaiting', { n: awaitingHere })}</span>}
         </div>
         {next && (
           <a
@@ -400,6 +409,7 @@ export function StepTodoBand() {
         ].filter(Boolean).join(' ') : ''}</span>
         <div className="dlv-band-actions">
           <Button appearance="primary" className="dlv-batch-button" icon={<Sparkle20Regular />} onClick={openBatchDraft} data-testid="dlv-draft">{t('dlv.batch.button')}</Button>
+          {awaiting.length > 0 && <Button appearance="secondary" icon={<CheckmarkCircle20Filled />} onClick={openTaskReview} data-testid="dlv-td-open-review">{t('dlv.td.openReview', { n: awaiting.length })}</Button>}
           <Button as="a" appearance="secondary" icon={<DocumentText20Regular />} href={hrefFor('/deliverables', { step })} data-testid="dlv-open">{t('dlv.band.open')}</Button>
           <Button
             appearance="subtle"

@@ -7,8 +7,9 @@ import {
 } from '../src/modules/project/deliverables.ts';
 import { buildDraft, draftPrompt } from '../src/modules/project/deliverableDraft.ts';
 import {
-  fillChanges, fillRequest, findGaps, mergeFills, parseFill, previewFillContext, reviewFill, savedProposals, tonneAmounts, yenAmounts, type FillProposal,
+  fillChanges, fillRequest, findGaps, MAX_FILL_RETRIES, mergeFills, parseFill, previewFillContext, requestFill, reviewFill, savedProposals, tonneAmounts, yenAmounts, type FillProposal,
 } from '../src/modules/project/dataFill.ts';
+import { setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
 import type { Entity } from '../src/data/schema.ts';
 import type { PackChange } from '../src/state/packEdits.ts';
 
@@ -93,6 +94,39 @@ describe('missing-data fill: labels decided by the app, reviewed one by one', ()
     expect(out.every((p) => p.value === undefined)).toBe(true);
     expect(out[1]!.note.ja).toBe('経理部の見積書');
     expect(() => parseFill('no json here', gaps, ctx, 'internal')).toThrow();
+  });
+
+  it('D-49: asks again only for the gaps an answer left without a value, and keeps earlier values if the retry fails', async () => {
+    const ctx = ctxWith();
+    const gaps = findGaps(ctx, 'internal').slice(0, 3);
+    const note = { ja: '推定の理由', en: 'Why' };
+    const prompts: string[] = [];
+    const replies = [
+      answer([{ gapId: gaps[0]!.id, basis: 'estimate', value: 10_000_000, note }]),
+      answer([{ gapId: gaps[1]!.id, basis: 'estimate', value: 20_000_000, note }]),
+      'broken',
+    ];
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true, provider: 'copilotSdk' }));
+    setLiveTransport(async (request) => {
+      prompts.push(request.prompt);
+      return { text: replies.shift()!, inputTokens: 1, outputTokens: 1 };
+    });
+    try {
+      writeLedger([]);
+      const request = fillRequest(ctx, 'ja', 'internal', gaps);
+      expect(request.prompt).toContain('Never answer "unacquired"');
+      const out = await requestFill(request, gaps, ctx, 'internal');
+      expect(prompts).toHaveLength(1 + MAX_FILL_RETRIES);
+      expect(prompts[1]).toContain('Retry:');
+      expect(prompts[1]).not.toContain(`"gapId":"${gaps[0]!.id}"`);
+      expect(prompts[1]).toContain(`"gapId":"${gaps[2]!.id}"`);
+      expect(prompts[2]).not.toContain(`"gapId":"${gaps[1]!.id}"`);
+      expect(out.map((p) => p.basis)).toEqual(['estimate', 'estimate', 'unacquired']);
+    } finally {
+      setLiveTransport(null);
+      setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
+      writeLedger([]);
+    }
   });
 
   it('applies values as pending, does not count unreviewed estimates as done, and labels them in the deliverable', () => {

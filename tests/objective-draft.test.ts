@@ -6,7 +6,7 @@ import { samplePack } from '../src/data/sample.ts';
 import * as relayClient from '../src/modules/ai/relayClient.ts';
 import type { WorkIqSectionInfo } from '../src/modules/ai/relayClient.ts';
 import {
-  applyObjectives, classifyObjectives, objectiveAspects, objectiveEvidence, objectivePrompt, OBJECTIVE_DRAFT_MARK, runObjectiveDraft, type ObjectiveDraftInput, type ObjectiveSearch,
+  applyObjectives, classifyObjectives, objectiveAspects, objectiveEvidence, objectivePrompt, OBJECTIVE_DRAFT_MARK, PROVISIONAL_HORIZON, runObjectiveDraft, type ObjectiveDraftInput, type ObjectiveSearch,
 } from '../src/modules/project/objectiveDraft.ts';
 
 const PLAN = '中期経営計画2027: 2027年度までにエンゲージメント実施件数を年間300件に拡大する。顧客にAIとCopilotの真の価値を伝える。';
@@ -112,7 +112,8 @@ describe('FR-367 business objectives from Work IQ, OKRs and sources', () => {
       { tier: 'drafted', text: '少人数で高品質なEngagementを大量に提供できる運営モデルを確立する', evidence: [{ ref: 'purpose', excerpt: '' }], reason: '目的から作成' },
       { tier: 'stated', text: 'Microsoft Innovation Hubが、大量に高品質なEngagementを実行できるようにしたい', horizon: 'FY27', evidence: [{ ref: 'purpose', excerpt: 'Microsoft Innovation Hubが、大量に高品質なEngagementを実行できるようにしたい' }] },
     ], none);
-    expect(drafted).toMatchObject({ tier: 'drafted', horizon: '', basis: 'customerStated' });
+    expect(drafted).toMatchObject({ tier: 'drafted', horizon: PROVISIONAL_HORIZON.ja, basis: 'customerStated' });
+    expect(drafted!.reason).toContain('BAS が仮置き'); // D-49: no draft is left without a horizon
     expect(drafted!.source.locator).toBe('BAS Project: Hub FY27');
     expect(fromPurpose).toMatchObject({ tier: 'unclear', downgraded: true });
     expect(objectiveEvidence(none).some((e) => e.kind === 'workiq')).toBe(false);

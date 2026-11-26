@@ -145,6 +145,9 @@ export function objectiveEvidence(input: ObjectiveDraftInput): ObjectiveEvidence
   return out.slice(0, MAX_EVIDENCE).filter((e) => (total += e.text.length + e.title.length) <= MAX_EVIDENCE_TOTAL);
 }
 
+/** The horizon BAS sets on a drafted objective when neither the evidence nor Copilot gave one (D-49). */
+export const PROVISIONAL_HORIZON = { ja: '中期（BAS の仮置き・要確認）', en: 'Mid-term (BAS provisional; confirm)' } as const;
+
 export function objectivePrompt(input: ObjectiveDraftInput, evidence: readonly ObjectiveEvidence[] = objectiveEvidence(input)): string {
   return [
     OBJECTIVE_DRAFT_MARK,
@@ -158,7 +161,7 @@ export function objectivePrompt(input: ObjectiveDraftInput, evidence: readonly O
     `List the business objectives of the company${input.unit ? ' and of the unit' : ''}, at most ${MAX_AI_OBJECTIVES}. Skip objectives equal to savedObjectives.`,
     'tier "stated": an evidence of kind workiq, okr or source states the objective and its horizon. Copy text and horizon word for word from the evidence and put the sentence that contains them, verbatim, in excerpt.',
     'tier "unclear": the evidence mentions the direction but not clearly (no horizon, only implied, or conflicting). tier "drafted": no evidence states an objective; derive a hypothesis from purpose, issues and other evidence.',
-    'For unclear and drafted, write text and reason in lang, cite the evidence refs you used, leave horizon empty unless the evidence gives it, and never invent numbers, people, deadlines or facts.',
+    'For unclear and drafted, write text and reason in lang and cite the evidence refs you used. Always give a horizon: the one the evidence gives, else your best estimate from the purpose, the KPI periods and the planning cycle in the evidence, and say in reason that the horizon is estimated. Never invent numbers, people or facts in text.',
     'scope: legalEntity (the company), group, business or department (the unit; put its name in scopeName).',
     'Answer only JSON:',
     '{"objectives":[{"tier":"stated","text":"...","horizon":"...","scope":"legalEntity","scopeName":"","evidence":[{"ref":"...","excerpt":"..."}],"reason":"..."}]}',
@@ -226,12 +229,18 @@ export function classifyObjectives(answer: string, input: ObjectiveDraftInput, e
       reason = reason || (ja ? '関連データがほとんどありません。' : 'There is little related data.');
     }
     seen.add(key);
+    // D-49: a draft never stays without a horizon (saving requires one); BAS sets a labelled provisional one.
+    let horizon = o.horizon;
+    if (!horizon && tier !== 'stated') {
+      horizon = PROVISIONAL_HORIZON[input.lang];
+      reason = [reason, ja ? '期間は根拠にも Copilot の回答にもないため、BAS が仮置きしました。確認して直してください。' : 'Neither the evidence nor Copilot gave a horizon, so BAS set a provisional one; confirm and correct it.'].filter(Boolean).join(' ');
+    }
     // A draft carries the best evidence it cited, so saving it later keeps a traceable source.
     const best = proof?.e ?? cited.find((c) => c.e.quotable)?.e ?? cited[0]?.e ?? byRef.get('purpose');
     const excerpt = proof ? proof.excerpt.trim() : (cited.find((c) => c.e === best)?.excerpt ?? '').trim();
     const publicSource = !!best?.public && !!best.url;
     out.push({
-      tier, text: o.text, horizon: o.horizon, scope: o.scope, scopeName: o.scope === 'legalEntity' ? '' : (o.scopeName || input.unit), reason, unverified, downgraded,
+      tier, text: o.text, horizon, scope: o.scope, scopeName: o.scope === 'legalEntity' ? '' : (o.scopeName || input.unit), reason, unverified, downgraded,
       evidence: cited.map(({ e, excerpt: x }) => ({ ref: e.ref, title: e.title, excerpt: x })),
       basis: publicSource ? 'published' : 'customerStated',
       source: {

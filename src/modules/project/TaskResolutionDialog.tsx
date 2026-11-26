@@ -1,12 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Radio, RadioGroup, Select, Textarea } from '@fluentui/react-components';
-import { AiLiveError, aiRequestFits, preflight } from '../../ai/client.ts';
+import { CheckmarkCircle48Filled } from '@fluentui/react-icons';
+import { AiLiveError, aiLive, aiRequestFits, preflight, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
+import { focusRouteTarget, hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { reasonKey } from '../ai/AiCommon.tsx';
@@ -16,12 +18,12 @@ import { evaluateStep, normalizeDeliverables, resultKey, STEP_DEFS, todoKey } fr
 import { Refs, todoHref, useCheckContext } from './deliverablesUi.tsx';
 import { useDeliverables, useProjTransient, useProjUi } from './stores.ts';
 import {
-  CHOICE_FIELDS, CHOICE_VALUES, chosenValue, humanDescription, NUMBER_FIELDS, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
+  CHOICE_FIELDS, CHOICE_VALUES, choiceBasis, chosenValue, completeResolution, humanDescription, ownerRoleBasis, NUMBER_FIELDS, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, resolutionTodo, suggestOwner, valueBasis,
   RESOLUTION_GUIDANCE_MAX, ResolutionResponseError, type HumanField, type HumanValues, type OwnerSuggestion, type RepairOption,
-  type ResolutionInput, type ResolutionProposal,
+  type CompletedProposal, type ResolutionInput, type ResolutionProposal,
 } from './taskResolution.ts';
 
-type ReadyResolution = { input: ResolutionInput; options: RepairOption[]; proposal: ResolutionProposal; stamp: string };
+type ReadyResolution = { input: ResolutionInput; options: RepairOption[]; proposal: CompletedProposal; stamp: string };
 /** What the reviewer typed for a KPI draft, kept as text so partial input such as "1." survives re-rendering. */
 type HumanInput = Partial<Record<HumanField, string>>;
 const OTHER = '__other';
@@ -60,11 +62,12 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   const [humanRaw, setHumanRaw] = useState<Record<string, HumanInput>>({});
   const [progress, setProgress] = useState<{ stage: AiStage; startedAt?: number } | null>(null);
   const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState(false);
+  const [applied, setApplied] = useState<{ inputHref: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
   const running = useRef(false);
   const controller = useRef<AbortController | null>(null);
+  const successRef = useRef<HTMLDivElement>(null);
   const step = Object.values(STEP_DEFS).find((def) => def.todos.some((todo) => todo.id === todoId))!.step;
   const input: ResolutionInput = { step, ctx, lang, audience, todoId };
   const result = resolutionTodo(input);
@@ -79,6 +82,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
   })), [ready, editor]);
   const human = humanValues(humanRaw, owners);
   const busy = progress !== null || applying;
+  const success = result.done ? applied : null;
   const stale = !!ready && !applied && batchSourceStamp() !== ready.stamp;
   const other = choiceId === OTHER;
   const choice = ready?.proposal.choices.find((c) => c.id === choiceId);
@@ -102,6 +106,9 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       close();
     }
   }, [scope, audience, lang, initialTarget, close]);
+  useEffect(() => {
+    if (success) successRef.current?.focus();
+  }, [success]);
 
   const errorText = (value: unknown) => value instanceof AiLiveError
     ? value.reasons.includes('liveFailed') ? t('dlv.batch.liveFailed', { detail: value.message }) : value.reasons.map((reason) => t(reasonKey(reason))).join(' ')
@@ -124,63 +131,30 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
     try {
       const stamp = batchSourceStamp();
       const options = repairOptions(input);
-      const fullRequest = { ...resolutionRequest(input, options, guidance), scope };
-      const fullCheck = preflight(fullRequest);
-      if (!fullCheck.allowed) throw new AiLiveError(fullCheck.reasons, fullCheck.reasons.map((reason) => t(reasonKey(reason))).join(' '), fullCheck.budget);
+      const transport = resolutionTransport(scope, abort.signal, t);
+      transport.fits(resolutionRequest(input, options, guidance));
       assertStamp(stamp);
-      let proposal: ResolutionProposal;
-      if (aiRequestFits(fullRequest, fullCheck.context)) {
-        proposal = await requestResolution(fullRequest, options, abort.signal);
-      } else {
-        // For unusually large task sets, generate bounded option chunks and merge a small set of distinct drafts.
-        const chunks: RepairOption[][] = [];
-        let chunk: RepairOption[] = [];
-        for (const option of options) {
-          const candidate = [...chunk, option];
-          const candidateRequest = { ...resolutionRequest(input, candidate, guidance), scope };
-          const candidateCheck = preflight(candidateRequest);
-          if (chunk.length && !aiRequestFits(candidateRequest, candidateCheck.context)) {
-            chunks.push(chunk);
-            chunk = [option];
-          } else {
-            chunk = candidate;
-          }
-        }
-        if (chunk.length) chunks.push(chunk);
-        if (!chunks.length) throw new Error(t('dlv.draft.tooLarge'));
-        const parts: ResolutionProposal[] = [];
-        for (const partOptions of chunks) {
-          const partRequest = { ...resolutionRequest(input, partOptions, guidance), scope };
-          const partCheck = preflight(partRequest);
-          if (!partCheck.allowed) throw new AiLiveError(partCheck.reasons, partCheck.reasons.map((reason) => t(reasonKey(reason))).join(' '), partCheck.budget);
-          if (!aiRequestFits(partRequest, partCheck.context)) throw new Error(t('dlv.draft.tooLarge'));
-          parts.push(await requestResolution(partRequest, partOptions, abort.signal));
-        }
-        const choices = parts.flatMap((part, partIndex) => part.choices.map((choice) => ({
-          ...choice,
-          id: `c${partIndex + 1}-${choice.id}`.slice(0, 40),
-        }))).slice(0, 4);
-        const firstPart = parts[0];
-        const firstId = firstPart?.choices.find((choice) => choice.id === firstPart.recommendedId)?.id;
-        const recommendedId = firstId
-          ? choices.find((choice) => choice.id === `c1-${firstId}`)?.id ?? choices[0]?.id
-          : choices[0]?.id;
-        if (!choices.length || recommendedId === undefined) throw new Error(t('dlv.resolve.invalidJson'));
-        proposal = {
-          choices,
-          recommendedId,
-          reasoning: [...new Set(parts.map((part) => part.reasoning))].join('\n\n'),
-          missingInformation: [...new Set(parts.flatMap((part) => part.missingInformation))].slice(0, 20),
-        };
-      }
+      // For unusually large task sets, bounded option chunks are generated and merged into a small set of distinct drafts.
+      const proposal: ResolutionProposal = await generateResolution(input, options, guidance, transport);
       if (abort.signal.aborted) {
         setCancelled(true);
         return;
       }
       assertStamp(stamp);
-      // Every choice must be applicable as shown; one invalid choice rejects the whole proposal.
-      for (const item of proposal.choices) previewResolution(input, item, options, new Date().toISOString());
-      setReady({ input, options, proposal, stamp });
+      // D-49: every choice is completed so that approving it leaves no missing information.
+      const ask = async (request: AiRequest) => {
+        if (!transport.fits(request)) throw transport.tooLarge();
+        return transport.send(request);
+      };
+      const completed = await completeResolution(input, options, proposal, {
+        owner: (option) => suggestOwner(input, option, useProjUi.getState().editor), ask, aborted: () => abort.signal.aborted,
+      });
+      if (abort.signal.aborted) {
+        setCancelled(true);
+        return;
+      }
+      assertStamp(stamp);
+      setReady({ input, options, proposal: completed, stamp });
       setChoiceId(proposal.recommendedId);
     } catch (value) {
       if (abort.signal.aborted) setCancelled(true);
@@ -199,6 +173,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
     setError(null);
     try {
       assertStamp(ready.stamp);
+      const inputHref = todoHref(resolutionTodo(ready.input));
       const at = new Date().toISOString();
       if (other || !choice) throw new Error(t('dlv.resolve.selectRequired'));
       const plan = previewResolution(ready.input, { ...choice, human }, ready.options, at);
@@ -233,13 +208,22 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
       });
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('dlv.batch.storageError'));
-      setApplied(true);
+      setApplied({ inputHref });
     } catch (value) {
       setError(errorText(value));
     } finally {
       running.current = false;
       setApplying(false);
     }
+  };
+
+  // After an approval that left the task open, the next round drafts the rest from the data as it is now.
+  const continueResolution = () => {
+    setApplied(null);
+    setReady(null);
+    setChoiceId('');
+    setHumanRaw({});
+    void generate();
   };
 
   function missingText(missing: { field: HumanField }[]) {
@@ -250,10 +234,38 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
 
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open && !busy) close(); }}>
-      <DialogSurface className="dlv-draft-surface" data-testid="dlv-resolve-dialog">
+      <DialogSurface className={success ? 'dlv-resolve-success-surface' : 'dlv-draft-surface'} data-testid="dlv-resolve-dialog">
         <DialogBody>
-          <DialogTitle>{t('dlv.resolve.title', { todo: t(todoKey(todoId)) })}</DialogTitle>
+          <DialogTitle className={success ? 'dlv-resolve-success-title' : undefined}>
+            {success ? t('dlv.resolve.successTitle') : t('dlv.resolve.title', { todo: t(todoKey(todoId)) })}
+          </DialogTitle>
           <DialogContent>
+            {success ? (
+              <div className="dlv-resolve-success" data-testid="dlv-resolve-success">
+                <div className="dlv-resolve-success-message" role="status" tabIndex={-1} ref={successRef} data-testid="dlv-resolve-result">
+                  <CheckmarkCircle48Filled className="dlv-resolve-success-icon" aria-hidden data-testid="dlv-resolve-success-icon" />
+                  <p className="dlv-resolve-success-task">{t(todoKey(todoId))}</p>
+                  <p>{t(resultKey(result.outcome!.code), result.outcome!.vars)}</p>
+                  <p>{t('dlv.resolve.resolved')}</p>
+                </div>
+                <p>{t('dlv.resolve.successNote')}</p>
+                <div className="dlv-resolve-success-links">
+                  <Button as="a" appearance="primary" href={hrefFor('/deliverables', { step, target: 'dlv-fields' })}
+                    onClick={(event) => {
+                      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                      if (event.currentTarget.getAttribute('href') === window.location.hash) {
+                        event.preventDefault();
+                        requestAnimationFrame(() => focusRouteTarget('dlv-fields'));
+                      }
+                      close();
+                    }} data-testid="dlv-resolve-input-link">
+                    {t('dlv.resolve.openInputs')}
+                  </Button>
+                  <a href={success.inputHref} onClick={close} data-testid="dlv-resolve-task-link">{t('dlv.task.openAction')}</a>
+                </div>
+              </div>
+            ) : (
+              <>
             <p>{t('dlv.resolve.note')}</p>
             <p>{t(resultKey(result.outcome!.code), result.outcome!.vars)}</p>
             <Refs refs={result.outcome?.refs ?? []} />
@@ -268,6 +280,20 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                   <strong>{t('dlv.resolve.recommendation', { label: recommended.label })}</strong>
                   <p className="proj-prewrap" data-testid="dlv-resolve-reasoning">{ready.proposal.reasoning}</p>
                 </div>
+                {ready.proposal.completion.rounds > 0 && <p role="status" data-testid="dlv-resolve-rounds">{t('dlv.resolve.rounds', { n: String(ready.proposal.completion.rounds) })}</p>}
+                {ready.proposal.completion.error && <p role="status" data-testid="dlv-resolve-completion-error">{t('dlv.resolve.completionError', { detail: ready.proposal.completion.error })}</p>}
+                {ready.proposal.unreachable.length > 0 && (
+                  <div role="status" data-testid="dlv-resolve-unreachable">
+                    <p>{t('dlv.resolve.unreachable')}</p>
+                    <Refs refs={ready.proposal.unreachable} />
+                  </div>
+                )}
+                {ready.proposal.uncovered.length > 0 && (
+                  <div role="status" data-testid="dlv-resolve-uncovered">
+                    <p>{t('dlv.resolve.uncovered')}</p>
+                    <Refs refs={ready.proposal.uncovered} />
+                  </div>
+                )}
                 {ready.proposal.missingInformation.length > 0 && (
                   <>
                     <strong>{t('dlv.resolve.missing')}</strong>
@@ -289,6 +315,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                         <div className="dlv-resolve-choice-body">
                           <p className="proj-prewrap">{item.rationale}</p>
                           {item.tradeoffs && <p className="proj-prewrap"><strong>{t('dlv.resolve.tradeoffs')}</strong>{' '}{item.tradeoffs}</p>}
+                          {!!item.added?.length && <p data-testid={`dlv-resolve-added-${item.id}`}>{t('dlv.resolve.added', { n: String(item.added.length) })}</p>}
                           <ol data-testid={`dlv-resolve-edits-${item.id}`}>
                             {edits.map((option) => (
                               <li key={option.id}>
@@ -311,7 +338,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                                       const value = humanRaw[option.id]?.[field] ?? draft?.[field] ?? '';
                                       const chosen = chosenValue(draft, human[option.id], field);
                                       const raw = draft?.unrecognized?.[field];
-                                      const basis = !chosen ? undefined : value !== (draft?.[field] ?? '') ? 'human' : 'proposed';
+                                      const basis = !chosen ? undefined : value !== (draft?.[field] ?? '') ? 'human' : choiceBasis(draft, field);
                                       return (
                                         <Field key={field} label={t(`dlv.resolve.human.${field}`)} required
                                           validationState={raw !== undefined && !chosen ? 'warning' : 'none'}
@@ -331,20 +358,22 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
                                     {NUMBER_FIELDS.map((field) => {
                                       const basis = valueBasis(ready.input, option, draft, human[option.id], field);
                                       const basisText = basis ? t(`dlv.resolve.human.basis.${basis}`) : undefined;
+                                      const warn = basis === 'estimate' || basis === 'provisional';
                                       return (
                                         <Field key={field} label={t(`dlv.resolve.human.${field}`)} required
-                                          validationState={basis === 'estimate' ? 'warning' : 'none'} validationMessage={basis === 'estimate' ? basisText : undefined}
-                                          hint={basis === 'estimate' ? undefined : basisText} data-basis={basis ?? ''} data-testid={`dlv-resolve-human-${option.newId}-${field}-field`}>
+                                          validationState={warn ? 'warning' : 'none'} validationMessage={warn ? basisText : undefined}
+                                          hint={warn ? undefined : basisText} data-basis={basis ?? ''} data-testid={`dlv-resolve-human-${option.newId}-${field}-field`}>
                                           <Input inputMode="decimal" disabled={busy} value={humanRaw[option.id]?.[field] ?? String(draft?.[field] ?? '')}
                                             onChange={(_, d) => setHuman(option.id, field, d.value)} data-testid={`dlv-resolve-human-${option.newId}-${field}`} />
                                         </Field>
                                       );
                                     })}
-                                    <Field label={t('dlv.resolve.human.ownerId')} required
-                                      hint={ownerId ? t(`dlv.resolve.human.basis.${owner && ownerId === owner.id ? owner.basis : 'human'}`) : undefined}>
+                                    <Field label={t('dlv.resolve.human.ownerId')} required data-testid={`dlv-resolve-human-${option.newId}-ownerId-field`}
+                                      hint={ownerId ? t(`dlv.resolve.human.basis.${owner && ownerId === owner.id ? owner.basis : 'human'}`)
+                                        : draft?.ownerRole ? t(`dlv.resolve.human.basis.${ownerRoleBasis(draft)}`) : undefined}>
                                       <Select disabled={busy} value={ownerId} onChange={(_, d) => setHuman(option.id, 'ownerId', d.value)}
                                         data-testid={`dlv-resolve-human-${option.newId}-ownerId`}>
-                                        <option value="">{t('dlv.resolve.human.noOwner')}</option>
+                                        <option value="">{draft?.ownerRole ? t('dlv.resolve.human.byRole', { role: draft.ownerRole[lang] }) : t('dlv.resolve.human.noOwner')}</option>
                                         {people.map((person) => <option key={person.id} value={person.id}>{loc(person.name, lang)}</option>)}
                                       </Select>
                                     </Field>
@@ -383,9 +412,12 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
               </p>
             )}
             <p><a href={todoHref(result)} onClick={() => { if (!busy) close(); }}>{t('dlv.task.openAction')}</a></p>
+              </>
+            )}
           </DialogContent>
           <DialogActions>
             {!applied && <Button disabled={busy || result.done || !draftable} onClick={() => void generate()} data-testid="dlv-resolve-generate">{t('dlv.resolve.generate')}</Button>}
+            {applied && !result.done && draftable && <Button appearance="primary" disabled={busy} onClick={continueResolution} data-testid="dlv-resolve-continue">{t('dlv.resolve.continue')}</Button>}
             {!applied && ready && other && (
               <Button disabled={busy || result.done || !otherText.trim()} onClick={() => void generate(otherText)} data-testid="dlv-resolve-regenerate">{t('dlv.resolve.regenerate')}</Button>
             )}

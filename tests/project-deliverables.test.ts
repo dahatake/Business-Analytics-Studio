@@ -21,7 +21,7 @@ import { emptyStrategy, setSection, setSolutionType, strategyThread, upsertContr
 import { buildSolutionDoc } from '../src/modules/project/solutionDocs.ts';
 import { simulateTaskImpact } from '../src/modules/project/taskImpact.ts';
 import { stepDashboard } from '../src/modules/project/stepDashboard.ts';
-import { humanDescription, parseResolution, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, suggestOwner, unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
+import { completeResolution, COMPLETE_MARK, humanDescription, parseResolution, previewResolution, repairDescription, repairOptions, requestResolution, resolutionRequest, suggestOwner, unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput } from '../src/modules/project/taskResolution.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -380,6 +380,114 @@ describe('Copilot task repairs', () => {
     const leadTime = repairOptions(inconsistent).filter((o) => o.kind === 'link' && o.relatedId === 'kpi-lead-time');
     expect(byId('asis', inconsistent.ctx)['asis-reconcile']!.done).toBe(true);
     expect(() => previewResolution(inconsistent, proposal(leadTime.map((o) => o.id)), leadTime, 'now')).toThrow(/regress/);
+  });
+
+  it('D-49: completes every choice so that approving any one resolves the task, asking Copilot only for what is still missing', async () => {
+    const raw = clone();
+    raw.entities = raw.entities.map((e) => e.kind === 'issue' ? { ...e, causeIds: [] } : e);
+    const input: ResolutionInput = { step: 'asis', todoId: 'define-causes', ctx: demoCtx({ pack: loadPack(raw) }), lang: 'ja', audience: 'internal' };
+    const options = creates(repairOptions(input));
+    expect(options.length).toBeGreaterThan(3);
+    const [a, b, ...rest] = options.map((o) => o.id) as [string, string, ...string[]];
+    // A conservative answer: each choice drafts a cause for one issue only, and no choice covers the others.
+    const proposal = parseResolution(JSON.stringify(response([
+      choice('a', [a], { drafts: { [a]: causeDraft } }),
+      choice('b', [b], { drafts: { [b]: { ...causeDraft, name: { ja: '承認の待ち', en: 'Waiting for approval' } } } }),
+    ])), options);
+    expect(previewResolution(input, proposal.choices[0]!, options, 'now').result!.done).toBe(false);
+    const prompts: string[] = [];
+    const completed = await completeResolution(input, options, proposal, {
+      owner: () => undefined,
+      ask: async (request) => {
+        prompts.push(request.prompt);
+        return JSON.stringify({ optionIds: rest, drafts: Object.fromEntries(rest.map((id) => [id, causeDraft])), rationale: 'Each issue source names the cause.' });
+      },
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(`${COMPLETE_MARK}define-causes]`);
+    const asked = JSON.parse(prompts[0]!.split('Allowed repair options: ')[1]!) as RepairOption[];
+    expect(asked.map((o) => o.id).sort()).toEqual([...rest].sort()); // only the items no choice covered
+    expect(completed.completion).toEqual({ rounds: 1 });
+    expect(completed.uncovered).toEqual([]);
+    for (const item of completed.choices) {
+      const preview = previewResolution(input, item, options, 'now');
+      expect(preview.missing).toEqual([]);
+      expect(preview.result!.done, item.id).toBe(true);
+    }
+    // The recommended choice keeps its own edit and takes the other choice's draft for the issue it left out.
+    expect(completed.choices[0]!.added).toEqual([b, ...rest]);
+    expect(completed.choices[0]!.drafts![b]!.name.ja).toBe('承認の待ち');
+    expect(completed.choices[1]!.drafts![a]).toEqual(causeDraft);
+  });
+
+  it('D-49: fills every KPI value: Copilot first, then a labelled provisional rule; the model cannot claim a provisional label', async () => {
+    const input = missingLinks();
+    const options = creates(repairOptions(input));
+    const ids = options.map((o) => o.id);
+    const bare: EntityDraft = { ...kpiDraft, direction: undefined, scale: undefined };
+    const proposal = parseResolution(JSON.stringify(response([
+      choice('a', ids, { drafts: Object.fromEntries(ids.map((id) => [id, { ...bare, scale: 'linear', provisional: ['scale'] }])) }),
+      choice('b', ids, { drafts: Object.fromEntries(ids.map((id) => [id, { ...kpiDraft, baseline: 20, current: 18, target: 10, estimateNote: { ja: '20・18・10 は推定', en: '20, 18 and 10 are estimates' } }])), rationale: 'Measured monthly.' }),
+    ])), options);
+    expect(proposal.choices[0]!.drafts![ids[0]!]!.provisional).toBeUndefined();
+    const needs: string[] = [];
+    // Copilot completes the first issue's KPI only; the rest stay empty and get the provisional rule.
+    const completed = await completeResolution(input, options, proposal, {
+      owner: () => undefined,
+      ask: async (request) => {
+        const items = JSON.parse(request.prompt.split('Items to complete: ')[1]!.split('\n')[0]!) as { key: string; missing: string[] }[];
+        needs.push(...items.map((i) => `${i.key}:${i.missing.join(',')}`));
+        return JSON.stringify({ completed: { [`a|${ids[0]}`]: { scale: 'ratio', direction: 'decrease', baseline: 20, current: 18, target: 12, ownerRole: { ja: '物流部', en: 'Logistics' } } } });
+      },
+    });
+    expect(needs).toContain(`a|${ids[0]}:scale,direction,baseline,current,target,ownerRole`);
+    expect(needs).toContain(`b|${ids[0]}:ownerRole`);
+    expect(completed.completion.rounds).toBe(2); // the second round still leaves values empty, then the rule applies
+    for (const item of completed.choices) {
+      const preview = previewResolution(input, item, options, 'now');
+      expect(preview.missing, item.id).toEqual([]);
+      expect(preview.result!.done, item.id).toBe(true);
+    }
+    const first = completed.choices[0]!.drafts![ids[0]!]!;
+    expect(first).toMatchObject({ scale: 'ratio', direction: 'decrease', baseline: 20, target: 12, ownerRole: { ja: '物流部' } });
+    expect(first.provisional).toBeUndefined();
+    expect(valueBasis(input, options[0]!, first, undefined, 'target')).toBe('estimate');
+    const second = completed.choices[0]!.drafts![ids[1]!]!;
+    expect(second.provisional).toEqual(['scale', 'direction', 'baseline', 'current', 'target', 'ownerRole']);
+    expect(second).toMatchObject({ scale: 'ratio', direction: 'decrease', baseline: 100, current: 100, target: 90 }); // "日" (days) is lower-is-better
+    expect(valueBasis(input, options[1]!, second, undefined, 'baseline')).toBe('provisional');
+    expect(second.estimateNote!.ja).toContain('BAS の仮置き');
+    const issue = input.ctx.pack.byId.get(options[1]!.issueId)!;
+    expect(second.ownerRole!.ja).toBe(`「${issue.name.ja}」を担当する部門`);
+    const kpi = previewResolution(input, completed.choices[0]!, options, 'now').changes.find((c) => c.op === 'upsert' && c.entity.id === options[1]!.newId);
+    expect(kpi).toMatchObject({ entity: { kind: 'kpi', ownerRole: second.ownerRole } });
+    expect(humanDescription(options[1]!, input, second, undefined)).toContain('BAS の仮置き');
+    // Copilot's 20 / 18 / 10 days contradict the 68 and 45 days the cash issue states, so they are replaced and labelled as evidence.
+    const cash = options.find((o) => o.issueId === 'issue-cash')!;
+    const reconciled = completed.choices[1]!.drafts![cash.id]!;
+    expect(reconciled).toMatchObject({ baseline: 68, target: 45 });
+    expect(valueBasis(input, cash, reconciled, undefined, 'baseline')).toBe('evidence');
+    expect(valueBasis(input, cash, reconciled, undefined, 'target')).toBe('evidence');
+    // A local person owner wins over a role, and only the role is ever asked from Copilot.
+    const owner = suggestOwner(input, options[0]!)!;
+    const withOwner = await completeResolution(input, options, proposal, { owner: () => owner });
+    expect(withOwner.choices[1]!.drafts![ids[0]!]!.ownerRole).toBeUndefined();
+  });
+
+  it('D-49: without a connection or when the follow-up fails, the provisional rule still leaves nothing empty', async () => {
+    const input = missingLinks();
+    const options = creates(repairOptions(input));
+    const ids = options.map((o) => o.id);
+    const proposal = parseResolution(JSON.stringify(response([
+      choice('a', ids, { drafts: Object.fromEntries(ids.map((id) => [id, { ...kpiDraft, name: { ja: '顧客満足度', en: 'Customer satisfaction' }, unit: { ja: '点', en: 'points' }, direction: undefined, scale: undefined, baseline: 3.2 }])) }),
+      choice('b', [ids[0]!], { drafts: { [ids[0]!]: kpiDraft } }),
+    ])), options);
+    const failed = await completeResolution(input, options, proposal, { owner: () => undefined, ask: async () => { throw new Error('relay down'); } });
+    expect(failed.completion).toEqual({ rounds: 1, error: 'relay down' });
+    const draft = failed.choices[0]!.drafts![ids[0]!]!;
+    expect(draft).toMatchObject({ scale: 'interval', direction: 'increase', baseline: 3.2, current: 3.2, target: 3.52 });
+    for (const item of failed.choices) expect(previewResolution(input, item, options, 'now').result!.done, item.id).toBe(true);
+    await expect(completeResolution(input, options, proposal, { owner: () => undefined, ask: async () => { throw new Error('aborted'); }, aborted: () => true })).rejects.toThrow('aborted');
   });
 
   it('uses the live gate without a mock fallback and reports invalid provider responses', async () => {

@@ -7,7 +7,7 @@ import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { currentScope, useProjects } from '../../state/projects.ts';
 import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
-import { recordsOfJob, summarizeTokens, type TokenSummary } from '../../ai/tokenUsage.ts';
+import { recordsOfJob, summarizeTokens, tokenLineLabel, type TokenLine, type TokenSummary } from '../../ai/tokenUsage.ts';
 import { reasonKey, TokenTable } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
@@ -59,6 +59,18 @@ export function BatchDraftDialog() {
     if (job.kind === 'kpiOkr') return t('dlv.batch.kpiOkr');
     if (job.kind === 'solution') return t('dlv.batch.solution', { name: job.name });
     return t(job.kind === 'fields' ? 'dlv.batch.fields' : 'dlv.batch.brief', { step: t(`proj.step.${job.step}`) });
+  };
+  const tokenNameOf = (line: TokenLine): string => {
+    const [stage, part] = line.step?.split(':') ?? [];
+    const job = jobs.find((candidate) => candidate.request.use === line.use
+      && (stage === batchJobId(candidate) || (!stage && candidate.kind === 'objectives')));
+    if (!job) return tokenLineLabel(line, lang);
+    let partKey: MessageKey | undefined;
+    if (job.kind === 'fields' && part === 'fields') partKey = 'dlv.batch.tokenFields';
+    else if (job.kind === 'fields' && part === 'tasks') partKey = 'dlv.batch.tokenTasks';
+    else if (job.kind === 'kpiOkr' && part === 'pick') partKey = 'dlv.batch.tokenPick';
+    else if (job.kind === 'kpiOkr' && part === 'fill') partKey = 'dlv.batch.tokenFill';
+    return `${nameOf(job)}${partKey ? ` — ${t(partKey)}` : ''}`;
   };
   const refreshTokens = () => {
     const uses = [...new Set(jobs.map((job) => job.request.use))];
@@ -220,7 +232,7 @@ export function BatchDraftDialog() {
               )}
               {interrupted && <p role="status">{t('dlv.batch.interrupted')}</p>}
               {done === jobs.length && !strategySkipped && <p role="status">{t('dlv.batch.complete')}</p>}
-              {tokens && <TokenTable summary={tokens} testId="dlv-batch-tokens" caption={t('ai.tokens.job')} />}
+              {tokens && <TokenTable summary={tokens} testId="dlv-batch-tokens" caption={t('ai.tokens.job')} lineLabel={tokenNameOf} />}
               <ol className="dlv-batch-list">
                 {jobs.map((job) => {
                   const id = batchJobId(job);

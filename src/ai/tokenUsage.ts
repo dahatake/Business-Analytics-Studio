@@ -1,4 +1,5 @@
 import type { UsageRecord } from './budget.ts';
+import { dictionaries, type Lang } from '../i18n/core.ts';
 
 /** Token totals of a group of ledger records. Tokens are what the provider reported (or the app's estimate, counted apart). */
 export interface TokenTotals {
@@ -12,13 +13,20 @@ export interface TokenTotals {
 
 export interface TokenLine extends TokenTotals {
   use: string;
-  /** Pack generation step: 'foundation' | 'business' | 'verify' (all fix rounds); absent for other uses. */
+  /** Pack-generation step or another use's recorded stage; absent when no stage was recorded. */
   step?: string;
 }
 
 export interface TokenSummary {
   lines: TokenLine[];
   total: TokenTotals;
+}
+
+/** A stage name belongs to pack generation only for packBuild; other uses retain their own labels. */
+export function tokenLineLabel(line: TokenLine, lang: Lang): string {
+  const texts: Readonly<Record<string, string>> = dictionaries[lang];
+  const stage = line.use === 'packBuild' && line.step ? texts[`proj.gen.step.${line.step}`] : undefined;
+  return stage ?? texts[`ai.use.${line.use}`] ?? (line.use || dictionaries[lang]['ai.tokens.unavailable']);
 }
 
 /** Pack generation stages map to the dialog's steps; every fix round belongs to "verify", every re-run to its stage. */
@@ -41,7 +49,7 @@ function add(t: TokenTotals, r: Pick<UsageRecord, 'inputTokens' | 'outputTokens'
   if (r.estimated) t.estimatedCalls++;
 }
 
-/** Per use (and pack-generation step) in the order first used, plus the total. The total is always the sum of the lines. */
+/** Per use and recorded stage in first-use order, plus the total. The total is always the sum of the lines. */
 export function summarizeTokens(records: readonly UsageRecord[]): TokenSummary {
   const lines = new Map<string, TokenLine>();
   const total = empty();

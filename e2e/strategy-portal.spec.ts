@@ -175,6 +175,58 @@ test('FR-367: Copilot gets the business objectives, registering stated ones and 
   await expect(page.locator('[id^="stg-node-objective:draft:objd-"]')).toHaveCount(0);
 });
 
+test('batch token labels identify business objectives and KPI/OKR pick and fill', async ({ page }) => {
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' },
+  } }));
+  let releaseNext!: () => void;
+  const next = new Promise<void>((resolve) => { releaseNext = resolve; });
+  await page.route('**/relay/ai', async (route) => {
+    const request = route.request().postDataJSON() as { use: string; stage?: string };
+    if (request.use === 'objectiveDraft') {
+      await route.fulfill({ json: { text: '{"objectives":[]}', inputTokens: 31, outputTokens: 3 } });
+    } else if (request.stage === 'kpiOkr:pick') {
+      await route.fulfill({ json: { text: JSON.stringify({ kpis: [{ id: 'okr.kpi:k-reach', reason: 'Relevant' }], okrs: [] }), inputTokens: 41, outputTokens: 4 } });
+    } else if (request.stage === 'kpiOkr:fill') {
+      await route.fulfill({ json: { text: '{"kpis":[],"okrs":[]}', inputTokens: 51, outputTokens: null } });
+    } else {
+      await next;
+      await route.fulfill({ status: 504, json: { error: 'fixtureTimeout' } }).catch(() => undefined);
+    }
+  });
+  try {
+    await seedProject(page);
+    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
+    await page.reload();
+    await expect(page.getByTestId('strategy-map')).toBeVisible();
+    await page.goto('/#/deliverables?step=asis');
+    await page.getByTestId('dlv-draft').click();
+    await page.getByTestId('dlv-batch-generate').click();
+    await expect(page.getByTestId('dlv-batch-objectives')).toHaveAttribute('data-status', 'done');
+    await expect(page.getByTestId('dlv-batch-kpiOkr')).toHaveAttribute('data-status', 'done');
+    await expect(page.getByTestId('dlv-batch-fields-asis')).toHaveAttribute('data-status', 'working');
+
+    const objective = page.locator('[data-testid="dlv-batch-tokens-row"][data-use="objectiveDraft"]');
+    const pick = page.locator('[data-testid="dlv-batch-tokens-row"][data-step="kpiOkr:pick"]');
+    const fill = page.locator('[data-testid="dlv-batch-tokens-row"][data-step="kpiOkr:fill"]');
+    await expect(objective.locator('th')).toHaveText('Shared across all steps: business objectives (Work IQ) and drafts');
+    await expect(pick.locator('th')).toContainText('All steps: KPI/OKR drafts');
+    await expect(pick.locator('th')).toContainText('Candidate selection or missing proposals');
+    await expect(fill.locator('th')).toContainText('All steps: KPI/OKR drafts');
+    await expect(fill.locator('th')).toContainText('Estimating empty fields');
+    await expect(objective.locator('td')).toHaveText(['1', '31', '3', '34']);
+    await expect(pick.locator('td')).toHaveText(['1', '41', '4', '45']);
+    await expect(fill.locator('td')).toHaveText(['1', '51', 'unknown', 'unknown']);
+    await expect(page.getByTestId('dlv-batch-tokens-total').locator('td')).toHaveText(['3', '123', 'unknown', 'unknown']);
+    await page.getByTestId('dlv-batch-stop').click();
+    releaseNext();
+    await expect(page.getByTestId('dlv-batch-current')).toHaveCount(0);
+  } finally {
+    releaseNext();
+  }
+});
+
 for (const fixture of [
   {
     name: 'a Work IQ fallback',

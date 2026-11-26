@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Badge, MessageBar, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
 import type { TokenCount } from '../../ai/client.ts';
-import type { TokenLine, TokenSummary } from '../../ai/tokenUsage.ts';
+import { tokenLineLabel, type TokenLine, type TokenSummary } from '../../ai/tokenUsage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useAiSettings } from './settingsStore.ts';
 import './ai.css';
@@ -77,22 +77,18 @@ export function LiveNotice({ usage, children }: { usage?: TokenCount; children?:
   );
 }
 
-/** Label of one token line: the pack-generation step when there is one, otherwise the use. */
-function tokenLineLabel(t: ReturnType<typeof useI18n>['t'], line: TokenLine): string {
-  return line.step ? t(`proj.gen.step.${line.step}` as MessageKey) : t(`ai.use.${line.use}` as MessageKey);
-}
-
 /**
  * Tokens per step and their total, as the provider reported them (the usage ledger is the only source).
  * `extraRows` are steps that used no generative AI (shown as 0 so the reader sees they were counted, not missed).
  */
-export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', caption }: {
+export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', caption, lineLabel }: {
   summary: TokenSummary;
   extraRows?: string[];
   testId?: string;
   caption?: string;
+  lineLabel?: (line: TokenLine) => string;
 }) {
-  const { t, fmt } = useI18n();
+  const { t, fmt, lang } = useI18n();
   const tokens = (v: number | null) => v === null ? t('ai.tokens.unavailable') : fmt.integer(v);
   return (
     <table className="ai-token-table" data-testid={testId}>
@@ -109,7 +105,7 @@ export function TokenTable({ summary, extraRows = [], testId = 'ai-tokens', capt
       <tbody>
         {summary.lines.map((l) => (
           <tr key={`${l.use}.${l.step ?? ''}`} data-testid={`${testId}-row`} data-use={l.use} data-step={l.step ?? ''}>
-            <th scope="row">{tokenLineLabel(t, l)}{l.estimatedCalls > 0 ? ` ${t('ai.tokens.estimatedMark')}` : ''}</th>
+            <th scope="row">{lineLabel?.(l) ?? tokenLineLabel(l, lang)}{l.estimatedCalls > 0 ? ` ${t('ai.tokens.estimatedMark')}` : ''}</th>
             <td>{fmt.integer(l.calls)}</td>
             <td>{tokens(l.inputTokens)}</td>
             <td>{tokens(l.outputTokens)}</td>

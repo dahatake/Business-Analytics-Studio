@@ -95,6 +95,19 @@ describe('connection test action', () => {
     expect(screen.getByTestId('ai-tokens-total').textContent).toContain('includes estimates');
     expect(screen.getByTestId('ai-tokens-total-value').textContent).toBe('230');
   });
+  it('labels non-pack stages by their use instead of treating them as pack-generation steps', () => {
+    const at = new Date().toISOString();
+    render(<TokenTable summary={summarizeTokens([
+      { at, use: 'packBuild', stage: 'foundation', inputTokens: 10, outputTokens: 5 },
+      { at, use: 'kpiOkrDraft', stage: 'kpiOkr:fill', inputTokens: 20, outputTokens: 5 },
+      { at, use: 'kpiOkrScreen', stage: 'decision', inputTokens: 30, outputTokens: 5 },
+    ])} />);
+    expect(screen.getAllByTestId('ai-tokens-row').map((row) => row.querySelector('th')?.textContent)).toEqual([
+      'Foundation (company, sites, products, customers, people, brand)',
+      'KPI/OKR drafts',
+      'KPI/OKR candidate pre-screening (Decision)',
+    ]);
+  });
   it.each<{ patch: Partial<AiSettingsState>; reason: string }>([
     { patch: { endpoint: 'https://other.example/api/projects/project' }, reason: 'project URL' },
     { patch: { endpoint: '' }, reason: 'HTTPS resource URL' },

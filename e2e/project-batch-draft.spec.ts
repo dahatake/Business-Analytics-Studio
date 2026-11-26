@@ -5,11 +5,15 @@ import { emptyDeliverables, setField, setSignOff, STEP_DEFS } from '../src/modul
 import type { ImprovementStep } from '../src/state/projects.ts';
 
 type Provider = 'foundry' | 'copilotSdk';
-type RelayRequest = { use: string; provider: Provider; prompt: string; context: string; stage?: string };
+type RelayRequest = { use: string; provider: Provider; lang: 'ja' | 'en'; prompt: string; context: string; stage?: string };
 const steps: ImprovementStep[] = ['asis', 'tobe', 'kpi', 'solution', 'deliverable'];
 const taskText = [
   '事実・根拠: 事実', '不足情報: 要確認', '仮説: 仮説', '選択肢: 比較',
   '推奨: 検証', '理由: 根拠', '検証: 照合', '影響: 評価',
+].join('\n');
+const englishTaskText = [
+  'Facts and evidence: Evidence', 'Missing information: To confirm', 'Hypotheses: Hypothesis', 'Options: Compare',
+  'Recommendation: Verify', 'Reasoning: Evidence', 'Verification: Check', 'Impact: Evaluate',
 ].join('\n');
 
 function answer(request: RelayRequest): string {
@@ -22,7 +26,7 @@ function answer(request: RelayRequest): string {
     const step = /\[bas-proj:deliverable:([a-z]+)\]/.exec(request.prompt)?.[1] as ImprovementStep;
     return [
       ...STEP_DEFS[step].fields.map((field) => `### ${field.id}\n提案`),
-      ...STEP_DEFS[step].todos.map((todo) => `### task-${todo.id}\n${taskText}`),
+      ...STEP_DEFS[step].todos.map((todo) => `### task-${todo.id}\n${request.lang === 'en' ? englishTaskText : taskText}`),
     ].join('\n');
   }
   if (request.use === 'stepBrief') {
@@ -36,7 +40,7 @@ function answer(request: RelayRequest): string {
   });
 }
 
-async function setupBatch(page: Page, provider: Provider, failOnce?: string, audience: 'internal' | 'external' = 'internal') {
+async function setupBatch(page: Page, provider: Provider, failOnce?: string, audience: 'internal' | 'external' = 'internal', lang: 'ja' | 'en' = 'ja') {
   const requests: RelayRequest[] = [];
   let shouldFail = !!failOnce;
   await page.route('**/relay/status', (route) => route.fulfill({ json: {
@@ -53,7 +57,7 @@ async function setupBatch(page: Page, provider: Provider, failOnce?: string, aud
     }
     await route.fulfill({ json: { text: answer(request), inputTokens: 100, outputTokens: 100 } });
   });
-  await open(page, '/deliverables?step=asis', { audience });
+  await open(page, '/deliverables?step=asis', { audience, lang });
   const at = '2026-11-09T00:00:00Z';
   const data = setSignOff(setField(emptyDeliverables(), 'asis', 'problem', { text: '人が入力した成果物', author: 'human', updatedAt: at }),
     'asis-field', { at, by: '担当者' });
@@ -154,6 +158,70 @@ test.describe('all-step live drafts', () => {
     });
   }
 
+  for (const lang of ['ja', 'en'] as const) {
+    test(`token usage names every batch step and split call with its own reported counts (${lang})`, async ({ page }) => {
+      await setupBatch(page, 'copilotSdk', undefined, 'internal', lang);
+      const calls: { stage: string; input: number; output: number | null }[] = [];
+      await page.route('**/relay/ai', async (route) => {
+        const request = route.request().postDataJSON() as RelayRequest;
+        if (!request.stage) throw new Error('Missing batch stage');
+        const input = (calls.length + 1) * 101;
+        const output = request.stage === 'brief-tobe' ? null : (calls.length + 1) * 13;
+        calls.push({ stage: request.stage, input, output });
+        await route.fulfill({ json: { text: answer(request), inputTokens: input, outputTokens: output } });
+      });
+      if (lang === 'ja') await openBatch(page);
+      else await page.getByTestId('dlv-draft').click();
+      await confirmBatch(page);
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
+      await expect(page.getByTestId('dlv-batch-tokens-row')).toHaveCount(17);
+
+      const unknown = lang === 'ja' ? '不明' : 'unknown';
+      const num = (n: number | null) => n === null ? unknown : n.toLocaleString(lang === 'ja' ? 'ja-JP' : 'en-US');
+      for (const { stage, input, output } of calls) {
+        const row = page.locator(`[data-testid="dlv-batch-tokens-row"][data-step="${stage}"]`);
+        const job = page.getByTestId(`dlv-batch-${stage.split(':')[0]}`);
+        await expect(row.locator('th')).toContainText(await job.locator('strong').innerText());
+        await expect(row.locator('td')).toHaveText([
+          '1', num(input), num(output), num(output === null ? null : input + output),
+        ]);
+      }
+      await expect(page.locator('[data-testid="dlv-batch-tokens-row"][data-step="fields-asis:fields"] th'))
+        .toContainText(lang === 'ja' ? '成果物の各項目' : 'Deliverable fields');
+      await expect(page.locator('[data-testid="dlv-batch-tokens-row"][data-step="fields-asis:tasks"] th'))
+        .toContainText(lang === 'ja' ? 'タスク別の推奨案' : 'Task recommendations');
+      await expect(page.getByTestId('dlv-batch-tokens-total').locator('td')).toHaveText([
+        '17', num(calls.reduce((sum, call) => sum + call.input, 0)), unknown, unknown,
+      ]);
+
+      const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .exclude('[data-tabster-dummy]').analyze();
+      expect(scan.violations.map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target) }))).toEqual([]);
+      const dialog = page.getByTestId('dlv-batch-dialog');
+      const table = page.getByTestId('dlv-batch-tokens');
+      for (const width of [390, 320]) {
+        await page.setViewportSize({ width, height: 844 });
+        const dialogBox = await dialog.boundingBox();
+        const tableBox = await table.boundingBox();
+        expect(tableBox!.x).toBeGreaterThanOrEqual(dialogBox!.x);
+        expect(tableBox!.x + tableBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width + 1);
+        expect(await table.locator('th, td').evaluateAll((cells) =>
+          cells.filter((cell) => cell.scrollWidth > cell.clientWidth + 1).map((cell) => cell.textContent))).toEqual([]);
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await dialog.getByRole('button', { name: lang === 'ja' ? '閉じる' : 'Close', exact: true }).click();
+      await page.getByTestId('proj-export-all').click();
+      await expect(page.getByTestId('proj-export-dialog')).toBeVisible();
+      await expect(page.getByTestId('proj-export-tokens-table-row')).toHaveCount(18);
+      await expect(page.getByTestId('proj-export-preview'))
+        .toContainText(lang === 'ja' ? '成果物のドラフト作成' : 'Deliverable drafts');
+      await expect(page.getByTestId('proj-export-tokens-table-total').locator('td')).toHaveText([
+        '17', num(calls.reduce((sum, call) => sum + call.input, 0)), unknown, unknown,
+      ]);
+    });
+  }
+
   test('D-41: runs to the end at any time, even after many calls today and with no interval', async ({ page }) => {
     const requests = await setupBatch(page, 'copilotSdk');
     const now = Date.now();
@@ -203,6 +271,13 @@ test.describe('all-step live drafts', () => {
     expect(kpi).toHaveLength(2);
     expect(kpi[1]!.prompt).toContain('This call covers only the fields');
     expect(kpi[1]!.stage).toBe('fields-kpi:fields');
+    const first = page.locator('[data-testid="dlv-batch-tokens-row"][data-step="fields-kpi"]');
+    const retry = page.locator('[data-testid="dlv-batch-tokens-row"][data-step="fields-kpi:fields"]');
+    await expect(first.locator('th')).toHaveText('KPI/OKR 定義: 成果物とタスク別の提案');
+    await expect(retry.locator('th')).toContainText('KPI/OKR 定義: 成果物とタスク別の提案');
+    await expect(retry.locator('th')).toContainText('成果物の各項目');
+    await expect(first.locator('td')).toHaveText(['1', '900', '32,000', '32,900']);
+    await expect(retry.locator('td')).toHaveText(['1', '900', '32,000', '32,900']);
   });
 
   test('shows the current split call, elapsed time and a wider responsive dialog', async ({ page }) => {
@@ -255,6 +330,10 @@ test.describe('all-step live drafts', () => {
       await expect(page.getByTestId('dlv-batch-fields-asis')).toHaveAttribute('data-status', 'pending');
       await expect(current).toHaveCount(0);
       await expect(dialog).toContainText('実行を中断しました');
+      const cancelled = page.locator('[data-testid="dlv-batch-tokens-row"][data-step="fields-asis:tasks"]');
+      await expect(cancelled.locator('th')).toContainText('現状分析: 成果物とタスク別の提案');
+      await expect(cancelled.locator('th')).toContainText('タスク別の推奨案');
+      await expect(cancelled.locator('th')).toContainText('推定を含む');
 
       await page.getByTestId('dlv-batch-generate').click();
       await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });

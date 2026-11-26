@@ -160,4 +160,13 @@ describe('token section in the Markdown export', () => {
     expect(md).toMatch(/\| 書き出し（生成AIは使いません） \| 0 \| 0 \| 0 \| 0 \|/);
     expect(md).toContain('| **合計** | 2 | 12,000 | 5,000 | 17,000 |');
   });
+
+  it('names non-pack stages by their use in the exported token table', () => {
+    const md = tokenSection(summarizeTokens([
+      rec({ use: 'kpiOkrDraft', stage: 'kpiOkr:fill', inputTokens: 10, outputTokens: 5 }),
+      rec({ use: 'kpiOkrScreen', stage: 'decision', inputTokens: 20, outputTokens: 5 }),
+    ]), 'ja').join('\n');
+    expect(md).toContain('| KPI・OKR のドラフト作成 | 1 | 10 | 5 | 15 |');
+    expect(md).toContain('| KPI・OKR 候補の事前判定（Decision） | 1 | 20 | 5 | 25 |');
+  });
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { TokenSummary, TokenTotals } from '../../ai/tokenUsage.ts';
+import { tokenLineLabel, type TokenSummary, type TokenTotals } from '../../ai/tokenUsage.ts';
 import type { Entity } from '../../data/schema.ts';
 import { isNewsDerived } from '../../data/pack.ts';
 import { translate, type Lang, type MessageKey, type Vars } from '../../i18n/core.ts';
@@ -271,7 +271,7 @@ export function tokenSection(s: TokenSummary, lang: Lang): string[] {
     '|---|---:|---:|---:|---:|',
   );
   for (const l of s.lines) {
-    const label = l.step ? tr(`proj.gen.step.${l.step}` as MessageKey) : tr(`ai.use.${l.use}` as MessageKey);
+    const label = tokenLineLabel(l, lang);
     out.push(row(l.estimatedCalls > 0 ? `${label} ${tr('ai.tokens.estimatedMark')}` : label, l));
   }
   out.push(row(tr('proj.export.tokens.export'), { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCalls: 0 }));

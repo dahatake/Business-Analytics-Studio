@@ -2,9 +2,8 @@ import { z } from 'zod';
 import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
-import { CollectionReport, COLLECTION_SECTIONS, collectionPresence } from './collection.ts';
+import { CollectionReport, COLLECTION_SECTIONS, collectionPresence, LATER_COLLECTION_SECTIONS, LEGACY_COLLECTION_SECTIONS } from './collection.ts';
 import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, DelayCostExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, RequirementEvidenceExtension, WorkflowExtension } from './extensionSchemas.ts';
-import { GraphExtensionSchema, parseGraphExtension } from '../modules/graph/extensions.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } from './companyAnchor.ts';
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from '../modules/project/companyAlignment.ts';
@@ -199,7 +198,7 @@ export function verifyPack(raw: unknown): VerifyResult {
   }
 
   const extensionSchemas = {
-    glossary: GlossarySchema, dataCatalog: PackCatalog, graph: GraphExtensionSchema,
+    glossary: GlossarySchema, dataCatalog: PackCatalog,
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
     workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension, requirementEvidence: RequirementEvidenceExtension,
     decisionReport: DecisionReportExtension, delayCost: DelayCostExtension,
@@ -259,12 +258,39 @@ export function verifyPack(raw: unknown): VerifyResult {
   }
   const workflow = WorkflowExtension.safeParse(pack.extensions?.workflow);
   if (workflow.success) {
-    const stageIds = new Set(workflow.data.stages.map((s) => s.id));
-    workflow.data.stages.forEach((s, i) => {
+    const w = workflow.data;
+    const stageIds = new Set(w.stages.map((s) => s.id));
+    const partyIds = new Set((w.parties ?? []).map((p) => p.id));
+    const phaseIds = new Set((w.phases ?? []).map((p) => p.id));
+    const dangling = (path: string, ref: string, what: string, action: string) =>
+      add({ severity: 'error', code: 'DANGLING_REF', path, cause: `"${ref}" is not ${what}.`, action });
+    w.stages.forEach((s, i) => {
+      const at = `extensions.workflow.stages[${i}]`;
       s.next.forEach((n, j) => {
-        if (!stageIds.has(n)) add({ severity: 'error', code: 'DANGLING_REF', path: `extensions.workflow.stages[${i}].next[${j}]`, cause: `"${n}" is not a stage id.`, action: 'Point next at an existing stage id, or name the team in handoffTo.' });
+        if (!stageIds.has(n)) dangling(`${at}.next[${j}]`, n, 'a stage id', 'Point next at an existing stage id, or name the team in handoffTo.');
       });
-      sourceRefs(s.sourceIds, `extensions.workflow.stages[${i}].sourceIds`);
+      if (s.partyId && !partyIds.has(s.partyId)) dangling(`${at}.partyId`, s.partyId, 'a party id', 'Add the party to extensions.workflow.parties or name the lane in team.');
+      if (s.phaseId && !phaseIds.has(s.phaseId)) dangling(`${at}.phaseId`, s.phaseId, 'a phase id', 'Add the phase to extensions.workflow.phases or remove phaseId.');
+      if (s.toBe?.into && !stageIds.has(s.toBe.into)) dangling(`${at}.toBe.into`, s.toBe.into, 'a stage id', 'Point into at the stage that absorbs this one.');
+      [...s.inputs, ...s.outputs].forEach((a) => {
+        if (typeof a === 'object' && 'partyId' in a && typeof a.partyId === 'string' && !partyIds.has(a.partyId)) dangling(`${at}.inputs/outputs`, a.partyId, 'a party id', 'Use an existing party id or omit partyId.');
+      });
+      sourceRefs(s.sourceIds, `${at}.sourceIds`);
+      // A stated number needs its source; an estimate is labelled as one and may stand without it.
+      const stated = [s.asIs, s.toBe?.metrics].some((m) => m && m.basis !== 'estimate' && ['touchMinutes', 'waitHours', 'volumePerMonth', 'firstPassPct'].some((k) => (m as Record<string, unknown>)[k] !== undefined));
+      if (stated && !s.sourceIds?.length && s.toBe?.basis !== 'hypothesis') add({ severity: 'warning', code: 'MISSING_SOURCE', path: `${at}.sourceIds`, cause: 'Step numbers are given without a source and are not marked as estimates.', action: 'Cite the source of the numbers, or set basis to "estimate".' });
+    });
+    (w.parties ?? []).forEach((p, i) => {
+      if (p.entityId && !byId.has(p.entityId)) dangling(`extensions.workflow.parties[${i}].entityId`, p.entityId, 'an entity id', 'Use an existing customer/supplier/person/site id or omit entityId.');
+      sourceRefs(p.sourceIds, `extensions.workflow.parties[${i}].sourceIds`);
+    });
+    (w.loops ?? []).forEach((l, i) => {
+      for (const end of ['from', 'to'] as const) if (!stageIds.has(l[end])) dangling(`extensions.workflow.loops[${i}].${end}`, l[end], 'a stage id', 'Point the loop at existing stage ids.');
+      sourceRefs(l.sourceIds, `extensions.workflow.loops[${i}].sourceIds`);
+    });
+    (w.kpiSpans ?? []).forEach((k, i) => {
+      if (byId.get(k.kpiId)?.kind !== 'kpi') dangling(`extensions.workflow.kpiSpans[${i}].kpiId`, k.kpiId, 'a kpi entity', 'Use an existing kpi id.');
+      for (const end of ['from', 'to'] as const) if (!stageIds.has(k[end])) dangling(`extensions.workflow.kpiSpans[${i}].${end}`, k[end], 'a stage id', 'Use existing stage ids.');
     });
   }
   const okr = OkrExtension.safeParse(pack.extensions?.okr);
@@ -321,9 +347,6 @@ export function verifyPack(raw: unknown): VerifyResult {
     });
     if (engagements.data.items.length) add({ severity: 'warning', code: 'INTERNAL', path: 'extensions.engagements', cause: 'Engagement records are internal.', action: 'Hidden for an external audience. Review sources before sharing the pack.' });
   }
-  for (const issue of parseGraphExtension(pack.extensions?.graph, new Set(byId.keys())).issues) {
-    add({ severity: 'error', code: 'EXTENSION_SCHEMA', path: 'extensions.graph', cause: issue, action: 'Fix the graph section and reference existing entities.' });
-  }
   const report = CollectionReport.safeParse(pack.extensions?.collection);
   if (report.success) {
     const presence = collectionPresence({ ...pack, entities: valid });
@@ -332,13 +355,14 @@ export function verifyPack(raw: unknown): VerifyResult {
       const path = `extensions.collection.sections[${i}]`;
       if (seen.has(section.key)) add({ severity: 'error', code: 'COLLECTION', path, cause: 'Duplicate collection section.', action: 'Report each section exactly once.' });
       seen.add(section.key);
-      if (section.status === 'complete' && (!presence[section.key] || section.missingFields.length > 0 || section.sourceIds.length === 0)) add({ severity: 'error', code: 'COLLECTION', path, cause: 'A complete section needs data, sources and no missingFields.', action: 'Use partial/unavailable and list missing fields instead of claiming completeness.' });
+      if ((LEGACY_COLLECTION_SECTIONS as readonly string[]).includes(section.key)) return;
+      if (section.status === 'complete' && (!presence[section.key as keyof typeof presence] || section.missingFields.length > 0 || section.sourceIds.length === 0)) add({ severity: 'error', code: 'COLLECTION', path, cause: 'A complete section needs data, sources and no missingFields.', action: 'Use partial/unavailable and list missing fields instead of claiming completeness.' });
       section.sourceIds.forEach((id) => {
         if (byId.get(id)?.kind !== 'source') add({ severity: 'error', code: 'SOURCE_KIND', path: `${path}.sourceIds`, cause: `"${id}" is not an existing source.`, action: 'Use an existing source entity id.' });
       });
     });
     for (const key of COLLECTION_SECTIONS) {
-      if (!seen.has(key)) add({ severity: 'error', code: 'COLLECTION', path: 'extensions.collection.sections', cause: `Collection section "${key}" is missing.`, action: 'Report every section, including unavailable and notApplicable sections.' });
+      if (!seen.has(key)) add({ severity: LATER_COLLECTION_SECTIONS.includes(key) ? 'warning' : 'error', code: 'COLLECTION', path: 'extensions.collection.sections', cause: `Collection section "${key}" is missing.`, action: 'Report every section, including unavailable and notApplicable sections.' });
     }
   }
 

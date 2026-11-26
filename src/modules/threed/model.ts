@@ -5,8 +5,7 @@ import { loc, type Localizable } from '../../state/text.ts';
 
 export type Vec3 = [number, number, number];
 
-export type TabKey = 'twin' | 'map' | 'kpi' | 'arch';
-export const TABS: TabKey[] = ['twin', 'map', 'kpi', 'arch'];
+export type TabKey = 'map' | 'arch';
 
 /** Text of a scene object: a dictionary key (with vars) or data text. Resolved in the UI language. */
 export type Label =
@@ -14,9 +13,8 @@ export type Label =
   | { text: Localizable };
 
 export type ObjectKind =
-  | 'site' | 'line' | 'machine' | 'product' | 'country' | 'supplier' | 'region'
-  | 'team' | 'stage'
-  | 'kpis' | 'kpi' | 'arch' | 'layer' | 'block';
+  | 'site' | 'product' | 'country' | 'supplier' | 'region'
+  | 'arch' | 'layer' | 'block';
 
 /**
  * One selectable object of a scene with its hierarchy/LOD metadata (FR-030).

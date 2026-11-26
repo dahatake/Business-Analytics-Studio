@@ -59,16 +59,15 @@ test.describe('F-3.3 visuals', () => {
     await expect(page.getByTestId('optimize-summary')).toContainText('Demand 5%, carbon price 20,000');
   });
 
-  test('flows live in the relations screen and the old flows link opens that view', async ({ page }) => {
+  test('the material flow is a tab of the business process screen and the old flows link opens it', async ({ page }) => {
     await open(page, '/flows?section=architecture', { lang: 'en' });
-    await expect(page).toHaveURL(/#\/relations\?/);
-    await expect(page).toHaveURL(/view=flow/);
-    await expect(page.getByRole('tab', { name: 'Flows', exact: true }).first()).toBeVisible();
-    await page.getByRole('tab', { name: 'Table', exact: true }).click();
-    await expect(page.getByTestId('relation-table')).toBeVisible();
-    await expect(page).not.toHaveURL(/section=/);
+    await expect(page).toHaveURL(/#\/process\?/);
+    await expect(page).toHaveURL(/tab=material/);
+    await expect(page.getByTestId('td-arch-switch')).toBeVisible();
+    await page.getByRole('tab', { name: 'Process map and analysis', exact: true }).click();
+    await expect(page.getByTestId('bp-map')).toBeVisible();
+    await expect(page).not.toHaveURL(/tab=/);
   });
-
   test('Sankey, Gantt, map and graph render interactive, focusable items', async ({ page }) => {
     await open(page, '/flows', { lang: 'en' });
     await expect(page.locator('.sankey-link')).toHaveCount(19);
@@ -133,7 +132,7 @@ async function seedWorkflow(page: Page, stages: unknown[], lang: 'ja' | 'en' = '
       },
     }));
   });
-  await page.goto('/#/flows');
+  await page.goto('/#/process?level=steps');
   await expect(page.locator('main#main')).toBeVisible();
   const pack = { ...samplePack, flows: [], extensions: { ...samplePack.extensions, workflow: { stages } } };
   await seedDeviceData(page, {
@@ -144,90 +143,61 @@ async function seedWorkflow(page: Page, stages: unknown[], lang: 'ja' | 'en' = '
     'bas.binary.pack.pj-alpha': JSON.stringify(pack),
   });
   await page.reload();
-  await expect(page.getByTestId('workflow-panel')).toBeVisible();
+  await expect(page.getByTestId('bp-map')).toBeVisible();
 }
 
-test.describe('workflow map', () => {
-  test('shows recorded branches, returns, outputs and sources without inventing adjacent handoffs', async ({ page }) => {
+test.describe('business process from a pack workflow (FR-380)', () => {
+  test('draws recorded branches and returns, and shows inputs, outputs and sources without inventing links', async ({ page }) => {
     await seedWorkflow(page, workflowStages);
-    await expect(page.getByTestId('workflow-stages').locator(':scope > li')).toHaveCount(20);
-    await page.getByRole('tab', { name: '工程マップ' }).click();
-    const map = page.getByTestId('workflow-map');
-    await expect(map.locator('.workflow-map-row')).toHaveCount(20);
-    const first = page.getByTestId('workflow-map-row-0');
-    await expect(first).toContainText('営業チーム');
-    await expect(first).toContainText('要望一覧 / 依頼記録');
-    await expect(first.getByRole('button', { name: '次の工程へ: 2. 審査' })).toBeVisible();
-    await expect(first.getByRole('button', { name: '次の工程へ: 3. 引き渡し' })).toBeVisible();
-    await expect(first).toContainText('外部の引き継ぎ先');
-    await expect(first).toContainText('外部パートナー');
-    await expect(page.getByTestId('workflow-map-row-1').getByRole('button', { name: '次の工程へ: 1. 受付' })).toBeVisible();
-    await expect(page.getByTestId('workflow-map-row-2')).toContainText('次の工程・引き継ぎ先の記載なし');
-    await expect(page.getByTestId('workflow-map-row-2').getByRole('button')).toHaveCount(1);
+    const map = page.getByTestId('bp-map');
+    await expect(map.locator('[data-testid^="bp-step-"]')).toHaveCount(20);
+    await expect(map.getByTestId('bp-canvas')).toContainText('営業チーム');
+    await expect(page.getByTestId('bp-edge-intake-review')).toHaveCount(1);
+    await expect(page.getByTestId('bp-edge-intake-delivery')).toHaveCount(1);
+    // "review → intake" goes back to an earlier step: a loop, not a second arrow forward.
+    await expect(page.getByTestId('bp-edge-review-intake')).toHaveCount(0);
+    await expect(page.getByTestId('bp-loop-loop-review-intake')).toHaveCount(1);
+    await expect(page.locator('[data-testid^="bp-edge-stage-"]')).toHaveCount(0);
 
-    const firstNode = page.getByTestId('workflow-map-node-0');
-    await firstNode.focus();
-    await firstNode.press('Enter');
-    await expect(firstNode).toHaveAttribute('aria-expanded', 'true');
-    const details = page.getByTestId('workflow-map-details-0');
-    await expect(details.getByTestId('workflow-inputs')).toContainText('顧客の要望');
-    await expect(details.getByTestId('workflow-activities')).toContainText('内容を整理');
-    await expect(details.getByTestId('workflow-outputs')).toContainText('依頼記録');
-    await expect(details.getByTestId('workflow-data')).toContainText('案件システム');
-    await expect(details.getByTestId('workflow-sources')).toContainText(workflowSource.name.ja);
-    await expect(details.getByTestId('workflow-map-previous').getByRole('button', { name: '前の工程へ: 2. 審査' })).toBeVisible();
-    await first.getByRole('button', { name: '次の工程へ: 2. 審査' }).press('Enter');
-    await expect(page.getByTestId('workflow-map-node-1')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByTestId('workflow-map-node-1')).toBeFocused();
-    await expect(page.getByTestId('workflow-map-details-1').getByTestId('workflow-inputs')).toContainText('記載なし');
-    await expect(page).toHaveURL(/flowView=map.*stage=2/);
+    await page.getByTestId('bp-step-intake').hover();
+    const hover = page.getByTestId('bp-hovercard');
+    await expect(hover).toContainText('顧客の要望');
+    await expect(hover).toContainText('依頼記録');
+    await expect(hover).toContainText('外部パートナー');
+    await expect(hover).toContainText(workflowSource.name.ja);
+    await page.keyboard.press('Escape');
+    await page.mouse.move(2, 2);
+    await expect(hover).toHaveCount(0);
 
-    await page.reload();
-    await expect(page.getByTestId('workflow-map-node-1')).toHaveAttribute('aria-expanded', 'true');
-    await page.getByRole('tab', { name: '段階一覧' }).click();
-    await expect(page.getByTestId('workflow-stages')).toBeVisible();
-    await expect(page.getByTestId('workflow-stage-intake').getByTestId('workflow-next')).toContainText('審査 / 引き渡し / 外部パートナー');
-    await page.getByRole('tab', { name: '工程マップ' }).click();
-    await expect(page.getByTestId('workflow-map-node-1')).toHaveAttribute('aria-expanded', 'true');
+    await page.getByTestId('bp-step-review').focus();
+    await expect(page.getByTestId('bp-hovercard')).toContainText('審査');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/sel=review/);
+    await expect(page.getByTestId('bp-detail')).toContainText('審査');
     await page.evaluate(() => window.scrollTo(0, 0));
-    expect(await scan(page, '[data-testid="workflow-panel"]')).toEqual([]);
-    await page.getByRole('tab', { name: 'アーキテクチャ', exact: true }).click();
-    await expect(page.getByTestId('td-arch-switch')).toBeVisible();
-    await page.getByTestId('flow-sections').getByRole('tab', { name: '流れ', exact: true }).click();
-    await expect(page.getByTestId('workflow-map-node-1')).toHaveAttribute('aria-expanded', 'true');
-    await page.goto('/#/flows?view=map&stage=1');
-    await expect(page).toHaveURL(/#\/relations\?/);
-    await expect(page).toHaveURL(/flowView=map/);
-    await expect(page.getByTestId('workflow-map-node-0')).toHaveAttribute('aria-expanded', 'true');
+    expect(await scan(page, '[data-testid="bp-map-panel"]')).toEqual([]);
   });
 
-  test('reports missing and ambiguous references instead of creating false links', async ({ page }) => {
+  test('ignores missing references and keeps steps that share an id', async ({ page }) => {
     await seedWorkflow(page, [
       { id: 'start', name: 'Start', next: ['missing', 'duplicate'] },
       { id: 'duplicate', name: 'First duplicate' },
       { id: 'duplicate', name: 'Second duplicate' },
     ]);
-    await page.getByRole('tab', { name: '工程マップ' }).click();
-    const first = page.getByTestId('workflow-map-row-0');
-    await expect(first).toContainText('参照先が見つかりません: missing');
-    await expect(first).toContainText('参照先を特定できません: duplicate');
-    await expect(first.getByRole('button')).toHaveCount(1);
-    await page.getByTestId('workflow-map-node-1').click();
-    await expect(page.getByTestId('workflow-map-previous')).toContainText('前の工程を特定できません');
-    await expect(page.getByTestId('workflow-map-details-1').getByTestId('workflow-sources')).toContainText('表示できる出典の記載なし');
+    await expect(page.locator('[data-testid^="bp-step-"]')).toHaveCount(3);
+    await expect(page.getByTestId('bp-edge-start-duplicate')).toHaveCount(1);
+    await expect(page.locator('[data-testid^="bp-edge-start-missing"]')).toHaveCount(0);
+    await page.getByTestId('bp-step-duplicate~2').hover();
+    await expect(page.getByTestId('bp-hovercard')).toContainText('出典なし');
   });
 
   test('works in English at 320px and passes accessibility checks', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 800 });
     await seedWorkflow(page, workflowStages, 'en');
-    await page.getByRole('tab', { name: 'Process map' }).click();
-    await page.getByTestId('workflow-map-node-0').click();
-    await expect(page.getByTestId('workflow-map-details-0')).toContainText('Customer request');
-    await expect(page.getByTestId('workflow-map-row-0')).toContainText('External partner');
-    await expect(page.getByTestId('workflow-map-row-2')).toContainText('No next stage or handoff recorded');
+    await page.getByTestId('bp-step-intake').focus();
+    await expect(page.getByTestId('bp-hovercard')).toContainText('Customer request');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
-    expect(await scan(page, '[data-testid="workflow-panel"]')).toEqual([]);
+    expect(await scan(page, 'main')).toEqual([]);
   });
 });
-

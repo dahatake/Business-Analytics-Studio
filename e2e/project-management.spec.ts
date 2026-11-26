@@ -576,8 +576,8 @@ test('external view blocks unclassifiable content derived from internal company 
       'bas.binary.pack.pj-alpha': JSON.stringify(internalPack),
     });
     await page.reload();
-    await page.evaluate(() => { window.location.hash = '/flows'; });
-    await expect(page.getByText('Internal workflow detail')).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/process?level=steps'; });
+    await expect(page.getByTestId('bp-step-private-stage')).toContainText('Internal workflow detail');
     await page.getByTestId('audience-toggle').click();
     await expect(page.getByTestId('company-anchor-external-restricted')).toBeVisible();
     await expect(page.locator('body')).not.toContainText('Internal workflow detail');

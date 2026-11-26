@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Button, MessageBar, MessageBarBody, Radio, RadioGroup, Select, Switch, Tab, TabList } from '@fluentui/react-components';
+import { Button, MessageBar, MessageBarBody, Radio, RadioGroup, Select, Switch } from '@fluentui/react-components';
 import { ArrowClockwise20Regular, ArrowCounterclockwise20Regular, Home20Regular, ZoomIn20Regular, ZoomOut20Regular } from '@fluentui/react-icons';
 import { getEntity } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
@@ -8,18 +8,17 @@ import { replaceQuery, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { cardController } from '../../ui/cardController.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
-import { PageHeader, Panel } from '../../ui/Panel.tsx';
+import { Panel } from '../../ui/Panel.tsx';
 import { buildArchitecture, ARCH_MODES, type ArchMode } from './architecture.ts';
-import { coreObjectChoice } from './coreObject.ts';
 import { detectWebGL, ORBIT_STEP, ZOOM_STEP } from './engine.ts';
-import { ancestry, labelText, objectById, TABS, type SceneModel, type SceneObject, type TabKey, type Vec3 } from './model.ts';
-import { buildArchModel, buildKpiModel, buildMapModel, buildTwinModel, type ArchScene, type TwinScene, type KpiScene, type MapScene } from './models.ts';
+import { ancestry, labelText, objectById, type SceneModel, type SceneObject, type TabKey, type Vec3 } from './model.ts';
+import { buildArchModel, buildMapModel, type ArchScene, type MapScene } from './models.ts';
 import type { Quality, QualityChange } from './quality.ts';
 import { dofBlockReason } from './dof.ts';
 import { SCENE_BUILDERS } from './scenes.ts';
 import { SceneView, type OverlayLabel, type SceneApi } from './SceneView.tsx';
-import { Arch2D, Kpi2D, Map2D, TwinPlan2D } from './views2d.tsx';
-import { ViewSwitch, type ViewMode } from './ViewSwitch.tsx';
+import { Arch2D, Map2D } from './views2d.tsx';
+import type { ViewMode } from './ViewSwitch.tsx';
 import type { UnavailableReason } from './ContextualScene.tsx';
 import './threed.css';
 
@@ -27,37 +26,32 @@ type QualityChoice = 'auto' | Quality;
 const QUALITY_CHOICES: QualityChoice[] = ['auto', 'high', 'medium', 'low'];
 
 const RATIONALE: Record<TabKey, MessageKey> = {
-  twin: 'td.rationale.twin',
   map: 'td.rationale.map',
-  kpi: 'td.rationale.kpi',
   arch: 'td.rationale.arch',
 };
 
 function labelPos(o: SceneObject, model: SceneModel): Vec3 {
   const [x, y, z] = o.position;
-  if (o.kind === 'kpi' || (model.tab === 'map' && o.kind === 'site')) return [x, y * 2 + 0.9, z];
-  if (o.kind === 'site') return [0, 9, 0];
+  if (model.tab === 'map' && o.kind === 'site') return [x, y * 2 + 0.9, z];
   if (o.kind === 'layer') return [-15, y + 0.4, 0];
   return [x, y + o.size * 0.55 + 0.6, z];
 }
 
-/** /twin3d: digital twin, 3D map with flows, KPI towers and AsIs/ToBe architecture, each in 3D and 2D (FR-020/021/040/066/217). */
-export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
-  fixedTab?: TabKey;
-  embedded?: boolean;
+/** 3D map with flows and AsIs/ToBe architecture, embedded in the map and architecture screens (FR-021/040/066/217). */
+export function ThreeDScreen({ tab, onUnavailable }: {
+  tab: TabKey;
   onUnavailable?: (reason: UnavailableReason) => void;
-} = {}) {
-  const { t, lang, fmt } = useI18n();
+}) {
+  const { t, lang } = useI18n();
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
   const reducedMotion = useReducedMotion();
   const q = route.query;
-  const tab: TabKey = fixedTab ?? ((TABS as string[]).includes(q.get('tab') ?? '') ? (q.get('tab') as TabKey) : 'twin');
   const archMode: ArchMode = q.get('arch') === 'asis' ? 'asis' : 'tobe';
   const [webgl] = useState(() => detectWebGL());
   const [engineFailed, setEngineFailed] = useState(false);
   const can3d = webgl && !engineFailed;
-  const mode: ViewMode = can3d && (embedded ? q.get('mode') === '3d' : q.get('mode') !== '2d') ? '3d' : '2d';
+  const mode: ViewMode = can3d && q.get('mode') === '3d' ? '3d' : '2d';
   useEffect(() => {
     if (!can3d) onUnavailable?.(webgl ? 'engineFailed' : 'webglUnavailable');
   }, [can3d, webgl, onUnavailable]);
@@ -73,21 +67,13 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
   const helpId = useId();
   const fallbackId = useId();
 
-  const core = useMemo(() => coreObjectChoice(undefined, audience), [audience]);
-  const coreId = core.candidates.some((c) => c.id === q.get('core')) ? q.get('core')! : core.defaultId;
-  const coreCandidate = core.candidates.find((c) => c.id === coreId);
-
-  const model: SceneModel = useMemo(() => {
-    switch (tab) {
-      case 'map': return buildMapModel(undefined, audience);
-      case 'kpi': return buildKpiModel(undefined, audience);
-      case 'arch': return buildArchModel(buildArchitecture(archMode, undefined, audience));
-      default: return buildTwinModel(coreCandidate, undefined, audience);
-    }
-  }, [tab, audience, archMode, coreCandidate]);
+  const model: SceneModel = useMemo(
+    () => (tab === 'map' ? buildMapModel(undefined, audience) : buildArchModel(buildArchitecture(archMode, undefined, audience))),
+    [tab, audience, archMode],
+  );
 
   const selected = objectById(model, q.get('sel'))?.id
-    ?? (embedded ? model.objects.find((o) => o.entityId === q.get('sel'))?.id : undefined)
+    ?? model.objects.find((o) => o.entityId === q.get('sel'))?.id
     ?? null;
   const selectedObj = objectById(model, selected);
   const text = useCallback((o: SceneObject) => labelText(o.label, t, lang), [t, lang]);
@@ -98,7 +84,7 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
 
   const select = (id: string | null) => {
     const object = objectById(model, id);
-    replaceQuery({ sel: (embedded ? object?.entityId ?? id : id) ?? undefined });
+    replaceQuery({ sel: (object?.entityId ?? id) ?? undefined });
   };
   const onPick = (id: string | null, anchor: Element) => {
     select(id);
@@ -133,15 +119,7 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
   const kindText = (o: SceneObject) => t(`td.kind.${o.kind}`);
 
   return (
-    <div className={embedded ? 'screen-td td-embedded' : 'screen screen-td'}>
-      {!embedded && (
-        <>
-          <PageHeader title={t('td.title')} subtitle={t('td.subtitle')} />
-          <TabList selectedValue={tab} onTabSelect={(_, d) => replaceQuery({ tab: String(d.value), sel: undefined })} aria-label={t('td.tabs')}>
-            {TABS.map((k) => <Tab key={k} value={k} data-testid={`td-tab-${k}`}>{t(`td.tab.${k}`)}</Tab>)}
-          </TabList>
-        </>
-      )}
+    <div className="screen-td td-embedded">
 
       {!can3d && !onUnavailable && (
         <MessageBar intent="warning" data-testid="td-fallback">
@@ -150,7 +128,6 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
       )}
 
       <div className="td-toolbar" role="group" aria-label={t('td.toolbar')}>
-        {!embedded && <ViewSwitch mode={mode} onChange={(m) => replaceQuery({ mode: m === '2d' ? '2d' : undefined })} disabled3d={!can3d} reasonId={fallbackId} />}
         {tab === 'arch' && (
           <ArchSwitch value={archMode} onChange={(v) => replaceQuery({ arch: v === 'tobe' ? undefined : v, sel: undefined })} />
         )}
@@ -187,7 +164,7 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
       </div>
 
       <div className="td-layout">
-        <Panel title={title} rationale={tab === 'twin' && (model as TwinScene).office ? 'td.rationale.office' : RATIONALE[tab]} className="td-main" testId="td-main">
+        <Panel title={title} rationale={RATIONALE[tab]} className="td-main" testId="td-main">
           <nav aria-label={t('td.breadcrumb')} className="td-breadcrumb" data-testid="td-breadcrumb">
             <ol>
               {crumbs.map((c, i) => (
@@ -231,13 +208,11 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
             </>
           ) : (
             <div className="td-2d-wrap" data-testid="td-2d">
-              {tab === 'twin' && <TwinPlan2D model={model} selected={selected} onPick={onPick} text={text} title={view2dTitle} />}
               {tab === 'map' && <Map2D model={model} selected={selected} onPick={onPick} text={text} title={view2dTitle} />}
-              {tab === 'kpi' && <Kpi2D model={model} selected={selected} onPick={onPick} text={text} title={view2dTitle} percent={fmt.percent} />}
               {tab === 'arch' && <Arch2D model={model} selected={selected} onPick={onPick} text={text} title={view2dTitle} roleText={(r) => t(`td.arch.role.${r as 'product' | 'current' | 'painPoint'}`)} />}
             </div>
           )}
-          <Legend tab={tab} office={(model as TwinScene).office} />
+          <Legend tab={tab} />
         </Panel>
 
         <div className="td-side">
@@ -253,43 +228,6 @@ export function ThreeDScreen({ fixedTab, embedded = false, onUnavailable }: {
               </dl>
             ) : <p className="muted">{t('td.noSelection')}</p>}
           </Panel>
-          {tab === 'twin' && (
-            <Panel title={t('td.core.title')} rationale="td.core.rationale" testId="td-core">
-              <p data-testid="td-core-name" className="td-core-name">
-                {coreCandidate?.entityId ? <EntityRef id={coreCandidate.entityId} /> : coreCandidate ? labelText({ text: coreCandidate.name }, t, lang) : '—'}
-              </p>
-              {core.reason && <p className="td-reason" data-testid="td-core-reason">{labelText(core.reason, t, lang)}</p>}
-              <label htmlFor={`${helpId}-core`} className="td-control-label">{t('td.core.change')}</label>
-              <Select id={`${helpId}-core`} value={coreId} onChange={(_, d) => replaceQuery({ core: d.value === core.defaultId ? undefined : d.value, sel: undefined })} data-testid="td-core-select">
-                {core.candidates.map((c) => <option key={c.id} value={c.id}>{labelText({ text: c.name }, t, lang)}</option>)}
-              </Select>
-              <div className="table-scroll" tabIndex={0} role="region" aria-label={t('td.core.compare')}>
-                <table className="data-table compact td-core-table">
-                  <caption>{t('td.core.compare')}</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{t('td.core.candidate')}</th>
-                      <th scope="col">{t('td.col.kind')}</th>
-                      {core.criteria.length > 0
-                        ? core.criteria.map((c) => <th key={c.id} scope="col">{c.label}</th>)
-                        : (<><th scope="col" className="num">{t('td.core.dealValue')}</th><th scope="col" className="num">{t('td.core.deals')}</th></>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {core.candidates.map((c) => (
-                      <tr key={c.id} className={c.id === coreId ? 'selected' : ''}>
-                        <th scope="row">{labelText({ text: c.name }, t, lang)}</th>
-                        <td>{t(`td.core.kind.${c.kind}`)}</td>
-                        {core.criteria.length > 0
-                          ? core.criteria.map((cr) => <td key={cr.id}>{c.scores?.[cr.id] ?? '—'}</td>)
-                          : (<><td className="num">{fmt.yenCompact(c.dealValueJpy)}</td><td className="num">{fmt.integer(c.dealCount)}</td></>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-          )}
         </div>
       </div>
 
@@ -346,16 +284,7 @@ function ArchSwitch({ value, onChange }: { value: ArchMode; onChange: (v: ArchMo
 }
 
 function ValueRows({ o, model }: { o: SceneObject; model: SceneModel }) {
-  const { t, tx, fmt } = useI18n();
-  const e = o.entityId ? getEntity(o.entityId) : undefined;
-  if (e?.kind === 'kpi') {
-    return (
-      <>
-        <dt>{t('td.kpi.progress')}</dt><dd>{Number.isFinite(o.value) ? fmt.percent(o.value!) : '—'}</dd>
-        <dt>{t('td.kpi.values')}</dt><dd>{t('td.kpi.valuesText', { baseline: fmt.number(e.baseline), current: fmt.number(e.current), target: fmt.number(e.target), unit: tx(e.unit) })}</dd>
-      </>
-    );
-  }
+  const { t, fmt } = useI18n();
   if (model.tab === 'map' && o.value !== undefined && o.level === 1) {
     return (<><dt>{t('td.map.volume')}</dt><dd>{t('unit.tPerMonth', { value: fmt.integer(o.value) })}</dd></>);
   }
@@ -371,13 +300,8 @@ function DetailCell({ o, model }: { o: SceneObject; model: SceneModel }) {
   const { t, lang, fmt } = useI18n();
   const parts: string[] = [];
   if (o.detail) parts.push(labelText(o.detail, t, lang));
-  if (model.tab === 'kpi' && o.kind === 'kpi') parts.push(t('td.kpi.progressText', { value: Number.isFinite(o.value) ? fmt.percent(o.value!) : '—' }));
   if (model.tab === 'map' && o.value !== undefined && o.level === 1) parts.push(t('unit.tPerMonth', { value: fmt.integer(o.value) }));
   if (model.tab === 'arch' && o.kind === 'layer') parts.push(t('td.arch.blockCount', { n: o.value ?? 0 }));
-  if (model.tab === 'kpi' && o.kind === 'kpi') {
-    const tw = (model as KpiScene).towers.find((x) => x.id === o.id);
-    if (tw) parts.push(t(`td.kpi.status.${tw.status}`));
-  }
   return <>{parts.join(' · ') || '—'}</>;
 }
 
@@ -412,19 +336,9 @@ function FlowTable({ model }: { model: MapScene }) {
   );
 }
 
-function Legend({ tab, office }: { tab: TabKey; office?: boolean }) {
+function Legend({ tab }: { tab: TabKey }) {
   const { t } = useI18n();
   const all: Record<TabKey, { cls: string; key: MessageKey }[]> = {
-    twin: office ? [
-      { cls: 'step-machining', key: 'td.legend.stage' },
-      { cls: 'twin-line', key: 'td.legend.team' },
-      { cls: 'twin-piece', key: 'td.legend.workItem' },
-    ] : [
-      { cls: 'step-machining', key: 'td.legend.machine' },
-      { cls: 'twin-line', key: 'td.legend.line' },
-      { cls: 'twin-product', key: 'td.legend.product' },
-      { cls: 'twin-piece', key: 'td.legend.piece' },
-    ],
     map: [
       { cls: 'map-plant', key: 'td.legend.plant' },
       { cls: 'map-hq', key: 'td.legend.hq' },
@@ -433,12 +347,6 @@ function Legend({ tab, office }: { tab: TabKey; office?: boolean }) {
       { cls: 'map-supplier', key: 'td.legend.supplier' },
       { cls: 'map-region', key: 'td.legend.region' },
       { cls: 'map-flow', key: 'td.legend.flow' },
-    ],
-    kpi: [
-      { cls: 'status-achieved', key: 'td.kpi.status.achieved' },
-      { cls: 'status-progressing', key: 'td.kpi.status.progressing' },
-      { cls: 'status-regressed', key: 'td.kpi.status.regressed' },
-      { cls: 'kpi-target', key: 'td.legend.target' },
     ],
     arch: [
       { cls: 'role-product', key: 'td.arch.role.product' },

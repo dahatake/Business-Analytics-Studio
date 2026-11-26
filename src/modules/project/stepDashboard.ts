@@ -1,4 +1,6 @@
 import type { Entity, EntityOf } from '../../data/schema.ts';
+import { WorkflowExtension } from '../../data/extensionSchemas.ts';
+import { demoWorkflow } from '../process/demo.ts';
 import { chooseKpiVisual, kpiProgress, kpiStatus } from '../../domain/kpi.ts';
 import { priorityScore } from '../../domain/priority.ts';
 import { DEFAULT_WEIGHTS } from '../../domain/summary.ts';
@@ -301,6 +303,13 @@ export const TOP_ISSUES = 3;
 
 const qualifiedOutCount = (c: CheckContext) => entities(c, 'issue').filter((i) => isQualifiedOut(c.deliverables, i.id)).length;
 
+/** Steps of the pack's business process (FR-380); the sample pack uses the demo process of the process screen. */
+function processStepCount(c: CheckContext): number {
+  const w = WorkflowExtension.safeParse(c.pack.pack.extensions?.workflow);
+  if (w.success) return w.data.stages.length;
+  return c.pack.pack.isSample ? demoWorkflow.stages.length : 0;
+}
+
 /** How much of each existing input a step can use. */
 export function inputCount(id: string, c: CheckContext): number {
   const n = (kind: string) => c.pack.pack.entities.filter((e) => e.kind === kind).length;
@@ -311,7 +320,7 @@ export function inputCount(id: string, c: CheckContext): number {
     case 'discussion': return c.discussion.themes.length + c.discussion.records.length;
     case 'analyses': return c.analysis.analyses.length;
     case 'kpis': return n('kpi');
-    case 'flows': return n('deal') + n('deliverable') + n('invoice');
+    case 'flows': return processStepCount(c);
     case 'projectKpis': return c.kpi.kpis.length;
     case 'okrs': return c.kpi.okrs.length;
     case 'objectives': return c.objectives?.length ?? 0;
@@ -327,7 +336,7 @@ export function inputCount(id: string, c: CheckContext): number {
 /** The screen where each input is kept. */
 const INPUT_HREF: Record<string, string> = {
   issues: '/relations', causes: '/relations', sources: '/data', discussion: '/discussion', analyses: '/analysis', kpis: '/analysis?tab=kpi',
-  flows: '/relations?view=flow', projectKpis: '/analysis?tab=kpi', okrs: '/analysis?tab=kpi', objectives: '/projects', useCases: '/usecases',
+  flows: '/process', projectKpis: '/analysis?tab=kpi', okrs: '/analysis?tab=kpi', objectives: '/projects', useCases: '/usecases',
   solutions: '/deliverables?step=solution', personas: '/usecases', initiatives: '/plan', people: '/directory',
 };
 

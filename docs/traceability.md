@@ -28,7 +28,7 @@
 | F-3.2.1 詳細カード | ホバー（350 ms）・フォーカス・タッチで開き、Esc・外側のタップで閉じる。カードの上にポインターを移しても消えない。入力欄には出さない | `e2e/interaction.spec.ts`、`e2e/touch.spec.ts` |
 | F-3.2.2 地図のポップアップ | 拠点マーカーは一覧と同じエンティティ ID のカード。Tab で移動、Enter で選択 | `e2e/interaction.spec.ts`「map popups」、`e2e/touch.spec.ts` |
 | F-3.2.3 ドリルスルー | 参照はリンク（クリック・Enter）。選択はチェックボックスで分離。図では「選択（クリック・Enter）」と「詳細を開く」を分離 | `e2e/interaction.spec.ts`「drill-through」 |
-| F-3.2.4 関係の可視化 | 顧客 → 案件 → 成果物 → 請求のレーン図（選択で上流・下流を強調）、段数 1〜3 の関係グラフ、関係の表 | `e2e/interaction.spec.ts`「business relationships」、`tests/data.test.ts` |
+| F-3.2.4 関係の可視化 | 関係の表（ステップのタスクからの修正。ニュースだけを根拠とする項目は除外）。業務の流れは FR-380 の業務プロセス画面 | `e2e/interaction.spec.ts`「business relationships」、`tests/data.test.ts` |
 | F-3.3.1 動的な表現 | d3（force・geo・sankey・transition・zoom・drag） | `e2e/visuals.spec.ts`（重みで順位が変わる、段数でノード数が変わる、ホバーで強調） |
 | F-3.3.2 最適な Visual | 表・ガント・サンキー・2×2・地図・リング／数直線・棒。業務の流れは明示された次工程・外部への引き継ぎをたどる工程マップと段階一覧を切り替える。各図に「この表現を選んだ理由」と代替の表 | `e2e/visuals.spec.ts`「every visual explains why」・工程マップの表示と操作 |
 | F-3.3.3 KPI の目標と達成度 | 名前・実績・目標・基準値・単位・望ましい方向を常に表示 | `tests/domain.test.ts`、`e2e/visuals.spec.ts` |
@@ -74,7 +74,7 @@
 | 分析対象と優先順位の参考（分析画面） | FR-340（AC-939〜AC-943） | `src/modules/project/analysisTargets.ts`（ステップ別の分析対象・2 軸・4 区分・概要の事実）、`analysisTargetsRender.ts`（d3 の力学配置と keyed join）、`AnalysisTargets.tsx`（概要・泡のマップ・詳細・表）、`AnalysisScreen.tsx`（タイルの選択でパラメーターを切り替え・双方向の強調）、`project.css`、`src/i18n/modules/proj.*.ts` | `tests/analysis-targets.test.ts`、`e2e/project.spec.ts`（FR-340・axe） |
 | インク・ホワイトボード | FR-086〜099、NFR-PERF-004 | `src/modules/ink/`（依存なしの PDF 1.4 出力、端末保存、自動保存） | `tests/ink.test.ts`（PDF の xref を検証）、`e2e/ink.spec.ts`（20 000 本での描画時間） |
 | 3D | FR-018、FR-020〜021、FR-023、FR-030〜034、FR-036、FR-040、FR-065〜069、FR-146〜147、FR-217 | `src/modules/threed/`（three.js、手続き生成のモデル、WebGL がない場合は 2D） | `tests/threed.test.ts`、`e2e/threed.spec.ts`（最初のフレーム・大きさの追従） |
-| 関係グラフ・Twin・空間 | FR-212〜214、FR-218、FR-235〜241、FR-245〜248、NFR-A11Y-010 | `src/modules/graph/` | `tests/graph.test.ts`、`e2e/graph.spec.ts` |
+| 業務プロセス（現状とあるべき姿） | FR-380（関係グラフ・Twin・空間の FR-212〜214、FR-218、FR-235〜241、FR-245〜248 は D-53 で廃止） | `src/modules/process/`、`src/data/extensionSchemas.ts`（`WorkflowExtension`）、`src/modules/project/packGenerate.ts` | `tests/process.test.ts`、`e2e/process.spec.ts`、`e2e/visuals.spec.ts`「business process from a pack workflow」 |
 | ユースケース・データカタログ | FR-043、FR-155〜167、FR-169〜172、FR-180、NFR-A11Y-006〜007、NFR-UX-010〜012 | `src/modules/usecases/` | `tests/usecases.test.ts`、`e2e/usecases*.spec.ts` |
 | 生成 AI | FR-010〜011、FR-017、FR-132、FR-167〜168、FR-182、FR-274〜292、NFR-SEC-001・002・005・012、NFR-COST-001 | `src/modules/ai/`、`server/`（localhost だけの中継。鍵は AES-256-GCM で暗号化） | `tests/ai-*.test.ts`、`e2e/ai.spec.ts`（鍵がページと通信に出ないこと） |
 | 生成パイプライン・ブランド・外部連携 | FR-058〜064、FR-100〜108、FR-118〜131、FR-141、FR-188〜203、NFR-SEC-006・008、NFR-OPS-001 | `scripts/bas.ts`（research・build・verify・launch・package・feedback・integrations）、`src/modules/ops/`、`docs/integration-catalog.md`、`docs/pack.schema.json`、起動・セットアップのスクリプト | `tests/ops-*.test.ts`、`e2e/ops.spec.ts`、壊したパックで `verify` が終了コード 1 |

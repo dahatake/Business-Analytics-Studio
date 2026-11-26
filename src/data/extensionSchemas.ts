@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LocalizableSchema, ORG_LEVELS } from '../modules/project/model.ts';
+import type { Localizable } from '../state/text.ts';
 
 export const GlossaryEntrySchema = z.object({
   term: LocalizableSchema,
@@ -19,28 +20,130 @@ export const ArchitectureExtension = z.object({
 
 const SourceIds = z.array(z.string()).optional();
 
+/** How an input or a work product travels: the medium tells where a hidden manual step is likely (FR-380). */
+export const ARTIFACT_FORMS = ['excel', 'email', 'paper', 'pdf', 'document', 'system', 'chat', 'meeting', 'verbal', 'other'] as const;
+export type ArtifactForm = (typeof ARTIFACT_FORMS)[number];
+/** An input or output named on its own (plain text), or with its medium and the party it comes from or goes to. */
+export const ArtifactSchema = z.union([LocalizableSchema, z.object({
+  name: LocalizableSchema,
+  form: z.enum(ARTIFACT_FORMS).optional(),
+  /** A party id (extensions.workflow.parties) the item comes from (inputs) or goes to (outputs). */
+  partyId: z.string().optional(),
+}).passthrough()]);
+export type Artifact = z.infer<typeof ArtifactSchema>;
+
+/**
+ * FR-380: the numbers a value stream map puts in a step's data box. All optional: only stated or measured values,
+ * `basis` says which (an estimate is labelled as one, never shown as a fact).
+ * touchMinutes = hands-on effort per item (all people together); waitHours = calendar time the item waits before the
+ * step finishes; volumePerMonth = items per month; firstPassPct = items that need no rework (%C&A).
+ */
+export const StepMetricsSchema = z.object({
+  touchMinutes: z.number().nonnegative().optional(),
+  waitHours: z.number().nonnegative().optional(),
+  volumePerMonth: z.number().nonnegative().optional(),
+  firstPassPct: z.number().min(0).max(100).optional(),
+  /** People who take part in the step (headcount, not FTE). */
+  people: z.number().int().nonnegative().optional(),
+  basis: z.enum(['stated', 'estimate']).optional(),
+}).passthrough();
+export type StepMetrics = z.infer<typeof StepMetricsSchema>;
+
+/** ECRS-style change of a step in the to-be process (step 2). `remove` = the step disappears; `new` = to-be only. */
+export const STEP_CHANGES = ['keep', 'improve', 'combine', 'remove', 'new'] as const;
+export type StepChange = (typeof STEP_CHANGES)[number];
+
+export const PARTY_SIDES = ['external', 'internal'] as const;
+export const PARTY_KINDS = ['customer', 'supplier', 'partner', 'regulator', 'department', 'team', 'other'] as const;
+export const LOOP_KINDS = ['rework', 'iteration', 'feedback'] as const;
+export const LOOP_STATES = ['asIs', 'toBe', 'both'] as const;
+
 /**
  * The team's own work as a chain of stages (sales and service organisations as well as plants): what comes in, what
  * the team does with it, what it hands over and to which team. Each stage cites the material it comes from.
+ * FR-380 adds, all optional so older packs stay valid: the parties (external customers and suppliers are kept apart
+ * from the company's own departments), phases for the bird's-eye view, the as-is numbers of each step (step 1), its
+ * to-be change and numbers (step 2), hidden micro-workflows, loops (rework, iteration) and the KPI a span is measured by.
  */
 export const WorkflowExtension = z.object({
+  title: LocalizableSchema.optional(),
+  /** Labour cost per hour used to turn hours into money; omitted = money is not shown. */
+  laborCostPerHourJpy: z.number().positive().optional(),
+  parties: z.array(z.object({
+    id: z.string().min(1),
+    name: LocalizableSchema,
+    side: z.enum(PARTY_SIDES),
+    kind: z.enum(PARTY_KINDS).optional(),
+    /** A customer, supplier, person or site entity this party stands for. */
+    entityId: z.string().optional(),
+    sourceIds: SourceIds,
+  }).passthrough()).optional(),
+  phases: z.array(z.object({ id: z.string().min(1), name: LocalizableSchema }).passthrough()).optional(),
   stages: z.array(z.object({
     id: z.string().min(1),
     name: LocalizableSchema,
     team: LocalizableSchema.optional(),
-    inputs: z.array(LocalizableSchema).default([]),
+    /** The lane: a party id. Absent = the lane is named by `team`. */
+    partyId: z.string().optional(),
+    phaseId: z.string().optional(),
+    description: LocalizableSchema.optional(),
+    inputs: z.array(ArtifactSchema).default([]),
     activities: z.array(LocalizableSchema).default([]),
-    outputs: z.array(LocalizableSchema).default([]),
+    outputs: z.array(ArtifactSchema).default([]),
     /** Reports, systems and data the stage reads or writes. */
     data: z.array(LocalizableSchema).optional(),
+    /** Small workflows inside the step that the process map hides (e.g. an Excel sheet sent round for others to fill in). */
+    hiddenWork: z.array(z.object({
+      name: LocalizableSchema,
+      form: z.enum(ARTIFACT_FORMS).optional(),
+      /** People asked to contribute each time. */
+      participants: z.number().int().nonnegative().optional(),
+      /** Effort per item, all participants together (part of the step's touchMinutes). */
+      minutes: z.number().nonnegative().optional(),
+    }).passthrough()).optional(),
     /** Stage ids that take over the outputs. */
     next: z.array(z.string()).default([]),
     /** A team outside this pack that takes over (e.g. "Account team", "Partner"). */
     handoffTo: z.array(LocalizableSchema).optional(),
+    /** Step 1: the measured or stated current state. */
+    asIs: StepMetricsSchema.optional(),
+    /** Step 2: what becomes of the step. Values without a source are hypotheses until measured. */
+    toBe: z.object({
+      change: z.enum(STEP_CHANGES),
+      metrics: StepMetricsSchema.optional(),
+      note: LocalizableSchema.optional(),
+      /** For `combine`: the stage that absorbs this one. */
+      into: z.string().optional(),
+      basis: z.enum(['stated', 'hypothesis']).optional(),
+    }).passthrough().optional(),
     sourceIds: SourceIds,
   }).passthrough()).min(1),
+  /** Work that goes round: rework back to an earlier step, a planned iteration (e.g. a weekly re-plan) or feedback. */
+  loops: z.array(z.object({
+    id: z.string().min(1),
+    from: z.string().min(1),
+    to: z.string().min(1),
+    kind: z.enum(LOOP_KINDS),
+    state: z.enum(LOOP_STATES).optional(),
+    label: LocalizableSchema.optional(),
+    /** Share of items that go round (rework), in percent. */
+    ratePct: z.number().min(0).max(100).optional(),
+    /** How often an iteration repeats (e.g. "weekly"). */
+    cadence: LocalizableSchema.optional(),
+    sourceIds: SourceIds,
+  }).passthrough()).optional(),
+  /** A KPI that measures the time from one stage to another; the app compares it with the sum of the steps. */
+  kpiSpans: z.array(z.object({
+    kpiId: z.string().min(1),
+    from: z.string().min(1),
+    to: z.string().min(1),
+  }).passthrough()).optional(),
 }).passthrough();
 export type WorkflowExtension = z.infer<typeof WorkflowExtension>;
+export type WorkflowStage = WorkflowExtension['stages'][number];
+
+/** The display name of an input or output, plain or structured. */
+export const artifactName = (a: Artifact): Localizable => (typeof a === 'object' && 'name' in a ? a.name as Localizable : a as Localizable);
 
 /**
  * KPI and OKR definitions as the organisation writes them ("20% of billed revenue", "NSAT ≥ 4.5"). Unlike kpi

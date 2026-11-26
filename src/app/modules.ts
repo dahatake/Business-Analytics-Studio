@@ -2,8 +2,8 @@ import { createElement, lazy, useState, type ComponentType, type LazyExoticCompo
 import type { FluentIcon } from '@fluentui/react-icons';
 import {
   Diagram24Regular, Map24Regular, ArrowFlowDiagonalUpRight24Regular, GanttChart24Regular,
-  DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Cube24Regular,
-  Organization24Regular, Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
+  DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Flowchart24Regular,
+  Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
   PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, TaskListSquareLtr24Regular,
   DocumentDatabase24Regular, Gauge24Regular,
 } from '@fluentui/react-icons';
@@ -48,9 +48,9 @@ export const SCREENS: ScreenDef[] = [
   // The former analysis overview is now the project's main screen; '/' stays as an alias so existing links keep working.
   { path: '/', label: 'proj.nav.home', Icon: Rocket24Regular, group: 'start', hiddenFromNav: true, component: HomeScreen },
   { path: '/analysis', label: 'proj.nav.analysis', Icon: DataPie24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/project/AnalysisScreen.tsx'), 'AnalysisScreen') },
-  { path: '/relations', label: 'nav.relations', Icon: Diagram24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Relations.tsx'), 'Relations') },
-  { path: '/graph', label: 'graph.title', Icon: Organization24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/graph/GraphScreen.tsx'), 'GraphScreen') },
-  { path: '/twin3d', label: 'td.title', Icon: Cube24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../modules/threed/ThreeDScreen.tsx'), 'ThreeDScreen') },
+  { path: '/process', label: 'nav.process', Icon: Flowchart24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/process/ProcessScreen.tsx'), 'ProcessScreen') },
+  // The relation table is the editor that step tasks open (`edit=`/`create=`); it is reached from those links, not the rail.
+  { path: '/relations', label: 'nav.relations', Icon: Diagram24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../screens/Relations.tsx'), 'Relations') },
   { path: '/map', label: 'nav.map', Icon: Map24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/MapScreen.tsx'), 'MapScreen') },
   { path: '/flows', label: 'nav.flows', Icon: ArrowFlowDiagonalUpRight24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../screens/FlowsRedirect.tsx'), 'FlowsRedirect') },
   { path: '/plan', label: 'nav.plan', Icon: GanttChart24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Plan.tsx'), 'Plan') },
@@ -86,7 +86,7 @@ export function screenFor(path: string): ScreenDef | undefined {
 }
 
 /** Light screens loaded in idle time after start-up, so their first visit opens without a loading spinner. */
-const IDLE_PRELOAD = ['/step', '/relations', '/map', '/plan', '/optimize', '/directory', '/settings'];
+const IDLE_PRELOAD = ['/step', '/process', '/map', '/plan', '/optimize', '/directory', '/settings'];
 
 export function preloadScreensWhenIdle() {
   const idle = (run: () => void) =>

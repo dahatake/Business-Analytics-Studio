@@ -1,7 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { wrap } from '../../ui/textWrap.ts';
 import type { SceneModel, SceneObject } from './model.ts';
-import { TWIN_PRODUCT_X, type ArchScene, type KpiScene, type MapScene, type TwinScene } from './models.ts';
+import type { ArchScene, MapScene } from './models.ts';
 
 export interface View2DProps {
   model: SceneModel;
@@ -24,52 +24,6 @@ function Hit({ id, label, selected, onPick, children, className }: { id: string;
       className={`td-hit${selected ? ' selected' : ''} ${className ?? ''}`} onClick={(e) => onPick(id, e.currentTarget)} onKeyDown={key}>
       {children}
     </g>
-  );
-}
-
-const byKind = (m: SceneModel, kind: SceneObject['kind']) => m.objects.filter((o) => o.kind === kind);
-
-/** FR-020 2D drawing: plan view of the same plant (same ids, same selection). */
-export function TwinPlan2D({ model, selected, onPick, text, title }: View2DProps) {
-  const m = model as TwinScene;
-  const { width, depth } = m.floor;
-  const vb = `${-width / 2 - 2} ${-depth / 2 - 8} ${width + 4} ${depth + 12}`;
-  const site = m.objects.find((o) => o.id === m.rootId)!;
-  return (
-    <svg className="td-2d td-plan" viewBox={vb} role="group" aria-label={title}>
-      <Hit id={site.id} label={text(site)} selected={selected === site.id} onPick={onPick}>
-        <rect x={-width / 2} y={-depth / 2} width={width} height={depth} className="td-floor" />
-      </Hit>
-      <rect x={-width / 2 + 1} y={-depth / 2 + 1} width={width - 2} height={depth - 2} className="td-wall" />
-      <rect x={-width / 2} y={-depth / 2 - 5.5} width={6} height={5} className="td-office" />
-      <text x={-width / 2 + 7} y={-depth / 2 - 2.2} className="td-svg-title">{text(site)}</text>
-      {m.lines.map((line) => {
-        const lo = model.objects.find((o) => o.id === line.id)!;
-        return (
-          <g key={line.id}>
-            <Hit id={line.id} label={text(lo)} selected={selected === line.id} onPick={onPick}>
-              <rect x={-19} y={line.z - 1} width={36} height={2} className="td-conveyor" />
-              <text x={-19} y={line.z - 2.6} className="td-svg-small">{text(lo)}</text>
-            </Hit>
-            {line.machines.map((mc) => {
-              const o = model.objects.find((x) => x.id === mc.id)!;
-              return (
-                <Hit key={mc.id} id={mc.id} label={text(o)} selected={selected === mc.id} onPick={onPick}>
-                  <rect x={mc.x - 1.6} y={line.z - 1.5} width={3.2} height={3} rx={0.3} className={`td-machine step-${mc.step}`} />
-                  <text x={mc.x} y={line.z + 2.6} textAnchor="middle" className="td-svg-tiny">{text(o)}</text>
-                </Hit>
-              );
-            })}
-          </g>
-        );
-      })}
-      {byKind(model, 'product').map((p) => (
-        <Hit key={p.id} id={p.id} label={text(p)} selected={selected === p.id} onPick={onPick}>
-          <circle cx={TWIN_PRODUCT_X} cy={p.position[2]} r={1.2} className={`td-product${p.id === m.heroId ? ' hero' : ''}`} />
-          <text x={width / 2 - 0.4} y={p.position[2] + 2.8} textAnchor="end" className="td-svg-tiny">{text(p)}</text>
-        </Hit>
-      ))}
-    </svg>
   );
 }
 
@@ -104,39 +58,6 @@ export function Map2D({ model, selected, onPick, text, title }: View2DProps) {
             {shape}
             {o.kind === 'site' && <text x={x + 1.1} y={z + 0.35} className="td-svg-tiny">{text(o)}</text>}
           </Hit>
-        );
-      })}
-    </svg>
-  );
-}
-
-/** §7 KPI towers as horizontal bars in 2D (same order, same selection). */
-export function Kpi2D({ model, selected, onPick, text, title, percent }: View2DProps & { percent: (v: number) => string }) {
-  const m = model as KpiScene;
-  const row = 40;
-  const left = 230;
-  const barW = 330;
-  const h = m.towers.length * row + 36;
-  return (
-    <svg className="td-2d td-kpi2d" viewBox={`0 0 640 ${h}`} role="group" aria-label={title}>
-      <line x1={left + barW} x2={left + barW} y1={8} y2={h - 18} className="td-target-line" />
-      {m.towers.map((tw, i) => {
-        const o = model.objects.find((x) => x.id === tw.id)!;
-        const p = Number.isFinite(tw.progress) ? tw.progress : 0;
-        const w = Math.max(2, Math.min(1.25, Math.max(0, p)) * barW);
-        const y = 14 + i * row;
-        const lines = wrap(text(o), 22);
-        return (
-          <g key={tw.id}>
-            <Hit id={tw.id} label={`${text(o)} ${percent(p)}`} selected={selected === tw.id} onPick={onPick}>
-              <rect x={0} y={y - 6} width={640} height={row - 4} className="td-row-hit" />
-              <rect x={left} y={y} width={w} height={20} rx={3} className={`td-bar status-${tw.status}`} />
-            </Hit>
-            <g aria-hidden="true" className="td-nohit">
-              {lines.slice(0, 2).map((ln, j) => <text key={j} x={left - 10} y={y + 10 + j * 14 - (lines.length > 1 ? 6 : 0)} textAnchor="end" className="td-svg-label">{ln}</text>)}
-              <text x={left + w + 6} y={y + 15} className="td-svg-label">{percent(p)}</text>
-            </g>
-          </g>
         );
       })}
     </svg>

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { entitiesOf, getEntity, loadPack } from '../src/data/pack.ts';
 import { samplePack } from '../src/data/sample.ts';
-import { deriveTwins } from '../src/modules/graph/model.ts';
 import { allowedEdges, analyzeEntity, isNewsDerived, newsExclusion } from '../src/data/relationAnalysis.ts';
 import type { Entity } from '../src/data/schema.ts';
 
@@ -37,7 +36,6 @@ describe('relations screen leaves the news feed out', () => {
     expect(entitiesOf('issue', pack).some((e) => e.id === 'issue-outage')).toBe(false);
     expect(getEntity('issue-quality', pack)?.sourceIds).toContain('source-news-1');
     expect(getEntity('issue-quality', pack)?.id).toBe('issue-quality');
-    expect(deriveTwins(pack).some((t) => t.digital.startsWith('source-news-') || t.real.startsWith('source-news-'))).toBe(false);
     for (const edge of allowedEdges(allow, pack)) {
       expect(edge.source.startsWith('source-news-') || edge.target.startsWith('source-news-')).toBe(false);
       expect([edge.source, edge.target]).not.toContain('issue-outage');

@@ -1,10 +1,9 @@
 import { Badge, Button, Text } from '@fluentui/react-components';
-import { ArrowLeft24Regular, ArrowRight16Regular, ArrowLeft16Regular, Diagram24Regular, LockClosed16Regular } from '@fluentui/react-icons';
+import { ArrowLeft24Regular, ArrowRight16Regular, ArrowLeft16Regular, LockClosed16Regular } from '@fluentui/react-icons';
 import { businessChain, getEntity, neighbors } from '../data/pack.ts';
 import type { RelationType } from '../data/pack.ts';
 import { useI18n } from '../i18n/index.ts';
 import { useSettings } from '../state/settings.ts';
-import { hrefFor } from '../state/router.ts';
 import { EntityImage } from '../ui/EntityImage.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { isHidden, specFor, type CardField } from '../ui/cardSpecs.ts';
@@ -76,7 +75,6 @@ export function EntityPage({ id }: { id: string }) {
             {e.classification === 'internal' && <Badge appearance="tint" color="warning" icon={<LockClosed16Regular />}>{t('badge.internal')}</Badge>}
             <Badge appearance="outline">{t(`world.${e.world}`)}</Badge>
           </div>
-          <Button as="a" appearance="secondary" icon={<Diagram24Regular />} href={hrefFor('/relations', { view: 'graph', focus: e.id })}>{t('entity.showInGraph')}</Button>
         </div>
       </header>
 

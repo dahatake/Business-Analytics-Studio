@@ -97,9 +97,9 @@ const CONDITIONS: Condition[] = [
     },
   },
   {
-    id: '3d-twin',
+    id: '3d-map',
     criterion: 'kpi5',
-    route: '/twin3d',
+    route: '/map?mode=3d',
     run: async (page, ms) => {
       await page.locator('canvas').first().scrollIntoViewIfNeeded();
       await page.waitForTimeout(ms);

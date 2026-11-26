@@ -277,7 +277,7 @@ function CollectionCoverage({ raw }: { raw: unknown }) {
   const labels = {
     company: 'proj.pack.company', regions: 'proj.pack.coverage.regions', flows: 'nav.flows',
     optimization: 'nav.optimize', brand: 'ops.title', dataCatalog: 'uc.nav.catalog',
-    glossary: 'proj.pack.coverage.glossary', graph: 'graph.title',
+    glossary: 'proj.pack.coverage.glossary', workflow: 'nav.process',
     architecture: 'proj.pack.coverage.architecture', coreObject: 'proj.pack.coverage.coreObject',
   } as const;
   return (

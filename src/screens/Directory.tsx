@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import { Button, Checkbox, Input, Label, Select, Tab, TabList } from '@fluentui/react-components';
 import { Search24Regular, LockClosed16Regular } from '@fluentui/react-icons';
-import { entitiesOf, getEntity, loaded, regionName } from '../data/pack.ts';
+import { entitiesOf, loaded, regionName } from '../data/pack.ts';
 import type { Entity } from '../data/schema.ts';
 import { useI18n, type MessageKey } from '../i18n/index.ts';
 import { useSettings } from '../state/settings.ts';
-import { hrefFor, replaceQuery, useRoute } from '../state/router.ts';
+import { replaceQuery, useRoute } from '../state/router.ts';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { isHidden } from '../ui/cardSpecs.ts';
@@ -119,7 +119,6 @@ export function Directory() {
     if (on) next.add(id); else next.delete(id);
     replaceQuery({ sel: [...next].join(',') || undefined });
   };
-  const firstSelected = [...selected].find((id) => getEntity(id));
 
   return (
     <div className="screen screen-directory">
@@ -143,12 +142,7 @@ export function Directory() {
         </div>
         <div className="selection-bar" aria-live="polite">
           <span>{t('directory.selected', { count: selected.size })}</span>
-          {selected.size > 0 && (
-            <>
-              <Button size="small" onClick={() => replaceQuery({ sel: undefined })}>{t('directory.clearSelection')}</Button>
-              {firstSelected && <Button size="small" as="a" href={hrefFor('/relations', { view: 'graph', focus: firstSelected })}>{t('directory.showInGraph')}</Button>}
-            </>
-          )}
+          {selected.size > 0 && <Button size="small" onClick={() => replaceQuery({ sel: undefined })}>{t('directory.clearSelection')}</Button>}
           <span className="muted">{t('directory.count', { shown: rows.length, total: visible.length })}</span>
           {hiddenCount > 0 && <span className="muted"><LockClosed16Regular aria-hidden /> {t('directory.hiddenInternal', { count: hiddenCount })}</span>}
         </div>

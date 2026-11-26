@@ -611,6 +611,7 @@ function rules(lang: Lang): string {
       '- 網羅: 達成度の最低件数は下限であって目標ではない。資料に名前が出る顧客（customer）・案件（engagements）・拠点（site）・人物（person）・KPI は、根拠（sourceIds）と必須項目がそろうものをすべて出す。目的に直接関係するものを先に出し、1 回の上限に収まらないものは gaps の missing に名前を書く。同じものを重複して出さず、別の案件には別の id を付ける。',
       '- Work IQ の回答（source-workiq-*）は Microsoft 365 の社内情報の要約で、区分ごとに分かれている。各区分を対応する場所に使う: 組織→person/site、KPI・OKR→extensions.okr（数値の基準値・現在値・目標値がそろう時だけ kpi エンティティ）、業務の流れ→extensions.workflow、データ資産→extensions.dataCatalog、拠点→site、顧客→customer、案件・取り組み→下記の engagements の規則、課題→issue/cause。回答に書かれていない値は作らず、「見つからない」とされた項目は作らない。人物は氏名と役職だけにする。「Project の目的に関する社内情報」の区分は目的の論点ごとの検索結果で、目的の課題・原因・施策・取り組み・KPI の第一の根拠として使う。',
       '- extensions.workflow.stages: このチーム（組織）の仕事を、受け取るもの（inputs）→行う作業（activities）→出すもの（outputs）→次の段（next）／引き継ぐ他チーム（handoffTo）の順に書く。使うレポート・システムは data。各段に sourceIds。',
+      '- extensions.workflow は業務プロセスの現状（ステップ1）とあるべき姿（ステップ2）の分析に使う（FR-380）。資料にある範囲で次も書く: parties（[{id:"party-…",name,side:"external|internal",kind:"customer|supplier|partner|regulator|department|team|other",entityId?}]。顧客・取引先など社外の相手は side:"external"、自社の部署・チームは "internal" と必ず分ける）、各 stage の partyId（担当するレーン）と phaseId、phases（[{id:"phase-…",name}] 受注・計画などの大きな段階を順に）、title（例「受注から入金まで」）。inputs・outputs は文字列か {name, form:"excel|email|paper|pdf|document|system|chat|meeting|verbal|other", partyId?}（媒体と相手が分かる時）。hiddenWork: 成果物を作るために隠れている小さな作業（例「関係者に Excel を配って記入を依頼し手で集計」）を [{name, form?, participants?, minutes?}]。asIs: 資料が数値で述べる時だけ {touchMinutes（1 件の作業時間・分）, waitHours（待ち時間・時間）, volumePerMonth（件/月）, firstPassPct（手戻りなしの割合 %）, people}。loops: 手戻り・反復（例 週次の計画見直し）を [{id:"loop-…",from:"後の stage id",to:"戻る先の stage id",kind:"rework|iteration|feedback",state:"asIs|toBe|both",ratePct?,cadence?,label?,sourceIds?}]。業務は一直線とは限らないので、資料にある繰り返しは loops に書く。toBe（あるべき姿）は資料が目標・計画として述べる時は {change:"keep|improve|combine|remove|new", metrics?, note, basis:"stated"}、課題から考えられる仮説なら basis:"hypothesis" とし note に解決策ではなく「どういう状態か」を書く。数値は作らない（不明なら省く）。',
       '- extensions.okr: kpis（name・definition・target・current・unit・period・owner は文字列で原文どおり。現在値が資料にない時は current を書かない）と objectives（objective・keyResults）。各要素に sourceIds。顧客がすでに KPI/OKR を定義しているかを必ず確かめ、definitionStatus（defined=定義が見つかり記録した / partial=KPI だけなど一部 / undefined=資料に「定義していない」と明記 / notRetrieved=確かめられなかった）と checkedSources（確かめた資料・会議の名前）を書く。見つからないことは undefined の根拠にならない（notRetrieved にする）。中期経営計画などの経営目標に対応する OKR は objective にその目標の文言を含める。',
       '- extensions.okr の対象組織: 全社の KPI/OKR（source-workiq-kpi-company など会社全体の資料）と対象の事業部の KPI/OKR（source-workiq-kpi-unit など）は両方記録し、事業部だけに絞らない（BPR の範囲と効果を小さく見積もらないため）。各 KPI・objective に orgUnitId を書く: "org-company"=全社、"org-unit"=対象の事業部。資料に他の組織（別の事業部・事業会社・部門）の KPI があれば extensions.okr.orgUnits に {id:"org-…",level:"group|legalEntity|business|department",name,basis:"stated",sourceIds} を足してその id を使う。どの組織の KPI か資料から分からなければ orgUnitId は書かない。org-company と org-unit の定義はアプリが書く。',
       '- 実施した案件・取り組みは extensions.engagements.items に保存する。各項目に id・name・sourceIds（1 件以上）、および period・customer・status の少なくとも 1 つを資料どおりに書く。任意: type（workshop/briefing/poc/programme/deliverable/deal/other）、customerId（既存の customer の id）、owner（氏名と役職のみ）、count・outcome。name は文字列または ja/en、他の事実は原文の文字列。金額・進捗・日付を補わない。deal は金額・製品・顧客・日付・担当が、initiative は進捗・期間・担当と費用・効果のある solution が資料にそろう時だけ。同じ実施情報をエンティティと engagements の両方に書かない。',
@@ -635,6 +636,7 @@ function rules(lang: Lang): string {
       '- Completeness: the readiness minimums are a floor, not a target. Output every customer, engagement, site, person and KPI the material names that has a basis (sourceIds) and the required fields. Put those most relevant to the purpose first; name any that do not fit the per-answer limit in the gap\'s missing list. Never output the same thing twice, and give each distinct piece of work its own id.',
       '- The Work IQ answers (source-workiq-*) summarise internal Microsoft 365 information, one per section. Use each where it belongs: organisation → person/site, KPI/OKR → extensions.okr (kpi entities only when baseline, current and target numbers are all stated), process → extensions.workflow, data assets → extensions.dataCatalog, locations → site, customers → customer, work records → engagements rules below, issues → issue/cause. Never create values they do not state or items they report as not found. People: name and title only. The "internal information on the project purpose" section searched each point of the purpose: use it first for the purpose\'s issues, causes, solutions, work records and KPIs.',
       '- extensions.workflow.stages: the team\'s work as what it receives (inputs) → what it does (activities) → what it hands over (outputs) → next stage ids (next) / other teams taking over (handoffTo); reports and systems used go in data. sourceIds on each stage.',
+      '- extensions.workflow feeds the analysis of the as-is (step 1) and to-be (step 2) business process (FR-380). As far as the material states, also write: parties ([{id:"party-…",name,side:"external|internal",kind:"customer|supplier|partner|regulator|department|team|other",entityId?}]; always keep outside parties such as customers and suppliers as side "external" apart from the company\'s own departments and teams as "internal"), partyId (the lane) and phaseId on each stage, phases ([{id:"phase-…",name}], the big stages such as order or plan, in order) and title (e.g. "Order to cash"). inputs and outputs are strings or {name, form:"excel|email|paper|pdf|document|system|chat|meeting|verbal|other", partyId?} when the medium and party are known. hiddenWork: small workflows hidden behind a work product (e.g. "send an Excel sheet round for others to fill in, then add it up by hand") as [{name, form?, participants?, minutes?}]. asIs only when the material states numbers: {touchMinutes (work per item, minutes), waitHours (waiting, hours), volumePerMonth (items/month), firstPassPct (share without rework, %), people}. loops: rework and iterations (e.g. a weekly re-plan) as [{id:"loop-…",from:"later stage id",to:"stage id it returns to",kind:"rework|iteration|feedback",state:"asIs|toBe|both",ratePct?,cadence?,label?,sourceIds?}]; work is rarely a straight line, so write the repetitions the material describes. toBe: when the material states a target or plan, {change:"keep|improve|combine|remove|new", metrics?, note, basis:"stated"}; when it is a hypothesis drawn from the issues, basis:"hypothesis", with a note that describes the state, not a solution. Never invent numbers (omit what is unknown).',
       '- extensions.okr: kpis (name, definition, target, current, unit, period, owner as strings, worded as in the material; omit current when the material has no current value) and objectives (objective, keyResults). sourceIds on each. Always check whether the customer already defines KPIs/OKRs and write definitionStatus (defined = found and recorded / partial = e.g. KPIs only / undefined = the material states there is none / notRetrieved = could not be checked) and checkedSources (names of the documents or meetings checked). Not finding a definition is not evidence there is none (use notRetrieved). For OKRs serving a company objective (e.g. the medium-term plan), quote that objective in the objective text.',
       '- Organisation of extensions.okr: record both the company-wide KPIs/OKRs (source-workiq-kpi-company and other company-level material) and those of the business unit (source-workiq-kpi-unit and the like); never narrow them to the unit alone, which would understate the scope and benefit of BPR. Give each KPI and objective an orgUnitId: "org-company" = the whole company, "org-unit" = the business unit. When the material states KPIs of another organisation (another division, operating company or department), add {id:"org-…",level:"group|legalEntity|business|department",name,basis:"stated",sourceIds} to extensions.okr.orgUnits and use that id. Omit orgUnitId when the material does not say whose KPI it is. The app writes org-company and org-unit itself.',
       '- Work records go in extensions.engagements.items. Each item needs id, name, sourceIds (at least one), and at least one of period, customer or status stated in the material. Optional: type (workshop/briefing/poc/programme/deliverable/deal/other), customerId (an existing customer id), owner (name and title only), count, outcome. name is a string or ja/en; other facts are verbatim strings. Never fill in amounts, progress or dates. Use deal only when value, products, customer, date and owner are known; initiative only when progress, dates, owner and a solution with cost and benefit are known. Do not duplicate the same work in entities and engagements.',
@@ -654,7 +656,7 @@ export function stageAPrompt(input: PackGenInput, entries: MaterialEntry[]): str
       : 'Build the foundation of a Business Analytics Studio (BAS) Project pack for the company below, from the material below only.',
     scope(input),
     ja ? '# 出力' : '# Output',
-    `{"packId":"...","company":{"name":{"ja":"","en":""},"industry":{"ja":"","en":""}},"isSample":false,"regions":[...],"entities":[...],"extensions":{"brand":{...},"glossary":[...],"dataCatalog":{"items":[...]},"workflow":{"stages":[...]}},"gaps":[{"section":"site","missing":["..."],"nextAction":"..."}]}`,
+    `{"packId":"...","company":{"name":{"ja":"","en":""},"industry":{"ja":"","en":""}},"isSample":false,"regions":[...],"entities":[...],"extensions":{"brand":{...},"glossary":[...],"dataCatalog":{"items":[...]},"workflow":{"title":"...","parties":[...],"phases":[...],"stages":[...],"loops":[...]}},"gaps":[{"section":"site","missing":["..."],"nextAction":"..."}]}`,
     ja ? `- entities の kind は ${KINDS_A.join(', ')} だけ。` : `- entities may only have kind ${KINDS_A.join(', ')}.`,
     ja ? '- brand は資料に色がある場合だけ。主色・文字色・書体・トーンと出典を調べ、不明な条件は gaps に記録する。資料にロゴの利用条件がある場合は logo の条件に反映し src は "brand/logo" とする。画像データは出力しない（利用者が許諾を確認して選ぶ）。' : '- Include brand only when the material states a colour. Research primary and text colours, fonts, tone and sources; report missing conditions in gaps. Put documented usage conditions in logo with src "brand/logo". Never output image data (the user selects it after confirming permission).',
     ja
@@ -683,7 +685,7 @@ export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foun
     '| id | kind | name |', '|---|---|---|', ...known,
     `regions: ${regions.join(', ') || '—'}`,
     ja ? '# 出力' : '# Output',
-    `{"entities":[...],"flows":[...],"optimization":{...},"extensions":{"okr":{"kpis":[{"id":"...","name":"...","orgUnitId":"org-company"}],"objectives":[{"id":"...","objective":"...","orgUnitId":"org-unit","keyResults":[...]}],"definitionStatus":"...","checkedSources":[...]},"engagements":{"items":[...]},"graph":{...},"architecture":{...},"coreObject":{...}},"gaps":[{"section":"kpi","missing":["..."],"nextAction":"..."}]}`,
+    `{"entities":[...],"flows":[...],"optimization":{...},"extensions":{"okr":{"kpis":[{"id":"...","name":"...","orgUnitId":"org-company"}],"objectives":[{"id":"...","objective":"...","orgUnitId":"org-unit","keyResults":[...]}],"definitionStatus":"...","checkedSources":[...]},"engagements":{"items":[...]},"architecture":{...},"coreObject":{...}},"gaps":[{"section":"kpi","missing":["..."],"nextAction":"..."}]}`,
     ja
       ? `- entities の kind は ${KINDS_B.join(', ')} だけ。目的「${input.purpose.trim()}」に関係する課題・原因・施策・KPI・取り組みを優先する。deal・deliverable・invoice は社内資料に根拠があるときだけ。`
       : `- entities may only have kind ${KINDS_B.join(', ')}. Prefer issues, causes, solutions, KPIs and initiatives relevant to the purpose "${input.purpose.trim()}". deal, deliverable and invoice only with work material behind them.`,
@@ -814,7 +816,7 @@ export function fixPrompt(input: PackGenInput, entries: MaterialEntry[], pack: R
     ...(sectionJson.length ? [ja ? '# 問題のある節' : '# Failing sections', ...sectionJson] : []),
     ja ? `# 参照できる id\n${ids}` : `# Ids you may reference\n${ids}`,
     ja ? '# 出力（JSON オブジェクト 1 つ）' : '# Output (one JSON object)',
-    '{"replace":[<corrected entities, same id>],"remove":["<id>"],"sections":{"flows":[...],"optimization":null,"regions":[...],"extensions":{"graph":{...}}}}',
+    '{"replace":[<corrected entities, same id>],"remove":["<id>"],"sections":{"flows":[...],"optimization":null,"regions":[...],"extensions":{"workflow":{...}}}}',
     ja ? '- sections には直す節だけを書く（null で削除）。' : '- sections holds only the sections you fix (null deletes one).',
     rules(input.lang),
     materialBlock(entries, input.lang),
@@ -899,7 +901,14 @@ export function repairExtensions(pack: Pack): Pack {
   }
   if (isObj(ext.workflow) && Array.isArray(ext.workflow.stages)) {
     ids(ext.workflow.stages, 'stage');
-    for (const s of ext.workflow.stages.filter(isObj)) for (const k of ['next', 'inputs', 'activities', 'outputs', 'data', 'handoffTo']) asList(s, k);
+    ids(ext.workflow.parties, 'party');
+    ids(ext.workflow.phases, 'phase');
+    ids(ext.workflow.loops, 'loop');
+    for (const s of ext.workflow.stages.filter(isObj)) {
+      for (const k of ['next', 'inputs', 'activities', 'outputs', 'data', 'handoffTo', 'hiddenWork']) asList(s, k);
+      // A hidden workflow written as plain text is still the name of one.
+      if (Array.isArray(s.hiddenWork)) s.hiddenWork = s.hiddenWork.map((h) => (typeof h === 'string' || (isObj(h) && 'ja' in h && !('name' in h)) ? { name: h } : h));
+    }
   }
   return pack;
 }
@@ -945,7 +954,23 @@ function salvageExtension(key: (typeof READINESS_EXTENSIONS)[number], raw: unkno
   if (key === 'workflow') {
     const stages = out.stages as Record<string, unknown>[];
     const stageIds = new Set(stages.map((s) => s.id));
-    for (const s of stages) if (Array.isArray(s.next)) s.next = s.next.filter((n) => stageIds.has(n));
+    const partyIds = new Set((Array.isArray(out.parties) ? out.parties : []).filter(isObj).map((p) => p.id));
+    const phaseIds = new Set((Array.isArray(out.phases) ? out.phases : []).filter(isObj).map((p) => p.id));
+    for (const s of stages) {
+      if (Array.isArray(s.next)) s.next = s.next.filter((n) => stageIds.has(n));
+      // FR-380: a lane, phase or merge target that does not exist is dropped alone; the step stays.
+      if (s.partyId !== undefined && !partyIds.has(s.partyId)) delete s.partyId;
+      if (s.phaseId !== undefined && !phaseIds.has(s.phaseId)) delete s.phaseId;
+      if (isObj(s.toBe) && s.toBe.into !== undefined && !stageIds.has(s.toBe.into)) delete s.toBe.into;
+    }
+    for (const list of ['loops', 'kpiSpans'] as const) {
+      if (!Array.isArray(out[list])) continue;
+      out[list] = (out[list] as unknown[]).filter((l, i) => {
+        const ok = isObj(l) && stageIds.has(l.from) && stageIds.has(l.to) && (list === 'loops' || entities.some((e) => e.id === l.kpiId && e.kind === 'kpi'));
+        if (!ok) dropped.push(`extensions.workflow.${list}[${i}]`);
+        return ok;
+      });
+    }
   }
   const parsed = key === 'okr' ? OkrExtension.safeParse(out) : key === 'workflow' ? WorkflowExtension.safeParse(out) : key === 'engagements' ? EngagementsExtension.safeParse(out) : PackCatalog.safeParse(out);
   const empty = lists[key].every((f) => !(out[f] as unknown[]).length);

@@ -31,7 +31,7 @@ export function ContextualScene({ tab, children }: { tab: TabKey; children?: Rea
       {(!children || opened3d || mode === '3d') && (
         <div hidden={!!children && mode === '2d'}>
           <Suspense fallback={<Spinner label={t('app.loading')} />}>
-            <ThreeDScreen fixedTab={tab} embedded onUnavailable={setUnavailable} />
+            <ThreeDScreen tab={tab} onUnavailable={setUnavailable} />
           </Suspense>
         </div>
       )}

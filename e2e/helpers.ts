@@ -141,9 +141,11 @@ export const JAPANESE = /[\u3040-\u30ff\u3400-\u9fff\uff01-\uff60]/;
 
 export const ROUTES = [
   '/',
+  '/process',
+  '/process?state=toBe&level=steps',
+  '/process?state=compare&level=detail&sel=st-plan',
+  '/process?tab=table',
   '/relations',
-  '/relations?view=graph',
-  '/relations?view=table',
   '/map',
   '/flows',
   '/plan',

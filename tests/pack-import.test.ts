@@ -6,13 +6,11 @@ import { samplePack } from '../src/data/sample.ts';
 import { activatePack, loadPack } from '../src/data/pack.ts';
 import { COLLECTION_SECTIONS, CollectionReport, collectionPresence } from '../src/data/collection.ts';
 import { ArchitectureExtension, CoreObjectExtension, GlossaryEntrySchema } from '../src/data/extensionSchemas.ts';
-import { GraphExtensionSchema, graphExtensionFor } from '../src/modules/graph/extensions.ts';
 import { BrandProfile } from '../src/modules/ops/brand.ts';
 import { CatalogItem } from '../src/modules/usecases/catalogSchema.ts';
 import { catalogForScope } from '../src/modules/usecases/catalog.ts';
 import { scopedKey, useProjects } from '../src/state/projects.ts';
 import { buildArchitecture } from '../src/modules/threed/architecture.ts';
-import { coreObjectChoice } from '../src/modules/threed/coreObject.ts';
 import { parseGlossary } from '../src/modules/project/discussion.ts';
 import { verifyPack } from '../src/data/verify.ts';
 import { verifyPack as cliVerifyPack } from '../scripts/lib/verify.ts';
@@ -137,7 +135,7 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
       brand: { primary: '#1267B4' },
       dataCatalog: { items: [{ name: 'Orders', columns: ['orderId'], url: 'https://example.com/dictionary' }] },
       glossary: [{ term: 'OTD', definition: 'On time delivery' }],
-      graph: { relations: [{ source: 'site-nagoya', target: 'kpi-otd', semantic: 'measurement' }] },
+      workflow: { parties: [{ id: 'party-sales', name: 'Sales', side: 'internal' }], stages: [{ id: 'st-1', name: 'Take the order', partyId: 'party-sales', inputs: [{ name: 'Order', form: 'email' }] }] },
       architecture: { asIs: [{ layer: 'data', name: 'ERP actual' }], toBe: [{ layer: 'experience', name: 'Approved portal' }] },
       coreObject: { candidates: [{ name: 'Selected product', summary: 'Sourced candidate' }], reason: 'Documented choice' },
       collection: report(),
@@ -166,7 +164,7 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
     it('all six extensions and the report survive split answers and are consumed by their screen models', () => {
       const ext = extensions();
       const text = [
-        fence({ part: '1/3', ...sourcedSample, isSample: false, extensions: { brand: ext.brand, dataCatalog: ext.dataCatalog, graph: ext.graph } }),
+        fence({ part: '1/3', ...sourcedSample, isSample: false, extensions: { brand: ext.brand, dataCatalog: ext.dataCatalog, workflow: ext.workflow } }),
         fence({ part: '2/3', extensions: { dataCatalog: { items: [{ name: 'Invoices' }] }, glossary: ext.glossary, architecture: ext.architecture } }),
         fence({ part: '3/3', extensions: { coreObject: ext.coreObject, collection: ext.collection } }),
       ].join('\n');
@@ -174,12 +172,11 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
       expect(result.verify?.problems.filter((p) => p.severity === 'error')).toEqual([]);
       expect(result.canImport).toBe(true);
       const data = loadPack(result.pack);
-      expect(graphExtensionFor(data).ext.relations).toHaveLength(1);
       expect(buildArchitecture('asis', data).layers.flatMap((l) => l.blocks).map((b) => b.label)).toContainEqual({ text: 'ERP actual' });
-      expect(coreObjectChoice(data).candidates[0]?.name).toBe('Selected product');
+      expect(CoreObjectExtension.parse(data.pack.extensions?.coreObject).candidates?.[0]?.name).toBe('Selected product');
       expect(parseGlossary(data.pack.extensions?.glossary)).toHaveLength(1);
       expect(CollectionReport.parse(data.pack.extensions?.collection).sections).toHaveLength(COLLECTION_SECTIONS.length);
-      expect(collectionPresence(data.pack)).toMatchObject({ brand: true, dataCatalog: true, glossary: true, graph: true, architecture: true, coreObject: true });
+      expect(collectionPresence(data.pack)).toMatchObject({ brand: true, dataCatalog: true, glossary: true, workflow: true, architecture: true, coreObject: true });
 
       localStorage.removeItem(scopedKey('pj-audit', 'catalog.import'));
       try {
@@ -197,8 +194,6 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
     it.each([
       ['dataCatalog', { items: [{ columns: ['x'] }] }],
       ['glossary', [{ term: 'missing definition' }]],
-      ['graph', { relations: [{ source: 'site-missing', target: 'site-nagoya', semantic: 'dependency' }] }],
-      ['graph', { layers: { 'site-missing': 'operations' } }],
       ['architecture', { asIs: [{ layer: 'not-a-layer', name: 'ERP' }] }],
       ['coreObject', { candidates: 'not an array' }],
       ['collection', { asOf: 'not-a-date' }],
@@ -208,9 +203,24 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
       expect(result.verify?.problems.some((p) => p.code === 'EXTENSION_SCHEMA')).toBe(true);
     });
 
+    it('FR-380: reads an older report with a graph section and without a workflow section (warning only)', () => {
+      const old = report();
+      old.sections = old.sections.filter((s) => s.key !== 'workflow');
+      old.sections.push({ ...old.sections[0]!, key: 'graph' as never, status: 'complete' });
+      const result = analyze({ ...sourcedSample, extensions: { collection: old } });
+      expect(result.canImport).toBe(true);
+      expect(result.verify?.problems.filter((p) => p.code === 'COLLECTION').map((p) => p.severity)).toEqual(['warning']);
+    });
+
+    it('ignores a legacy graph extension like any unknown extension', () => {
+      const result = analyze({ ...sourcedSample, extensions: { graph: { relations: [{ source: 'site-missing', target: 'site-nagoya', semantic: 'dependency' }] } } });
+      expect(result.canImport).toBe(true);
+      expect(result.verify?.problems.some((p) => p.path.startsWith('extensions.graph'))).toBe(false);
+    });
+
     it('distinguishes no report, empty extension, and a partial/blocked report without fabricating completeness', () => {
-      const pack = CustomerPack.parse({ ...sourcedSample, extensions: { graph: { relations: [] }, dataCatalog: { items: [] } } });
-      expect(collectionPresence(pack)).toMatchObject({ graph: false, dataCatalog: false, site: true });
+      const pack = CustomerPack.parse({ ...sourcedSample, extensions: { workflow: { stages: [] }, dataCatalog: { items: [] } } });
+      expect(collectionPresence(pack)).toMatchObject({ workflow: false, dataCatalog: false, site: true });
       expect(analyze({ ...sourcedSample, extensions: { collection: report() } }).canImport).toBe(true);
       const missing = report();
       missing.sections.pop();
@@ -538,7 +548,7 @@ describe('the Microsoft 365 Copilot prompt stays in step with the schema', () =>
     }
     for (const field of ['packId', 'company', 'isSample', 'regions', 'flows', 'optimization', 'regionDemandT', 'currentAllocation']) expect(text).toContain(field);
     for (const key of COLLECTION_SECTIONS) expect(text).toContain(key);
-    for (const schema of [ArchitectureExtension, CoreObjectExtension, GlossaryEntrySchema, GraphExtensionSchema, BrandProfile, CatalogItem, CollectionReport]) {
+    for (const schema of [ArchitectureExtension, CoreObjectExtension, GlossaryEntrySchema, BrandProfile, CatalogItem, CollectionReport]) {
       for (const key of Object.keys(schema.shape)) {
         if (key !== 'logo') expect(text, `${lang}: extension field ${key}`).toContain(key);
       }

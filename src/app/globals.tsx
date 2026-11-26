@@ -4,13 +4,12 @@ import * as project from '../modules/project/global.tsx';
 import * as ai from '../modules/ai/global.tsx';
 import * as ink from '../modules/ink/global.tsx';
 import * as threed from '../modules/threed/global.tsx';
-import * as graph from '../modules/graph/global.tsx';
 import * as usecases from '../modules/usecases/global.tsx';
 import * as ops from '../modules/ops/global.tsx';
 
-const MODULES = [project, workspace, show, ai, ink, threed, graph, usecases, ops];
+const MODULES = [project, workspace, show, ai, ink, threed, usecases, ops];
 /** Modules whose top-bar controls are commands (second row). The project module provides the work context (first row). */
-const ACTION_MODULES = [workspace, show, ai, ink, threed, graph, usecases, ops];
+const ACTION_MODULES = [workspace, show, ai, ink, threed, usecases, ops];
 
 /** First row: where the user is working (work-target menu, stepper, export). */
 export function ContextSlot({ restricted = false }: { restricted?: boolean }) {

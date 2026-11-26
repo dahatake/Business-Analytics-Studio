@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { JAPANESE, open, scan, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
+/** The 3D view is embedded in the map screen. */
+const ROUTE = '/map?mode=3d';
 const canvas = (page: Page) => page.getByTestId('td-canvas');
 const NAME = { ja: '被写界深度', en: 'Depth of field' } as const;
 const dofSwitch = (page: Page, lang: Lang = 'en') => page.getByRole('switch', { name: NAME[lang] });
@@ -21,7 +23,7 @@ async function measureFps(page: Page, ms = 1000) {
 
 test.describe('FR-067 depth of field', () => {
   test('off by default; available with High + cinematic effects + full motion', async ({ page }) => {
-    await open(page, '/twin3d', { lang: 'en', motion: 'full' });
+    await open(page, ROUTE, { lang: 'en', motion: 'full' });
     await firstFrame(page);
     await expect(canvas(page)).toHaveAttribute('data-dof', 'off');
     await expect(dofSwitch(page)).not.toBeChecked();
@@ -33,7 +35,7 @@ test.describe('FR-067 depth of field', () => {
   });
 
   test('High + cinematic + toggle → DOF on and frames keep rendering (FPS measured)', async ({ page }) => {
-    await open(page, '/twin3d', { lang: 'en', motion: 'full' });
+    await open(page, ROUTE, { lang: 'en', motion: 'full' });
     await firstFrame(page);
     // Manual High: the preset stays put, so the measurement compares DOF on/off at the same quality.
     await page.getByTestId('td-quality').selectOption('high');
@@ -46,10 +48,10 @@ test.describe('FR-067 depth of field', () => {
     await page.waitForTimeout(150);
     const fpsOn = await measureFps(page);
     expect(await frames(page)).toBeGreaterThan(f0);
-    test.info().annotations.push({ type: 'fps (headless SwiftShader)', description: `twin, High: DOF off ${fpsOff.toFixed(1)} fps, DOF on ${fpsOn.toFixed(1)} fps` });
+    test.info().annotations.push({ type: 'fps (headless SwiftShader)', description: `map, High: DOF off ${fpsOff.toFixed(1)} fps, DOF on ${fpsOn.toFixed(1)} fps` });
 
     // Selecting an object keeps DOF on (focus follows the selection) and frames keep coming.
-    await page.locator('[data-td-select="twin-m-1-3"]').click();
+    await page.locator('[data-td-select="map-site-sendai"]').click();
     const f1 = await frames(page);
     await page.waitForTimeout(300);
     expect(await frames(page)).toBeGreaterThan(f1);
@@ -62,7 +64,7 @@ test.describe('FR-067 depth of field', () => {
   });
 
   test('the controller turns DOF off before lowering the preset (KPI-5)', async ({ page }) => {
-    await open(page, '/twin3d', { lang: 'en', motion: 'full' });
+    await open(page, ROUTE, { lang: 'en', motion: 'full' });
     await firstFrame(page);
     await page.evaluate(() => {
       const c = document.querySelector('[data-testid="td-canvas"]')!;
@@ -82,7 +84,7 @@ test.describe('FR-067 depth of field', () => {
     await expect(canvas(page).and(page.locator('[data-dof="on"]')).or(page.getByTestId('td-dof-auto-off'))).toBeVisible({ timeout: 10_000 });
     await page.waitForTimeout(1200);
     const fps = await measureFps(page, 1000);
-    test.info().annotations.push({ type: 'fps (headless SwiftShader)', description: `twin, Auto (High) + DOF: ${fps.toFixed(1)} fps` });
+    test.info().annotations.push({ type: 'fps (headless SwiftShader)', description: `map, Auto (High) + DOF: ${fps.toFixed(1)} fps` });
     if (fps < 45) {
       await expect(canvas(page)).toHaveAttribute('data-dof', 'off', { timeout: 5000 });
       await expect(page.getByTestId('td-dof-auto-off')).toContainText('Depth of field was turned off');
@@ -99,7 +101,7 @@ test.describe('FR-067 depth of field', () => {
 
   test('DOF keeps the 1 px size-follow guarantee', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await open(page, '/twin3d', { lang: 'en', motion: 'full' });
+    await open(page, ROUTE, { lang: 'en', motion: 'full' });
     await firstFrame(page);
     await page.getByTestId('td-quality').selectOption('high');
     await dofSwitch(page).check();
@@ -120,7 +122,7 @@ test.describe('FR-067 depth of field', () => {
   });
 
   test('reduced motion forces DOF off and explains why', async ({ page }) => {
-    await open(page, '/twin3d', { lang: 'en', motion: 'reduce' });
+    await open(page, ROUTE, { lang: 'en', motion: 'reduce' });
     await firstFrame(page);
     await expect(canvas(page)).toHaveAttribute('data-dof', 'off');
     await expect(dofSwitch(page)).toBeDisabled();
@@ -130,7 +132,7 @@ test.describe('FR-067 depth of field', () => {
   });
 
   test('Medium quality disables DOF with a reason; back to High re-enables it', async ({ page }) => {
-    await open(page, '/twin3d', { lang: 'en', motion: 'full' });
+    await open(page, ROUTE, { lang: 'en', motion: 'full' });
     await firstFrame(page);
     await page.getByTestId('td-quality').selectOption('high');
     await dofSwitch(page).check();
@@ -151,9 +153,9 @@ test.describe('FR-067 depth of field', () => {
         return (orig as (...a: unknown[]) => unknown).call(this, type, ...rest);
       } as typeof orig;
     });
-    await open(page, '/twin3d', { lang: 'en', motion: 'full' });
-    await expect(page.getByTestId('td-fallback')).toBeVisible();
-    await expect(page.getByTestId('td-2d')).toBeVisible();
+    await open(page, ROUTE, { lang: 'en', motion: 'full' });
+    await expect(page.getByRole('radio', { name: '3D', exact: true })).toBeDisabled();
+    await expect(page.getByRole('radio', { name: '2D', exact: true })).toBeChecked();
     await expect(canvas(page)).toHaveCount(0);
     await expect(dofSwitch(page)).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
@@ -161,7 +163,7 @@ test.describe('FR-067 depth of field', () => {
 
   for (const lang of ['ja', 'en'] as Lang[]) {
     test(`axe ${lang}: DOF on, and DOF disabled with its reason`, async ({ page }) => {
-      await open(page, '/twin3d', { lang, motion: 'full' });
+      await open(page, ROUTE, { lang, motion: 'full' });
       await firstFrame(page);
       await page.getByTestId('td-quality').selectOption('high');
       await dofSwitch(page, lang).check();

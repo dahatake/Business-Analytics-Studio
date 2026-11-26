@@ -167,16 +167,16 @@ Work IQ CLI は、使う前に Microsoft の使用許諾契約（EULA）への�
 
    | 区分 | 探す内容 | 出典の id | Projectパックの使い先（画面） |
    | --- | --- | --- | --- |
-   | 組織・役割 | 組織構成・チーム・役割 | `source-workiq-org` | 人物・拠点（関係グラフ、地図） |
+   | 組織・役割 | 組織構成・チーム・役割 | `source-workiq-org` | 人物・拠点（一覧、地図） |
    | KPI・OKR・目標 | 社内の KPI・OKR・目標値・計測期間・責任者 | `source-workiq-kpi` | `extensions.okr`（Project の「分析」の「KPI・OKR」タブの「社内の KPI / OKR（Work IQ で取得）」）。基準値・現在値・目標値の数値がそろう KPI は KPI 表にも入ります |
-   | 業務の流れ | このチームが受け取るもの（入力）→ 行う作業 → 出すもの（出力）→ 引き継ぐチーム | `source-workiq-process` | `extensions.workflow`（「業務と物の流れ」の業務の流れ、「関係グラフとTwin」の「デジタルツイン」のチーム別の作業） |
+   | 業務の流れ | このチームが受け取るもの（入力）→ 行う作業 → 出すもの（出力）→ 引き継ぐチーム | `source-workiq-process` | `extensions.workflow`（「業務プロセス」。社外の相手と自社の部署を分けたレーン、フェーズ、各ステップの入力・成果物とその媒体、隠れた小さな作業、資料が数値で述べる時間・件数、手戻り・反復のループ。あるべき姿は資料の目標なら「資料の目標」、課題から考えた場合は「仮説」と表示） |
    | データ資産 | チームが管理・利用するレポート・ダッシュボード・システム・データセット | `source-workiq-data` | `extensions.dataCatalog`（「データカタログ」） |
    | 拠点 | オフィス・拠点の都市と役割 | `source-workiq-locations` | 拠点（世界地図、3D の地図） |
    | 関係者 | 主要な関係者の氏名と役職 | `source-workiq-people` | 人物 |
    | 顧客・案件・取り組み | 顧客・案件・プログラム | `source-workiq-engagements` | 顧客・案件・施策 |
-   | 課題・リスク・決定事項 | 課題・原因・決定 | `source-workiq-issues` | 課題・原因（関係グラフの中心） |
+   | 課題・リスク・決定事項 | 課題・原因・決定 | `source-workiq-issues` | 課題・原因 |
 
-   各区分の回答・引用（https のリンク・題名）・秘密度ラベル名を、社内（internal）の出典として Foundry に渡します。Work IQ の Web 検索は使いません（公開情報は公式サイトとニュースから取り、関係グラフでは薄く周辺に表示します）。
+   各区分の回答・引用（https のリンク・題名）・秘密度ラベル名を、社内（internal）の出典として Foundry に渡します。Work IQ の Web 検索は使いません（公開情報は公式サイトとニュースから取り、周辺の文脈として少しだけ使います）。
 5. **分析に必要なデータがそろうまで聞き直します。** 段階（基盤・業務）ごとに Foundry が作った内容を、アプリが次の基準で数えます（生成AIの「足りています」という自己申告ではなく、Projectパックの中身の件数です）。数えるのは、検査で除かれずに**保存される項目だけ**です（例: 進捗率のない施策、費用・年間の効果額のない解決策、出典のない拠点は数えません）。
 
    | 項目 | 段階 | 基準 | 数えるもの |
@@ -199,7 +199,7 @@ Work IQ CLI は、使う前に Microsoft の使用許諾契約（EULA）への�
    - 作成中の進捗に「Work IQ 追加取得 2 回目・不足 3 項目」のように表示されます。出典の id は 1 回目が `source-workiq-a-topic-1`、2 回目が `source-workiq-a2-topic-1` のようになります（`a` は基盤、`b` は業務）。
 6. 保存後の画面に、Work IQ を使ったこと、区分ごとの回答の有無と引用の件数、秘密度ラベル、**分析に必要なデータの充足状況**（上の表の項目ごとの件数・基準・充足／不足、追加取得の各回の記録、終わった理由）が表示されます。検索文・引用・ラベル・充足状況はProjectパックの `extensions.generation` に残ります。作成中に Work IQ が使えなくなったとき（サインイン切れ・時間切れなど）は理由を表示し、Work IQ なしで作成を続けます。
 
-社内の情報で作ったProjectパックでは、画面は製造業を前提にしません。工場（`role: "plant"`）がない組織では、「関係グラフとTwin」の「デジタルツイン」が工場の代わりにチームごとのレーンと作業の段階を表示します。地図は拠点が日本の外にもあれば世界地図になり、拠点の役割には「オフィス」（`office`）が使えます。「データカタログ」のデータエンティティの表の下に、ユースケースのエンティティにまだ対応していない企業データカタログのデータ（Work IQ で見つけたレポート・システムなど）が一覧で表示されます。
+社内の情報で作ったProjectパックでは、画面は製造業を前提にしません。工場（`role: "plant"`）がない組織でも、「業務プロセス」がチームごとのレーンと作業のステップを表示します。地図は拠点が日本の外にもあれば世界地図になり、拠点の役割には「オフィス」（`office`）が使えます。「データカタログ」のデータエンティティの表の下に、ユースケースのエンティティにまだ対応していない企業データカタログのデータ（Work IQ で見つけたレポート・システムなど）が一覧で表示されます。
 
 金額・進捗率が資料にないワークショップ・ブリーフィング・PoC などは、架空の金額や 0% を補わず、**出典付きの実施記録**として保存します。Project の **分析 → 分析** タブの「社内の案件・成果物・取り組みの記録」で、種類・期間・顧客・状態・担当・回数・結果・出典を読み取り専用で確認できます。記録は常に社内向けで、社外表示では一覧ごと非表示です。案件の金額合計・投資回収・ガントの計算には入りません。
 
@@ -338,7 +338,7 @@ Excel・PDFなどの資料そのものは「対象外」と表示されます（
 | `flows` | 供給元・拠点・地域・顧客等の物量フロー。単位は月間トン |
 | `optimization` | 工場能力・需要・生産/輸送コスト・CO2・リードタイム・現行配分の入力 |
 | `extensions` | ブランドやデータカタログなど、各機能の拡張データ。使わないサンプル値を残さない |
-| `extensions.workflow` | 製造業以外の組織の業務の流れ。`{"stages":[{"id","name","team","inputs":[],"activities":[],"outputs":[],"data":[],"next":["次の段階のid"],"handoffTo":["引き継ぐ外部チーム"],"sourceIds":[]}]}`。「業務と物の流れ」と 3D のデジタルツインに表示 |
+| `extensions.workflow` | 業務プロセス（業種を問わない）。`{"title","parties":[{"id","name","side":"external\|internal","kind"}],"phases":[{"id","name"}],"stages":[{"id","name","partyId","phaseId","team","inputs":["文字列" または {"name","form":"excel\|email\|paper\|pdf\|document\|system\|chat\|meeting\|verbal\|other","partyId"}],"activities":[],"outputs":[],"data":[],"hiddenWork":[{"name","form","participants","minutes"}],"next":["次のステップのid"],"handoffTo":["引き継ぐ外部チーム"],"asIs":{"touchMinutes","waitHours","volumePerMonth","firstPassPct","people","basis"},"toBe":{"change":"keep\|improve\|combine\|remove\|new","metrics","note","into","basis":"stated\|hypothesis"},"sourceIds":[]}],"loops":[{"id","from","to","kind":"rework\|iteration\|feedback","state":"asIs\|toBe\|both","ratePct","cadence"}],"kpiSpans":[{"kpiId","from","to"}],"laborCostPerHourJpy"}`。`stages` 以外はすべて任意（古いパックもそのまま表示）。「業務プロセス」画面に表示 |
 | `extensions.okr` | 社内の KPI と OKR を書かれたとおりに記録。`{"kpis":[{"id","name","definition","target","current","unit","period","owner","sourceIds"}],"objectives":[{"id","objective","owner","keyResults":[{"text","target","period","kpiId"}],"sourceIds"}]}`。目標値は文章でよい。数値の基準値・現在値・目標値がそろう KPI だけを `kpi` エンティティにする。顧客自身の定義の有無を `definitionStatus`（`defined` 取得済み・`partial` 一部・`undefined` 定義なしを確認・`notRetrieved` 確認できず）に、確認した資料を `checkedSources` に記録する。中身がないのに `defined` と書かれた場合は作成時に付け直す。`undefined`・`notRetrieved`・`partial` なら、Project の「KPI/OKR 定義」で定義案を作る（[第2章](02-orientation.md#経営kpiokrproject-のつながり)） |
 | 拠点の `role` | `hq`（本社）・`plant`（工場）・`dc`（物流拠点）・`office`（オフィス・営業拠点）。工場のない組織に `plant` を使わない |
 

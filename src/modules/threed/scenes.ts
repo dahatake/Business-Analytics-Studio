@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { SceneBuild } from './engine.ts';
 import type { QualityPreset } from './quality.ts';
 import type { SceneModel } from './model.ts';
-import type { ArchScene, KpiScene, MapScene, TwinScene, TwinStep } from './models.ts';
+import type { ArchScene, MapScene } from './models.ts';
 import { getEntity } from '../../data/pack.ts';
 
 /** Shared plumbing for the procedural scenes (FR-066). Everything is generated in code: no external assets (FR-068). */
@@ -168,94 +168,6 @@ class Kit {
 
 const hueColor = (hue: number, s = 0.55, l = 0.55) => new THREE.Color().setHSL(hue / 360, s, l).getHex();
 
-const STEP_COLOR: Record<TwinStep, number> = {
-  receiving: 0x8aa4c8,
-  machining: 0x5cc8ff,
-  assembly: 0x7ee0d2,
-  inspection: 0xffd866,
-  packing: 0xc6c6ff,
-};
-
-/** FR-020 digital twin of the plant: floor, building shell, lines, machines, products and moving work pieces. */
-export function buildTwinScene(model: SceneModel): SceneBuild {
-  const m = model as TwinScene;
-  const k = new Kit();
-  const { width, depth } = m.floor;
-  k.add(k.mesh(k.box(width, 0.4, depth), k.lambert(0x2a3a52), 0, -0.2, 0), [0, Infinity], m.rootId);
-  const grid = new THREE.GridHelper(Math.max(width, depth), 22, 0x46607f, 0x34465e);
-  grid.position.y = 0.01;
-  k.add(grid, [1, Infinity]);
-  // Building shell (site level only): translucent walls + edges + saw-tooth roof.
-  const shell = new THREE.Group();
-  shell.add(k.mesh(k.box(width - 2, 7, depth - 2), k.lambert(0x9cc3ff, { opacity: 0.1 }), 0, 3.5, 0));
-  const edges = new THREE.LineSegments(k.geo(`edges-${width}-${depth}`, () => new THREE.EdgesGeometry(new THREE.BoxGeometry(width - 2, 7, depth - 2))), k.line(0x9cc3ff, 0.7));
-  edges.position.y = 3.5;
-  shell.add(edges);
-  const teeth = m.office ? 0 : Math.floor((width - 2) / 6);
-  const tooth = k.geo('roof-tooth', () => new THREE.CylinderGeometry(0.01, 1.6, depth - 2, 3, 1).rotateX(Math.PI / 2));
-  for (let i = 0; i < teeth; i++) shell.add(k.mesh(tooth, k.lambert(0x6d87a8, { opacity: 0.55 }), -width / 2 + 4 + i * 6, 7.6, 0));
-  k.add(shell, [0, 0]);
-  k.add(k.mesh(k.box(6, 4, 5), k.lambert(0x50678a), -width / 2 + 3, 2, -depth / 2 - 3));
-
-  const pieces: { line: number; z: number }[] = [];
-  for (const line of m.lines) {
-    const color = hueColor(line.hue);
-    k.add(k.mesh(k.box(36, 1.2, 2.6), k.lambert(color), -1, 0.6, line.z), [0, 0], line.id);
-    k.add(k.mesh(k.box(36, 0.5, 2), k.lambert(0x3b4b61), -1, 0.25, line.z), [1, Infinity], line.id);
-    for (const mc of line.machines) {
-      const g = new THREE.Group();
-      g.position.set(mc.x, 0, line.z);
-      g.add(k.mesh(k.box(3.2, 2.4, 3), k.lambert(STEP_COLOR[mc.step]), 0, 1.2, 0));
-      k.add(g, [1, Infinity], mc.id);
-      const detail = new THREE.Group();
-      detail.position.set(mc.x, 0, line.z);
-      detail.add(k.mesh(k.geo('spindle', () => new THREE.CylinderGeometry(0.45, 0.45, 1.1, 10)), k.lambert(0xdfe6ef), 0, 2.95, 0));
-      detail.add(k.mesh(k.box(0.9, 1.2, 0.25), k.lambert(0x1d2533), 1.1, 1.6, 1.6));
-      detail.add(k.mesh(k.geo('lamp', () => new THREE.SphereGeometry(0.22, 8, 6)), k.basic(0x6ee7a0), -1.2, 2.65, 1.2));
-      k.add(detail, [2, Infinity], mc.id);
-    }
-    for (let i = 0; i < 6; i++) pieces.push({ line: pieces.length, z: line.z });
-    if (line.productId) {
-      const p = getEntity(line.productId);
-      const pid = `twin-p-${line.productId}`;
-      const hero = pid === m.heroId;
-      const lod: [number, number] = hero ? [0, Infinity] : [1, Infinity];
-      const hue = p?.kind === 'product' ? p.illustration.hue : line.hue;
-      const g = new THREE.Group();
-      g.position.set(17, 0, line.z);
-      g.add(k.mesh(k.geo('pedestal', () => new THREE.CylinderGeometry(1.6, 1.8, 0.6, 16)), k.lambert(0x4a5d78), 0, 0.3, 0));
-      const body = k.mesh(k.geo('body', () => new THREE.CylinderGeometry(0.95, 0.95, 1.9, 18).rotateZ(Math.PI / 2)), k.lambert(hueColor(hue, 0.6, 0.6), { emissive: hero ? 0x101820 : 0 }), 0, 1.8, 0);
-      g.add(body);
-      g.add(k.mesh(k.box(0.5, 2.1, 2.1), k.lambert(0xb9c4d4), 1.15, 1.8, 0));
-      k.add(g, lod, pid);
-      const detail = new THREE.Group();
-      detail.position.set(17, 0, line.z);
-      detail.add(k.mesh(k.geo('shaft', () => new THREE.CylinderGeometry(0.22, 0.22, 1.2, 10).rotateZ(Math.PI / 2)), k.lambert(0xe8edf3), 2, 1.8, 0));
-      const fin = k.geo('fin', () => new THREE.TorusGeometry(0.98, 0.07, 6, 20).rotateY(Math.PI / 2));
-      for (let i = 0; i < 4; i++) detail.add(k.mesh(fin, k.lambert(0x9aa7b8), -0.7 + i * 0.4, 1.8, 0));
-      k.add(detail, [2, Infinity], pid);
-      if (hero) k.glow(hueColor(hue, 0.8, 0.65), 6, 17, 1.9, line.z);
-    }
-  }
-  // Moving work pieces (one instanced mesh for all lines).
-  const inst = new THREE.InstancedMesh(k.box(0.7, 0.7, 0.7), k.lambert(0xffb86b), pieces.length);
-  inst.frustumCulled = false;
-  k.add(inst, [1, Infinity]);
-  const dummy = new THREE.Object3D();
-  const place = (t: number) => {
-    pieces.forEach((pc, i) => {
-      const u = ((i % 6) / 6 + t * 0.04) % 1;
-      dummy.position.set(-18 + u * 34, 0.85, pc.z);
-      dummy.updateMatrix();
-      inst.setMatrixAt(i, dummy.matrix);
-    });
-    inst.instanceMatrix.needsUpdate = true;
-  };
-  place(0);
-  k.particleSetters.push((f) => { inst.count = Math.max(1, Math.round(pieces.length * f)); });
-  return k.finish(place);
-}
-
 /** FR-021 3D map: Japan, sites, suppliers, demand regions, flow arcs and particles along the flows. */
 export function buildMapScene(model: SceneModel): SceneBuild {
   const m = model as MapScene;
@@ -339,35 +251,6 @@ export function buildMapScene(model: SceneModel): SceneBuild {
   return k.finish(place);
 }
 
-const STATUS_COLOR = { achieved: 0x8fd694, progressing: 0x9db8ff, regressed: 0xff9e80 } as const;
-
-/** §7 executive view: one tower per KPI, height = progress toward target; the translucent plane marks 100 %. */
-export function buildKpiScene(model: SceneModel): SceneBuild {
-  const m = model as KpiScene;
-  const k = new Kit();
-  const width = Math.max(10, m.towers.length * 4.5 + 4);
-  k.add(k.mesh(k.box(width, 0.4, 8), k.lambert(0x1b2a40), 0, -0.2, 0));
-  const full = m.fullHeight + 0.3;
-  k.add(k.mesh(k.geo(`target-${width}`, () => new THREE.PlaneGeometry(width, 8).rotateX(-Math.PI / 2)), k.basic(0x9db8ff, 0.08), 0, full, 0));
-  const targetEdge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-width / 2, full, -4), new THREE.Vector3(width / 2, full, -4), new THREE.Vector3(width / 2, full, 4), new THREE.Vector3(-width / 2, full, 4),
-  ]), k.line(0x9db8ff, 0.6));
-  k.add(targetEdge);
-  for (const tw of m.towers) {
-    const geo = k.box(2.2, Number(tw.height.toFixed(3)), 2.2);
-    k.add(k.mesh(geo, k.lambert(STATUS_COLOR[tw.status]), tw.x, tw.height / 2, 0), [0, Infinity], tw.id);
-    const frame = new THREE.LineSegments(k.geo('frame', () => new THREE.EdgesGeometry(new THREE.BoxGeometry(2.6, m.fullHeight, 2.6))), k.line(0xdfe6ef, 0.55));
-    frame.position.set(tw.x, m.fullHeight / 2 + 0.3, 0);
-    k.add(frame, [1, Infinity]);
-    for (const q of [0.25, 0.5, 0.75]) {
-      const tick = k.mesh(k.box(2.8, 0.05, 0.05), k.basic(0xdfe6ef, 0.5), tw.x, 0.3 + q * m.fullHeight, 1.3);
-      k.add(tick, [1, Infinity]);
-    }
-    k.glow(STATUS_COLOR[tw.status], 3.4, tw.x, tw.height + 0.2, 0);
-  }
-  return k.finish();
-}
-
 const ROLE_COLOR = { product: 0x7ee0d2, current: 0xc0c8d0, painPoint: 0xff9e80 } as const;
 const LAYER_COLOR = [0xe3c08d, 0x5cc8ff, 0xd7a7ff, 0x8fd694, 0xffd866];
 
@@ -408,8 +291,6 @@ export function buildArchScene(model: SceneModel): SceneBuild {
 }
 
 export const SCENE_BUILDERS = {
-  twin: buildTwinScene,
   map: buildMapScene,
-  kpi: buildKpiScene,
   arch: buildArchScene,
 } as const;

@@ -718,7 +718,7 @@ export const STEP_DEFS: Record<ImprovementStep, StepDef> = {
   },
   tobe: {
     step: 'tobe',
-    inputs: ['objectives', 'issues', 'kpis', 'useCases', 'personas', 'projectKpis', 'okrs'],
+    inputs: ['objectives', 'issues', 'kpis', 'flows', 'useCases', 'personas', 'projectKpis', 'okrs'],
     fields: TOBE_FIELDS,
     todos: [
       {

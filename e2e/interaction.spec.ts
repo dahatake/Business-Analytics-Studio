@@ -163,20 +163,6 @@ test.describe('F-3.2.3 drill-through', () => {
     await expect(card(page)).toBeVisible();
     await expect(card(page)).toContainText('no detail screen');
   });
-
-  test('diagram nodes select on click/Enter; drilling through is a separate action', async ({ page }) => {
-    await open(page, '/relations', { lang: 'en' });
-    const node = page.locator('.chain-diagram [data-entity-ref="deal-sakura-ev"]');
-    await node.focus();
-    await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(/#\/relations\?.*sel=deal-sakura-ev/);
-    await expect(node).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByTestId('selection-panel')).toBeVisible();
-    await page.getByTestId('selection-panel').getByRole('link', { name: 'Open details' }).click();
-    await expect(page).toHaveURL(/#\/entity\/deal-sakura-ev/);
-    await page.goBack();
-    await expect(page.locator('.chain-diagram [data-entity-ref="deal-sakura-ev"]')).toHaveAttribute('aria-pressed', 'true');
-  });
 });
 
 test.describe('F-3.2.2 map popups', () => {
@@ -197,25 +183,6 @@ test.describe('F-3.2.2 map popups', () => {
 });
 
 test.describe('F-3.2.4 business relationships', () => {
-  test('selecting an invoice highlights its customer → deal → deliverable chain', async ({ page }) => {
-    await open(page, '/relations?sel=inv-2026-101', { lang: 'en' });
-    for (const id of ['cust-sakura-motors', 'deal-sakura-ev', 'dlv-sakura-ev-proto', 'inv-2026-101']) {
-      await expect(page.locator(`.chain-diagram [data-entity-ref="${id}"]`)).toHaveClass(/\bon\b/);
-    }
-    await expect(page.locator('.chain-diagram [data-entity-ref="cust-kaze-energy"]')).toHaveClass(/\bdim\b/);
-  });
-
-  test('the relationship graph reacts to hops and focus', async ({ page }) => {
-    await open(page, '/relations?view=graph&focus=cust-sakura-motors&hops=1', { lang: 'en' });
-    const one = await page.locator('.force-graph .graph-node').count();
-    await open(page, '/relations?view=graph&focus=cust-sakura-motors&hops=3', { lang: 'en' });
-    const three = await page.locator('.force-graph .graph-node').count();
-    expect(three).toBeGreaterThan(one);
-    await page.locator('.force-graph [data-entity-ref="deal-sakura-ev"]').focus();
-    await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(/focus=deal-sakura-ev/);
-  });
-
   test('news-feed headlines and items resting on them alone are left out; the rest is analysed', async ({ page }) => {
     const l = (s: string) => ({ ja: s, en: s });
     const common = { world: 'digital', type: 'data', classification: 'shareable', author: 'ai', description: l('About') };
@@ -229,27 +196,10 @@ test.describe('F-3.2.4 business relationships', () => {
       ],
     };
     await page.route('**/data/pack.json', (route) => route.fulfill({ json: pack }));
-    await open(page, '/relations?view=graph&focus=source-news-2&hops=3', { lang: 'en' });
+    await open(page, '/relations', { lang: 'en' });
     await expect(page.getByTestId('news-excluded')).toContainText('headlines (2) and items supported only by them (1)');
-    await expect(page.locator('#focus-select option[value^="source-news-"], #focus-select option[value="issue-outage"]')).toHaveCount(0);
-    await expect(page.locator('#focus-select')).toHaveValue('cust-sakura-motors');
-    await expect(page.locator('.force-graph .graph-node').first()).toBeVisible();
-    await expect(page.locator('.force-graph [data-entity-ref^="source-news-"]')).toHaveCount(0);
-
-    await open(page, '/relations?view=graph&focus=issue-quality', { lang: 'en' });
-    await expect(page.getByTestId('selection-evidence')).toContainText('Public material and web (1)');
-    await expect(page.getByTestId('selection-evidence').locator('[data-entity-ref^="source-news-"]')).toHaveCount(0);
-    await expect(page.getByTestId('selection-links')).toContainText('Early-failure rate');
-    await expect(page.getByTestId('selection-gaps')).toContainText('No gaps found.');
-
-    await open(page, '/relations?view=table', { lang: 'en' });
     await expect(page.getByTestId('relation-table').locator('tbody tr').first()).toBeVisible();
     await expect(page.getByTestId('relation-table').locator('[data-entity-ref^="source-news-"], [data-entity-ref="issue-outage"]')).toHaveCount(0);
-
-    await open(page, '/graph?view=relations&level=element', { lang: 'en' });
-    await expect(page.getByTestId('graph-node-table').locator('tr[data-row-for^="source-news-"], tr[data-row-for="issue-outage"]')).toHaveCount(0);
-    await open(page, '/graph?view=twin&level=element', { lang: 'en' });
-    await expect(page.getByTestId('graph-node-table').locator('tr[data-row-for^="source-news-"], tr[data-row-for="issue-outage"]')).toHaveCount(0);
 
     await open(page, '/', { lang: 'en' });
     await expect(page.locator('[data-entity-ref="issue-outage"], [data-entity-ref^="source-news-"]')).toHaveCount(0);

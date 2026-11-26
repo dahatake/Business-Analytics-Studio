@@ -11,17 +11,14 @@ import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
 import { cardController } from '../ui/cardController.ts';
 import { hrefFor, navigate, replaceQuery, useRoute } from '../state/router.ts';
-import { WorkflowExtension } from '../data/extensionSchemas.ts';
-import { loc } from '../state/text.ts';
 import { ContextualScene } from '../modules/threed/ContextualScene.tsx';
-import { WorkflowFields, WorkflowMap, WorkflowSources } from './WorkflowMap.tsx';
 
 interface N { id: string; label: string; color: string; isEntity: boolean }
 interface L { source: string; target: string; value: number }
 
 const W = 960, H = 520;
 
-/** The work and material flow body; `embedded` drops the page header when shown as a tab of the relations screen. */
+/** The work and material flow body; `embedded` drops the page header (a tab of the business process screen, which draws the work itself). */
 export function Flows({ embedded = false }: { embedded?: boolean } = {}) {
   const { t, tx, fmt } = useI18n();
   const route = useRoute();
@@ -103,18 +100,12 @@ export function Flows({ embedded = false }: { embedded?: boolean } = {}) {
   }, [hover, showingArchitecture]);
 
   const total = d3.sum(loaded.pack.flows.filter((f) => getEntity(f.source)?.kind === 'supplier'), (f) => f.valueT);
-  const workflow = useMemo(() => {
-    const r = WorkflowExtension.safeParse(loaded.pack.extensions?.workflow);
-    return r.success ? r.data : null;
-  }, []);
-  // A sales or service organisation has a work chain but no material flow; show only what the pack has.
-  const workOnly = workflow !== null && graph.nodes.length === 0;
 
   return (
     <div className={embedded ? 'flows-embedded' : 'screen screen-flows'}>
       {!embedded && <PageHeader
-        title={workOnly ? t('flows.work.title') : t('flows.title')}
-        subtitle={workOnly ? t('flows.work.subtitle', { count: workflow.stages.length }) : t('flows.subtitle', { total: fmt.integer(total) })}
+        title={t('flows.title')}
+        subtitle={t('flows.subtitle', { total: fmt.integer(total) })}
       />}
       <TabList
         selectedValue={showingArchitecture ? 'architecture' : 'flow'}
@@ -129,8 +120,6 @@ export function Flows({ embedded = false }: { embedded?: boolean } = {}) {
         <Tab value="architecture">{t('td.tab.arch')}</Tab>
       </TabList>
       {showingArchitecture ? <ContextualScene tab="arch" /> : <>
-      {workflow && <WorkflowPanel workflow={workflow} />}
-      {!workOnly && (<>
       <Panel title={t('flows.panel')} rationale="visual.sankey" testId="sankey-panel">
         {graph.nodes.length === 0 && <p className="muted" data-testid="flows-empty">{t('flows.empty')}</p>}
         <div className="chart-scroll" hidden={graph.nodes.length === 0}>
@@ -157,47 +146,7 @@ export function Flows({ embedded = false }: { embedded?: boolean } = {}) {
           </table>
         </div>
       </Panel>
-      </>)}
       </>}
     </div>
   );
 }
-
-function WorkflowPanel({ workflow }: { workflow: WorkflowExtension }) {
-  const { t, lang } = useI18n();
-  const route = useRoute();
-  const view = route.query.get('flowView') === 'map' ? 'map' : 'list';
-  const nameOf = new Map(workflow.stages.map((s) => [s.id, loc(s.name, lang)]));
-  return (
-    <Panel title={t('flows.work.panel')} rationale={view === 'map' ? 'visual.workflow' : undefined} testId="workflow-panel">
-      <TabList
-        selectedValue={view}
-        onTabSelect={(_, data) => replaceQuery({ flowView: data.value === 'map' ? 'map' : undefined })}
-        aria-label={t('flows.work.views')}
-        data-testid="workflow-views"
-      >
-        <Tab value="list">{t('flows.work.view.list')}</Tab>
-        <Tab value="map">{t('flows.work.view.map')}</Tab>
-      </TabList>
-      {view === 'map' ? <WorkflowMap workflow={workflow} /> : (
-        <>
-          <p className="muted">{t('flows.work.hint')}</p>
-          <ol className="workflow-stages" data-testid="workflow-stages">
-            {workflow.stages.map((s, i) => {
-              const next = [...s.next.map((id) => nameOf.get(id) ?? id), ...(s.handoffTo ?? []).map((h) => loc(h, lang))];
-              return (
-                <li key={s.id} className="workflow-stage" data-testid={`workflow-stage-${s.id}`}>
-                  <h3>{i + 1}. {loc(s.name, lang)}{s.team && <span className="muted"> · {loc(s.team, lang)}</span>}</h3>
-                  <WorkflowFields stage={s} />
-                  {next.length > 0 && <p data-testid="workflow-next"><strong>{t('flows.work.next')}</strong> → {next.join(' / ')}</p>}
-                  <WorkflowSources stage={s} />
-                </li>
-              );
-            })}
-          </ol>
-        </>
-      )}
-    </Panel>
-  );
-}
-

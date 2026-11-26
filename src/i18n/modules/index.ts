@@ -6,8 +6,8 @@ import { inkJa } from './ink.ja.ts';
 import { inkEn } from './ink.en.ts';
 import { tdJa } from './td.ja.ts';
 import { tdEn } from './td.en.ts';
-import { graphJa } from './graph.ja.ts';
-import { graphEn } from './graph.en.ts';
+import { bpJa } from './bp.ja.ts';
+import { bpEn } from './bp.en.ts';
 import { projJa } from './proj.ja.ts';
 import { projEn } from './proj.en.ts';
 import { ucJa } from './uc.ja.ts';
@@ -37,7 +37,7 @@ export const moduleDictionaries = {
   show: { ja: showJa, en: showEn },
   ink: { ja: inkJa, en: inkEn },
   td: { ja: tdJa, en: tdEn },
-  graph: { ja: graphJa, en: graphEn },
+  bp: { ja: bpJa, en: bpEn },
   proj: { ja: projJa, en: projEn },
   uc: { ja: ucJa, en: ucEn },
   ai: { ja: aiJa, en: aiEn },
@@ -51,5 +51,5 @@ export const moduleDictionaries = {
   ck: { ja: ckJa, en: ckEn },
 } as const;
 
-export const modulesJa = { ...wsJa, ...showJa, ...inkJa, ...tdJa, ...graphJa, ...projJa, ...ucJa, ...aiJa, ...opsJa, ...dlvJa, ...entryJa, ...solJa, ...stgJa, ...resJa, ...valJa, ...ckJa };
-export const modulesEn: Record<keyof typeof modulesJa, string> = { ...wsEn, ...showEn, ...inkEn, ...tdEn, ...graphEn, ...projEn, ...ucEn, ...aiEn, ...opsEn, ...dlvEn, ...entryEn, ...solEn, ...stgEn, ...resEn, ...valEn, ...ckEn };
+export const modulesJa = { ...wsJa, ...showJa, ...inkJa, ...tdJa, ...bpJa, ...projJa, ...ucJa, ...aiJa, ...opsJa, ...dlvJa, ...entryJa, ...solJa, ...stgJa, ...resJa, ...valJa, ...ckJa };
+export const modulesEn: Record<keyof typeof modulesJa, string> = { ...wsEn, ...showEn, ...inkEn, ...tdEn, ...bpEn, ...projEn, ...ucEn, ...aiEn, ...opsEn, ...dlvEn, ...entryEn, ...solEn, ...stgEn, ...resEn, ...valEn, ...ckEn };

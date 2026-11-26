@@ -5,8 +5,7 @@ import {
 } from '../src/modules/threed/quality.ts';
 import { angleDelta, flyDurationMs, flyPose } from '../src/modules/threed/flythrough.ts';
 import { buildArchitecture, productLayer } from '../src/modules/threed/architecture.ts';
-import { coreObjectChoice } from '../src/modules/threed/coreObject.ts';
-import { buildArchModel, buildKpiModel, buildMapModel, buildTwinModel, towerHeight, KPI_FULL_HEIGHT } from '../src/modules/threed/models.ts';
+import { buildArchModel, buildMapModel } from '../src/modules/threed/models.ts';
 import { ancestry, poseFor, type Pose } from '../src/modules/threed/model.ts';
 import { entitiesOf, loadPack } from '../src/data/pack.ts';
 import { samplePack } from '../src/data/sample.ts';
@@ -219,59 +218,6 @@ describe('FR-040 architecture from the pack', () => {
   });
 });
 
-describe('FR-018 core object candidates', () => {
-  it('lists products and plants and picks the product with the largest deal value', () => {
-    const c = coreObjectChoice(data);
-    const kinds = new Set(c.candidates.map((x) => x.kind));
-    expect(kinds).toEqual(new Set(['product', 'site']));
-    expect(c.candidates.filter((x) => x.kind === 'site').every((x) => data.byId.get(x.id)?.kind === 'site')).toBe(true);
-    const products = c.candidates.filter((x) => x.kind === 'product');
-    const max = Math.max(...products.map((p) => p.dealValueJpy));
-    expect(c.candidates.find((x) => x.id === c.defaultId)!.dealValueJpy).toBe(max);
-    expect(c.reason && 'key' in c.reason && c.reason.key).toBe('td.core.reason');
-    expect(c.fromPack).toBe(false);
-  });
-
-  it('uses the pack coreObject (§3.6) with name ?? label and the pack reason', () => {
-    const pack = loadPack({ ...samplePack, extensions: { coreObject: { candidates: [{ label: 'GX Precision Gearbox', summary: 's' }, { name: 'Robot' }], reason: 'Because.', criteria: [{ id: 'c1', label: 'Value' }] } } });
-    const c = coreObjectChoice(pack);
-    expect(c.fromPack).toBe(true);
-    expect(c.candidates.map((x) => x.name)).toEqual(['GX Precision Gearbox', 'Robot']);
-    expect(c.candidates[0]!.entityId).toBe('prod-gearbox');
-    expect(c.candidates[0]!.siteId).toBe('site-nagoya');
-    expect(c.reason).toEqual({ text: 'Because.' });
-  });
-
-  it('the twin shows the plant of the core object with the product as hero', () => {
-    const c = coreObjectChoice(data);
-    const best = c.candidates.find((x) => x.id === c.defaultId)!;
-    const twin = buildTwinModel(best, data);
-    expect(twin.siteEntityId).toBe(best.siteId);
-    expect(twin.heroId).toBe(`twin-p-${best.entityId}`);
-    const machine = twin.objects.find((o) => o.kind === 'machine')!;
-    expect(ancestry(twin, machine.id).map((o) => o.kind)).toEqual(['site', 'line', 'machine']);
-    const sendai = buildTwinModel(c.candidates.find((x) => x.id === 'site-sendai'), data);
-    expect(sendai.siteEntityId).toBe('site-sendai');
-  });
-
-  it('an organisation without a plant gets an office twin: team lanes holding its work stages, not machines', () => {
-    const raw = structuredClone(samplePack);
-    for (const e of raw.entities) if (e.kind === 'site' && e.role === 'plant') e.role = 'office';
-    raw.extensions = { ...raw.extensions, workflow: { stages: [
-      { id: 'st-in', name: '案件の受付', team: '営業', outputs: ['案件リスト'], next: ['st-plan'] },
-      { id: 'st-plan', name: '提案', team: '営業', next: ['st-dev'] },
-      { id: 'st-dev', name: '技術検証', team: 'エンジニアリング' },
-    ] } };
-    const office = loadPack(raw);
-    const twin = buildTwinModel(coreObjectChoice(office).candidates[0], office);
-    expect(twin.office).toBe(true);
-    expect(twin.objects.some((o) => o.kind === 'machine' || o.kind === 'product')).toBe(false);
-    expect(twin.objects.filter((o) => o.kind === 'team').map((o) => o.label)).toEqual([{ text: '営業' }, { text: 'エンジニアリング' }]);
-    const stage = twin.objects.find((o) => o.kind === 'stage' && JSON.stringify(o.label) === JSON.stringify({ text: '技術検証' }))!;
-    expect(ancestry(twin, stage.id).map((o) => o.kind)).toEqual(['site', 'team', 'stage']);
-  });
-});
-
 describe('scene models', () => {
   it('map: every site and flow with both ends resolved, products at LOD 2', () => {
     const m = buildMapModel(data);
@@ -281,20 +227,11 @@ describe('scene models', () => {
     expect(m.outline.length).toBeGreaterThan(0);
   });
 
-  it('KPI towers: height grows with progress, capped beyond target', () => {
-    const m = buildKpiModel(data);
-    expect(m.towers).toHaveLength(entitiesOf('kpi', data).length);
-    expect(towerHeight(0)).toBeLessThan(towerHeight(0.5));
-    expect(towerHeight(1)).toBeCloseTo(0.3 + KPI_FULL_HEIGHT);
-    expect(towerHeight(5)).toBe(towerHeight(1.25));
-    expect(towerHeight(-1)).toBe(towerHeight(0));
-    expect(towerHeight(Number.NaN)).toBe(towerHeight(0));
-  });
-
   it('framing a deep object reaches the deepest LOD; the root stays at LOD 0', () => {
-    const twin = buildTwinModel(coreObjectChoice(data).candidates[0], data);
-    const machine = twin.objects.find((o) => o.kind === 'machine')!;
-    expect(lodForDistance(poseFor(twin, machine, twin.home).distance, twin.lodThresholds)).toBe(2);
-    expect(lodForDistance(twin.home.distance, twin.lodThresholds)).toBe(0);
+    const map = buildMapModel(data);
+    const product = map.objects.find((o) => o.kind === 'product')!;
+    expect(ancestry(map, product.id).map((o) => o.kind)).toEqual(['country', 'site', 'product']);
+    expect(lodForDistance(poseFor(map, product, map.home).distance, map.lodThresholds)).toBe(2);
+    expect(lodForDistance(map.home.distance, map.lodThresholds)).toBe(0);
   });
 });

@@ -540,7 +540,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       const noHeader = await fetch('/relay/secrets/foundryKey', { method: 'DELETE' });
       const getSession = await fetch('/relay/session');
       const { token } = (await (await fetch('/relay/session', { method: 'POST' })).json()) as { token: string };
-      const ai = await fetch('/relay/ai', { method: 'POST', headers: { 'X-BAS-Relay': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ use: 'chat' }) });
+      const ai = await fetch('/relay/ai', { method: 'POST', headers: { 'X-BAS-Relay': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ use: 'summarize' }) });
       const status = await fetch('/relay/status', { headers: { 'X-BAS-Relay': token } });
       return { noHeader: noHeader.status, getSession: getSession.status, ai: ai.status, body: await ai.json(), status: status.status };
     });
@@ -1449,7 +1449,7 @@ test.describe('live generation through the relay (D-12)', () => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(`${page.url()}: ${e.message}`));
     for (const route of ['/', '/home', '/analysis', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
-      '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings']) {
+      '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/usecases', '/workspace', '/ai-settings']) {
       await page.goto(`/#${route}`);
       await expect(page.locator('main#main'), route).toBeVisible();
       await page.waitForTimeout(300);

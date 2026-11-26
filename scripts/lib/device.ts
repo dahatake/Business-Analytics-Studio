@@ -7,9 +7,9 @@ import {
   DEVICE_HEADER, DEVICE_ID_HEADER, DEVICE_PREFIX, DEVICE_TEST_HEADER, isDeviceKey, type DeviceChange, type DeviceLocationMode, type DeviceSnapshot,
 } from './deviceProtocol.ts';
 import {
-  DB_FILE, LocationError, ProjectFileExists, configuredDir, createFolder, currentDataDir, folderRoots, inspectTarget, listFolders, samePath, writeLocation,
-  writeProjectFile,
+  DB_FILE, LocationError, ProjectFileExists, configuredDir, currentDataDir, inspectTarget, samePath, writeLocation, writeProjectFile,
 } from './deviceLocation.ts';
+import { pickNativeFolder } from './nativeFolderPicker.ts';
 
 export class DeviceConflict extends Error {}
 /** The data folder changed (or this window loaded another database); the window must reload instead of writing. */
@@ -196,10 +196,11 @@ export interface DeviceServiceOptions {
   servedRoots?: string[];
   /** BAS_DEVICE_DIR pins the folder: Settings shows it but cannot change it. */
   fixed?: boolean;
+  pickFolder?: (initial: string, title: string, signal: AbortSignal) => Promise<string | null>;
 }
 
 const ROUTES: Record<string, string[]> = {
-  state: ['GET', 'POST'], archive: ['POST'], location: ['GET', 'POST'], folders: ['POST'], 'folders/create': ['POST'], files: ['POST'],
+  state: ['GET', 'POST'], archive: ['POST'], location: ['GET', 'POST'], 'folders/pick': ['POST'], files: ['POST'],
 };
 const MODES: DeviceLocationMode[] = ['copy', 'open', 'default'];
 const pathKey = (path: string) => process.platform === 'win32' || process.platform === 'darwin' ? resolve(path).toLowerCase() : resolve(path);
@@ -210,6 +211,8 @@ export function createDeviceService(dir: string, testMode = false, options: Devi
   const databases = new Map<string, DeviceDatabase>();
   const servedRoots = (options.servedRoots ?? []).map((root) => resolve(root));
   const fixed = options.fixed ?? false;
+  const pickFolder = options.pickFolder ?? pickNativeFolder;
+  const pickerRequests = new Set<AbortController>();
   const locate = (home: string) => fixed ? home : currentDataDir(home);
   const open = (home: string) => {
     const dataDir = locate(home);
@@ -274,20 +277,30 @@ export function createDeviceService(dir: string, testMode = false, options: Devi
         if (route === 'location' && req.method === 'GET') return send(200, location(home));
         const body = req.method === 'POST' ? await readBody(req) : undefined;
         const field = (name: string) => body && typeof body === 'object' && name in body ? (body as Record<string, unknown>)[name] : undefined;
-        if (route === 'folders') {
-          const current = location(home).available ? locate(home) : home;
-          const requested = field('path');
-          const listing = listFolders(typeof requested === 'string' && requested ? requested : current);
-          return send(200, {
-            ...listing, roots: folderRoots(home, current),
-            target: inspectTarget(listing.path, { home, current, servedRoots }, false),
-          });
-        }
-        if (route === 'folders/create') {
-          const parent = field('parent');
-          const name = field('name');
-          if (typeof parent !== 'string' || typeof name !== 'string') return send(400, { error: 'locationInvalid' });
-          return send(200, { path: createFolder(parent, name) });
+        if (route === 'folders/pick') {
+          if (fixed) throw new LocationError('locationFixed');
+          if (!location(home).available) throw new LocationError('locationUnavailable');
+          const title = field('title');
+          if (typeof title !== 'string' || !title.trim() || title.length > 200 || /[\u0000-\u001f]/.test(title)) {
+            return send(400, { error: 'locationInvalid' });
+          }
+          if (res.destroyed) return;
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          pickerRequests.add(controller);
+          res.once('close', abort);
+          try {
+            const path = await pickFolder(locate(home), title, controller.signal);
+            if (controller.signal.aborted) return;
+            if (path === null) return send(200, { selection: null });
+            const current = locate(home);
+            const target = inspectTarget(path, { home, current, servedRoots });
+            if (target.error) throw new LocationError(target.error);
+            return send(200, { selection: { path: resolve(path), hasData: target.hasData, warnings: target.warnings } });
+          } finally {
+            res.off('close', abort);
+            pickerRequests.delete(controller);
+          }
         }
         if (route === 'files') {
           if (!location(home).available) throw new LocationError('locationUnavailable');
@@ -312,7 +325,7 @@ export function createDeviceService(dir: string, testMode = false, options: Devi
           const path = field('path');
           if (typeof path !== 'string') return send(400, { error: 'locationInvalid' });
           const { db, dataDir } = open(home);
-          const info = inspectTarget(path, { home, current: dataDir, servedRoots }, true);
+          const info = inspectTarget(path, { home, current: dataDir, servedRoots });
           if (info.error) throw new LocationError(info.error);
           const target = resolve(path);
           if (mode === 'copy') {
@@ -341,8 +354,11 @@ export function createDeviceService(dir: string, testMode = false, options: Devi
         if (!validChanges(body)) return send(400, { error: 'invalidDeviceChanges' });
         send(200, db.commit(body.changes));
       } catch (error) {
+        if (res.destroyed) return;
         // Data and filesystem paths are deliberately excluded from logs and error responses.
-        if (error instanceof LocationError) return send(error.code === 'locationUnavailable' ? 503 : 400, { error: error.code });
+        if (error instanceof LocationError) {
+          return send(['locationUnavailable', 'locationPickerUnavailable', 'locationPickerFailed'].includes(error.code) ? 503 : 400, { error: error.code });
+        }
         const code = error instanceof DeviceConflict ? 'deviceConflict' : error instanceof DeviceMoved ? 'deviceMoved' :
           error instanceof RangeError ? 'deviceTooLarge' : error instanceof SyntaxError ? 'invalidDeviceChanges' : 'deviceUnavailable';
         if (code === 'deviceUnavailable') console.error('Device storage operation failed.');
@@ -350,5 +366,9 @@ export function createDeviceService(dir: string, testMode = false, options: Devi
       }
     })();
   };
-  return { handle, close: () => { for (const db of databases.values()) db.close(); databases.clear(); } };
+  return { handle, close: () => {
+    for (const controller of pickerRequests) controller.abort();
+    for (const db of databases.values()) db.close();
+    databases.clear();
+  } };
 }

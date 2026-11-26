@@ -87,17 +87,10 @@ shows the input, output and total tokens of **that job only**:
 
 ### HTML stories
 
-The assistant's story section generates **one** JSON storyboard, including durations, through the common Foundry
-relay and one-time consent gate (Microsoft Foundry only, no attachments). There is no separate AI timing call or
-automatic generation retry. HTML playback, pause/resume, restart, reduced-motion rendering, and standalone HTML downloads
-need no Azure video, storage or hosting service. Model text is validated (an invalid storyboard is refused) and escaped
-into a fixed player, embedded in a sandboxed iframe with no network access. Live failures are shown explicitly and do not
-silently substitute a mock. There is no pricing file, reservation or monthly allocation; `story-pricing.json`,
-`story-budget.json` and `POST /relay/story/estimate` no longer exist. The story shows the tokens its call used.
+The standalone assistant's HTML story generator was retired on 2026-11-27. The relay no longer accepts `storyVideo`
+requests. This does not affect the separate story creation action on the Presentation screen.
 
-The requested subscription was confirmed through its explicit tenant and its existing `model-router` deployment was
-found in `eastus2`. Reuse is preferable to provisioning another resource. Do not silently replace an existing common
-connection that points to a different resource; configure and verify the intended destination through AI Settings.
+### Vault protection
 
 The master key of the vault is protected with Windows DPAPI (CurrentUser) on Windows (I-6) and is a 0600 file elsewhere or
 when DPAPI is unavailable. `GET /relay/status` reports `keyProtection: 'dpapi' | 'file'`, shown in the AI settings dialog.

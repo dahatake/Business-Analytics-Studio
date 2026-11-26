@@ -1,117 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiLiveError, aiComplete, aiLive, preflight, readLedger, setLiveTransport, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { workIqRequiredFor } from '../src/ai/policy.ts';
-import { loaded } from '../src/data/pack.ts';
 import { useAiSettings, connectionDraftProblem, connectionTestPreflight, isConfigured, isMediaConfigured, isSpeechReady, liveReady, runtimeSettings, workIqReady } from '../src/modules/ai/settingsStore.ts';
 import { LEGACY_FOUNDRY_KEY, copyLegacyPatch, legacyState, readLegacyFoundry } from '../src/modules/ai/legacy.ts';
 import '../src/modules/ai/mocks.ts';
-import {
-  sourcesFromSolutions, storyMock, storyPrompt, storyState, type StoryVideo,
-} from '../src/modules/ai/story.ts';
-import { StoryOutput } from '../src/ai/storyOutput.ts';
-import { storyHtml } from '../src/modules/ai/storyHtml.ts';
-import { buildIndex, chatPrompt, contextWindow, pairsInPrompt, search, tokenize, type ChatTurn } from '../src/modules/ai/search.ts';
 import {
   appliedForRoute, applyProposals, commitApply, parseProposals, reviewPrompt, undoLastApply, useAiOverrides, overrideKey, type Proposal,
 } from '../src/modules/ai/review.ts';
 import { buildExplanation, componentsForRoute, entitiesOfComponents } from '../src/modules/ai/explain.ts';
 import { dailyUsage } from '../src/modules/ai/ledger.ts';
-import { USAGE_MAX_CHARS, USAGE_TIMEOUT_MS, TimeoutError, withTimeout } from '../src/modules/ai/usage.ts';
 
 const JAPANESE = /[\u3040-\u30ff\u3400-\u9fff\uff01-\uff60]/;
-
-describe('HTML stories (FR-291/292)', () => {
-  it('rejects malformed or unbounded model scenes', () => {
-    const scene = { title: 'Source', narration: 'Evidence', role: 'opening', durationMs: 3000 };
-    expect(StoryOutput.safeParse({ scenes: [scene] }).success).toBe(true);
-    for (const scenes of [[], [null], [{ ...scene, durationMs: -1 }], [{ ...scene, role: 'script' }], Array(11).fill(scene)]) {
-      expect(StoryOutput.safeParse({ scenes }).success).toBe(false);
-    }
-  });
-
-  it('escapes source/model content in standalone HTML and keeps playback code fixed', () => {
-    const video: StoryVideo = {
-      sourceId: '</small><img src=x onerror=alert(1)>', sourceUpdatedAt: 'pack', createdAt: '2026-11-17',
-      lang: 'en', mode: 'live', status: 'latest', calls: 1, inputTokens: 10, outputTokens: 20,
-      scenes: [{ title: '</title><script>alert(1)</script>', narration: '<img src=x onerror=alert(1)> & "data"', role: 'opening', durationMs: 3000 }],
-    };
-    const html = storyHtml(video);
-    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
-    expect(html).not.toContain('<img');
-    expect(html.match(/<script>/g)).toHaveLength(1);
-    expect(html).toContain("connect-src 'none'");
-    expect(html).toContain('AI-generated; review required');
-  });
-
-  it('mock storyboard follows the source and goes stale when the source changes', () => {
-    const src = sourcesFromSolutions(() => true)[0]!;
-    const scenes = JSON.parse(storyMock(storyPrompt(src, 'en', 'storyboard'))) as { title: string }[];
-    expect(scenes[0]!.title).toBe((src.title as { en: string }).en);
-    expect(scenes.length).toBe(src.steps.length + 1);
-    const video = { sourceId: src.id, sourceUpdatedAt: src.updatedAt, status: 'latest' } as StoryVideo;
-    expect(storyState(video, src)).toBe('latest');
-    expect(storyState(video, { ...src, updatedAt: 'changed' })).toBe('stale');
-    expect(storyState(undefined, src)).toBe('none');
-  });
-});
-
-describe('local search (FR-017)', () => {
-  const index = buildIndex(loaded.pack.entities, [
-    { id: 'uc-x', name: { ja: '出荷の見える化', en: 'Shipment visibility' }, summary: 'typed by user', persona: 'business', steps: [], relatedIds: [], origin: 'registered', updatedAt: '2026-11-09' },
-  ]);
-
-  it('tokenizes Latin words and Japanese bigrams', () => {
-    expect(tokenize('Lead time')).toEqual(['lead', 'time']);
-    expect(tokenize('受注から')).toEqual(['受注', '注か', 'から']);
-  });
-
-  it('ranks name matches above description-only matches, in both languages', () => {
-    const en = search(index, 'lead time');
-    expect(en.slice(0, 2).map((h) => h.id).sort()).toEqual(['issue-lead-time', 'kpi-lead-time']);
-    const ja = search(index, 'リードタイム');
-    expect(ja[0]!.id).toBe('kpi-lead-time');
-    const shipment = search(index, '出荷');
-    expect(shipment.some((h) => h.id === 'uc-x' && h.type === 'usecase')).toBe(true);
-    const synthetic = [
-      { id: 'b-desc', type: 'entity' as const, fields: [{ text: 'other', weight: 3 }, { text: 'alpha beta', weight: 1 }] },
-      { id: 'a-name', type: 'entity' as const, fields: [{ text: 'alpha', weight: 3 }, { text: 'none', weight: 1 }] },
-      { id: 'c-none', type: 'entity' as const, fields: [{ text: 'gamma', weight: 3 }] },
-    ];
-    expect(search(synthetic, 'alpha').map((h) => h.id)).toEqual(['a-name', 'b-desc']);
-    // Every query word plus the exact phrase outranks a single-word name match.
-    expect(search(synthetic, 'alpha beta').map((h) => h.id)).toEqual(['b-desc', 'a-name']);
-  });
-
-  it('is deterministic and empty for empty queries', () => {
-    expect(search(index, '  ')).toEqual([]);
-    expect(search(index, 'energy')).toEqual(search(index, 'energy'));
-  });
-});
-
-describe('chat context (PARAM-123)', () => {
-  const turns: ChatTurn[] = Array.from({ length: 7 }, (_, i) => ({ q: `q${i}`, a: `a${i}`, citations: [], reasons: [] }));
-
-  it('keeps only the last 5 question-answer pairs', () => {
-    expect(contextWindow(turns).map((t) => t.q)).toEqual(['q2', 'q3', 'q4', 'q5', 'q6']);
-    const p = chatPrompt('new', turns);
-    expect(p).not.toContain('q1');
-    expect(p).toContain('q2');
-    expect(p.endsWith('Q: new')).toBe(true);
-    expect(pairsInPrompt(p)).toBe(5);
-    expect(pairsInPrompt(chatPrompt('first', []))).toBe(0);
-  });
-
-  it('answers with a mock grounded in the hits, internal ones included (D-2)', async () => {
-    const grounding = ['issue-lead-time', 'deal-tsubasa-cobot'].map((id) => loaded.byId.get(id)!);
-    const r = await aiComplete({ use: 'chat', lang: 'en', prompt: chatPrompt('lead time?', turns), entities: grounding });
-    expect(r.mode).toBe('mock');
-    expect(r.blockedReasons).toContain('notConfirmed');
-    expect(r.text).toContain('Long order-to-ship lead time');
-    expect(r.text).toContain('Co-developed'); // internal deal: since D-2 a real model could receive it, so the mock may show it
-    expect(r.text).toContain('last 5 pairs');
-    expect(JAPANESE.test(r.text)).toBe(false);
-  });
-});
 
 describe('Copilot analysis proposals (FR-279〜281)', () => {
   beforeEach(() => {
@@ -333,14 +232,6 @@ describe('settings provider wiring (FR-132, FR-275, D-1)', () => {
     writeLedger([]);
   });
 
-  it('chat is available with the same saved consent as every other AI use', async () => {
-    useAiSettings.setState(READY);
-    const r = await aiComplete({ use: 'chat', lang: 'ja', prompt: 'x' });
-    expect(r.mode).toBe('live');
-    expect(r.blockedReasons).toEqual([]);
-    expect(calls).toHaveLength(1);
-  });
-
   it('"explain" uses saved settings consent and records the reported tokens', async () => {
     useAiSettings.setState(READY);
     const entities = entitiesOfComponents(componentsForRoute('/'));
@@ -550,15 +441,6 @@ describe('usage and limits (FR-276, PARAM-121/122)', () => {
     const rec = (use: string, at = '2026-11-20T01:00:00Z') => ({ at, use, inputTokens: 0, outputTokens: 0, costJpy: 85_000 });
     writeLedger([rec('explain'), rec('chat'), rec('review'), rec('explain', '2026-10-01T00:00:00Z')]);
     expect(dailyUsage(readLedger(), now)).toEqual({ todayCalls: 2, dailyLimit: 30 });
-  });
-
-  it('caps input at 8000 characters and times out after 60 s', async () => {
-    expect(USAGE_MAX_CHARS).toBe(8000);
-    expect(USAGE_TIMEOUT_MS).toBe(60_000);
-    await expect(withTimeout(new Promise(() => {}), 5)).rejects.toBeInstanceOf(TimeoutError);
-    await expect(withTimeout(Promise.resolve(1), 50)).resolves.toBe(1);
-    const r = await aiComplete({ use: 'aiUsageAnalysis', lang: 'en', prompt: 'We answer customer inquiry emails and read invoice documents.' });
-    expect(r.text).toMatch(/inquiries|documents/);
   });
 });
 

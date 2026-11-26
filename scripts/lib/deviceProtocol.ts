@@ -34,15 +34,10 @@ export interface DeviceLocation {
   available: boolean;
 }
 
-export type FolderRootKind = 'current' | 'default' | 'home' | 'documents' | 'drive' | 'system';
-
-export interface DeviceFolderListing {
+export interface DeviceFolderSelection {
   path: string;
-  parent: string | null;
-  folders: string[];
-  truncated: boolean;
-  roots: { kind: FolderRootKind; path: string }[];
-  target: { hasData: boolean; warnings: 'syncedFolder'[]; error?: string };
+  hasData: boolean;
+  warnings: 'syncedFolder'[];
 }
 
 export function isDeviceKey(key: string): boolean {

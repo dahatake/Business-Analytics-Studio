@@ -4,7 +4,7 @@ import {
   Diagram24Regular, Map24Regular, ArrowFlowDiagonalUpRight24Regular, GanttChart24Regular,
   DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Cube24Regular,
   Organization24Regular, Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
-  Bot24Regular, PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, TaskListSquareLtr24Regular,
+  PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, TaskListSquareLtr24Regular,
   DocumentDatabase24Regular, Gauge24Regular,
 } from '@fluentui/react-icons';
 import type { MessageKey } from '../i18n/index.ts';
@@ -52,7 +52,7 @@ export const SCREENS: ScreenDef[] = [
   { path: '/graph', label: 'graph.title', Icon: Organization24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/graph/GraphScreen.tsx'), 'GraphScreen') },
   { path: '/twin3d', label: 'td.title', Icon: Cube24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../modules/threed/ThreeDScreen.tsx'), 'ThreeDScreen') },
   { path: '/map', label: 'nav.map', Icon: Map24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/MapScreen.tsx'), 'MapScreen') },
-  { path: '/flows', label: 'nav.flows', Icon: ArrowFlowDiagonalUpRight24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Flows.tsx'), 'Flows') },
+  { path: '/flows', label: 'nav.flows', Icon: ArrowFlowDiagonalUpRight24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../screens/FlowsRedirect.tsx'), 'FlowsRedirect') },
   { path: '/plan', label: 'nav.plan', Icon: GanttChart24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Plan.tsx'), 'Plan') },
   { path: '/optimize', label: 'nav.optimize', Icon: DataTrending24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Optimize.tsx'), 'Optimize') },
   { path: '/catalog', label: 'uc.nav.catalog', Icon: Database24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/usecases/CatalogScreen.tsx'), 'CatalogScreen') },
@@ -61,7 +61,6 @@ export const SCREENS: ScreenDef[] = [
   { path: '/discussion', label: 'proj.nav.discussion', Icon: Chat24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/project/DiscussionScreen.tsx'), 'DiscussionScreen') },
   { path: '/board', label: 'ink.title', Icon: Board24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ink/BoardScreen.tsx'), 'BoardScreen') },
   { path: '/usecases', label: 'uc.title', Icon: BookOpen24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/usecases/UseCasesScreen.tsx'), 'UseCasesScreen') },
-  { path: '/assistant', label: 'ai.title', Icon: Bot24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/ai/AssistantScreen.tsx'), 'AssistantScreen') },
   { path: '/show', label: 'show.title', Icon: SlideText24Regular, group: 'present', component: lazyNamed(() => import('../modules/show/ShowScreen.tsx'), 'ShowScreen') },
   { path: '/projects', label: 'proj.title', Icon: Briefcase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/ProjectsScreen.tsx'), 'ProjectsScreen') },
   { path: '/data', label: 'proj.nav.data', Icon: DocumentDatabase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/PackDataScreen.tsx'), 'PackDataScreen') },
@@ -87,7 +86,7 @@ export function screenFor(path: string): ScreenDef | undefined {
 }
 
 /** Light screens loaded in idle time after start-up, so their first visit opens without a loading spinner. */
-const IDLE_PRELOAD = ['/step', '/relations', '/map', '/flows', '/plan', '/optimize', '/directory', '/settings'];
+const IDLE_PRELOAD = ['/step', '/relations', '/map', '/plan', '/optimize', '/directory', '/settings'];
 
 export function preloadScreensWhenIdle() {
   const idle = (run: () => void) =>

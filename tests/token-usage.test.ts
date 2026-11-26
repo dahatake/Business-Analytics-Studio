@@ -83,7 +83,7 @@ describe('ledger attribution', () => {
     expect(readLedger()[0]!.estimated).toBeUndefined();
 
     setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: false, configured: true }));
-    const mock = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi', scope: 'pj-x' });
+    const mock = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Hi', scope: 'pj-x' });
     expect(mock.mode).toBe('mock');
     expect(mock.usage).toBeUndefined();
     expect(readLedger()).toHaveLength(1);

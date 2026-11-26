@@ -119,8 +119,8 @@ describe('AI client', () => {
     expect(noConfirmation.mode).toBe('mock');
     expect(noConfirmation.blockedReasons).toEqual(['notConfirmed']);
     setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
-    const chat = await aiComplete({ use: 'chat', lang: 'en', prompt: 'Hi' });
-    expect(chat.mode).toBe('live');
+    const allowed = await aiComplete({ use: 'explain', lang: 'en', prompt: 'Explain' });
+    expect(allowed.mode).toBe('live');
     expect(calls).toHaveLength(1);
     expect(readLedger()).toHaveLength(1);
   });
@@ -198,9 +198,9 @@ describe('AI client', () => {
   });
 
   it('shares a use between modules with matchers (mock registry)', async () => {
-    registerMock('import', () => 'generic');
-    registerMock('import', () => 'handwriting', (q) => q.prompt.startsWith('ink.handwriting:'));
-    expect((await aiComplete({ use: 'import', lang: 'en', prompt: 'ink.handwriting: abc' })).text).toBe('handwriting');
-    expect((await aiComplete({ use: 'import', lang: 'en', prompt: 'file' })).text).toBe('generic');
+    registerMock('explain', () => 'generic');
+    registerMock('explain', () => 'specific', (q) => q.prompt.startsWith('specific:'));
+    expect((await aiComplete({ use: 'explain', lang: 'en', prompt: 'specific: abc' })).text).toBe('specific');
+    expect((await aiComplete({ use: 'explain', lang: 'en', prompt: 'fallback' })).text).toBe('generic');
   });
 });

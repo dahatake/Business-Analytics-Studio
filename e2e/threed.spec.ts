@@ -49,8 +49,9 @@ test.describe('Contextual 2D / 3D views', () => {
     await expect(page.getByTestId('td-quality')).toHaveValue('low');
   });
 
-  test('twin and architecture are reachable from graph, also on a narrow screen', async ({ page }) => {
+  test('twin stays on graph and architecture is on flows, also on a narrow screen', async ({ page }) => {
     await open(page, '/graph', { lang: 'en' });
+    await expect(page.getByRole('tab', { name: 'Architecture', exact: true })).toHaveCount(0);
     await page.getByRole('tab', { name: 'Digital twin', exact: true }).click();
     await expect(page.getByTestId('td-2d')).toBeVisible();
     await page.locator('[data-td-select="twin-m-1-3"]').click();
@@ -61,15 +62,56 @@ test.describe('Contextual 2D / 3D views', () => {
     await firstFrame(page);
     await expect(viewport(page)).toHaveAttribute('data-selected', 'twin-m-1-3');
     await page.setViewportSize({ width: 700, height: 900 });
-    await page.getByRole('combobox', { name: 'View', exact: true }).selectOption('architecture');
-    await firstFrame(page);
+    await expect(page.getByRole('combobox', { name: 'View', exact: true }).locator('option[value="architecture"]')).toHaveCount(0);
+    await page.goto('/#/flows');
+    await expect(page.getByTestId('sankey-panel')).toBeVisible();
+    await page.getByRole('tab', { name: 'Architecture', exact: true }).click();
     await expect(page.getByTestId('td-arch-switch')).toBeVisible();
+    await expect(page.getByTestId('td-2d')).toBeVisible();
+    await page.getByRole('radio', { name: 'AsIs (current)' }).check();
+    await expect(page.getByTestId('td-table')).toContainText('Spreadsheets and email');
+    await page.getByRole('radio', { name: 'ToBe (future)' }).check();
+    await expect(page.getByTestId('td-table')).toContainText('Microsoft Fabric');
+    await page.getByRole('radio', { name: '3D', exact: true }).check();
+    await firstFrame(page);
     await page.getByRole('radio', { name: '2D', exact: true }).check();
     await expect(page.getByTestId('td-2d')).toBeVisible();
+    await page.getByTestId('flow-sections').getByRole('tab', { name: 'Flows', exact: true }).click();
+    await expect(page.locator('.sankey-link')).toHaveCount(19);
+    await page.getByRole('tab', { name: 'Architecture', exact: true }).click();
     expect(await scan(page)).toEqual([]);
     await page.emulateMedia({ forcedColors: 'active' });
     // Legacy app chrome has separate high-contrast findings; verify the changed control here.
     expect(await scan(page, '.contextual-scene > .view-switch')).toEqual([]);
+  });
+
+  test('old graph architecture links open the moved view with their selection and settings', async ({ page }) => {
+    await open(page, '/graph?view=architecture&mode=2d&arch=asis&sel=arch-layer-data', { lang: 'en' });
+    await expect(page).toHaveURL(/#\/relations\?/);
+    await expect(page).toHaveURL(/view=flow/);
+    await expect(page).toHaveURL(/section=architecture/);
+    await expect(page.getByRole('tab', { name: 'Architecture', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('radio', { name: 'AsIs (current)' })).toBeChecked();
+    await expect(page.getByTestId('td-selected-name')).toContainText('Data');
+    await expect(page.getByTestId('td-table')).toContainText('Spreadsheets and email');
+  });
+
+  test('relocated architecture explains the 2D fallback when WebGL is unavailable', async ({ page }) => {
+    await page.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+        if (/webgl/i.test(type)) return null;
+        return (original as (...a: unknown[]) => unknown).call(this, type, ...rest);
+      } as typeof original;
+    });
+    await open(page, '/relations?view=flow&section=architecture&mode=3d', { lang: 'en' });
+    await expect(page.getByRole('radio', { name: '3D', exact: true })).toBeDisabled();
+    await expect(page.getByRole('radio', { name: '2D', exact: true })).toBeChecked();
+    await expect(page.getByText('3D (WebGL) is not available in this environment, so the 2D view is shown.')).toBeVisible();
+    await expect(page.getByTestId('td-2d')).toBeVisible();
+    await page.getByRole('radio', { name: 'AsIs (current)' }).check();
+    await expect(page.getByTestId('td-table')).toContainText('Spreadsheets and email');
+    expect(await scan(page, '.contextual-scene')).toEqual([]);
   });
 
   test('unavailable WebGL returns to the native map with an explained disabled 3D option', async ({ page }) => {

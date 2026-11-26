@@ -3,17 +3,16 @@
  * The default BAS folder keeps a small pointer file; the database itself may live in another folder chosen in Settings.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type { FolderRootKind } from './deviceProtocol.ts';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 export const LOCATION_FILE = 'storage-location.json';
 export const DB_FILE = 'device.sqlite';
 
 export type LocationErrorCode =
-  | 'locationInvalid' | 'locationNetwork' | 'locationServed' | 'locationNotWritable' | 'locationUnreadable'
-  | 'locationHasData' | 'locationNoData' | 'locationSame' | 'locationFixed' | 'locationUnavailable' | 'locationCorrupt' | 'locationNameInvalid';
+  | 'locationInvalid' | 'locationNetwork' | 'locationServed' | 'locationNotWritable'
+  | 'locationHasData' | 'locationNoData' | 'locationSame' | 'locationFixed' | 'locationUnavailable' | 'locationCorrupt' | 'locationNameInvalid'
+  | 'locationPickerUnavailable' | 'locationPickerFailed';
 
 // No parameter properties: offline packages run this file with Node's type stripping.
 export class LocationError extends Error {
@@ -71,8 +70,6 @@ export function writeLocation(home: string, dataDir: string | null): () => void 
 }
 
 const SYNCED = /^(onedrive|dropbox|icloud ?drive|google ?drive|my drive|box)( - .*)?$/i;
-const SYSTEM = new Set(['$recycle.bin', 'system volume information', 'config.msi', 'recovery', 'node_modules']);
-
 export function isNetworkPath(path: string): boolean {
   return /^[\\/]{2}/.test(path);
 }
@@ -95,8 +92,8 @@ export interface LocationContext {
   servedRoots: string[];
 }
 
-/** `probe` writes and removes a scratch file; browsing skips it so merely looking at a folder never changes it. */
-export function inspectTarget(path: string, ctx: LocationContext, probe: boolean): TargetInfo {
+/** Writes and removes a scratch file to verify that the selected folder is writable. */
+export function inspectTarget(path: string, ctx: LocationContext): TargetInfo {
   const info: TargetInfo = { hasData: false, warnings: [] };
   if (!isAbsolute(path)) return { ...info, error: 'locationInvalid' };
   if (isNetworkPath(path)) return { ...info, error: 'locationNetwork' };
@@ -106,7 +103,6 @@ export function inspectTarget(path: string, ctx: LocationContext, probe: boolean
   info.hasData = existsSync(join(path, DB_FILE));
   if (samePath(path, ctx.current)) return { ...info, error: 'locationSame' };
   if (ctx.servedRoots.some((root) => within(path, root)) && !within(path, ctx.home)) return { ...info, error: 'locationServed' };
-  if (!probe) return info;
   const probeFile = join(path, `.bas-write-check-${randomBytes(6).toString('hex')}`);
   try {
     writeFileSync(probeFile, '', { flag: 'wx' });
@@ -115,63 +111,7 @@ export function inspectTarget(path: string, ctx: LocationContext, probe: boolean
   return info;
 }
 
-export interface FolderListing {
-  path: string;
-  parent: string | null;
-  folders: string[];
-  truncated: boolean;
-}
-
-const MAX_FOLDERS = 1000;
-export function listFolders(path: string): FolderListing {
-  if (!isAbsolute(path) || isNetworkPath(path)) throw new LocationError(isNetworkPath(path) ? 'locationNetwork' : 'locationInvalid');
-  const dir = resolve(path);
-  let names: string[];
-  try {
-    names = readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !entry.name.startsWith('$') && !SYSTEM.has(entry.name.toLowerCase()))
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-  } catch (error) {
-    throw new LocationError((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR' ? 'locationInvalid' : 'locationUnreadable');
-  }
-  const parent = dirname(dir);
-  return { path: dir, parent: parent === dir ? null : parent, folders: names.slice(0, MAX_FOLDERS), truncated: names.length > MAX_FOLDERS };
-}
-
-export function folderRoots(home: string, current: string): { kind: FolderRootKind; path: string }[] {
-  const roots: { kind: FolderRootKind; path: string }[] = [{ kind: 'current', path: resolve(current) }];
-  if (!samePath(home, current)) roots.push({ kind: 'default', path: resolve(home) });
-  const user = homedir();
-  roots.push({ kind: 'home', path: user });
-  const documents = join(user, 'Documents');
-  if (existsSync(documents)) roots.push({ kind: 'documents', path: documents });
-  if (process.platform === 'win32') {
-    for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
-      const drive = `${letter}:\\`;
-      if (existsSync(drive)) roots.push({ kind: 'drive', path: drive });
-    }
-  } else {
-    roots.push({ kind: 'system', path: '/' });
-  }
-  return roots;
-}
-
-// Portable folder names: no reserved characters, no trailing dot/space, no Windows device names.
 const RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i;
-export function createFolder(parent: string, name: string): string {
-  if (!isAbsolute(parent) || isNetworkPath(parent) || typeof name !== 'string' || name.length < 1 || name.length > 120 ||
-    /[<>:"/\\|?*\u0000-\u001f]/.test(name) || /[. ]$/.test(name) || name === '.' || name === '..' || RESERVED.test(name)) {
-    throw new LocationError('locationNameInvalid');
-  }
-  const path = join(resolve(parent), name);
-  try { mkdirSync(path); }
-  catch (error) {
-    throw new LocationError((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'locationNameInvalid' : 'locationNotWritable');
-  }
-  return path;
-}
-
 /** FR-378: generated documents of a project live in `<data folder>/projects/<project folder>/`. */
 export const PROJECT_FILES_DIR = 'projects';
 export const MAX_PROJECT_FILE_BYTES = 4 * 1024 * 1024;

@@ -1,6 +1,6 @@
 import {
   BINARY_PREFIX, DEVICE_HEADER, DEVICE_ID_HEADER, DEVICE_PREFIX, DEVICE_TEST_HEADER, isDeviceKey,
-  type DeviceChange, type DeviceFolderListing, type DeviceLocation, type DeviceLocationMode, type DeviceSnapshot,
+  type DeviceChange, type DeviceFolderSelection, type DeviceLocation, type DeviceLocationMode, type DeviceSnapshot,
 } from '../../scripts/lib/deviceProtocol.ts';
 
 export type StorageStatus = 'saved' | 'saving' | 'error' | 'conflict' | 'moved';
@@ -30,7 +30,7 @@ export class DeviceStorageError extends Error {
 }
 
 /** `id` is the database this window loaded; the server refuses it once the data folder has changed. */
-async function request(path: string, token: string | null, body?: unknown, id?: string): Promise<unknown> {
+async function request(path: string, token: string | null, body?: unknown, id?: string, signal?: AbortSignal): Promise<unknown> {
   const testId = localStorage.getItem('bas.device.test');
   const response = await fetch(`${DEVICE_PREFIX}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
@@ -41,8 +41,8 @@ async function request(path: string, token: string | null, body?: unknown, id?: 
       ...(testId ? { [DEVICE_TEST_HEADER]: testId } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    // Copying a large database to a slow drive can take minutes; ordinary requests keep the short limit.
-    signal: AbortSignal.timeout(path === 'location' && body !== undefined ? 600_000 : 15_000),
+    // Folder selection is user-driven; its caller supplies a signal rather than a short timeout.
+    signal: signal ?? AbortSignal.timeout(path === 'location' && body !== undefined ? 600_000 : 15_000),
     cache: 'no-store',
   });
   if (!response.ok) {
@@ -368,12 +368,20 @@ async function locationToken(): Promise<string> {
 export async function getDeviceLocation(): Promise<DeviceLocation> {
   return await request('location', await locationToken()) as DeviceLocation;
 }
-export async function browseDeviceFolders(path?: string): Promise<DeviceFolderListing> {
-  return await request('folders', await locationToken(), path ? { path } : {}) as DeviceFolderListing;
-}
-export async function createDeviceFolder(parent: string, name: string): Promise<string> {
-  const result = await request('folders/create', await locationToken(), { parent, name }) as { path: string };
-  return result.path;
+export async function pickDeviceFolder(title: string, signal: AbortSignal): Promise<DeviceFolderSelection | null> {
+  const result = await request('folders/pick', await locationToken(), { title }, undefined, signal);
+  if (!result || typeof result !== 'object' || !('selection' in result)) throw new DeviceStorageError(false);
+  const selection = result.selection;
+  if (selection === null) return null;
+  if (!selection || typeof selection !== 'object' || !('path' in selection) || typeof selection.path !== 'string' || !selection.path ||
+    !('hasData' in selection) || typeof selection.hasData !== 'boolean' ||
+    !('warnings' in selection) || !Array.isArray(selection.warnings)) throw new DeviceStorageError(false);
+  const warnings: DeviceFolderSelection['warnings'] = [];
+  for (const warning of selection.warnings) {
+    if (warning !== 'syncedFolder') throw new DeviceStorageError(false);
+    warnings.push(warning);
+  }
+  return { path: selection.path, hasData: selection.hasData, warnings };
 }
 /**
  * FR-378: writes a generated Markdown file into `<data folder>/projects/<folder>/<name>` and returns its absolute path.

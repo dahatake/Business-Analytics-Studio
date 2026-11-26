@@ -238,6 +238,19 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
 }
 .rail-link:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: -2px; }
 .rail-button { width: 100%; border: 0; background: none; font: inherit; text-align: start; cursor: pointer; }
+/* FR-379: the rail collapses to icons only; labels and group titles stay in the accessibility tree. */
+.layout { transition: grid-template-columns var(--durationNormal) var(--curveEasyEase); }
+.rail-head { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--colorNeutralStroke2); }
+.rail-toggle { color: var(--colorNeutralForeground3); }
+@media (min-width: 861px) {
+  .layout.rail-collapsed { grid-template-columns: 60px minmax(0, 1fr); }
+  .rail-collapsed .rail { padding: 12px 6px; overflow-x: hidden; scrollbar-width: thin; }
+  .rail-collapsed .rail-link { justify-content: center; gap: 0; padding: 9px 0; }
+  .rail-collapsed .rail-label, .rail-collapsed .rail-group-title {
+    position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .rail-collapsed .rail-group + .rail-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--colorNeutralStroke2); }
+}
 /* In-text links that open a dialog render as <button>; keep the surrounding text metrics like an <a>. */
 button.text-action { font: inherit; line-height: inherit; vertical-align: baseline; }
 
@@ -246,7 +259,8 @@ button.text-action { font: inherit; line-height: inherit; vertical-align: baseli
 
 .screen { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .screen > .page-header, .screen > [role='tablist'], .screen > .split, .screen > .grid-2, .screen > .grid-3,
-.screen > .span-full, .screen > .entity-hero, .screen > button, .screen > .restricted-page { grid-column: 1 / -1; }
+.screen > .span-full, .screen > .entity-hero, .screen > button, .screen > .restricted-page, .screen > .flows-embedded { grid-column: 1 / -1; }
+.flows-embedded { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 .screen-flows > .panel, .screen-plan > .panel, .screen-relations > .panel, .screen-directory > .panel, .screen-settings > .panel, .screen-entity > .panel, .screen-optimize > .panel { grid-column: 1 / -1; }
 .screen > button { justify-self: start; }
 .split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr); gap: 20px; align-items: start; }
@@ -472,6 +486,44 @@ button.text-action { font: inherit; line-height: inherit; vertical-align: baseli
 .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; }
 .workflow-grid ul { margin: 2px 0 0; padding-left: 18px; }
 .workflow-label { font-size: 0.85em; }
+.workflow-missing { margin: 2px 0 0; }
+.workflow-map-note { font-size: var(--fontSizeBase200); }
+.workflow-map-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.workflow-map-row { min-width: 0; border: 1px solid var(--colorNeutralStroke2); border-radius: 8px; overflow: hidden; }
+.workflow-map-main { display: grid; grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1.15fr); align-items: center; }
+.workflow-map-node {
+  display: flex; gap: 10px; align-items: flex-start; min-width: 0; width: 100%; height: 100%; padding: 12px;
+  border: 2px solid transparent; border-radius: 7px; background: var(--colorNeutralBackground2);
+  color: var(--colorNeutralForeground1); font: inherit; text-align: left; cursor: pointer;
+}
+.workflow-map-node:hover { background: var(--colorNeutralBackground2Hover); }
+.workflow-map-node[aria-expanded='true'] { border-color: var(--colorBrandStroke1); }
+.workflow-map-node:focus-visible, .workflow-map-link:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: -2px; }
+.workflow-map-number { flex: 0 0 auto; color: var(--colorBrandForeground1); font-weight: var(--fontWeightBold); font-size: var(--fontSizeBase400); }
+.workflow-map-node-content { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.workflow-map-name { font-weight: var(--fontWeightSemibold); }
+.workflow-map-field { color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+.workflow-map-arrow { text-align: center; color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase500); }
+.workflow-map-targets { display: grid; gap: 8px; min-width: 0; padding: 10px 12px 10px 0; overflow-wrap: anywhere; }
+.workflow-map-target-list { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.workflow-map-target-list li { min-width: 0; }
+.workflow-map-link, .workflow-map-external, .workflow-map-unresolved {
+  display: inline-block; max-width: 100%; padding: 5px 9px; border: 1px solid var(--colorNeutralStroke1);
+  border-radius: 6px; background: var(--colorNeutralBackground1); color: var(--colorNeutralForeground1);
+  font: inherit; text-align: left; overflow-wrap: anywhere;
+}
+.workflow-map-link { min-height: 32px; cursor: pointer; }
+.workflow-map-link:hover { background: var(--colorNeutralBackground1Hover); }
+.workflow-map-external { border-style: dashed; }
+.workflow-map-unresolved { border-style: dashed; color: var(--colorNeutralForeground2); }
+.workflow-map-detail { display: grid; gap: 12px; padding: 14px; border-top: 1px solid var(--colorNeutralStroke2); }
+.workflow-map-detail p { margin: 4px 0 0; }
+.workflow-map-previous { min-width: 0; }
+@media (max-width: 700px) {
+  .workflow-map-main { grid-template-columns: minmax(0, 1fr); }
+  .workflow-map-arrow { justify-self: start; margin-left: 15px; transform: rotate(90deg); }
+  .workflow-map-targets { padding: 0 12px 12px; }
+}
 .sankey-link { fill: none; stroke-opacity: 0.38; transition: stroke-opacity var(--durationNormal) var(--curveEasyEase); }
 .sankey-link.on { stroke-opacity: 0.8; }
 .sankey-link.dim { stroke-opacity: 0.08; }
@@ -560,6 +612,7 @@ button.text-action { font: inherit; line-height: inherit; vertical-align: baseli
   .rail { display: flex; overflow-x: auto; gap: 8px; }
   .rail-group + .rail-group { margin-top: 0; }
   .rail-group-title { display: none; }
+  .rail-head { display: none; }
   .rail ul { display: flex; gap: 4px; }
   .rail-link { white-space: nowrap; padding: 8px 10px; }
   .rail-link[aria-current='page']::before { left: 10px; right: 10px; top: auto; bottom: 0; width: auto; height: 3px; }

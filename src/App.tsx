@@ -1,9 +1,10 @@
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge, Button, FluentProvider, MessageBar, MessageBarBody, Spinner, Text, Tooltip, createDarkTheme, createLightTheme, type Theme,
 } from '@fluentui/react-components';
 import {
   Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular, KeyMultiple24Regular,
+  PanelLeftContract24Regular, PanelLeftExpand24Regular,
 } from '@fluentui/react-icons';
 import { MotionBehaviourProvider } from '@fluentui/react-motion';
 import { useI18n } from './i18n/index.ts';
@@ -113,29 +114,61 @@ function isActive(path: string, current: string) {
   return current === path || current.startsWith(`${path}/`) || (path === '/directory' && current.startsWith('/entity'));
 }
 
+/** FR-379: icon-only rail items keep their text for assistive tech; the tooltip shows it to sighted users.
+ * The Tooltip stays mounted in both states so toggling does not remount the item and lose focus. */
+function RailTip({ collapsed, label, children }: { collapsed: boolean; label: string; children: React.ReactElement }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <Tooltip content={label} relationship="inaccessible" positioning="after" withArrow visible={collapsed && visible} onVisibleChange={(_, d) => setVisible(d.visible)}>
+      {children}
+    </Tooltip>
+  );
+}
+
 function NavRail({ current }: { current: string }) {
   const { t } = useI18n();
+  const collapsed = useSettings((s) => s.navCollapsed);
+  const setCollapsed = useSettings((s) => s.setNavCollapsed);
+  const toggleLabel = t(collapsed ? 'nav.expand' : 'nav.collapse');
   return (
-    <nav className="rail" aria-label={t('nav.label')}>
+    <nav className="rail" aria-label={t('nav.label')} data-collapsed={collapsed ? 'true' : 'false'}>
+      <div className="rail-head">
+        <RailTip collapsed={collapsed} label={toggleLabel}>
+          <button
+            type="button"
+            className="rail-link rail-button rail-toggle"
+            aria-expanded={!collapsed}
+            onClick={() => { sound.play('tap'); setCollapsed(!collapsed); }}
+            data-testid="nav-collapse-toggle"
+          >
+            {collapsed ? <PanelLeftExpand24Regular aria-hidden /> : <PanelLeftContract24Regular aria-hidden />}
+            <span className="rail-label">{toggleLabel}</span>
+          </button>
+        </RailTip>
+      </div>
       {NAV_GROUPS.map(({ group, label }) => (
         <div key={group} className="rail-group">
           <h2 className="rail-group-title" id={`nav-${group}`}>{t(label)}</h2>
           <ul aria-labelledby={`nav-${group}`}>
             {SCREENS.filter((s) => s.group === group && !s.hiddenFromNav).map(({ path, label: itemLabel, Icon }) => (
               <li key={path}>
-                <a href={hrefFor(path)} className="rail-link" aria-current={isActive(path, current) ? 'page' : undefined} onClick={() => sound.play('tap')}>
-                  <Icon aria-hidden />
-                  <span>{t(itemLabel)}</span>
-                </a>
+                <RailTip collapsed={collapsed} label={t(itemLabel)}>
+                  <a href={hrefFor(path)} className="rail-link" aria-current={isActive(path, current) ? 'page' : undefined} onClick={() => sound.play('tap')}>
+                    <Icon aria-hidden />
+                    <span className="rail-label">{t(itemLabel)}</span>
+                  </a>
+                </RailTip>
               </li>
             ))}
             {group === 'manage' && (
               // D-25: AI settings are a dialog, not a screen, so this entry opens it instead of navigating.
               <li>
-                <button type="button" className="rail-link rail-button" onClick={() => { sound.play('tap'); openAiSettings(); }} data-testid="nav-ai-settings">
-                  <KeyMultiple24Regular aria-hidden />
-                  <span>{t('ai.nav.settings')}</span>
-                </button>
+                <RailTip collapsed={collapsed} label={t('ai.nav.settings')}>
+                  <button type="button" className="rail-link rail-button" onClick={() => { sound.play('tap'); openAiSettings(); }} data-testid="nav-ai-settings">
+                    <KeyMultiple24Regular aria-hidden />
+                    <span className="rail-label">{t('ai.nav.settings')}</span>
+                  </button>
+                </RailTip>
               </li>
             )}
           </ul>
@@ -154,6 +187,10 @@ function Screen() {
   const { t } = useI18n();
   const route = useRoute();
   const [first, second] = route.segments;
+  useEffect(() => {
+    if (first === 'assistant') window.location.replace(hrefFor('/home'));
+  }, [first]);
+  if (first === 'assistant') return null;
   if (first === 'entity') return second ? <EntityPage id={second} /> : <NotFound />;
   // The former AI settings screen: SettingsDialogHost redirects to Home and opens the settings on the AI tab.
   if (first === 'ai-settings') return null;
@@ -174,7 +211,7 @@ export function App() {
   const dark = useEffectiveDark();
   const reduced = useReducedMotion();
   const route = useRoute();
-  const { muted, bgm, sfx, volume, audience } = useSettings();
+  const { muted, bgm, sfx, volume, audience, navCollapsed } = useSettings();
   const restricted = audience === 'external' && companyAnchorRequiresInternalView(loaded.pack.extensions);
 
   useEffect(() => {
@@ -246,7 +283,7 @@ export function App() {
             {!restricted && <StepBandSlot />}
             {!restricted && <PortalReturnBar />}
           </div>
-          <div className="layout">
+          <div className={`layout${navCollapsed ? ' rail-collapsed' : ''}`}>
             <NavRail current={route.path} />
             <main id="main" tabIndex={-1} className="main" key={route.path}>
               {restricted

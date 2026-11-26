@@ -775,15 +775,14 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
     await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
-    await page.goto('/#/assistant');
-    await page.getByTestId('ai-chat-input').fill('lead time');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.goto('/#/plan');
+    await page.getByTestId('ai-explain-button').click();
     await expect(page.getByTestId('ai-person-confirm')).toHaveCount(0);
-    const answer = page.getByTestId('ai-chat-log').getByTestId('ai-mock-label').first();
+    const panel = page.getByTestId('ai-explain-panel');
+    const answer = panel.getByTestId('ai-mock-label');
     await expect(answer).toContainText('Mock');
-    await expect(answer.locator('[data-reason="notConfigured"]')).toBeVisible();
-    await expect(answer.locator('[data-reason="liveDisabled"]')).toHaveCount(0);
-    await expect(answer.locator('[data-entity-ref]').first()).toBeVisible();
+    await expect(panel.locator('[data-reason="notConfigured"]')).toBeVisible();
+    await expect(panel.getByTestId('ai-explain-fallback')).toBeVisible();
   });
 });
 
@@ -922,144 +921,16 @@ test.describe('explain current state (FR-274, FR-277)', () => {
   });
 });
 
-test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
-  test('live chat shows its actual stage and elapsed time while waiting', async ({ page }) => {
-    await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
-      connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' }, workiq: null,
-    } }));
-    let release!: () => void;
-    const response = new Promise<void>((resolve) => { release = resolve; });
-    await page.route('**/relay/ai', async (route) => {
-      expect((route.request().postDataJSON() as { use: string }).use).toBe('chat');
-      await response;
-      await route.fulfill({ json: { text: 'Synthetic answer', inputTokens: 10, outputTokens: 10 } }).catch(() => undefined);
-    });
-    try {
-      await open(page, '/assistant', { lang: 'en' });
-      await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
-      await page.reload();
-      await page.getByTestId('ai-chat-input').fill('What should I check?');
-      await page.getByRole('button', { name: 'Send', exact: true }).click();
-      const progress = page.getByTestId('ai-chat-progress');
-      await expect(progress).toHaveAttribute('data-stage', 'generate');
-      await expect(progress).toContainText('AI is generating');
-      await expect(progress).toContainText('Check and process the answer');
-      await expect(progress).not.toContainText('Check and save the answer');
-      await expect(progress.getByTestId('ai-chat-progress-status')).toContainText('0:02 since starting', { timeout: 5000 });
-      expect(await scan(page)).toEqual([]);
-      release();
-      await expect(page.getByTestId('ai-chat-log')).toContainText('Synthetic answer');
-      await expect(progress).toHaveCount(0);
-    } finally {
-      release();
-    }
-  });
-
-  test('search returns EntityRef links and chat answers are labelled mock', async ({ page }) => {
-    await open(page, '/assistant', { lang: 'en' });
-    await page.getByTestId('ai-search-input').fill('lead time');
-    await page.getByRole('button', { name: 'Search', exact: true }).click();
-    const results = page.getByTestId('ai-search-results');
-    await expect(results.locator('a.ref-link[data-entity-ref="kpi-lead-time"]')).toBeVisible();
-    await page.getByTestId('ai-chat-input').fill('What slows order to ship?');
-    await page.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByTestId('ai-chat-log').getByTestId('ai-mock-label')).toContainText('Mock');
-    await expect(page.getByTestId('ai-chat-log')).toContainText('last 0 pairs');
-
-    await page.getByTestId('ai-usage-input').fill('We answer customer inquiry emails and read invoice documents.');
-    await page.getByTestId('ai-usage-run').click();
-    await expect(page.getByTestId('ai-usage-result')).toContainText('inquiries');
-    await expect(page.getByTestId('ai-usage-input')).toHaveAttribute('maxlength', '8000');
-
-    await expect(page.getByTestId('ai-import-ai')).toBeDisabled();
-    await expect(page.getByTestId('ai-import-reasons')).toContainText('Connection settings are incomplete');
-  });
-
-  test('story video exports standalone HTML with playback and safe model text', async ({ page }) => {
-    await open(page, '/assistant', { lang: 'en', motion: 'full' });
-    const story = page.getByTestId('ai-story');
-    await expect(story.getByTestId('ai-story-estimate')).toHaveCount(0);
-    await expect(story.getByTestId('ai-story-generate-live')).toBeDisabled();
-    await expect(story.getByTestId('ai-story-generate')).toBeEnabled();
-    await expect(story.getByTestId('ai-story-overcap')).toHaveCount(0);
-    await story.getByTestId('ai-story-generate').click();
-    await expect(story.getByTestId('ai-story-state')).toHaveText('Latest');
-    await expect(story.getByTestId('ai-mock-label')).toContainText('Mock');
-    const player = page.frameLocator('[data-testid="ai-story-player"]');
-    await expect(player.locator('li').first()).toBeVisible();
-    const first = await player.locator('h1').textContent();
-    await expect(player.locator('li')).toHaveCount(1);
-    await story.getByRole('button', { name: 'Play', exact: true }).click();
-    await expect(story.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
-    await expect(player.locator('h1')).not.toHaveText(first!, { timeout: 5000 });
-    await story.getByRole('button', { name: 'Pause', exact: true }).click();
-    await expect(story.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
-    const download = page.waitForEvent('download');
-    await story.getByTestId('ai-story-download').click();
-    const file = await download;
-    expect(file.suggestedFilename()).toMatch(/\.html$/);
-    const stream = await file.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
-    const html = Buffer.concat(chunks).toString('utf8');
-    const savedUrl = new URL('/saved-story.html', page.url()).href;
-    await page.route(savedUrl, (route) => route.fulfill({ contentType: 'text/html', body: html }));
-    await page.goto(savedUrl);
-    await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Restart', exact: true }).click();
-    await expect(page.locator('#position')).toContainText('1 /');
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeHidden();
-    await expect(page.locator('li').nth(1)).toBeVisible();
-    await noJapanese(page);
-  });
-
-  test('live HTML story uses one gated request, renders text safely, and survives reload', async ({ page }) => {
-    let calls = 0;
-    await page.route('**/relay/status', (route) => route.fulfill({ json: {
-      secrets: { foundryKey: true },
-      connection: { endpoint: 'https://example.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' },
-      connectionVerifiedAt: '2026-11-17T00:00:00Z', keyProtection: null, copilot: null, workiq: null,
-    } }));
-    await page.route('**/relay/ai', async (route) => {
-      expect(route.request().postDataJSON().use).toBe('storyVideo');
-      calls++;
-      await route.fulfill({ json: {
-        text: JSON.stringify({ scenes: [{ title: 'Source evidence', narration: '<img src=x onerror=alert(1)>', role: 'opening', durationMs: 3000 }] }),
-        inputTokens: 100, outputTokens: 80,
-      } });
-    });
-    const settings = await openAiSettings(page, { lang: 'en' });
-    await settings.getByTestId('ai-send-consent').check();
-    await settings.getByTestId('ai-live-switch').check();
-    await settings.getByTestId('ai-settings-dialog-close').click();
-    await page.goto('/#/assistant');
-    await page.getByTestId('ai-story-generate-live').click();
-    await expect(page.getByTestId('ai-story').getByTestId('ai-live-label')).toBeVisible();
-    await expect(page.getByTestId('ai-story').getByTestId('ai-live-tokens')).toHaveText('Tokens used: 180 (input 100 / output 80)');
-    expect(calls).toBe(1);
-    const frame = page.frameLocator('[data-testid="ai-story-player"]');
-    await expect(frame.locator('li')).toContainText('<img src=x onerror=alert(1)>');
-    await expect(frame.locator('img')).toHaveCount(0);
-    await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
-    await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
-    await page.reload();
-    await expect(page.frameLocator('[data-testid="ai-story-player"]').locator('li')).toContainText('onerror');
-    expect(calls).toBe(1);
-  });
-});
-
-test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => {
+test.describe('AI settings and in-context AI accessibility (axe, WCAG 2.2 AA) and language', () => {
   for (const lang of ['ja', 'en'] as Lang[]) {
-    for (const route of ['/assistant', '/ai-settings']) {
-      test(`${lang} ${route}`, async ({ page }) => {
-        await open(page, route, { lang });
-        await page.waitForTimeout(500);
-        expect(await scan(page)).toEqual([]);
-        if (lang === 'en') await noJapanese(page);
-      });
-    }
+    test(`${lang}: retired assistant bookmark returns to Home without an assistant menu entry`, async ({ page }) => {
+      await open(page, '/assistant', { lang });
+      await expect(page).toHaveURL(/#\/home$/);
+      await expect(page.getByRole('navigation').locator('a[href^="#/assistant"]')).toHaveCount(0);
+      await expect(page.locator('.ai-screen')).toHaveCount(0);
+      await page.goto('/#/show');
+      await expect(page.getByTestId('show-ai')).toBeVisible();
+    });
 
     test(`${lang} AI settings dialog`, async ({ page }) => {
       // D-6: a legacy Foundry record makes the settings show the "move" candidate, which is scanned too.
@@ -1072,7 +943,7 @@ test.describe('AI screens accessibility (axe, WCAG 2.2 AA) and language', () => 
     });
 
     test(`${lang} D-25: AI settings have one place; links and old bookmarks open the same dialog`, async ({ page }) => {
-      await open(page, '/assistant', { lang });
+      await open(page, '/plan', { lang });
       await page.getByTestId('nav-ai-settings').click();
       const settings = page.getByTestId('ai-settings-dialog');
       await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
@@ -1577,7 +1448,7 @@ test.describe('live generation through the relay (D-12)', () => {
     // A generated pack is sparser than the sample (no customers, deals or invoices here): every screen must still render.
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(`${page.url()}: ${e.message}`));
-    for (const route of ['/', '/home', '/analysis', '/assistant', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
+    for (const route of ['/', '/home', '/analysis', '/board', '/brand', '/catalog', '/deliverables', '/directory', '/discussion', '/flows',
       '/graph', '/integrations', '/map', '/optimize', '/plan', '/projects', '/relations', '/settings', '/show', '/twin3d', '/usecases', '/workspace', '/ai-settings']) {
       await page.goto(`/#${route}`);
       await expect(page.locator('main#main'), route).toBeVisible();

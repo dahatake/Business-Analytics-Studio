@@ -4,9 +4,6 @@ import { loaded } from '../../data/pack.ts';
 import type { Entity } from '../../data/schema.ts';
 import { buildExplanation, explanationText } from './explain.ts';
 import { reviewMock } from './review.ts';
-import { chatMock } from './search.ts';
-import { storyMock } from './story.ts';
-import { usageMock } from './usage.ts';
 
 const shareable = (e: Entity) => selectOutbound([e], loaded.byId).included.length > 0;
 
@@ -16,6 +13,3 @@ const shareable = (e: Entity) => selectOutbound([e], loaded.byId).included.lengt
  */
 registerMock('explain', (req) => explanationText(buildExplanation(req.entities ?? [], shareable), req.lang));
 registerMock('review', (req) => reviewMock(req.lang, req.prompt));
-registerMock('chat', (req, context) => chatMock(req.lang, req.prompt, context));
-registerMock('aiUsageAnalysis', (req) => usageMock(req.lang, req.prompt));
-registerMock('storyVideo', (req) => storyMock(req.prompt));

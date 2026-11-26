@@ -1,10 +1,10 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DeviceDatabase, createDeviceService, type DeviceServiceOptions } from '../scripts/lib/device.ts';
-import { DB_FILE, LOCATION_FILE, isSyncedFolder, writeLocation } from '../scripts/lib/deviceLocation.ts';
+import { DB_FILE, LOCATION_FILE, LocationError, isSyncedFolder, writeLocation } from '../scripts/lib/deviceLocation.ts';
 
 const dirs: string[] = [];
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -35,7 +35,7 @@ async function service(home: string, options: DeviceServiceOptions = {}) {
       : { method: 'POST', headers: { ...headers, ...extra }, body: JSON.stringify(body) });
     return { status: response.status, body: await response.json() as Record<string, unknown> };
   };
-  return { call };
+  return { call, origin, headers };
 }
 
 const pointer = (home: string) => existsSync(join(home, LOCATION_FILE)) ? JSON.parse(readFileSync(join(home, LOCATION_FILE), 'utf8')) as unknown : null;
@@ -148,25 +148,90 @@ describe('FR-339 choosing the device data folder', () => {
     expect(await call('location', { path: temporary(), mode: 'copy' })).toEqual({ status: 400, body: { error: 'locationFixed' } });
   });
 
-  it('lists and creates folders for the picker, marking folders that already hold data', async () => {
+  it('validates native selections and cancellation before offering a switch', async () => {
     const home = temporary();
     const base = temporary();
-    mkdirSync(join(base, 'Beta'));
-    mkdirSync(join(base, '.hidden'));
-    new DeviceDatabase(join(base, 'Beta')).close();
-    const { call } = await service(home);
+    const existing = join(base, 'existing');
+    const synced = join(base, 'OneDrive');
+    const served = join(base, 'served');
+    mkdirSync(existing);
+    mkdirSync(synced);
+    mkdirSync(served);
+    new DeviceDatabase(existing).close();
+    const pickFolder = vi.fn<NonNullable<DeviceServiceOptions['pickFolder']>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(base)
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(synced)
+      .mockResolvedValueOnce(home)
+      .mockResolvedValueOnce('\\\\server\\share\\bas')
+      .mockResolvedValueOnce(served)
+      .mockResolvedValueOnce(join(base, 'missing'));
+    const { call, origin, headers } = await service(home, { servedRoots: [served], pickFolder });
 
-    const listing = await call('folders', { path: base });
-    expect(listing.body).toMatchObject({ path: base, folders: ['Beta'], target: { hasData: false } });
-    expect((listing.body.roots as { kind: string }[]).map((r) => r.kind)).toEqual(expect.arrayContaining(['current', 'home']));
-    expect((await call('folders', { path: join(base, 'Beta') })).body).toMatchObject({ target: { hasData: true } });
-    expect((await call('folders', { path: join(base, 'nope') })).body).toEqual({ error: 'locationInvalid' });
-
-    expect(await call('folders/create', { parent: base, name: 'Alpha' })).toEqual({ status: 200, body: { path: join(base, 'Alpha') } });
-    for (const name of ['Alpha', 'a/b', '..', 'CON', 'trailing.']) {
-      expect(await call('folders/create', { parent: base, name }), name).toEqual({ status: 400, body: { error: 'locationNameInvalid' } });
+    expect((await fetch(`${origin}/device/folders/pick`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Choose folder' }),
+    })).status).toBe(403);
+    expect((await fetch(`${origin}/device/folders/pick`, {
+      method: 'POST', headers: { ...headers, origin: 'https://other.example' }, body: JSON.stringify({ title: 'Choose folder' }),
+    })).status).toBe(403);
+    expect(await call('folders/pick', { title: '' })).toEqual({ status: 400, body: { error: 'locationInvalid' } });
+    expect(pickFolder).not.toHaveBeenCalled();
+    expect(await call('folders/pick', { title: 'Choose folder' })).toEqual({ status: 200, body: { selection: null } });
+    expect(pickFolder).toHaveBeenCalledWith(home, 'Choose folder', expect.any(AbortSignal));
+    expect(await call('folders/pick', { title: 'Choose folder' })).toEqual({
+      status: 200, body: { selection: { path: base, hasData: false, warnings: [] } },
+    });
+    expect(await call('folders/pick', { title: 'Choose folder' })).toEqual({
+      status: 200, body: { selection: { path: existing, hasData: true, warnings: [] } },
+    });
+    expect(await call('folders/pick', { title: 'Choose folder' })).toEqual({
+      status: 200, body: { selection: { path: synced, hasData: false, warnings: ['syncedFolder'] } },
+    });
+    for (const error of ['locationSame', 'locationNetwork', 'locationServed', 'locationInvalid']) {
+      expect(await call('folders/pick', { title: 'Choose folder' })).toEqual({ status: 400, body: { error } });
     }
-    expect((await call('folders', { path: base })).body.folders).toEqual(['Alpha', 'Beta']);
+    expect(pointer(home)).toBeNull();
+    expect(existsSync(join(base, DB_FILE))).toBe(false);
+    expect(await call('folders', {})).toEqual({ status: 404, body: { error: 'notFound' } });
+    expect(await call('folders/create', {})).toEqual({ status: 404, body: { error: 'notFound' } });
+  });
+
+  it('does not open a picker for fixed storage and reports a picker failure', async () => {
+    const home = temporary();
+    const pickFolder = vi.fn<NonNullable<DeviceServiceOptions['pickFolder']>>()
+      .mockRejectedValue(new LocationError('locationPickerUnavailable'));
+    const fixed = await service(home, { fixed: true, pickFolder });
+    expect(await fixed.call('folders/pick', { title: 'Choose folder' })).toEqual({ status: 400, body: { error: 'locationFixed' } });
+    expect(pickFolder).not.toHaveBeenCalled();
+
+    const available = await service(home, { pickFolder });
+    expect(await available.call('folders/pick', { title: 'Choose folder' })).toEqual({ status: 503, body: { error: 'locationPickerUnavailable' } });
+    expect(pointer(home)).toBeNull();
+  });
+
+  it('keeps serving storage requests while a picker is open and aborts it when the client disconnects', async () => {
+    const home = temporary();
+    let started: () => void = () => {};
+    let aborted: () => void = () => {};
+    const opened = new Promise<void>((resolve) => { started = resolve; });
+    const closed = new Promise<void>((resolve) => { aborted = resolve; });
+    const pickFolder: NonNullable<DeviceServiceOptions['pickFolder']> = async (_initial, _title, signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => { aborted(); reject(new Error('picker aborted')); }, { once: true });
+        started();
+      });
+    const { call, origin, headers } = await service(home, { pickFolder });
+    const controller = new AbortController();
+    const pending = fetch(`${origin}/device/folders/pick`, {
+      method: 'POST', headers, body: JSON.stringify({ title: 'Choose folder' }), signal: controller.signal,
+    });
+    await opened;
+    expect((await call('state')).status).toBe(200);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await closed;
+    expect(pointer(home)).toBeNull();
   });
 
   it('warns about cloud-synced folders', () => {

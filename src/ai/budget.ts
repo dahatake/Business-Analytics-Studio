@@ -41,7 +41,7 @@ export function jstDay(d: Date): string {
   return new Date(d.getTime() + JST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-/** Uses sharing the daily-call quota (Q-059: chat counts against the "explain" quota). */
+/** Keep counting earlier chat calls against the shared "explain" quota (Q-059). */
 const DAILY_SHARED = new Set(['explain', 'chat']);
 
 export function checkBudget(ledger: UsageRecord[], now: Date, req: BudgetRequest, perUse: PerCallLimits | undefined = PER_USE_LIMITS[req.use as AiUse]): BudgetDecision {

@@ -327,7 +327,7 @@ export function inputCount(id: string, c: CheckContext): number {
 /** The screen where each input is kept. */
 const INPUT_HREF: Record<string, string> = {
   issues: '/relations', causes: '/relations', sources: '/data', discussion: '/discussion', analyses: '/analysis', kpis: '/analysis?tab=kpi',
-  flows: '/flows', projectKpis: '/analysis?tab=kpi', okrs: '/analysis?tab=kpi', objectives: '/projects', useCases: '/usecases',
+  flows: '/relations?view=flow', projectKpis: '/analysis?tab=kpi', okrs: '/analysis?tab=kpi', objectives: '/projects', useCases: '/usecases',
   solutions: '/deliverables?step=solution', personas: '/usecases', initiatives: '/plan', people: '/directory',
 };
 

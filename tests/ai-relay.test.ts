@@ -111,39 +111,13 @@ describe('authenticated company news relay', () => {
   });
 });
 
-describe('HTML story through the relay (no budget gating)', () => {
-  const conn = { endpoint: 'https://res.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
-  const body = { use: 'storyVideo', provider: 'foundry', lang: 'en', prompt: 'Generate a source-grounded story.', context: '', maxOutputTokens: 2000, timeoutMs: 90_000 };
-  const scenes = JSON.stringify({ scenes: [{ title: 'Source', narration: 'Only supplied evidence.', role: 'opening', durationMs: 3000 }] });
-  const prepare = async () => {
-    vault.set('foundryKey', FAKE_KEY);
-    await call(req('PUT', '/relay/connection', conn), { fetch: verifiedReply });
-  };
-  it('sends without any price file and returns the reported tokens, with no cost or reservation', async () => {
-    await prepare();
-    const send = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
-      expect(JSON.parse(String(init?.body)).max_completion_tokens).toBe(2000);
-      expect(JSON.parse(String(init?.body)).response_format).toEqual({ type: 'json_object' });
-      return new Response(JSON.stringify({ choices: [{ message: { content: scenes } }], usage: { prompt_tokens: 100, completion_tokens: 80 } }));
-    });
-    const live = await call(req('POST', '/relay/ai', body), { fetch: send });
-    expect(live).toEqual({ status: 200, body: { text: scenes, inputTokens: 100, outputTokens: 80 } });
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(readdirSync(vault.dir).filter((name) => name.startsWith('story-'))).toEqual([]);
-  });
-  it('rejects output that is not a valid storyboard, and has no estimate route any more', async () => {
-    await prepare();
-    const send: typeof fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: '{"scenes":[]}' } }], usage: { prompt_tokens: 100, completion_tokens: 10 } }));
-    expect((await call(req('POST', '/relay/ai', body), { fetch: send })).body).toEqual({ error: 'badProviderResponse' });
-    expect((await call(req('POST', '/relay/story/estimate', body), { fetch: send })).status).toBe(404);
-  });
-  it('is Foundry only and takes no attachments', async () => {
-    await prepare();
-    const send = vi.fn<typeof fetch>();
-    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
-    expect((await call(req('POST', '/relay/ai', { ...body, provider: 'copilotSdk' }), { fetch: send })).status).toBe(400);
-    expect(send).not.toHaveBeenCalled();
-  });
+it.each(['chat', 'aiUsageAnalysis', 'import', 'storyVideo'])('rejects retired assistant use %s without sending it', async (use) => {
+  const send = vi.fn<typeof fetch>();
+  const response = await call(req('POST', '/relay/ai', {
+    use, provider: 'foundry', lang: 'en', prompt: 'Example', context: '', maxOutputTokens: 100, timeoutMs: 1000,
+  }), { fetch: send });
+  expect(response).toEqual({ status: 400, body: { error: 'unknownUse' } });
+  expect(send).not.toHaveBeenCalled();
 });
 
 describe('secret vault (AES-256-GCM)', () => {
@@ -780,11 +754,11 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
   });
 
   it('accepts every declared AI use and rejects unknown uses without contacting the provider', async () => {
-    for (const use of AI_USES.filter((value) => value !== 'connectionTest' && value !== 'storyVideo')) {
+    for (const use of AI_USES.filter((value) => value !== 'connectionTest')) {
       expect((await call(req('POST', '/relay/ai', aiBody({ use })), ctx())).status, use).toBe(200);
     }
     expect((await call(req('POST', '/relay/ai', aiBody({ use: 'nope' })), ctx())).status).toBe(400);
-    expect(seen).toHaveLength(AI_USES.length - 2);
+    expect(seen).toHaveLength(AI_USES.length - 1);
   });
 
   it('server-side decision: only requires a complete connection', () => {

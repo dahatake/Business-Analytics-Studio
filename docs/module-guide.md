@@ -15,7 +15,7 @@ Each feature module owns only its own files:
 | graph | `src/modules/graph/` | `graph.` | `/graph` → `GraphScreen.tsx` |
 | project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables), `ck.` (step decision view and what-if) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
 | usecases | `src/modules/usecases/` | `uc.` | `/usecases`, `/catalog` |
-| ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant` (`AiSettingsDialog` is the only settings surface; legacy `/ai-settings` redirects to Home and opens it) |
+| ai | `src/modules/ai/`, `server/` | `ai.` | No standalone screen. AI actions live on their respective screens; legacy `/assistant` redirects to Home, and legacy `/ai-settings` redirects to Home and opens the settings dialog. |
 | ops | `src/modules/ops/`, `scripts/`, `docs/integration-catalog.md` | `ops.` | `/integrations`, `/brand` |
 
 Also owned by each module: `src/i18n/modules/<prefix>.ja.ts` / `.en.ts`, tests named `tests/<module>*.test.ts`, E2E specs named `e2e/<module>*.spec.ts`, and an optional stylesheet `src/modules/<module>/<module>.css` imported by the module's own files.
@@ -43,7 +43,7 @@ Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/
 - **Motion:** honour `useReducedMotion()` from `src/state/motion.ts` (durations 0, no autoplay). CSS animations are disabled globally under `[data-motion='reduced']`.
 - **Accessibility:** WCAG 2.2 AA. Every interactive element is keyboard operable, has a name containing its visible text, and has a non-drag alternative (NFR-A11Y-004). Minimum target 24 px (PARAM-040). axe runs on every screen in both languages.
 - **Confidentiality:** respect `useSettings().audience`. For an external audience, hide `classification: 'internal'` items (see `isHidden` in `src/ui/cardSpecs.ts`).
-- **Generative AI:** call `aiComplete()` or strict `aiLive()` from `src/ai/client.ts`. Both enforce shared consent, connection and safety-limit gates (token caps, interval, daily calls; budget management was removed); `aiLive()` reports failures instead of substituting a mock for saved real results. The UI must label mock and live answers. HTML stories use the same gate and show their own token usage (see [relay configuration](relay-config.md#html-stories)). Never send data anywhere else.
+- **Generative AI:** call `aiComplete()` or strict `aiLive()` from `src/ai/client.ts`. Both enforce shared consent, connection and safety-limit gates (token caps, interval, daily calls; budget management was removed); `aiLive()` reports failures instead of substituting a mock for saved real results. The UI must label mock and live answers. Never send data anywhere else.
 - **Customer-pack data for a module:** read `loaded.pack.extensions?.<key>` and validate it with your own zod schema. Fall back to your demo data when the pack is the sample.
 - **Styling:** use Fluent tokens via CSS variables (`var(--colorNeutralForeground1)` etc.). Do not hard-code colours for text.
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { Suspense, lazy, useCallback, useMemo } from 'react';
 import { Button, Label, MessageBar, MessageBarBody, Select, Slider, Tab, TabList } from '@fluentui/react-components';
 import { Open16Regular } from '@fluentui/react-icons';
 import { PARAMS } from '../config/params.ts';
@@ -18,9 +18,11 @@ import { EntityEditorDialog } from '../ui/entry/EntityEditorDialog.tsx';
 import { isEditableKind } from '../ui/entry/entitySpecs.ts';
 import { usePackVersion } from '../state/packEdits.ts';
 
-type View = 'chain' | 'graph' | 'table';
+type View = 'chain' | 'graph' | 'table' | 'flow';
 type Allow = (e: Entity) => boolean;
-const VIEWS: View[] = ['chain', 'graph', 'table'];
+const VIEWS: View[] = ['chain', 'graph', 'table', 'flow'];
+// Work flow and material flow are another view of the same data, so they live here and load on demand.
+const FlowsView = lazy(() => import('./Flows.tsx').then((m) => ({ default: m.Flows })));
 const DEFAULT_FOCUS = 'cust-sakura-motors';
 /** Kinds that anchor the business problem; a generated pack rarely contains the sample customer. */
 const FOCUS_KINDS: EntityKind[] = ['issue', 'customer', 'kpi', 'initiative'];
@@ -147,11 +149,16 @@ export function Relations() {
           <MessageBarBody>{t('relations.newsExcluded', { headlines: excluded.headlines, derived: excluded.derived })}</MessageBarBody>
         </MessageBar>
       )}
-      <TabList selectedValue={view} onTabSelect={(_, d) => replaceQuery({ view: String(d.value) })} aria-label={t('relations.viewLabel')}>
+      <TabList selectedValue={view} onTabSelect={(_, d) => replaceQuery({ view: String(d.value), section: undefined })} aria-label={t('relations.viewLabel')}>
         <Tab value="chain">{t('relations.view.chain')}</Tab>
         <Tab value="graph">{t('relations.view.graph')}</Tab>
         <Tab value="table">{t('relations.view.table')}</Tab>
+        <Tab value="flow">{t('nav.flows')}</Tab>
       </TabList>
+
+      {view === 'flow' && (
+        <Suspense fallback={null}><FlowsView embedded /></Suspense>
+      )}
 
       {view === 'chain' && (
         <div className="split">

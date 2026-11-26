@@ -1,6 +1,6 @@
 export const AI_USES = [
-  'structure', 'summarize', 'recommend', 'chat', 'executiveSummary',
-  'explain', 'presentation', 'aiUsageAnalysis', 'review', 'import', 'storyVideo', 'connectionTest',
+  'structure', 'summarize', 'recommend', 'executiveSummary',
+  'explain', 'presentation', 'review', 'connectionTest',
   'research', 'brandResearch', 'packBuild', 'alignmentProposal', 'deliverableDraft', 'stepBrief', 'strategyOverview', 'kpiOkrDraft',
   'valueDraft', 'valueExplain', 'objectiveDraft', 'solutionDraft',
 ] as const;
@@ -53,9 +53,7 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
     maxOutputTokens: AI_LIMITS.maxOutputTokens,
     minIntervalMs: AI_LIMITS.minIntervalMs,
   },
-  chat: { dailyCalls: AI_LIMITS.dailyCalls },
   presentation: { maxOutputTokens: 4000 },
-  storyVideo: { maxOutputTokens: 2000 },
   packBuild: { dailyCalls: 64, maxInputTokens: 100_000, maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS },
   alignmentProposal: { maxInputTokens: 8_000, maxOutputTokens: 3_000 },
   deliverableDraft: { maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS },

@@ -262,7 +262,7 @@ Project を開くと、5 つのステップ（現状分析 → … ）に沿っ�
 | Linux | `~/.local/share/BusinessAnalyticsStudio` |
 
 **バックアップ:** BAS を終了してから、このフォルダーをコピーします。アプリ内の［全量エクスポート］でも、データを 1 つのファイルに書き出せます。<br>
-**別の場所に保存したいとき:** `start.cmd --data-dir D:\BAS-data` のように指定します。
+**別の場所に保存したいとき:** ［設定］の「データの保存先」から OS のフォルダー選択画面を開きます。Linux ではグラフィカルなデスクトップと `zenity` または `kdialog` が必要です。起動時に `start.cmd --data-dir D:\BAS-data` のように指定した場合は保存先が固定され、画面からは変更できません。
 
 <a id="trouble"></a>
 

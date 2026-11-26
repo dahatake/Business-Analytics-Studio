@@ -18,6 +18,8 @@ export interface SettingsState {
   volume: number;
   /** FR-002 / FR-117: who is watching. `external` hides `internal` content in cards, lists and charts. */
   audience: Audience;
+  /** FR-379: the nav rail shows icons only, widening the main area. */
+  navCollapsed: boolean;
   setLang: (lang: Lang) => void;
   setTheme: (theme: ThemePref) => void;
   setMotion: (motion: MotionPref) => void;
@@ -27,6 +29,7 @@ export interface SettingsState {
   setSfx: (sfx: boolean) => void;
   setVolume: (volume: number) => void;
   setAudience: (audience: Audience) => void;
+  setNavCollapsed: (navCollapsed: boolean) => void;
 }
 
 export const SETTINGS_STORAGE_KEY = 'bas.settings';
@@ -43,6 +46,7 @@ export const useSettings = create<SettingsState>()(
       sfx: true,
       volume: 0.5,
       audience: 'internal',
+      navCollapsed: false,
       setLang: (lang) => set({ lang }),
       setTheme: (theme) => set({ theme }),
       setMotion: (motion) => set({ motion }),
@@ -52,12 +56,13 @@ export const useSettings = create<SettingsState>()(
       setSfx: (sfx) => set({ sfx }),
       setVolume: (volume) => set({ volume: Math.min(1, Math.max(0, volume)) }),
       setAudience: (audience) => set({ audience }),
+      setNavCollapsed: (navCollapsed) => set({ navCollapsed }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience }) => ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience }),
+      partialize: ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience, navCollapsed }) => ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience, navCollapsed }),
     },
   ),
 );

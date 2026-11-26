@@ -1,7 +1,45 @@
 import { expect, test } from '@playwright/test';
 import { PARAMS } from '../src/config/params.ts';
 import { samplePack } from '../src/data/sample.ts';
-import { card, open } from './helpers.ts';
+import { card, open, scan } from './helpers.ts';
+
+test.describe('FR-379 collapsible nav rail', () => {
+  test('collapsing widens main, keeps names and headings, shows tooltips and survives a reload', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open(page, '/optimize', { lang: 'en' });
+    const main = page.locator('main#main');
+    const nav = page.getByRole('navigation', { name: 'Main screens' });
+    const toggle = page.getByTestId('nav-collapse-toggle');
+    const before = (await main.boundingBox())!.width;
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toHaveAccessibleName('Expand menu');
+    await expect(toggle).toBeFocused();
+    await expect.poll(async () => (await main.boundingBox())!.width).toBeGreaterThan(before + 120);
+    expect((await nav.boundingBox())!.width).toBeLessThanOrEqual(60);
+    await expect(nav.getByRole('link', { name: 'Resource optimization' })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('heading', { name: 'Analyze' })).toBeAttached();
+    expect((await nav.getByText('Resource optimization').boundingBox())!.width).toBeLessThanOrEqual(1);
+    await nav.getByRole('link', { name: 'Map' }).hover();
+    await expect(page.getByRole('tooltip').filter({ hasText: /^Map$/ })).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+
+    await page.reload();
+    await expect(page.getByTestId('nav-collapse-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await page.getByTestId('nav-collapse-toggle').click();
+    await expect(page.getByTestId('nav-collapse-toggle')).toHaveAccessibleName('Collapse menu');
+    await expect.poll(async () => Math.round((await main.boundingBox())!.width)).toBe(Math.round(before));
+  });
+
+  test('narrow screens keep the horizontal rail without the toggle', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await open(page, '/home', { lang: 'en' });
+    await expect(page.getByTestId('nav-collapse-toggle')).toBeHidden();
+    await expect(page.getByRole('navigation', { name: 'Main screens' }).getByText('Map')).toBeVisible();
+  });
+});
 
 test.describe('F-3.2.1 detail cards', () => {
   test('hover opens after a delay, the card is hoverable, and leaving closes it', async ({ page }) => {

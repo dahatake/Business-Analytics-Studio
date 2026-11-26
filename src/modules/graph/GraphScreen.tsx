@@ -6,7 +6,7 @@ import {
 } from '@fluentui/react-icons';
 import { getEntity, loaded } from '../../data/pack.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
-import { replaceQuery, useRoute } from '../../state/router.ts';
+import { hrefFor, replaceQuery, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { EntityRef } from '../../ui/EntityRef.tsx';
@@ -26,11 +26,11 @@ import { ContextualScene } from '../threed/ContextualScene.tsx';
 import { ViewSwitch } from '../threed/ViewSwitch.tsx';
 import './graph.css';
 
-type Tabs = GraphView | 'digitalTwin' | 'architecture' | 'criteria';
-const TABS: Tabs[] = ['relations', 'twin', 'spatial', 'digitalTwin', 'architecture', 'criteria'];
+type Tabs = GraphView | 'digitalTwin' | 'criteria';
+const TABS: Tabs[] = ['relations', 'twin', 'spatial', 'digitalTwin', 'criteria'];
 const TAB_LABELS: Record<Tabs, MessageKey> = {
   relations: 'graph.tab.relations', twin: 'graph.tab.twin', spatial: 'graph.tab.spatial',
-  digitalTwin: 'td.tab.twin', architecture: 'td.tab.arch', criteria: 'graph.tab.criteria',
+  digitalTwin: 'td.tab.twin', criteria: 'graph.tab.criteria',
 };
 const WORLDS: WorldFilter[] = ['both', 'real', 'digital'];
 const LEGEND_KINDS = ['site', 'person', 'customer', 'product', 'deal', 'deliverable', 'invoice', 'issue', 'cause', 'solution', 'kpi', 'initiative', 'supplier', 'source'] as const;
@@ -45,8 +45,17 @@ export function GraphScreen() {
   const { t, tx, fmt } = useI18n();
   const route = useRoute();
   const audience = useSettings((s) => s.audience);
+  const legacyArchitecture = route.query.get('view') === 'architecture';
+  useEffect(() => {
+    if (!legacyArchitecture) return;
+    const query = new URLSearchParams(route.query);
+    query.delete('view');
+    query.set('view', 'flow');
+    query.set('section', 'architecture');
+    window.location.replace(hrefFor('/relations', query));
+  }, [legacyArchitecture, route]);
   const tab = pick(route.query.get('view'), TABS, 'relations');
-  const sceneTab = tab === 'digitalTwin' ? 'twin' : tab === 'architecture' ? 'arch' : null;
+  const sceneTab = tab === 'digitalTwin' ? 'twin' : null;
   const view: GraphView = tab === 'twin' || tab === 'spatial' ? tab : 'relations';
   const format = pick(route.query.get('format'), FORMATS, 'graph');
   const level = pick(route.query.get('level'), LEVELS, 'element');
@@ -174,6 +183,8 @@ export function GraphScreen() {
 
   const viewTitle: Record<GraphView, MessageKey> = { relations: 'graph.view.relations', twin: 'graph.view.twin', spatial: 'graph.view.spatial' };
   const rationale: Record<GraphView, MessageKey> = { relations: 'graph.why.relations', twin: 'graph.why.twin', spatial: 'graph.why.spatial' };
+
+  if (legacyArchitecture) return null;
 
   return (
     <div className="screen screen-graph">

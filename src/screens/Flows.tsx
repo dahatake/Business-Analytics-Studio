@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Tab, TabList } from '@fluentui/react-components';
 import * as d3 from 'd3';
 import { sankey, sankeyLinkHorizontal, sankeyJustify, type SankeyNode, type SankeyLink } from 'd3-sankey';
 import { getEntity, loaded, regionName } from '../data/pack.ts';
@@ -8,17 +9,23 @@ import { attachCardTrigger } from '../ui/cardController.ts';
 import { kindColor } from '../ui/icons.ts';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
 import { EntityRef } from '../ui/EntityRef.tsx';
-import { hrefFor, navigate } from '../state/router.ts';
+import { cardController } from '../ui/cardController.ts';
+import { hrefFor, navigate, replaceQuery, useRoute } from '../state/router.ts';
 import { WorkflowExtension } from '../data/extensionSchemas.ts';
-import { loc, type Localizable } from '../state/text.ts';
+import { loc } from '../state/text.ts';
+import { ContextualScene } from '../modules/threed/ContextualScene.tsx';
+import { WorkflowFields, WorkflowMap, WorkflowSources } from './WorkflowMap.tsx';
 
 interface N { id: string; label: string; color: string; isEntity: boolean }
 interface L { source: string; target: string; value: number }
 
 const W = 960, H = 520;
 
-export function Flows() {
+/** The work and material flow body; `embedded` drops the page header when shown as a tab of the relations screen. */
+export function Flows({ embedded = false }: { embedded?: boolean } = {}) {
   const { t, tx, fmt } = useI18n();
+  const route = useRoute();
+  const showingArchitecture = route.query.get('section') === 'architecture';
   const reduced = useReducedMotion();
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<string | null>(null);
@@ -36,9 +43,9 @@ export function Flows() {
   }, [tx]);
 
   useEffect(() => {
-    const svg = d3.select(svgRef.current!);
     // A pack without flows (e.g. imported or generated from customer material) has nothing to lay out.
-    if (graph.nodes.length === 0) return;
+    if (showingArchitecture || !svgRef.current || graph.nodes.length === 0) return;
+    const svg = d3.select(svgRef.current);
     const layout = sankey<N, L>().nodeId((d) => d.id).nodeAlign(sankeyJustify).nodeWidth(16).nodePadding(18).extent([[8, 28], [W - 8, H - 8]]);
     const { nodes, links } = layout({ nodes: graph.nodes.map((n) => ({ ...n })), links: graph.links.map((l) => ({ ...l })) });
 
@@ -86,13 +93,14 @@ export function Flows() {
     const detach: (() => void)[] = [];
     nodeSel.filter((d) => d.isEntity).each(function (d) { detach.push(attachCardTrigger(this, d.id, () => navigate(hrefFor(`/entity/${d.id}`)))); });
     return () => detach.forEach((f) => f());
-  }, [graph, reduced, t, fmt]);
+  }, [graph, reduced, t, fmt, showingArchitecture]);
 
   useEffect(() => {
-    d3.select(svgRef.current!).select('g.links').selectAll<SVGPathElement, SankeyLink<N, L>>('path')
+    if (!svgRef.current) return;
+    d3.select(svgRef.current).select('g.links').selectAll<SVGPathElement, SankeyLink<N, L>>('path')
       .classed('dim', (d) => hover !== null && (d.source as N).id !== hover && (d.target as N).id !== hover)
       .classed('on', (d) => hover !== null && ((d.source as N).id === hover || (d.target as N).id === hover));
-  }, [hover]);
+  }, [hover, showingArchitecture]);
 
   const total = d3.sum(loaded.pack.flows.filter((f) => getEntity(f.source)?.kind === 'supplier'), (f) => f.valueT);
   const workflow = useMemo(() => {
@@ -103,11 +111,24 @@ export function Flows() {
   const workOnly = workflow !== null && graph.nodes.length === 0;
 
   return (
-    <div className="screen screen-flows">
-      <PageHeader
+    <div className={embedded ? 'flows-embedded' : 'screen screen-flows'}>
+      {!embedded && <PageHeader
         title={workOnly ? t('flows.work.title') : t('flows.title')}
         subtitle={workOnly ? t('flows.work.subtitle', { count: workflow.stages.length }) : t('flows.subtitle', { total: fmt.integer(total) })}
-      />
+      />}
+      <TabList
+        selectedValue={showingArchitecture ? 'architecture' : 'flow'}
+        onTabSelect={(_, data) => {
+          cardController.closeNow();
+          replaceQuery({ section: data.value === 'architecture' ? 'architecture' : undefined });
+        }}
+        aria-label={t('flows.sections')}
+        data-testid="flow-sections"
+      >
+        <Tab value="flow">{t('flows.section.flow')}</Tab>
+        <Tab value="architecture">{t('td.tab.arch')}</Tab>
+      </TabList>
+      {showingArchitecture ? <ContextualScene tab="arch" /> : <>
       {workflow && <WorkflowPanel workflow={workflow} />}
       {!workOnly && (<>
       <Panel title={t('flows.panel')} rationale="visual.sankey" testId="sankey-panel">
@@ -137,43 +158,45 @@ export function Flows() {
         </div>
       </Panel>
       </>)}
+      </>}
     </div>
   );
 }
 
 function WorkflowPanel({ workflow }: { workflow: WorkflowExtension }) {
   const { t, lang } = useI18n();
-  const tx = (x: Localizable) => loc(x, lang);
-  const nameOf = new Map(workflow.stages.map((s) => [s.id, tx(s.name)]));
-  const list = (label: string, items: readonly Localizable[] | undefined, testId: string) => (items && items.length > 0 ? (
-    <div className="workflow-part" data-testid={testId}>
-      <div className="muted workflow-label">{label}</div>
-      <ul>{items.map((x, i) => <li key={i}>{tx(x)}</li>)}</ul>
-    </div>
-  ) : null);
+  const route = useRoute();
+  const view = route.query.get('flowView') === 'map' ? 'map' : 'list';
+  const nameOf = new Map(workflow.stages.map((s) => [s.id, loc(s.name, lang)]));
   return (
-    <Panel title={t('flows.work.panel')} testId="workflow-panel">
-      <p className="muted">{t('flows.work.hint')}</p>
-      <ol className="workflow-stages" data-testid="workflow-stages">
-        {workflow.stages.map((s, i) => {
-          const next = [...s.next.map((id) => nameOf.get(id) ?? id), ...(s.handoffTo ?? []).map((h) => tx(h))];
-          return (
-            <li key={s.id} className="workflow-stage" data-testid={`workflow-stage-${s.id}`}>
-              <h3>{i + 1}. {tx(s.name)}{s.team && <span className="muted"> · {tx(s.team)}</span>}</h3>
-              <div className="workflow-grid">
-                {list(t('flows.work.inputs'), s.inputs, 'workflow-inputs')}
-                {list(t('flows.work.activities'), s.activities, 'workflow-activities')}
-                {list(t('flows.work.outputs'), s.outputs, 'workflow-outputs')}
-                {list(t('flows.work.data'), s.data, 'workflow-data')}
-              </div>
-              {next.length > 0 && <p data-testid="workflow-next"><strong>{t('flows.work.next')}</strong> → {next.join(' / ')}</p>}
-              {s.sourceIds && s.sourceIds.some((id) => getEntity(id) || !loaded.byId.has(id)) && (
-                <p className="muted">{t('flows.work.sources')}: {s.sourceIds.filter((id) => getEntity(id) || !loaded.byId.has(id)).map((id, k) => <span key={id}>{k > 0 && ', '}{getEntity(id) ? <EntityRef id={id} /> : id}</span>)}</p>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+    <Panel title={t('flows.work.panel')} rationale={view === 'map' ? 'visual.workflow' : undefined} testId="workflow-panel">
+      <TabList
+        selectedValue={view}
+        onTabSelect={(_, data) => replaceQuery({ flowView: data.value === 'map' ? 'map' : undefined })}
+        aria-label={t('flows.work.views')}
+        data-testid="workflow-views"
+      >
+        <Tab value="list">{t('flows.work.view.list')}</Tab>
+        <Tab value="map">{t('flows.work.view.map')}</Tab>
+      </TabList>
+      {view === 'map' ? <WorkflowMap workflow={workflow} /> : (
+        <>
+          <p className="muted">{t('flows.work.hint')}</p>
+          <ol className="workflow-stages" data-testid="workflow-stages">
+            {workflow.stages.map((s, i) => {
+              const next = [...s.next.map((id) => nameOf.get(id) ?? id), ...(s.handoffTo ?? []).map((h) => loc(h, lang))];
+              return (
+                <li key={s.id} className="workflow-stage" data-testid={`workflow-stage-${s.id}`}>
+                  <h3>{i + 1}. {loc(s.name, lang)}{s.team && <span className="muted"> · {loc(s.team, lang)}</span>}</h3>
+                  <WorkflowFields stage={s} />
+                  {next.length > 0 && <p data-testid="workflow-next"><strong>{t('flows.work.next')}</strong> → {next.join(' / ')}</p>}
+                  <WorkflowSources stage={s} />
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
     </Panel>
   );
 }

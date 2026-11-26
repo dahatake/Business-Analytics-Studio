@@ -1,0 +1,5 @@
+.data-location-paths { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
+.data-location-paths dd { margin: 0; overflow-wrap: anywhere; }
+.data-location-confirm { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.data-location-confirm p { overflow-wrap: anywhere; margin: 0; }
+.data-location-actions { display: flex; gap: 8px; flex-wrap: wrap; }

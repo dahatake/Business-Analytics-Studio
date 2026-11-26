@@ -376,6 +376,14 @@ export async function createDeviceFolder(parent: string, name: string): Promise<
   return result.path;
 }
 /**
+ * FR-378: writes a generated Markdown file into `<data folder>/projects/<folder>/<name>` and returns its absolute path.
+ * Throws DeviceStorageError with code `fileExists` when the file is there and `overwrite` is false.
+ */
+export async function saveProjectFile(folder: string, name: string, content: string, overwrite = false): Promise<string> {
+  const result = await request('files', await locationToken(), { folder, name, content, overwrite }) as { path: string };
+  return result.path;
+}
+/**
  * Saves pending edits first so the copy is complete, then switches folders and reloads into the new database.
  * The migration marker for the new database is set so this browser's copy of the old data is not imported as legacy data.
  */

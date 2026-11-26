@@ -1,9 +1,9 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
-import { Badge, Button, ProgressBar } from '@fluentui/react-components';
+import { Badge, Button, ProgressBar, Tab, TabList } from '@fluentui/react-components';
 import { DocumentText20Regular } from '@fluentui/react-icons';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
-import { hrefFor, revisitRouteTarget, useRoute } from '../../state/router.ts';
+import { hrefFor, replaceQuery, revisitRouteTarget, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
@@ -27,6 +27,7 @@ import { KpiBasisNote, OriginBadge } from './StrategyPanels.tsx';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
 import { ValueModelPanel } from './ValuePanel.tsx';
+import { StepCockpit } from './StepCockpit.tsx';
 import './project.css';
 
 const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_STEPS as readonly string[]).includes(s);
@@ -671,8 +672,10 @@ export function StepDashboardScreen() {
   }, [ctx, audience, lang, t]);
   const n = IMPROVEMENT_STEPS.indexOf(step) + 1;
   const report = useDecisionReport(ctx.pack.pack.extensions);
+  // FR-378: the decision view is the default; a deep link to a detail panel (`target`) opens the details.
+  const view: 'decision' | 'details' = route.query.get('view') === 'details' || (route.query.get('view') === null && !!route.query.get('target')) ? 'details' : 'decision';
   return (
-    <div className="screen proj-screen step-dash" data-testid="step-dash" data-step={step}>
+    <div className="screen proj-screen step-dash" data-testid="step-dash" data-step={step} data-view={view}>
       <PageHeader
         title={t('proj.dash.title', { n, total: IMPROVEMENT_STEPS.length, step: t(`proj.step.${step}`) })}
         subtitle={t(`dlv.${step}.purpose` as MessageKey)}
@@ -682,25 +685,33 @@ export function StepDashboardScreen() {
           </Button>
         )}
       />
-      <StrategyOverview ctx={ctx} step={step} />
-      <StepBriefPanel d={d} ctx={ctx} audience={audience} />
-      <Summary d={d} />
-      <PriorityBriefPanel step={step} ctx={ctx} />
-      {(step === 'asis' || step === 'tobe') && <PriorityRobustnessPanel step={step} ctx={ctx} />}
-      {(step === 'asis' || step === 'tobe') && <CostOfDelayPanel step={step} ctx={ctx} />}
-      <DiscoveryAdvicePanel step={step} ctx={ctx} />
-      <HandoffPanel ctx={ctx} step={step} />
-      <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">
-        <p className="muted">{t('proj.dash.tilesHint')}</p>
-        <ul className="step-dash-tiles">
-          {d.tiles.map((tile) => <Tile key={tile.id} tile={tile} results={d.results} />)}
-        </ul>
-      </Panel>
-      <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} ctx={ctx} />
-      {(step === 'solution' || step === 'deliverable') && <ValueModelPanel ctx={ctx} nameOf={nameOf} />}
-      <DecisionSupport step={step} report={report} visible={report ? visible(report.sourceId) : false} />
-      <DocPanel d={d} />
-      <InputsPanel d={d} />
+      <TabList selectedValue={view} onTabSelect={(_, data) => replaceQuery({ view: data.value === 'details' ? 'details' : undefined })} aria-label={t('ck.views')} data-testid="step-dash-views">
+        <Tab value="decision" data-testid="step-dash-view-decision">{t('ck.view.decision')}</Tab>
+        <Tab value="details" data-testid="step-dash-view-details">{t('ck.view.details')}</Tab>
+      </TabList>
+      {view === 'decision' ? <StepCockpit step={step} d={d} ctx={ctx} audience={audience} visible={visible} nameOf={nameOf} /> : (
+        <>
+          <StrategyOverview ctx={ctx} step={step} />
+          <StepBriefPanel d={d} ctx={ctx} audience={audience} />
+          <Summary d={d} />
+          <PriorityBriefPanel step={step} ctx={ctx} />
+          {(step === 'asis' || step === 'tobe') && <PriorityRobustnessPanel step={step} ctx={ctx} />}
+          {(step === 'asis' || step === 'tobe') && <CostOfDelayPanel step={step} ctx={ctx} />}
+          <DiscoveryAdvicePanel step={step} ctx={ctx} />
+          <HandoffPanel ctx={ctx} step={step} />
+          <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">
+            <p className="muted">{t('proj.dash.tilesHint')}</p>
+            <ul className="step-dash-tiles">
+              {d.tiles.map((tile) => <Tile key={tile.id} tile={tile} results={d.results} />)}
+            </ul>
+          </Panel>
+          <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} ctx={ctx} />
+          {(step === 'solution' || step === 'deliverable') && <ValueModelPanel ctx={ctx} nameOf={nameOf} />}
+          <DecisionSupport step={step} report={report} visible={report ? visible(report.sourceId) : false} />
+          <DocPanel d={d} />
+          <InputsPanel d={d} />
+        </>
+      )}
     </div>
   );
 }

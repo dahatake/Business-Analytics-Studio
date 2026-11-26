@@ -11,7 +11,8 @@ import { applyDraft, emptyDeliverables, STEP_DEFS, type CheckContext } from '../
 import { buildDraft } from '../src/modules/project/deliverableDraft.ts';
 import { stepDashboard, tileTone, TOP_ISSUES } from '../src/modules/project/stepDashboard.ts';
 import { emptyStrategy, upsertContribution } from '../src/modules/project/strategy.ts';
-import { approveGeneratedBrief, briefText, buildStepBrief, parseBrief, requestStepBrief, verifyNumbers } from '../src/modules/project/stepBrief.ts';
+import { approveGeneratedBrief, briefText, buildStepBrief, parseBrief, requestLiveStepBrief, requestStepBrief, stepBriefRequest, verifyNumbers } from '../src/modules/project/stepBrief.ts';
+import { setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
 
 const TODAY = '2026-11-09';
 const clone = () => JSON.parse(JSON.stringify(samplePack)) as typeof samplePack;
@@ -47,6 +48,32 @@ function draftedCtx(): CheckContext {
 }
 
 const contexts: [string, () => CheckContext][] = [['demo', () => demoCtx()], ['drafted', draftedCtx], ['empty project', emptyProjectCtx]];
+
+it('D-51: a live summary missing sections is repaired for those sections only', async () => {
+  const c = demoCtx();
+  const b = buildStepBrief(stepDashboard('kpi', c), c, 'en', 'internal');
+  const full = briefText(b);
+  const withoutActions = full.replace(/### actions[\s\S]*?(?=### caveats)/, '');
+  const prompts: string[] = [];
+  setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+  setLiveTransport(async (call) => {
+    prompts.push(call.prompt);
+    return { text: call.prompt.includes('REPAIR:') ? '### actions\n- Review the KPI owners' : withoutActions, inputTokens: 5, outputTokens: 5 };
+  });
+  try {
+    const result = await requestLiveStepBrief(b, stepBriefRequest(b, c, 'en'));
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('Write ONLY these sections');
+    expect(prompts[1]).toContain('actions');
+    expect(result.content.actions).toEqual(['Review the KPI owners']);
+    expect(result.content.answer).toBe(parseBrief(full).answer);
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 10 });
+  } finally {
+    setLiveTransport(null);
+    setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
+    writeLedger([]);
+  }
+});
 
 it('requires explicit summary approval and refuses stale, different-language or unverified drafts', async () => {
   const c = demoCtx();

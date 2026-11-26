@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { runAgentLoop } from '../../ai/agentLoop.ts';
 import { aiLive, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { loadPack, type LoadedPack } from '../../data/pack.ts';
@@ -267,23 +268,28 @@ export const MAX_FILL_RETRIES = 2;
  * partial or broken answer does not leave missing data. A failed retry keeps what the earlier answers gave.
  */
 export async function requestFill(request: AiRequest, gaps: DataGap[], ctx: CheckContext, audience: Audience, signal?: AbortSignal): Promise<FillProposal[]> {
-  const response = await aiLive(request, signal);
-  let proposals = parseFill(response.text, gaps, ctx, audience);
-  for (let round = 0; round < MAX_FILL_RETRIES; round += 1) {
-    const open = gaps.filter((g) => proposals.find((p) => p.gapId === g.id)?.basis === 'unacquired');
-    if (!open.length) break;
-    let again: FillProposal[];
-    try {
-      again = parseFill((await aiLive({ ...request, ...fillRequest(ctx, request.lang, audience, open, true) }, signal)).text, open, ctx, audience);
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      break;
-    }
-    const better = new Map(again.filter((p) => p.basis !== 'unacquired').map((p) => [p.gapId, p]));
-    if (!better.size) break;
-    proposals = proposals.map((p) => better.get(p.gapId) ?? p);
-  }
-  return proposals;
+  let first: FillProposal[] = [];
+  const loop = await runAgentLoop<FillProposal>({
+    units: gaps.map((g) => g.id),
+    maxRounds: 1 + MAX_FILL_RETRIES,
+    signal,
+    ask: (pending, round) => aiLive(round === 1 ? request : { ...request, ...fillRequest(ctx, request.lang, audience, gaps.filter((g) => pending.includes(g.id)), true) }, signal),
+    verify: (answer, pending) => {
+      const open = gaps.filter((g) => pending.includes(g.id));
+      let parsed: FillProposal[];
+      try {
+        parsed = parseFill(answer.text, open, ctx, audience);
+      } catch (err) {
+        // A broken follow-up keeps what the earlier answers gave; a broken first answer is the caller's error.
+        if (first.length) return {};
+        throw err;
+      }
+      if (!first.length) first = parsed;
+      return Object.fromEntries(parsed.filter((p) => p.basis !== 'unacquired').map((p) => [p.gapId, p]));
+    },
+  });
+  // Gaps the loop could not fill keep the first answer's proposal (basis "unacquired"), as before.
+  return first.map((p) => loop.values[p.gapId] ?? p);
 }
 
 const withField = (entity: Entity, field: FillField, value: FillValue | undefined): Entity => {

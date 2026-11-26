@@ -366,7 +366,7 @@ test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
     await expect(page.getByTestId('pack-imported-notice')).toContainText('架空商事株式会社-営業改革', { timeout: 4000 });
 
     // As-is: issues ranked from the report; the user's rating re-ranks at once and survives a reload.
-    await page.evaluate(() => { window.location.hash = '/step?step=asis'; });
+    await page.evaluate(() => { window.location.hash = '/step?step=asis&view=details'; });
     const dec = page.getByTestId('step-dash-dec');
     await expect(dec.getByTestId('step-dash-dec-stack')).toBeVisible();
     await expect(page.getByTestId('step-dash-dec-issue-issue-1')).toHaveAttribute('data-rank', '1');
@@ -390,12 +390,12 @@ test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
     await page.reload();
     await expect(page.getByTestId('step-dash-dec-issue-issue-2')).toHaveAttribute('data-rank', '1');
 
-    await page.evaluate(() => { window.location.hash = '/step?step=tobe'; });
+    await page.evaluate(() => { window.location.hash = '/step?step=tobe&view=details'; });
     await expect(page.getByTestId('step-dash-dec-gaps')).toContainText('見積プロセス');
     expect(await scan(page)).toEqual([]);
 
     // KPI: the report's 20% gate is simulated; an impossible input is refused instead of computed.
-    await page.evaluate(() => { window.location.hash = '/step?step=kpi'; });
+    await page.evaluate(() => { window.location.hash = '/step?step=kpi&view=details'; });
     await expect(page.getByTestId('step-dash-dec-kpis')).toContainText('見積リードタイム');
     await expect(page.getByTestId('step-dash-dec-gate-result')).toBeVisible();
     await expect(page.getByTestId('step-dash-dec-gate-placeholder')).toBeVisible();
@@ -403,12 +403,12 @@ test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
     await page.getByTestId('step-dash-dec-gate-n').fill('1');
     await expect(page.getByTestId('step-dash-dec-gate-invalid')).toBeVisible();
 
-    await page.evaluate(() => { window.location.hash = '/step?step=solution'; });
+    await page.evaluate(() => { window.location.hash = '/step?step=solution&view=details'; });
     await expect(page.getByTestId('step-dash-dec-opt-option-a')).toBeVisible();
     await expect(page.getByTestId('step-dash-dec-options')).toContainText('課題 1');
     expect(await scan(page)).toEqual([]);
 
-    await page.evaluate(() => { window.location.hash = '/step?step=deliverable'; });
+    await page.evaluate(() => { window.location.hash = '/step?step=deliverable&view=details'; });
     await expect(page.getByTestId('step-dash-dec-roadmap')).toBeVisible();
     await expect(page.getByTestId('step-dash-dec-risks')).toContainText('説明会を開く');
     await expect(page.getByTestId('step-dash-dec-check-falsifiers')).toHaveAttribute('data-ok', 'false');

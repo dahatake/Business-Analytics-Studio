@@ -24,7 +24,7 @@ test.describe('F-3.3 visuals', () => {
     expect(asc).toEqual([...asc].sort((a, b) => a - b));
     expect(asc).not.toEqual(desc);
     for (const step of ['asis', 'tobe', 'kpi', 'solution', 'deliverable']) {
-      await page.goto(`/#/step?step=${step}`);
+      await page.goto(`/#/step?step=${step}&view=details`);
       await expect(page.getByTestId('strategy-axis')).toHaveValue('impact');
       await expect(page.getByTestId('strategy-sort')).toHaveValue('asc');
       await expect(page.getByTestId('strategy-map')).toBeVisible();

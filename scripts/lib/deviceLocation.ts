@@ -171,3 +171,35 @@ export function createFolder(parent: string, name: string): string {
   }
   return path;
 }
+
+/** FR-378: generated documents of a project live in `<data folder>/projects/<project folder>/`. */
+export const PROJECT_FILES_DIR = 'projects';
+export const MAX_PROJECT_FILE_BYTES = 4 * 1024 * 1024;
+const portableName = (name: unknown, max: number): name is string => typeof name === 'string' && name.length >= 1 && name.length <= max &&
+  !/[<>:"/\\|?*\u0000-\u001f]/.test(name) && !/[. ]$/.test(name) && name !== '.' && name !== '..' && !RESERVED.test(name);
+
+export class ProjectFileExists extends Error {}
+
+/**
+ * Writes one Markdown file into the project's folder inside the data folder. Names are checked as single portable path
+ * segments (no traversal), the file is written to a temporary name and renamed, and an existing file is replaced only
+ * when `overwrite` is set (a person may have edited it).
+ */
+export function writeProjectFile(dataDir: string, folder: unknown, name: unknown, content: unknown, overwrite: boolean): string {
+  if (!portableName(folder, 120) || !portableName(name, 200) || !name.toLowerCase().endsWith('.md') || typeof content !== 'string' ||
+    Buffer.byteLength(content, 'utf8') > MAX_PROJECT_FILE_BYTES) throw new LocationError('locationNameInvalid');
+  const dir = join(resolve(dataDir), PROJECT_FILES_DIR, folder);
+  const path = join(dir, name);
+  if (!within(path, join(resolve(dataDir), PROJECT_FILES_DIR))) throw new LocationError('locationNameInvalid');
+  if (existsSync(path) && !overwrite) throw new ProjectFileExists();
+  const tmp = join(dir, `.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(tmp, content, { encoding: 'utf8', flag: 'wx' });
+    renameSync(tmp, path);
+  } catch {
+    rmSync(tmp, { force: true });
+    throw new LocationError('locationNotWritable');
+  }
+  return path;
+}

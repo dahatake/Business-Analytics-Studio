@@ -505,6 +505,16 @@ describe('Copilot task repairs', () => {
     writeLedger([]);
     setLiveTransport(async () => ({ text: 'not JSON', inputTokens: 1, outputTokens: 1 }));
     await expect(requestResolution(request, options, new AbortController().signal)).rejects.toThrow(/JSON/);
+    // D-51: a rejected first answer is corrected once with the reason.
+    writeLedger([]);
+    const seen: string[] = [];
+    setLiveTransport(async (call) => {
+      seen.push(call.prompt);
+      return { text: call.prompt.includes('REPAIR:') ? JSON.stringify(response([choice('a', [first]), choice('b', [second])])) : 'not JSON', inputTokens: 1, outputTokens: 1 };
+    });
+    const corrected = await requestResolution(request, options, new AbortController().signal);
+    expect(corrected.choices).toHaveLength(2);
+    expect(seen).toHaveLength(2);
     writeLedger([]);
     setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: true }));
     await expect(requestResolution(request, options, new AbortController().signal)).rejects.toThrow(/blocked/);
@@ -999,6 +1009,36 @@ describe('Draft with Copilot', () => {
     ].join('\n');
     setLiveTransport(async () => ({ text: incompleteTasks, inputTokens: 10, outputTokens: 10 }));
     await expect(requestDeliverableDraft(input, { ...draftRequest(input) })).rejects.toThrow('task-define-causes');
+  });
+
+  it('D-51: asks again only for the sections the first answer left out and keeps the accepted ones', async () => {
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    const input = { step: 'asis', ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
+    const task = (id: string) => `### task-${id}\n事実・根拠: 既知\n不足情報: 未確認\n仮説: 検証が必要\n選択肢: 1) 確認 2) 保留\n推奨: 確認\n理由: 根拠不足\n検証: 記録を照合\n影響: 要試算`;
+    const [dropped, ...kept] = STEP_DEFS.asis.fields;
+    const prompts: string[] = [];
+    setLiveTransport(async (call) => {
+      prompts.push(call.prompt);
+      const repair = call.prompt.includes('repair call');
+      const sections = repair ? [`### ${dropped!.id}\nrepaired`] : [...kept.map((f) => `### ${f.id}\nfield`), ...STEP_DEFS.asis.todos.map((todo) => task(todo.id))];
+      return { text: sections.join('\n'), inputTokens: 10, outputTokens: 10 };
+    });
+    const result = await requestDeliverableDraft(input, { ...draftRequest(input) });
+    expect(result.fields[dropped!.id]).toBe('repaired');
+    expect(result.fields[kept[0]!.id]).toBe('field');
+    expect(Object.keys(result.tasks)).toHaveLength(STEP_DEFS.asis.todos.length);
+    expect(prompts.filter((p) => p.includes('repair call'))).toHaveLength(1);
+    const repairPrompt = prompts.find((p) => p.includes('repair call'))!;
+    expect(repairPrompt).not.toContain('### task-');
+    expect(repairPrompt.length).toBeLessThan(prompts[0]!.length);
+  });
+
+  it('keeps the partial result on the error when a section cannot be filled', async () => {
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    const input = { step: 'asis', ctx: demoCtx(), lang: 'ja', audience: 'internal' } as const;
+    setLiveTransport(async () => ({ text: '### problem\nonly this', inputTokens: 10, outputTokens: 10 }));
+    const err = await requestDeliverableDraft(input, { ...draftRequest(input) }).catch((e: unknown) => e) as { partial: { fields: Record<string, string> } };
+    expect(err.partial.fields).toEqual({ problem: 'only this' });
   });
 
   it('keeps task sections separate and links missing causes to the issue', () => {

@@ -92,6 +92,18 @@ describe('solution type and whole-document draft (last phase of a Project pack)'
     setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
     setLiveTransport(async () => ({ text: JSON.stringify(partial), inputTokens: 1, outputTokens: 1 }));
     await expect(requestLiveSolutionDraft(input(confirmed), solutionDraftRequest(input(confirmed))!)).rejects.toThrow(`必要な項目がありません: ${first}, ${second}`);
+
+    // D-51: a repair that supplies exactly the missing sections completes the draft without redoing the accepted ones.
+    const repairs: string[] = [];
+    setLiveTransport(async (call) => {
+      if (!call.prompt.includes('REPAIR:')) return { text: JSON.stringify(partial), inputTokens: 1, outputTokens: 1 };
+      repairs.push(call.prompt);
+      return { text: JSON.stringify({ ...full, sections: { [first!]: 'fixed 1', [second!]: 'fixed 2' } }), inputTokens: 1, outputTokens: 1 };
+    });
+    const repaired = await requestLiveSolutionDraft(input(confirmed), solutionDraftRequest(input(confirmed))!);
+    expect(repairs).toHaveLength(1);
+    expect(repaired.sections[first!]).toBe('fixed 1');
+    expect(Object.keys(repaired.sections).sort()).toEqual(Object.keys(full.sections).sort());
   });
 
   it('bundles only software-solvable work and lists the rest as not included', () => {

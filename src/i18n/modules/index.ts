@@ -28,6 +28,8 @@ import { resJa } from './res.ja.ts';
 import { resEn } from './res.en.ts';
 import { valJa } from './val.ja.ts';
 import { valEn } from './val.en.ts';
+import { ckJa } from './ck.ja.ts';
+import { ckEn } from './ck.en.ts';
 
 /** Feature-module dictionaries. Keys are prefixed with the module name, so modules never collide (checked by tests). */
 export const moduleDictionaries = {
@@ -46,7 +48,8 @@ export const moduleDictionaries = {
   stg: { ja: stgJa, en: stgEn },
   res: { ja: resJa, en: resEn },
   val: { ja: valJa, en: valEn },
+  ck: { ja: ckJa, en: ckEn },
 } as const;
 
-export const modulesJa = { ...wsJa, ...showJa, ...inkJa, ...tdJa, ...graphJa, ...projJa, ...ucJa, ...aiJa, ...opsJa, ...dlvJa, ...entryJa, ...solJa, ...stgJa, ...resJa, ...valJa };
-export const modulesEn: Record<keyof typeof modulesJa, string> = { ...wsEn, ...showEn, ...inkEn, ...tdEn, ...graphEn, ...projEn, ...ucEn, ...aiEn, ...opsEn, ...dlvEn, ...entryEn, ...solEn, ...stgEn, ...resEn, ...valEn };
+export const modulesJa = { ...wsJa, ...showJa, ...inkJa, ...tdJa, ...graphJa, ...projJa, ...ucJa, ...aiJa, ...opsJa, ...dlvJa, ...entryJa, ...solJa, ...stgJa, ...resJa, ...valJa, ...ckJa };
+export const modulesEn: Record<keyof typeof modulesJa, string> = { ...wsEn, ...showEn, ...inkEn, ...tdEn, ...graphEn, ...projEn, ...ucEn, ...aiEn, ...opsEn, ...dlvEn, ...entryEn, ...solEn, ...stgEn, ...resEn, ...valEn, ...ckEn };

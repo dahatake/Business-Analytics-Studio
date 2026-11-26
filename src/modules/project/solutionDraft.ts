@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { runAgentLoop } from '../../ai/agentLoop.ts';
 import { aiComplete, aiLive, registerMock, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import type { Entity, EntityOf } from '../../data/schema.ts';
@@ -230,14 +231,37 @@ function incomplete(lang: Lang, missing: string[]): Error {
   return new Error(lang === 'ja' ? `AI の応答に必要な項目がありません: ${missing.join(', ')}` : `Incomplete AI response: ${missing.join(', ')}`);
 }
 
-/** Live only (the all-step batch): a missing or invalid section fails the job so it can be retried. */
+/** D-51: sections the answer left out are asked for again on their own (the type is already decided) before the job fails. */
+async function repairSolutionDraft(input: SolutionDraftInput, request: AiRequest, draft: SolutionDraft, missing: string[], signal?: AbortSignal): Promise<SolutionDraft> {
+  const loop = await runAgentLoop<string>({
+    units: [...Object.keys(draft.sections), ...missing],
+    seed: draft.sections,
+    maxRounds: 2,
+    signal,
+    ask: (pending, round) => aiLive({
+      ...request,
+      prompt: `${request.prompt}\nREPAIR: the type is "${draft.type}" and the other sections are already accepted. Answer with the same JSON object, type "${draft.type}", whose "sections" holds ONLY these section ids, each complete: ${pending.join(', ')}.`,
+      ...(request.stage ? { stage: `${request.stage}:repair${round}` } : {}),
+    }, signal),
+    verify: (answer, pending) => {
+      const parsed = parseSolutionDraft(answer.text);
+      if (!parsed || parsed.type !== draft.type) return {};
+      const checked = checkSolutionDraft(input, parsed).draft;
+      return Object.fromEntries(Object.entries(checked?.sections ?? {}).filter(([id]) => pending.includes(id)));
+    },
+  });
+  if (loop.missing.length) throw incomplete(input.lang, loop.missing);
+  return { ...draft, sections: loop.values };
+}
+
+/** Live only (the all-step batch): a missing or invalid section is repaired, and fails the job only if the repair cannot fill it. */
 export async function requestLiveSolutionDraft(input: SolutionDraftInput, request: AiRequest, signal?: AbortSignal): Promise<SolutionDraft> {
   const live = await aiLive(request, signal);
   const parsed = parseSolutionDraft(live.text);
   if (!parsed) throw incomplete(input.lang, ['json']);
   const { draft, missing } = checkSolutionDraft(input, parsed);
-  if (!draft || missing.length) throw incomplete(input.lang, missing.length ? missing : ['type']);
-  return draft;
+  if (!draft) throw incomplete(input.lang, ['type']);
+  return missing.length ? repairSolutionDraft(input, request, draft, missing, signal) : draft;
 }
 
 /** One solution from its panel: live when allowed, otherwise a labelled mock. */

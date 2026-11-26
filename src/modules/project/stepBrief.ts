@@ -1,3 +1,4 @@
+import { runAgentLoop } from '../../ai/agentLoop.ts';
 import { aiComplete, aiLive, registerMock, type AiRequest, type AiResponse } from '../../ai/client.ts';
 import { STEP_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import type { Entity } from '../../data/schema.ts';
@@ -718,8 +719,8 @@ export function stepBriefRequest(brief: StepBrief, ctx: CheckContext, lang: Lang
   return { use: 'stepBrief', lang, prompt: briefPrompt(brief, lang), entities: briefEntities(brief, ctx), sendEntityContext: false, timeoutMs: STEP_DRAFT_TIMEOUT_MS, ...(scope ? { scope } : {}) };
 }
 
-function generatedBrief(brief: StepBrief, lang: Lang, response: AiResponse): GeneratedBrief {
-  const content = parseBrief(response.text);
+function generatedBrief(brief: StepBrief, lang: Lang, response: AiResponse, merged?: BriefContent): GeneratedBrief {
+  const content = merged ?? parseBrief(response.text);
   const text = [content.answer, content.situation, content.complication, content.question, ...content.findings, ...content.actions, ...content.caveats].join('\n');
   return {
     content, mode: response.mode, blockedReasons: response.blockedReasons, at: new Date().toISOString(), hash: brief.hash, lang, check: verifyNumbers(text, brief),
@@ -727,18 +728,34 @@ function generatedBrief(brief: StepBrief, lang: Lang, response: AiResponse): Gen
   };
 }
 
+const SECTION_UNITS: readonly Section[] = SECTIONS;
+
+/** D-51: sections the answer left empty are asked for again on their own; accepted ones are kept as written. */
 export async function requestLiveStepBrief(brief: StepBrief, request: AiRequest, signal?: AbortSignal): Promise<GeneratedBrief> {
-  const live = await aiLive(request, signal);
-  const response: AiResponse = {
-    mode: 'live', text: live.text, blockedReasons: [], withheldIds: [], context: '',
-    usage: { inputTokens: live.inputTokens, outputTokens: live.outputTokens },
+  const accepted = (c: BriefContent): Partial<Record<Section, string | string[]>> => Object.fromEntries(
+    SECTION_UNITS.flatMap((s) => (c[s].length ? [[s, c[s]]] : [])),
+  );
+  const loop = await runAgentLoop<string | string[]>({
+    units: SECTION_UNITS,
+    signal,
+    ask: (pending, round) => aiLive(round === 1 ? request : {
+      ...request,
+      prompt: `${request.prompt}\nREPAIR: sections already accepted. Write ONLY these sections, each starting with "### <id>", complete: ${pending.join(', ')}.`,
+      ...(request.stage ? { stage: `${request.stage}:repair${round - 1}` } : {}),
+    }, signal),
+    verify: (answer, pending) => Object.fromEntries(Object.entries(accepted(parseBrief(answer.text))).filter(([id]) => pending.includes(id))) as Record<string, string | string[]>,
+  });
+  if (loop.missing.length) throw new Error(request.lang === 'ja' ? 'AI の要約に必要な項目がありません。' : 'The AI summary is missing required sections.');
+  const v = loop.values as Record<Section, string | string[]>;
+  const content: BriefContent = {
+    answer: v.answer as string, situation: v.situation as string, complication: v.complication as string, question: v.question as string,
+    findings: v.findings as string[], actions: v.actions as string[], caveats: v.caveats as string[],
   };
-  const result = generatedBrief(brief, request.lang, response);
-  const c = result.content;
-  if (!c.answer || !c.situation || !c.complication || !c.question || !c.findings.length || !c.actions.length || !c.caveats.length) {
-    throw new Error(request.lang === 'ja' ? 'AI の要約に必要な項目がありません。' : 'The AI summary is missing required sections.');
-  }
-  return result;
+  const response: AiResponse = {
+    mode: 'live', text: '', blockedReasons: [], withheldIds: [], context: '',
+    usage: { inputTokens: loop.inputTokens, outputTokens: loop.outputTokens },
+  };
+  return generatedBrief(brief, request.lang, response, content);
 }
 
 export async function requestStepBrief(brief: StepBrief, ctx: CheckContext, lang: Lang): Promise<GeneratedBrief> {

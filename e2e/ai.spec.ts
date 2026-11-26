@@ -122,7 +122,7 @@ test.describe('Strategic overview optimization', () => {
     const before = (await deviceSnapshot(page)).records['bas.scope.demo.pack.edits'];
     await expect(page.getByTestId('ai-review-button')).toHaveCount(0);
     for (const step of steps) {
-      await page.goto(`/#/step?step=${step}`);
+      await page.goto(`/#/step?step=${step}&view=details`);
       await page.getByTestId('strategy-optimize').click();
       await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
       const draft = page.getByTestId('strategy-draft');
@@ -136,7 +136,7 @@ test.describe('Strategic overview optimization', () => {
     }
     expect(requests).toEqual(steps);
     for (const step of steps) {
-      await page.goto(`/#/step?step=${step}`);
+      await page.goto(`/#/step?step=${step}&view=details`);
       await expect(page.getByTestId('strategy-draft')).toContainText(`Strategy for ${step}`);
     }
     const key = 'bas.scope.demo.proj.overview';
@@ -1277,7 +1277,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
 
   test('D-22: [Generate with Copilot] sends without a second confirmation and flags a figure not in the fact ledger', async ({ page }) => {
     await configure(page, 'en');
-    await page.goto('/#/step?step=kpi');
+    await page.goto('/#/step?step=kpi&view=details');
     const gen = page.getByTestId('step-dash-brief-generate');
     await expect(page.getByTestId('step-dash-brief-ai-col')).toContainText('Send consent is given once in AI settings');
     received.length = 0;

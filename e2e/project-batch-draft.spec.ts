@@ -146,7 +146,7 @@ test.describe('all-step live drafts', () => {
       await expect(page.getByTestId('strategy-stale')).toHaveCount(0);
       await page.reload();
       await expect(page.getByTestId('strategy-draft')).toBeVisible();
-      await page.goto('/#/step?step=tobe');
+      await page.goto('/#/step?step=tobe&view=details');
       await expect(page.getByTestId('step-dash-brief-ai')).toHaveAttribute('data-mode', 'live');
       await expect(page.getByTestId('step-dash-brief-ai')).toHaveAttribute('data-stale', 'false');
       await page.reload();

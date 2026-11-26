@@ -1198,6 +1198,7 @@ test.describe('step handoff and Copilot form drafts', () => {
     const stepper = page.getByTestId('proj-stepper');
     const asis = stepper.locator('[data-step="asis"]');
     await asis.click();
+    await page.getByTestId('step-dash-view-details').click();
     await expect(page.getByTestId('step-handoff-status')).toHaveAttribute('data-status', 'none');
     await expect(page.getByTestId('step-handoff-confirm')).toBeDisabled();
     await expect(page.getByTestId('step-handoff-blocker')).toHaveText('ToDo をすべて完了すると確定できます。');
@@ -1214,6 +1215,7 @@ test.describe('step handoff and Copilot form drafts', () => {
     await page.getByTestId('step-handoff-confirm').click();
     await expect(page).toHaveURL(/#\/step\?step=tobe/);
     await expect(asis).toHaveAttribute('data-handoff', 'current');
+    await page.getByTestId('step-dash-view-details').click();
     const inherited = page.getByTestId('step-handoff-inherited-items');
     await expect(inherited.locator('tbody tr').first()).toBeVisible();
     await expect(inherited.locator('[data-change="changed"]')).toHaveCount(0);
@@ -1230,7 +1232,7 @@ test.describe('step handoff and Copilot form drafts', () => {
     await page.goto('/#/deliverables?step=asis');
     await page.getByTestId('dlv-field-problem').fill('受注から出荷までが長い(追記)');
     await expect(asis).toHaveAttribute('data-handoff', 'stale');
-    await page.goto('/#/step?step=tobe');
+    await page.goto('/#/step?step=tobe&view=details');
     await expect(page.getByTestId('step-handoff-upstream-changed')).toBeVisible();
     await expect(page.getByTestId('step-handoff-inherited-items').locator('[data-change="changed"]')).toHaveCount(1);
   });

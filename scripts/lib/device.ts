@@ -7,7 +7,8 @@ import {
   DEVICE_HEADER, DEVICE_ID_HEADER, DEVICE_PREFIX, DEVICE_TEST_HEADER, isDeviceKey, type DeviceChange, type DeviceLocationMode, type DeviceSnapshot,
 } from './deviceProtocol.ts';
 import {
-  DB_FILE, LocationError, configuredDir, createFolder, currentDataDir, folderRoots, inspectTarget, listFolders, samePath, writeLocation,
+  DB_FILE, LocationError, ProjectFileExists, configuredDir, createFolder, currentDataDir, folderRoots, inspectTarget, listFolders, samePath, writeLocation,
+  writeProjectFile,
 } from './deviceLocation.ts';
 
 export class DeviceConflict extends Error {}
@@ -198,7 +199,7 @@ export interface DeviceServiceOptions {
 }
 
 const ROUTES: Record<string, string[]> = {
-  state: ['GET', 'POST'], archive: ['POST'], location: ['GET', 'POST'], folders: ['POST'], 'folders/create': ['POST'],
+  state: ['GET', 'POST'], archive: ['POST'], location: ['GET', 'POST'], folders: ['POST'], 'folders/create': ['POST'], files: ['POST'],
 };
 const MODES: DeviceLocationMode[] = ['copy', 'open', 'default'];
 const pathKey = (path: string) => process.platform === 'win32' || process.platform === 'darwin' ? resolve(path).toLowerCase() : resolve(path);
@@ -287,6 +288,15 @@ export function createDeviceService(dir: string, testMode = false, options: Devi
           const name = field('name');
           if (typeof parent !== 'string' || typeof name !== 'string') return send(400, { error: 'locationInvalid' });
           return send(200, { path: createFolder(parent, name) });
+        }
+        if (route === 'files') {
+          if (!location(home).available) throw new LocationError('locationUnavailable');
+          try {
+            return send(200, { path: writeProjectFile(locate(home), field('folder'), field('name'), field('content'), field('overwrite') === true) });
+          } catch (error) {
+            if (error instanceof ProjectFileExists) return send(409, { error: 'fileExists' });
+            throw error;
+          }
         }
         if (route === 'location') {
           if (fixed) throw new LocationError('locationFixed');

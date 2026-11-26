@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { askUntilValid, repairNote } from '../../ai/agentLoop.ts';
+import { aiLive, type AiRequest } from '../../ai/client.ts';
 import { entitiesOf, subsetPack } from '../../data/pack.ts';
 import { LText, solutionMoney, type Entity, type EntityOf } from '../../data/schema.ts';
 import type { Lang } from '../../i18n/index.ts';
@@ -352,6 +354,18 @@ export function proposalEntities(proposal: OverviewProposal, ctx: CheckContext):
 export function parseOverviewResponse(text: string, ctx: CheckContext, lang: Lang, step?: ImprovementStep, audience: Audience = 'internal'): OverviewProposal {
   const json = text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1');
   return humanizeProposal(validateOverviewProposal(JSON.parse(json), ctx, step, audience), ctx, lang);
+}
+
+/** D-51: one live answer; one the parser rejects is corrected once with the reason before the call fails. */
+export async function requestLiveOverview(
+  request: AiRequest, ctx: CheckContext, lang: Lang, step?: ImprovementStep, audience: Audience = 'internal', signal?: AbortSignal,
+): Promise<{ proposal: OverviewProposal; inputTokens: number | null; outputTokens: number | null }> {
+  const r = await askUntilValid({
+    signal,
+    ask: (feedback) => aiLive(feedback ? { ...request, prompt: request.prompt + repairNote(feedback) } : request, signal),
+    parse: (text) => parseOverviewResponse(text, ctx, lang, step, audience),
+  });
+  return { proposal: r.value, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
 }
 
 const STEP_FOCUS: Record<ImprovementStep, string> = {

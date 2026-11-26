@@ -36,6 +36,7 @@ test.describe('step dashboard', () => {
     for (const step of STEPS) {
       await stepper.locator(`[data-step="${step}"]`).click();
       await expect(page).toHaveURL(new RegExp(`#/step\\?step=${step}`));
+      await page.getByTestId('step-dash-view-details').click();
       await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', step);
       await expect(stepper.locator(`[data-step="${step}"]`)).toHaveAttribute('aria-current', 'step');
       await expect(page.getByTestId('step-dash-tile-doc')).toBeVisible();
@@ -47,7 +48,7 @@ test.describe('step dashboard', () => {
   });
 
   test('a tile reflects a change to the underlying data and links to where the work is done', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const doc = page.getByTestId('step-dash-tile-doc');
     await expect(doc).toHaveAttribute('data-tone', 'open');
     await page.getByTestId('step-dash-open').click();
@@ -55,7 +56,7 @@ test.describe('step dashboard', () => {
     for (const field of STEP_DEFS.asis.fields) {
       await page.getByTestId(`dlv-field-${field.id}`).fill('2026-11-09 16');
     }
-    await page.goto('/#/step?step=asis');
+    await page.goto('/#/step?step=asis&view=details');
     await expect(doc).toHaveAttribute('data-tone', 'ok');
     await expect(page.getByTestId('step-dash-sign-asis-field')).toHaveAttribute('data-done', 'false');
     await expectTilesMatchBand(page);
@@ -73,6 +74,7 @@ test.describe('step dashboard', () => {
     await page.getByTestId('proj-target-menu').click();
     await page.getByRole('menuitemradio', { name: '空Project' }).click();
     await page.getByTestId('proj-stepper').locator('[data-step="asis"]').click();
+    await page.getByTestId('step-dash-view-details').click();
     const tile = page.getByTestId('step-dash-tile-decisions');
     await expect(tile).toHaveAttribute('data-tone', 'empty');
     await expect(tile).toContainText('データなし');
@@ -82,13 +84,14 @@ test.describe('step dashboard', () => {
   });
 
   test('each step shows its decision chart, a data table alternative and a rule-based executive summary', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const charts: Record<(typeof STEPS)[number], string[]> = {
       asis: ['matrix', 'pareto', 'gap'], tobe: [], kpi: ['quality'], solution: ['range', 'bridge'], deliverable: ['gantt', 'payback'],
     };
     for (const step of STEPS) {
       await page.getByTestId('proj-stepper').locator(`[data-step="${step}"]`).click();
       await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', step);
+      await page.getByTestId('step-dash-view-details').click();
       const brief = page.getByTestId('step-dash-brief');
       await expect(brief.getByTestId('step-dash-brief-answer')).not.toBeEmpty();
       await expect(brief.getByTestId('step-dash-brief-ledger')).toBeVisible();
@@ -109,11 +112,11 @@ test.describe('step dashboard', () => {
   });
 
   test('the asis Pareto marks the vital few up to 80% and the payback chart flags solutions over the limit', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const rows = page.getByTestId('step-dash-chart-pareto').locator('.step-chart-row');
     await expect(rows.first()).toHaveAttribute('data-vital', 'true');
     await expect(page.getByTestId('step-dash-chart-pareto').locator('.step-chart-bar.is-brand').first()).toBeVisible();
-    await page.goto('/#/step?step=deliverable');
+    await page.goto('/#/step?step=deliverable&view=details');
     const pay = page.getByTestId('step-dash-chart-payback').or(page.getByTestId('step-dash-chart-payback-empty'));
     await expect(pay).toBeVisible();
     await expect(page.getByTestId('step-dash')).toHaveAttribute('data-step', 'deliverable');
@@ -125,7 +128,7 @@ test.describe('step dashboard', () => {
   });
 
   test('[Copilot で生成] without a live connection shows a labelled mock whose figures all match the fact ledger', async ({ page }) => {
-    await go(page, '/step?step=kpi');
+    await go(page, '/step?step=kpi&view=details');
     const gen = page.getByTestId('step-dash-brief-generate');
     await expect(gen).toHaveText(/Copilot で生成/);
     await gen.click();
@@ -146,7 +149,7 @@ test.describe('step dashboard', () => {
     const sign = page.getByTestId('dlv-exit').getByTestId('dlv-sign-kpi-measure');
     await expect(sign).not.toBeChecked();
     await sign.check();
-    await page.goto('/#/step?step=kpi');
+    await page.goto('/#/step?step=kpi&view=details');
     await expect(ai).toHaveAttribute('data-stale', 'true');
     await expect(ai).toHaveAttribute('data-approved', 'false');
     await expect(gen).toHaveText(/再生成/);
@@ -160,7 +163,7 @@ test.describe('step dashboard', () => {
 
 test.describe('issue qualification (FR-347)', () => {
   test('every issue starts as a yellow light; a verdict needs its reason, "pursue" also what is different, and a "no" leaves the solution path', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const tile = page.getByTestId('step-dash-tile-issuesQualified');
     await expect(tile).toHaveAttribute('data-tone', 'open');
     await expect(tile).toHaveAttribute('data-value', '0');
@@ -210,14 +213,14 @@ test.describe('issue qualification (FR-347)', () => {
     await page.getByTestId(`qualify-open-${firstId}`).click();
     await expect(dialog.getByTestId('qualify-saved')).toContainText('E2E');
     await dialog.getByRole('button', { name: 'キャンセル' }).click();
-    await page.goto('/#/step?step=solution');
+    await page.goto('/#/step?step=solution&view=details');
     await expect(page.getByTestId('step-dash-qualified-out')).toContainText('1 件');
     await expect(page.getByTestId('step-dash-issue-solutions').locator(`tr[data-issue="${firstId}"]`)).toHaveCount(0);
     await expectTilesMatchBand(page);
   });
 
   test('the qualification dialog has no accessibility violations in English', async ({ page }) => {
-    await go(page, '/step?step=asis', 'en');
+    await go(page, '/step?step=asis&view=details', 'en');
     const id = (await page.getByTestId('step-dash-issues').locator('tbody tr').first().getAttribute('data-issue'))!;
     await page.getByTestId(`qualify-open-${id}`).click();
     const dialog = page.getByTestId('qualify-dialog');
@@ -231,7 +234,7 @@ test.describe('issue qualification (FR-347)', () => {
 
 test.describe('Order by cost of delay, the data each method needs, and a person\'s estimate (FR-365)', () => {
   test('As-is compares CD3 with impact × feasibility, and an estimate changes the order and is kept', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const panel = page.getByTestId('step-cod');
     await expect(panel).toBeVisible();
     const verdict = panel.getByTestId('step-cod-verdict');
@@ -268,13 +271,13 @@ test.describe('Order by cost of delay, the data each method needs, and a person\
     await page.getByTestId('step-cod-estimate-issue-lead-time').click();
     await page.getByTestId('cod-est-clear').click();
     await expect(page.getByTestId('step-cod-verdict')).toHaveAttribute('data-pick', 'issue-cash');
-    await page.goto('/#/step?step=kpi');
+    await page.goto('/#/step?step=kpi&view=details');
     await expect(page.getByTestId('step-priority')).toBeVisible();
     await expect(page.getByTestId('step-cod')).toHaveCount(0);
   });
 
   test('the panel and the estimate dialog pass axe, in English with no Japanese', async ({ page }) => {
-    await go(page, '/step?step=asis', 'en');
+    await go(page, '/step?step=asis&view=details', 'en');
     const panel = page.getByTestId('step-cod');
     await expect(panel).toContainText('Order by cost of delay');
     await panel.getByTestId('step-cod-sim').locator('summary').click();
@@ -290,9 +293,9 @@ test.describe('Order by cost of delay, the data each method needs, and a person\
 
 test.describe('Khalsa advice on every step screen (FR-351)', () => {
   test('each step shows its advice and priority aids (FR-358) on the dashboard and on the deliverable screen', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     for (const step of STEPS) {
-      await page.goto(`/#/step?step=${step}`);
+      await page.goto(`/#/step?step=${step}&view=details`);
       const advice = page.getByTestId('step-advice');
       await expect(advice).toBeVisible();
       await expect(advice.getByTestId(`step-advice-ask.${step}`)).toBeVisible();
@@ -306,12 +309,12 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
       await expect(page.getByTestId(`step-advice-ask.${step}`)).toBeVisible();
       await expect(page.getByTestId('step-priority')).toBeVisible();
     }
-    await page.goto('/#/step?step=asis');
+    await page.goto('/#/step?step=asis&view=details');
     await expect(page.getByTestId('step-priority-candidates')).toBeVisible();
   });
 
   test('the advice follows the data: qualifying the issues removes the yellow light, and its link opens the work', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const item = page.getByTestId('step-advice-unqualified');
     await expect(item).toHaveAttribute('data-tone', 'yellow');
     await expect(item).toContainText('判断していない課題が 5 件');
@@ -331,14 +334,14 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
     }
     await expect(page.getByTestId('step-advice-unqualified')).toHaveCount(0);
     await expect(page.getByTestId('step-advice-allDeclined')).toHaveAttribute('data-tone', 'info');
-    await page.goto('/#/step?step=solution');
+    await page.goto('/#/step?step=solution&view=details');
     await expect(page.getByTestId('step-advice-noPursued')).toBeVisible();
   });
 
   test('the advice panel and the priority aids (FR-358) pass axe on every step in English and have no Japanese', async ({ page }) => {
-    await go(page, '/step?step=asis', 'en');
+    await go(page, '/step?step=asis&view=details', 'en');
     for (const step of STEPS) {
-      await page.goto(`/#/step?step=${step}`);
+      await page.goto(`/#/step?step=${step}&view=details`);
       await expect(page.getByTestId('step-priority')).toContainText('Priority aids');
       await expect(page.getByTestId('step-advice')).toBeVisible();
       await expect(page.getByTestId('step-advice')).toContainText('Advice based on Khalsa');
@@ -351,7 +354,7 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
 
 test.describe('Firmness of the issue order and the one check worth making next (FR-364)', () => {
   test('As-is and To-be show rank acceptability, and the simulation re-ranks without saving', async ({ page }) => {
-    await go(page, '/step?step=asis');
+    await go(page, '/step?step=asis&view=details');
     const panel = page.getByTestId('step-robust');
     await expect(panel).toBeVisible();
     const verdict = panel.getByTestId('step-robust-verdict');
@@ -369,17 +372,17 @@ test.describe('Firmness of the issue order and the one check worth making next (
 
     await page.reload();
     await expect(page.getByTestId('step-robust-verdict')).toHaveAttribute('data-pick', 'issue-lead-time');
-    await page.goto('/#/step?step=tobe');
+    await page.goto('/#/step?step=tobe&view=details');
     await expect(page.getByTestId('step-robust')).toBeVisible();
     await page.goto('/#/deliverables?step=asis');
     await expect(page.getByTestId('step-robust')).toBeVisible();
-    await page.goto('/#/step?step=kpi');
+    await page.goto('/#/step?step=kpi&view=details');
     await expect(page.getByTestId('step-priority')).toBeVisible();
     await expect(page.getByTestId('step-robust')).toHaveCount(0);
   });
 
   test('the panel passes axe with the simulation open, in English with no Japanese', async ({ page }) => {
-    await go(page, '/step?step=asis', 'en');
+    await go(page, '/step?step=asis&view=details', 'en');
     const panel = page.getByTestId('step-robust');
     await expect(panel).toContainText('How firm the ranking is');
     await panel.getByTestId('step-robust-sim').locator('summary').click();

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Link, MessageBar, MessageBarBody, Select, Spinner } from '@fluentui/react-components';
 import { Checkmark20Regular, Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { aiLive, AiLiveError, preflight } from '../../ai/client.ts';
+import { AiLiveError, preflight } from '../../ai/client.ts';
 import { STEP_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded, loadPack } from '../../data/pack.ts';
@@ -25,7 +25,7 @@ import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { todayIn, todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
 import { collectObjectives, objectiveDraftInput, storeObjectives, type ObjectiveProgress, type ObjectiveSearch } from './objectiveDraft.ts';
 import {
-  availableAxes, itemNames, overviewBaseline, overviewContext, overviewPrompt, parseOverviewResponse, proposalEntities, recommendedAxis, strategyMap,
+  availableAxes, itemNames, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, requestLiveOverview, strategyMap,
   useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyDrafts, type StrategyMap, type StrategyNode,
 } from './overviewModel.ts';
 import { BriefBody } from './StepBriefPanel.tsx';
@@ -337,12 +337,12 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       current();
       if (useAiSettings.getState().provider !== provider) throw new Error(t('stg.stale'));
       abort.current = new AbortController();
-      const result = await aiLive(request, abort.current.signal);
+      const result = await requestLiveOverview(request, ctx, lang, step, audience, abort.current.signal);
       if (alive.current) setGenerationProgress({ stage: 'verify', startedAt: Date.now() });
       current();
       if (!alive.current) return;
       if (JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]) !== previousDraft) throw new Error(t('stg.draftChanged'));
-      const proposal = parseOverviewResponse(result.text, ctx, lang, step, audience);
+      const proposal = result.proposal;
       set((v) => ({ ...v, stepDrafts: { ...v.stepDrafts, [draftKey]: { proposal, step, baseline, lang, audience, at: new Date().toISOString(), provider, inputTokens: result.inputTokens, outputTokens: result.outputTokens } } }));
       setShowShared(false);
       await flushDeviceStorage();

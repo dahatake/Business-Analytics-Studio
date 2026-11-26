@@ -21,7 +21,7 @@ async function go(page: Page, step: 'solution' | 'deliverable', lang: Lang = 'ja
     sessionStorage.setItem('bas.e2e.val', '1');
     localStorage.setItem('bas.proj.ui', JSON.stringify({ state: { editor: 'E2E', editMode: true, lens: 'business', analysisLayout: 'split', firstRunDone: true, todoCollapsed: true }, version: 1 }));
   });
-  await open(page, `/step?step=${step}`, { lang });
+  await open(page, `/step?step=${step}&view=details`, { lang });
   await expect(page.getByTestId('val-panel')).toBeVisible();
 }
 

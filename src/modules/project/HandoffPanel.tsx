@@ -95,7 +95,7 @@ export function HandoffPanel({ ctx, step }: { ctx: AppCheckContext; step: Improv
             ? (
               <p data-testid="step-handoff-noinput">
                 {t('dlv.handoff.noUpstream')}{' '}
-                <a href={hrefFor('/step', { step: inherited.from })}>{t('dlv.handoff.openUpstream', { step: t(`proj.step.${inherited.from}`) })}</a>
+                <a href={hrefFor('/step', { step: inherited.from, view: 'details' })}>{t('dlv.handoff.openUpstream', { step: t(`proj.step.${inherited.from}`) })}</a>
               </p>
             )
             : (
@@ -156,7 +156,7 @@ export function HandoffPanel({ ctx, step }: { ctx: AppCheckContext; step: Improv
               : t(view.record ? 'dlv.handoff.reconfirmLast' : 'dlv.handoff.confirmLast')}
           </Button>
           {view.record && <Button icon={<Dismiss20Regular />} onClick={undo} data-testid="step-handoff-undo">{t('dlv.handoff.undo')}</Button>}
-          {view.status === 'current' && next && <a href={hrefFor('/step', { step: next })}>{t('dlv.handoff.goNext', { step: t(`proj.step.${next}`) })}</a>}
+          {view.status === 'current' && next && <a href={hrefFor('/step', { step: next, view: 'details' })}>{t('dlv.handoff.goNext', { step: t(`proj.step.${next}`) })}</a>}
         </div>
         {error && <p role="alert">{error}</p>}
       </section>

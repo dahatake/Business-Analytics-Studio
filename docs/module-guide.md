@@ -13,7 +13,7 @@ Each feature module owns only its own files:
 | ink | `src/modules/ink/` | `ink.` | `/board` → `BoardScreen.tsx` |
 | threed | `src/modules/threed/` | `td.` | `/twin3d` → `ThreeDScreen.tsx` |
 | graph | `src/modules/graph/` | `graph.` | `/graph` → `GraphScreen.tsx` |
-| project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
+| project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables), `ck.` (step decision view and what-if) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
 | usecases | `src/modules/usecases/` | `uc.` | `/usecases`, `/catalog` |
 | ai | `src/modules/ai/`, `server/` | `ai.` | `/assistant` (`AiSettingsDialog` is the only settings surface; legacy `/ai-settings` redirects to Home and opens it) |
 | ops | `src/modules/ops/`, `scripts/`, `docs/integration-catalog.md` | `ops.` | `/integrations`, `/brand` |

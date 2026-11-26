@@ -1,4 +1,4 @@
-import { aiLive, liveErrorCode, readLedger, type AiRequest } from '../../ai/client.ts';
+import { liveErrorCode, readLedger, type AiRequest } from '../../ai/client.ts';
 import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, type AiUse, type Provider } from '../../ai/policy.ts';
 import { appStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
@@ -12,7 +12,7 @@ import { useAiSettings } from '../ai/settingsStore.ts';
 import { draftRequest, requestDeliverableDraft, type DraftInput } from './deliverableDraft.ts';
 import { normalizeDeliverables, type AppCheckContext } from './deliverables.ts';
 import {
-  overviewBaseline, overviewContext, overviewPrompt, parseOverviewResponse, recommendedAxis, stepBriefContext, strategyMap, useOverview,
+  overviewBaseline, overviewContext, overviewPrompt, recommendedAxis, requestLiveOverview, stepBriefContext, strategyMap, useOverview,
   type OverviewProposal, type OverviewState,
 } from './overviewModel.ts';
 import { buildStepBrief, requestLiveStepBrief, setStepBrief, stepBriefRequest, useStepBriefs, type GeneratedBrief, type StepBrief } from './stepBrief.ts';
@@ -153,8 +153,8 @@ export async function runBatchJob(job: BatchJob, signal: AbortSignal, onProgress
   };
   if (job.kind === 'brief') return { kind: 'brief', brief: await once(() => requestLiveStepBrief(job.brief, request, signal)) };
   if (job.kind === 'solution') return { kind: 'solution', draft: await once(() => requestLiveSolutionDraft(job.input, request, signal)) };
-  const live = await once(() => aiLive(request, signal));
-  return { kind: 'strategy', proposal: parseOverviewResponse(live.text, job.context, request.lang), inputTokens: live.inputTokens, outputTokens: live.outputTokens };
+  const live = await once(() => requestLiveOverview(request, job.context, request.lang, undefined, 'internal', signal));
+  return { kind: 'strategy', proposal: live.proposal, inputTokens: live.inputTokens, outputTokens: live.outputTokens };
 }
 
 /** Snapshot all mutable inputs and existing drafts so another tab cannot silently overwrite them. */

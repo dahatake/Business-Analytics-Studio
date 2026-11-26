@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { askUntilValid, repairNote } from '../../ai/agentLoop.ts';
 import { aiLive, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { loadPack } from '../../data/pack.ts';
@@ -348,8 +349,13 @@ export function parseResolution(text: string, options: RepairOption[]): Resoluti
 }
 
 export async function requestResolution(request: AiRequest, options: RepairOption[], signal: AbortSignal): Promise<ResolutionProposal> {
-  const response = await aiLive(request, signal);
-  return parseResolution(response.text, options);
+  // D-51: an answer the parser rejects is corrected once with the reason, instead of failing the whole resolution.
+  const { value } = await askUntilValid({
+    signal,
+    ask: (feedback) => aiLive(feedback ? { ...request, prompt: request.prompt + repairNote(feedback) } : request, signal),
+    parse: (text) => parseResolution(text, options),
+  });
+  return value;
 }
 
 export interface ResolutionPreview {

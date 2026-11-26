@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Radio, RadioGroup, Select, Textarea } from '@fluentui/react-components';
-import { AiLiveError, preflight } from '../../ai/client.ts';
+import { AiLiveError, aiRequestFits, preflight } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
@@ -124,12 +124,55 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
     try {
       const stamp = batchSourceStamp();
       const options = repairOptions(input);
-      const request = { ...resolutionRequest(input, options, guidance), scope };
-      const check = preflight(request);
-      if (!check.allowed) throw new AiLiveError(check.reasons, check.reasons.map((reason) => t(reasonKey(reason))).join(' '), check.budget);
-      if (request.prompt.length + check.context.length > 32_000) throw new Error(t('dlv.draft.tooLarge'));
+      const fullRequest = { ...resolutionRequest(input, options, guidance), scope };
+      const fullCheck = preflight(fullRequest);
+      if (!fullCheck.allowed) throw new AiLiveError(fullCheck.reasons, fullCheck.reasons.map((reason) => t(reasonKey(reason))).join(' '), fullCheck.budget);
       assertStamp(stamp);
-      const proposal = await requestResolution(request, options, abort.signal);
+      let proposal: ResolutionProposal;
+      if (aiRequestFits(fullRequest, fullCheck.context)) {
+        proposal = await requestResolution(fullRequest, options, abort.signal);
+      } else {
+        // For unusually large task sets, generate bounded option chunks and merge a small set of distinct drafts.
+        const chunks: RepairOption[][] = [];
+        let chunk: RepairOption[] = [];
+        for (const option of options) {
+          const candidate = [...chunk, option];
+          const candidateRequest = { ...resolutionRequest(input, candidate, guidance), scope };
+          const candidateCheck = preflight(candidateRequest);
+          if (chunk.length && !aiRequestFits(candidateRequest, candidateCheck.context)) {
+            chunks.push(chunk);
+            chunk = [option];
+          } else {
+            chunk = candidate;
+          }
+        }
+        if (chunk.length) chunks.push(chunk);
+        if (!chunks.length) throw new Error(t('dlv.draft.tooLarge'));
+        const parts: ResolutionProposal[] = [];
+        for (const partOptions of chunks) {
+          const partRequest = { ...resolutionRequest(input, partOptions, guidance), scope };
+          const partCheck = preflight(partRequest);
+          if (!partCheck.allowed) throw new AiLiveError(partCheck.reasons, partCheck.reasons.map((reason) => t(reasonKey(reason))).join(' '), partCheck.budget);
+          if (!aiRequestFits(partRequest, partCheck.context)) throw new Error(t('dlv.draft.tooLarge'));
+          parts.push(await requestResolution(partRequest, partOptions, abort.signal));
+        }
+        const choices = parts.flatMap((part, partIndex) => part.choices.map((choice) => ({
+          ...choice,
+          id: `c${partIndex + 1}-${choice.id}`.slice(0, 40),
+        }))).slice(0, 4);
+        const firstPart = parts[0];
+        const firstId = firstPart?.choices.find((choice) => choice.id === firstPart.recommendedId)?.id;
+        const recommendedId = firstId
+          ? choices.find((choice) => choice.id === `c1-${firstId}`)?.id ?? choices[0]?.id
+          : choices[0]?.id;
+        if (!choices.length || recommendedId === undefined) throw new Error(t('dlv.resolve.invalidJson'));
+        proposal = {
+          choices,
+          recommendedId,
+          reasoning: [...new Set(parts.map((part) => part.reasoning))].join('\n\n'),
+          missingInformation: [...new Set(parts.flatMap((part) => part.missingInformation))].slice(0, 20),
+        };
+      }
       if (abort.signal.aborted) {
         setCancelled(true);
         return;

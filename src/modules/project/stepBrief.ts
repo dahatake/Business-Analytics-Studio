@@ -715,7 +715,7 @@ export const briefEntities = (brief: StepBrief, ctx: CheckContext): Entity[] =>
   brief.refs.map((id) => ctx.pack.byId.get(id)).filter((e): e is Entity => !!e && e.kind !== 'person');
 
 export function stepBriefRequest(brief: StepBrief, ctx: CheckContext, lang: Lang, scope?: string): AiRequest {
-  return { use: 'stepBrief', lang, prompt: briefPrompt(brief, lang), entities: briefEntities(brief, ctx), timeoutMs: STEP_DRAFT_TIMEOUT_MS, ...(scope ? { scope } : {}) };
+  return { use: 'stepBrief', lang, prompt: briefPrompt(brief, lang), entities: briefEntities(brief, ctx), sendEntityContext: false, timeoutMs: STEP_DRAFT_TIMEOUT_MS, ...(scope ? { scope } : {}) };
 }
 
 function generatedBrief(brief: StepBrief, lang: Lang, response: AiResponse): GeneratedBrief {

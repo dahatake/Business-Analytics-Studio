@@ -44,6 +44,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.reason.notConfirmed': 'Broad send consent has not been given in AI settings',
   'ai.reason.notConfigured': 'Connection settings are incomplete or the Foundry connection has not been verified',
   'ai.reason.budget': 'A call, size or interval limit has been reached',
+  'ai.reason.inputTooLarge': 'The send is larger than the request limit',
   'ai.reason.relayUnreachable': 'The relay process cannot be reached',
   'ai.reason.unknown': 'Other reason',
 

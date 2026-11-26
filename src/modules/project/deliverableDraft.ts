@@ -504,7 +504,7 @@ export function draftEntities(ctx: CheckContext, audience: Audience = 'internal'
 }
 
 export function draftRequest(input: DraftInput, part: DraftPart | null = null): AiRequest {
-  return { use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input, part), entities: draftEntities(input.ctx, input.audience), timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS };
+  return { use: 'deliverableDraft', lang: input.lang, prompt: draftPrompt(input, part), entities: draftEntities(input.ctx, input.audience), sendEntityContext: false, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS };
 }
 
 /**

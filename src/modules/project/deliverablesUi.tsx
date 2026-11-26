@@ -19,7 +19,8 @@ import { useUseCases } from '../usecases/store.ts';
 import { catalogForScope, useCatalogImport } from '../usecases/catalog.ts';
 import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiActivity, type AiStage } from '../ai/AiProgress.tsx';
-import { DELIVERABLE_DRAFT_TIMEOUT_MS, DRAFT_MAX_PROMPT_CHARS } from '../../ai/policy.ts';
+import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
+import { aiRequestFits } from '../../ai/client.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
 import { fillChanges, fillRequest, findGaps, mergeFills, previewFillContext, requestFill, savedProposals, type FillProposal } from './dataFill.ts';
@@ -500,7 +501,7 @@ export function DraftDialog() {
       setState({ status: 'error', message: [...new Set([...pf.reasons, ...(fillPf?.reasons ?? [])])].map((r) => t(reasonKey(r))).join(' ') });
       return;
     }
-    if (request.prompt.length + pf.context.length > DRAFT_MAX_PROMPT_CHARS || (fillReq && fillPf && fillReq.prompt.length + fillPf.context.length > DRAFT_MAX_PROMPT_CHARS)) {
+    if (!aiRequestFits(request, pf.context) || (fillReq && fillPf && !aiRequestFits(fillReq, fillPf.context))) {
       setState({ status: 'error', message: t('dlv.draft.tooLarge') });
       return;
     }

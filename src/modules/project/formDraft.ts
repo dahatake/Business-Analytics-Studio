@@ -248,7 +248,7 @@ export type FormDraftRequest<K extends FormDraftKind> = (onProgress: (activity: 
 
 export async function requestFormDraft<K extends FormDraftKind>(kind: K, context: FormDraftContext[K], lang: Lang, entities: Entity[] = []): Promise<FormDraftResult<K>> {
   registerMock('deliverableDraft', formMock, isFormDraft);
-  const response = await aiComplete({ use: 'deliverableDraft', lang, prompt: formDraftPrompt(kind, context, lang), entities });
+  const response = await aiComplete({ use: 'deliverableDraft', lang, prompt: formDraftPrompt(kind, context, lang), entities, sendEntityContext: false });
   const parsed = parseFormDraft(kind, response.text);
   const draft = kind === 'entity' && parsed ? (sanitizeEntityDraft(context as EntityDraftContext, parsed as FormDraft['entity']) as FormDraft[K] | null) : parsed;
   return { response, draft };

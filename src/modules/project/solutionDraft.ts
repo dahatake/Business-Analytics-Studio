@@ -148,7 +148,7 @@ export function solutionDraftRequest(input: SolutionDraftInput): AiRequest | nul
   const related = solution?.kind === 'solution'
     ? [solution, ...solution.issueIds, ...solution.kpiIds].map((x) => (typeof x === 'string' ? input.ctx.pack.byId.get(x) : x)).filter((e): e is Entity => !!e && show(e))
     : [];
-  return { use: 'solutionDraft', lang: input.lang, prompt: solutionDraftPrompt(input, context), entities: related, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS };
+  return { use: 'solutionDraft', lang: input.lang, prompt: solutionDraftPrompt(input, context), entities: related, sendEntityContext: false, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS };
 }
 
 /** Keeps only what the document can take: a type that was offered, every open section of it, known attachments. */

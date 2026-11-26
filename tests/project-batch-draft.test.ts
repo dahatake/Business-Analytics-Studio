@@ -264,11 +264,11 @@ describe('all-step drafts', () => {
     const now = Date.now();
     writeLedger(uses.flatMap((use) => Array.from({ length: 100 }, (_, i) => ({ at: new Date(now - i * 10).toISOString(), use, inputTokens: 1, outputTokens: 1 }))));
     setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
-    const huge = 'あ'.repeat(100_000);
+    const huge = 'あ'.repeat(300_000);
     for (const job of jobs) {
       expect(batchIntervalMs(job.request.use, new Map([[job.request.use, now]]), now)).toBe(0);
       expect(preflight(job.request).allowed).toBe(true);
-      expect(preflight({ ...job.request, prompt: `${job.request.prompt}${huge}` })).toMatchObject({ allowed: true, reasons: [] });
+      expect(preflight({ ...job.request, prompt: `${job.request.prompt}${huge}` }).reasons).toContain('inputTooLarge');
     }
     for (const job of jobs.filter((item) => item.request.use !== 'deliverableDraft' && item.request.use !== 'solutionDraft')) expect(job.request.timeoutMs).toBe(STEP_DRAFT_TIMEOUT_MS);
     setLiveTransport(async (call) => ({ text: response(call, ctx), inputTokens: 10, outputTokens: 10 }));

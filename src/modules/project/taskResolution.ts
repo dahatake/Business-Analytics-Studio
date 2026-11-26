@@ -195,13 +195,25 @@ export function repairOptions(input: ResolutionInput): RepairOption[] {
   return options;
 }
 
-function resolutionFacts(input: ResolutionInput) {
-  const entities = draftEntities(input.ctx, input.audience);
+function resolutionFacts(input: ResolutionInput, allowedOptions: RepairOption[] = []) {
+  const allEntities = draftEntities(input.ctx, input.audience);
+  const relevantIds = new Set<string>();
+  for (const ref of resolutionTodo(input).outcome?.refs ?? []) {
+    if (ref.type === 'entity') relevantIds.add(ref.id);
+  }
+  for (const option of allowedOptions) {
+    if (option.kind === 'link') relevantIds.add(option.entityId).add(option.relatedId);
+    if (option.kind === 'create') relevantIds.add(option.issueId);
+    for (const evidenceId of option.evidenceIds) relevantIds.add(evidenceId);
+  }
+  const entities = allEntities.filter((e) => relevantIds.has(e.id));
   const visibleIds = new Set(entities.map((e) => e.id));
   return {
     entities,
     facts: entities.map((e) => ({
-      id: e.id, kind: e.kind, name: loc(e.name, input.lang), description: loc(e.description, input.lang),
+      id: e.id, kind: e.kind,
+      name: loc(e.name, input.lang).slice(0, 160),
+      description: loc(e.description, input.lang).slice(0, 800),
       sourceIds: e.sourceIds.filter((id) => visibleIds.has(id)),
     })),
   };
@@ -235,10 +247,10 @@ const RESOLUTION_EXAMPLE = {
 
 export function resolutionRequest(input: ResolutionInput, options: RepairOption[], guidance = ''): AiRequest {
   const result = resolutionTodo(input);
-  const { entities, facts } = resolutionFacts(input);
+  const { entities, facts } = resolutionFacts(input, options);
   const direction = guidance.trim().slice(0, RESOLUTION_GUIDANCE_MAX);
   return {
-    use: 'deliverableDraft', lang: input.lang, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS, entities,
+    use: 'deliverableDraft', lang: input.lang, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS, entities, sendEntityContext: false,
     prompt: [
       `[bas-proj:resolve:${input.todoId}]`,
       `Review this unresolved task in ${input.lang === 'ja' ? 'Japanese' : 'English'}: ${translate(input.lang, todoKey(input.todoId))}`,
@@ -362,7 +374,7 @@ function draftedEntity(input: ResolutionInput, option: Extract<RepairOption, { k
 export function previewResolution(input: ResolutionInput, edits: ResolutionEdits, options: RepairOption[], at: string): ResolutionPreview {
   // Rebuild the allow-list before applying: callers cannot smuggle arbitrary edits through a proposal.
   const allowed = new Map(repairOptions(input).map((o) => [o.id, o]));
-  const evidence = JSON.stringify(resolutionFacts(input).facts);
+  const evidence = JSON.stringify(resolutionFacts(input, options).facts);
   if (!edits.optionIds.length) throw new Error('Resolution changes no data');
   const drafts: Record<string, EntityDraft> = {};
   const missing: ResolutionPreview['missing'] = [];
@@ -500,7 +512,7 @@ export function valueBasis(
   if (value === undefined) return null;
   if (option.kind !== 'create' || !draft?.unit) return 'estimate';
   const scope = new Set([option.issueId, ...option.evidenceIds]);
-  const stated = resolutionFacts(input).facts.filter((f) => scope.has(f.id))
+  const stated = resolutionFacts(input, [option]).facts.filter((f) => scope.has(f.id))
     .some((f) => statesField(`${f.name}\n${f.description}`, value, [draft.unit![input.lang]], field));
   return stated ? 'evidence' : 'estimate';
 }

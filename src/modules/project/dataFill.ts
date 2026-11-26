@@ -239,7 +239,7 @@ export function fillRequest(ctx: CheckContext, lang: Lang, audience: Audience, g
   }));
   const wanted = gaps.map((g) => ({ gapId: g.id, entityId: g.entityId, field: g.field, expected: EXPECTED[g.field] }));
   return {
-    use: 'deliverableDraft', lang, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS, entities,
+    use: 'deliverableDraft', lang, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS, entities, sendEntityContext: false,
     prompt: [
       FILL_MARK,
       `Fill the missing Project data below for ${ctx.pack.pack.company.industry[lang]} (${lang === 'ja' ? 'Japanese' : 'English'} notes, both languages required).`,

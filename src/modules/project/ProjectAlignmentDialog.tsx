@@ -3,7 +3,7 @@ import {
   Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input,
   MessageBar, MessageBarBody, Select, Textarea,
 } from '@fluentui/react-components';
-import { AiLiveError, aiLive, preflight } from '../../ai/client.ts';
+import { AiLiveError, aiLive, aiRequestFits, preflight } from '../../ai/client.ts';
 import { PER_USE_LIMITS } from '../../ai/policy.ts';
 import { anchorFreshness } from '../../data/companyAnchor.ts';
 import { loadImportedPack } from '../../data/packStore.ts';
@@ -108,7 +108,7 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
     setMessage({ error: false, text: t('proj.align.removed') });
   };
   const suggest = async () => {
-    if (!version || !aiApproved || !estimate?.allowed || proposal.length > 32_000) return;
+    if (!version || !aiApproved || !estimate?.allowed || !aiRequestFits({ use: 'alignmentProposal', prompt: proposal })) return;
     const controller = new AbortController();
     abort.current = controller;
     setBusy(true);
@@ -227,8 +227,8 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
                   <p className="muted">{t('proj.align.aiContents')}</p>
                   <pre className="proj-prewrap" data-testid="alignment-ai-preview">{proposal}</pre>
                   <Checkbox checked={aiApproved} onChange={(_, data) => setAiApproved(data.checked === true)} label={t('proj.align.aiApprove')} data-testid="alignment-ai-approve" />
-                  {(!estimate?.allowed || proposal.length > 32_000) && <p className="muted">{t('proj.align.aiNotReady', { reason: proposal.length > 32_000 ? 'inputTooLarge' : estimate?.reasons.join(', ') ?? '' })}</p>}
-                  <Button disabled={busy || !liveReady(ai) || !aiApproved || !estimate?.allowed || proposal.length > 32_000 || !purpose.trim()}
+                  {(!estimate?.allowed || !aiRequestFits({ use: 'alignmentProposal', prompt: proposal })) && <p className="muted">{t('proj.align.aiNotReady', { reason: !aiRequestFits({ use: 'alignmentProposal', prompt: proposal }) ? 'inputTooLarge' : estimate?.reasons.join(', ') ?? '' })}</p>}
+                  <Button disabled={busy || !liveReady(ai) || !aiApproved || !estimate?.allowed || !aiRequestFits({ use: 'alignmentProposal', prompt: proposal }) || !purpose.trim()}
                     onClick={() => void suggest()} data-testid="alignment-ai-run">{t('proj.align.aiRun')}</Button>
                   {busy && <AiProgress stage="generate" result="process" testId="alignment-ai-progress" />}
                   {tokens && <TokensInline usage={tokens} testId="alignment-ai-tokens" />}

@@ -43,6 +43,7 @@ export const aiJa = {
   'ai.reason.notConfirmed': 'AI 設定で包括的な送信同意をしていません',
   'ai.reason.notConfigured': '接続設定が未完了、または Foundry の接続テストが未確認です',
   'ai.reason.budget': '回数・大きさ・間隔のいずれかの上限に達しています',
+  'ai.reason.inputTooLarge': '送信内容が上限を超えています',
   'ai.reason.relayUnreachable': '中継プロセスに接続できません',
   'ai.reason.unknown': 'その他の理由',
 

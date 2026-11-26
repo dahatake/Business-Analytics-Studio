@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { AI_USES, AI_LIMITS, PER_USE_LIMITS } from '../src/ai/policy.ts';
+import { AI_DEFAULT_MAX_REQUEST_CHARS, AI_USES, AI_LIMITS, PER_USE_LIMITS } from '../src/ai/policy.ts';
 import { checkBudget, jstDay, estimateTokens, type UsageRecord } from '../src/ai/budget.ts';
 import { evaluateGate } from '../src/ai/gate.ts';
 import { selectOutbound } from '../src/ai/redact.ts';
-import { aiComplete, preflight, readLedger, registerMock, setLiveTransport, setRuntimeSettingsProvider, type LiveCall } from '../src/ai/client.ts';
+import { aiComplete, aiRequestFits, aiRequestLength, preflight, readLedger, registerMock, setLiveTransport, setRuntimeSettingsProvider, type LiveCall } from '../src/ai/client.ts';
 import { loaded } from '../src/data/pack.ts';
 
 const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'explain', estimatedInputTokens: 10, maxOutputTokens: 100 });
@@ -164,6 +164,37 @@ describe('AI client', () => {
     expect(pf.personCount).toBe(10);
     expect(pf.estimatedInputTokens).toBeGreaterThan(0);
     expect(pf.reasons).toEqual([]);
+  });
+
+  it('applies one relay character limit to prompt and context', () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
+    const exact = 'x'.repeat(AI_DEFAULT_MAX_REQUEST_CHARS);
+    expect(aiRequestLength({ prompt: 'x'.repeat(AI_DEFAULT_MAX_REQUEST_CHARS - 2) }, 'xx')).toBe(AI_DEFAULT_MAX_REQUEST_CHARS);
+    expect(aiRequestFits({ use: 'explain', prompt: exact }, '')).toBe(true);
+    expect(aiRequestFits({ use: 'explain', prompt: `${exact}x` }, '')).toBe(false);
+    expect(preflight({ use: 'explain', lang: 'en', prompt: `${exact}x` }).reasons).toContain('inputTooLarge');
+  });
+
+  it('can embed facts in a prompt without repeating the entity context', () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
+    const pf = preflight({
+      use: 'deliverableDraft',
+      lang: 'ja',
+      prompt: 'Facts: {"id":"issue-1"}',
+      entities: loaded.pack.entities,
+      sendEntityContext: false,
+    });
+    expect(pf.context).toBe('');
+    expect(pf.allowed).toBe(true);
+  });
+
+  it('applies one relay character limit to prompt and context for every use', () => {
+    setRuntimeSettingsProvider(() => ({ liveEnabled: true, sendConsent: true, configured: true }));
+    const exactly = 'x'.repeat(AI_DEFAULT_MAX_REQUEST_CHARS);
+    expect(aiRequestLength({ prompt: 'x'.repeat(AI_DEFAULT_MAX_REQUEST_CHARS - 2) }, 'xx')).toBe(AI_DEFAULT_MAX_REQUEST_CHARS);
+    expect(aiRequestFits({ use: 'explain', prompt: exactly }, '')).toBe(true);
+    expect(aiRequestFits({ use: 'explain', prompt: `${exactly}x` }, '')).toBe(false);
+    expect(preflight({ use: 'explain', lang: 'en', prompt: `${exactly}x` }).reasons).toContain('inputTooLarge');
   });
 
   it('shares a use between modules with matchers (mock registry)', async () => {

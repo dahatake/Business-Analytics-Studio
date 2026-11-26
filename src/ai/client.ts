@@ -2,7 +2,7 @@ import type { Entity } from '../data/schema.ts';
 import { appStorage as localStorage } from '../data/deviceStorage.ts';
 import { loaded } from '../data/pack.ts';
 import { currentScope } from '../state/projects.ts';
-import { AI_LIMITS, PER_USE_LIMITS, type AiUse, type Provider } from './policy.ts';
+import { AI_LIMITS, aiMaxRequestChars, PER_USE_LIMITS, type AiUse, type Provider } from './policy.ts';
 import { checkBudget, estimateTokens, type BudgetDecision, type UsageRecord } from './budget.ts';
 import { evaluateGate, type GateReason } from './gate.ts';
 import { selectOutbound, toPromptContext } from './redact.ts';
@@ -17,6 +17,8 @@ export interface AiRequest {
   prompt: string;
   /** Data the feature wants to ground the answer in (D-2: internal items may be included). */
   entities?: Entity[];
+  /** Some prompts already embed the exact grounding facts; omit the duplicate entity description context. */
+  sendEntityContext?: boolean;
   /** Per-use output cap (e.g. PARAM-132: 4000 for presentations). */
   maxOutputTokens?: number;
   /** Per-use timeout in ms (e.g. PARAM-121: 60 s, PARAM-127: 90 s). */
@@ -145,10 +147,18 @@ export interface Preflight {
   context: string;
 }
 
+export function aiRequestLength(req: Pick<AiRequest, 'prompt'>, context = ''): number {
+  return req.prompt.length + context.length;
+}
+
+export function aiRequestFits(req: Pick<AiRequest, 'use' | 'prompt'>, context = ''): boolean {
+  return aiRequestLength(req, context) <= aiMaxRequestChars(req.use);
+}
+
 /** Send context prepared by callers; broad one-time permission is captured in AI settings. */
 export function preflight(req: AiRequest, now = new Date()): Preflight {
   const selection = selectOutbound(req.entities ?? [], loaded.byId);
-  const context = toPromptContext(selection, req.lang);
+  const context = req.sendEntityContext === false ? '' : toPromptContext(selection, req.lang);
   const settings = runtime();
   const maxOutputTokens = req.maxOutputTokens ?? PER_USE_LIMITS[req.use]?.maxOutputTokens ?? AI_LIMITS.maxOutputTokens;
   const estimatedInputTokens = estimateTokens(req.prompt + context) + (req.media?.length ?? 0) * MEDIA_TOKEN_ESTIMATE;
@@ -159,6 +169,10 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
     configured: settings.configured,
     budget,
   });
+  if (!aiRequestFits(req, context)) {
+    gate.allowed = false;
+    gate.reasons = [...gate.reasons.filter((reason) => reason !== 'inputTooLarge'), 'inputTooLarge'];
+  }
   return {
     allowed: gate.allowed,
     reasons: gate.reasons,

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, ProgressBar, Spinner } from '@fluentui/react-components';
 import { AiLiveError, liveErrorCode, preflight, readLedger, type Preflight } from '../../ai/client.ts';
-import { DRAFT_MAX_PROMPT_CHARS, type AiUse } from '../../ai/policy.ts';
+import { type AiUse } from '../../ai/policy.ts';
+import { aiRequestFits } from '../../ai/client.ts';
 import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { currentScope, useProjects } from '../../state/projects.ts';
@@ -112,7 +113,7 @@ export function BatchDraftDialog() {
       const check = checks[i]!;
       const reasons = check.reasons.filter((reason) => reason !== 'budget');
       if (reasons.length) throw new Error(`${nameOf(job)}: ${reasons.map((reason) => t(reasonKey(reason))).join(' ')}`);
-      if (job.request.prompt.length + check.context.length > DRAFT_MAX_PROMPT_CHARS) throw new Error(`${nameOf(job)}: ${t('dlv.draft.tooLarge')}`);
+      if (!aiRequestFits(job.request, check.context)) throw new Error(`${nameOf(job)}: ${t('dlv.draft.tooLarge')}`);
     }
     return checks;
   };

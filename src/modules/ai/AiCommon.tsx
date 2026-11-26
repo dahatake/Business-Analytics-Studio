@@ -9,7 +9,7 @@ import './ai.css';
 /** Reasons the UI can explain: the client gate's reasons plus the relay's own refusals. */
 export const KNOWN_REASONS = [
   'liveDisabled', 'notConfirmed', 'notConfigured', 'budget', 'liveFailed',
-  'relayUnreachable',
+  'relayUnreachable', 'inputTooLarge',
 ] as const;
 export type KnownReason = (typeof KNOWN_REASONS)[number];
 

@@ -5,6 +5,7 @@ export type GateReason =
   | 'notConfirmed' // the user has not given broad send consent in AI settings
   | 'notConfigured' // no connection settings (endpoint/deployment/key held by the relay)
   | 'budget' // a safety limit refused (token cap, minimum interval, daily calls; see BudgetDecision.reasons)
+  | 'inputTooLarge' // prompt plus context exceeds the relay limit for this use
   | 'liveFailed'; // the live call was attempted and failed (FR-283: fall back to the mock)
 
 export interface GateInput {

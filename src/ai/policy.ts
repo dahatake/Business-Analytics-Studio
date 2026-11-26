@@ -81,6 +81,23 @@ export const DRAFT_MAX_PROMPT_CHARS = PACK_BUILD_MAX_PROMPT_CHARS;
 /** D-41: summaries and strategy optimization get the deliverable-draft time so large projects do not time out. */
 export const STEP_DRAFT_TIMEOUT_MS = DELIVERABLE_DRAFT_TIMEOUT_MS;
 
+/** Default relay character limit for prompt + entity context. Feature-specific limits override this in one place. */
+export const AI_DEFAULT_MAX_REQUEST_CHARS = 32_000;
+export const AI_MAX_REQUEST_CHARS_BY_USE: Partial<Record<AiUse, number>> = {
+  packBuild: PACK_BUILD_MAX_PROMPT_CHARS,
+  recommend: RECOMMEND_MAX_PROMPT_CHARS,
+  deliverableDraft: DRAFT_MAX_PROMPT_CHARS,
+  solutionDraft: DRAFT_MAX_PROMPT_CHARS,
+  stepBrief: DRAFT_MAX_PROMPT_CHARS,
+  strategyOverview: DRAFT_MAX_PROMPT_CHARS,
+  objectiveDraft: DRAFT_MAX_PROMPT_CHARS,
+  kpiOkrDraft: DRAFT_MAX_PROMPT_CHARS,
+};
+
+export function aiMaxRequestChars(use: AiUse): number {
+  return AI_MAX_REQUEST_CHARS_BY_USE[use] ?? AI_DEFAULT_MAX_REQUEST_CHARS;
+}
+
 export const WORKIQ_SOURCE = {
   use: 'packBuild' as const,
   providers: ['foundry', 'copilotSdk'] as readonly Provider[],

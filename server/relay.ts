@@ -6,7 +6,7 @@ import { replaceFileSync } from './files.ts';
 import { checkHost, classifyTransportError, configureNetwork, networkDispatcher, networkStatus, type HostCheck } from './network.ts';
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
-import { AI_LIMITS, AI_REASONING_EFFORT, DELIVERABLE_DRAFT_TIMEOUT_MS, DRAFT_MAX_PROMPT_CHARS, PACK_BUILD_MAX_PROMPT_CHARS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, RECOMMEND_MAX_PROMPT_CHARS, STEP_DRAFT_TIMEOUT_MS, isAiUse, workIqAllowedFor, type AiUse, type Provider } from '../src/ai/policy.ts';
+import { AI_DEFAULT_MAX_REQUEST_CHARS, AI_LIMITS, AI_MAX_REQUEST_CHARS_BY_USE, AI_REASONING_EFFORT, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, isAiUse, workIqAllowedFor, type AiUse, type Provider } from '../src/ai/policy.ts';
 import { MAX_SECRET_LENGTH, SecretVault, isSecretName } from './vault.ts';
 import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
@@ -48,16 +48,11 @@ export const RELAY_PREFIX = '/relay/';
  */
 export const RELAY_HEADER = 'x-bas-relay';
 /** Prompt + context characters accepted by POST /relay/ai. */
-export const MAX_AI_CHARS = 32_000;
+export const MAX_AI_CHARS = AI_DEFAULT_MAX_REQUEST_CHARS;
 /** Upper bound of the per-call timeout a client may ask for. */
 export const MAX_TIMEOUT_MS = 120_000;
 /** Uses with their own caps (D-12: pack generation reads attached material and writes long JSON; D-20: suggestions with attachments). */
-export const MAX_AI_CHARS_BY_USE: Partial<Record<AiUse, number>> = {
-  packBuild: PACK_BUILD_MAX_PROMPT_CHARS, recommend: RECOMMEND_MAX_PROMPT_CHARS,
-  // D-41: the all-step batch uses (D-46: kpiOkrDraft too).
-  deliverableDraft: DRAFT_MAX_PROMPT_CHARS, solutionDraft: DRAFT_MAX_PROMPT_CHARS, stepBrief: DRAFT_MAX_PROMPT_CHARS, strategyOverview: DRAFT_MAX_PROMPT_CHARS, objectiveDraft: DRAFT_MAX_PROMPT_CHARS,
-  kpiOkrDraft: DRAFT_MAX_PROMPT_CHARS,
-};
+export const MAX_AI_CHARS_BY_USE: Partial<Record<AiUse, number>> = AI_MAX_REQUEST_CHARS_BY_USE;
 export const MAX_TIMEOUT_MS_BY_USE: Partial<Record<AiUse, number>> = {
   packBuild: PACK_BUILD_TIMEOUT_MS, deliverableDraft: DELIVERABLE_DRAFT_TIMEOUT_MS, solutionDraft: DELIVERABLE_DRAFT_TIMEOUT_MS, stepBrief: STEP_DRAFT_TIMEOUT_MS, strategyOverview: STEP_DRAFT_TIMEOUT_MS, objectiveDraft: STEP_DRAFT_TIMEOUT_MS,
   kpiOkrDraft: STEP_DRAFT_TIMEOUT_MS,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Badge, Button, DrawerBody, DrawerHeader, DrawerHeaderTitle, OverlayDrawer, Spinner,
+  Badge, Button, DrawerBody, DrawerHeader, DrawerHeaderTitle, OverlayDrawer,
 } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
 import { aiComplete, readLedger, type AiRequest, type AiResponse } from '../../ai/client.ts';
@@ -10,6 +10,7 @@ import { useSettings } from '../../state/settings.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { LiveNotice, MockNotice } from './AiCommon.tsx';
+import { AiProgress } from './AiProgress.tsx';
 import { buildExplanation, componentsForRoute, entitiesOfComponents } from './explain.ts';
 import { dailyUsage } from './ledger.ts';
 import { liveReady, useAiSettings } from './settingsStore.ts';
@@ -75,7 +76,7 @@ export function ExplainPanel() {
               <Badge appearance="outline" color={live ? 'success' : 'warning'} data-testid="ai-explain-mode">{live ? t('ai.live.badge') : t('ai.mock.badge')}</Badge>
               <span>{t('ai.explain.quota', { used: usage.todayCalls, limit: usage.dailyLimit })}</span>
             </p>
-            {state.status === 'loading' && <Spinner size="tiny" label={t('ai.loading')} />}
+            {state.status === 'loading' && <AiProgress stage="generate" result="process" testId="ai-explain-progress" />}
             {state.status === 'done' && state.res.mode === 'live' && (
               <LiveNotice usage={state.res.usage}>
                 <p className="ai-answer" data-testid="ai-explain-answer">{state.res.text}</p>

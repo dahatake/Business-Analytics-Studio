@@ -244,7 +244,7 @@ export interface FormDraftResult<K extends FormDraftKind> {
   response: AiResponse;
   draft: FormDraft[K] | null;
 }
-export type FormDraftRequest<K extends FormDraftKind> = () => Promise<FormDraftResult<K>>;
+export type FormDraftRequest<K extends FormDraftKind> = (onProgress: (activity: 'workiq' | 'generate') => void) => Promise<FormDraftResult<K>>;
 
 export async function requestFormDraft<K extends FormDraftKind>(kind: K, context: FormDraftContext[K], lang: Lang, entities: Entity[] = []): Promise<FormDraftResult<K>> {
   registerMock('deliverableDraft', formMock, isFormDraft);

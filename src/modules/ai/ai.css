@@ -2,6 +2,8 @@
 .ai-d4-warning { flex: none; }
 .ai-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .ai-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
+.ai-network-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ai-network-results li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; overflow-wrap: anywhere; }
 .ai-label { font-weight: 600; color: var(--colorNeutralForeground2); margin-right: 4px; }
 .ai-h3 { font-size: 1rem; margin: 0; }
 .ai-mock { border: 1px dashed var(--colorPaletteYellowBorder2, var(--colorNeutralStroke1)); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -56,6 +58,10 @@
 .ai-settings-dialog { width: min(960px, calc(100vw - 32px)); max-width: min(960px, calc(100vw - 32px)); }
 .ai-settings-body .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .ai-settings-body > p { margin: 0; }
+.settings-tabs { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 16px; align-items: start; }
+.settings-tablist { position: sticky; top: 0; min-width: 160px; }
+.settings-tabpanel { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+@media (max-width: 720px) { .settings-tabs { grid-template-columns: minmax(0, 1fr); } .settings-tablist { position: static; } }
 .ai-readiness { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .ai-readiness li { display: flex; align-items: center; gap: 6px; }
 

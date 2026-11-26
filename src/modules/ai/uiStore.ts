@@ -8,7 +8,10 @@ export const useAiPanels = create<{ open: AiPanel | null; setOpen: (p: AiPanel |
   setOpen: (open) => set({ open }),
 }));
 
-/** D-25: AI settings exist only as this one dialog; every entry point (nav, launch, projects, links) opens it. */
-export const useAiSettingsDialog = create<{ open: boolean }>()(() => ({ open: false }));
-export const openAiSettings = () => useAiSettingsDialog.setState({ open: true });
-export const closeAiSettings = () => useAiSettingsDialog.setState({ open: false });
+/** D-25: settings (一般 / AI 設定) exist as one set of tabs; every entry point (nav, launch, projects, links) opens it. */
+export type SettingsTab = 'general' | 'ai';
+export const useSettingsDialog = create<{ open: boolean; tab: SettingsTab }>()(() => ({ open: false, tab: 'general' }));
+export const openSettings = (tab: SettingsTab = 'general') => useSettingsDialog.setState({ open: true, tab });
+export const setSettingsTab = (tab: SettingsTab) => useSettingsDialog.setState({ tab });
+export const closeSettings = () => useSettingsDialog.setState({ open: false });
+export const openAiSettings = () => openSettings('ai');

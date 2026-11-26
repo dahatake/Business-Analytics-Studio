@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   addKpiDrafts, addOkrDrafts, applyCopilotPick, discardKpiDraft, emptyDrafts, kpiAdoptState, kpiDraftPrompt, okrAdoptState,
   parseKpiDraftResponse, parseTarget, saveAllDrafts, saveKpiDraft, saveOkrDraft, MAX_AI_KPIS, type DraftPromptInput,
-  applyMissingKpiDraftResponse, missingKpiDraftPrompt, missingKpiDrafts, applyKpiScreen, kpiScreenRequest,
+  applyMissingKpiDraftResponse, missingKpiDraftPrompt, missingKpiDrafts, applyKpiScreen, kpiScreenRequest, applyKpiFill, emptyKpiFields, kpiFillPrompt, kpiFillTargets,
+  periodDate, provisionalFill,
 } from '../src/modules/project/kpiAdopt.ts';
 import { validateDecisionRequest } from '../src/ai/decision.ts';
 import type { KpiData } from '../src/modules/project/model.ts';
@@ -336,5 +337,97 @@ describe('Decision pre-screen of the candidates (FR-325 / D-37)', () => {
     expect(filtered.kpis).toEqual([]);
     const { r_c2: _dropped, ...partial } = answers;
     expect(applyKpiScreen(ext, plan, partial)).toBeNull();
+  });
+});
+
+describe('D-46: Copilot fills the fields the material leaves empty', () => {
+  const adopted = () => addOkrDrafts(['okr.kpi:k-reach', 'okr.obj:o-growth'], ext, empty(), addKpiDrafts(['okr.kpi:k-rate'], ext, empty(), emptyDrafts(), 'ja').drafts, 'ja').drafts;
+  const objectives = [{ id: 'OBJ-1', text: '顧客接点を増やす' }, { id: 'OBJ-2', text: '収益性の改善' }];
+  const fillInput = (drafts = adopted()) => ({ purpose: '顧客接点の拡大', ext, drafts, objectives, lang: 'ja' as const, today: '2026-11-26' });
+
+  it('asks only for the empty fields and the OKRs without a company objective', () => {
+    const drafts = adopted();
+    const prompt = kpiFillPrompt(fillInput(drafts))!;
+    expect(prompt).toContain('Mode: fill');
+    const data = JSON.parse(prompt.split('\n')[2]!);
+    const reach = data.kpis.find((k: { name: string }) => k.name === 'Customer Reach');
+    expect(reach.missing).toEqual(['baseline', 'current', 'deadline']);
+    expect(reach.statedPeriod).toBe('FY27');
+    // o-growth already names co-1; the OKR drafted from k-reach has none.
+    expect(data.okrs).toHaveLength(1);
+    expect(kpiFillTargets({ drafts, objectives: [] }).okrs).toHaveLength(0);
+  });
+
+  it('fills every empty field so the drafts can be saved, labels each estimate, and never overwrites stated values', () => {
+    const drafts = adopted();
+    const reach = drafts.kpis.find((d) => d.name === 'Customer Reach')!;
+    const rate = drafts.kpis.find((d) => d.name === 'Adoption rate')!;
+    const okr = drafts.okrs.find((o) => o.companyObjectiveIds.length === 0)!;
+    const answer = JSON.stringify({
+      kpis: [
+        { id: reach.id, fields: { baseline: { value: '１', why: '未計測のため基準を 1 倍とした推定' }, current: { value: 1, why: '同上' }, deadline: { value: '2027-06-30', why: 'FY27 の期末' }, target: { value: '99', why: '上書きしてはいけない' } } },
+        { id: rate.id, fields: { baseline: { value: '0', why: '推定' }, current: { value: '0', why: '推定' }, deadline: { value: 'FY27', why: '日付でない' } } },
+        { id: 'unknown', fields: { target: { value: '1', why: 'x' } } },
+      ],
+      okrs: [{ id: okr.id, objectiveIds: ['OBJ-1', 'OBJ-9'], why: 'リーチ拡大は顧客接点の目標に貢献' }],
+    });
+    const r = applyKpiFill(answer, drafts, objectives);
+    const filled = r.drafts.kpis.find((d) => d.id === reach.id)!;
+    expect(filled).toMatchObject({ target: '10', baseline: '1', current: '1', deadline: '2027-06-30' });
+    expect(filled.estimated).toEqual({ baseline: '未計測のため基準を 1 倍とした推定', current: '同上', deadline: 'FY27 の期末' });
+    expect(filled.notes).not.toContain('noDeadline');
+    expect(r.drafts.kpis.find((d) => d.id === rate.id)!.deadline).toBe('');
+    expect(r).toMatchObject({ fields: 5, okrs: 1 });
+    expect(r.remaining).toBe(r.drafts.kpis.reduce((n, d) => n + emptyKpiFields(d).length, 0));
+    expect(emptyKpiFields(r.drafts.kpis.find((d) => d.id === rate.id)!)).toEqual(['deadline']);
+    expect(r.drafts.okrs.find((o) => o.id === okr.id)).toMatchObject({ companyObjectiveIds: ['OBJ-1'], objectiveEstimate: 'リーチ拡大は顧客接点の目標に貢献' });
+    // The OKR drafts link to the reach KPI draft; with every field filled it saves, the rate draft still blocks.
+    const saved = saveAllDrafts(empty(), r.drafts);
+    expect(saved.data.kpis.some((k) => k.name === 'Customer Reach' && k.deadline === '2027-06-30')).toBe(true);
+    expect(saved.errors.some((e) => e.draftId === rate.id)).toBe(true);
+  });
+
+  it('rejects an answer that is not the requested JSON', () => {
+    expect(() => applyKpiFill('not json', adopted(), objectives)).toThrow();
+  });
+
+  it('has nothing to ask once every draft is complete', () => {
+    const drafts = adopted();
+    const done = { kpis: drafts.kpis.map((d) => ({ ...d, unit: d.unit || '%', baseline: '0', current: '0', target: d.target || '1', deadline: '2027-06-30' })), okrs: drafts.okrs.map((o) => ({ ...o, companyObjectiveIds: ['OBJ-1'] })) };
+    expect(kpiFillPrompt(fillInput(done))).toBeNull();
+  });
+
+  it('sets every field Copilot left empty by rule, marks it provisional, and lets the next fill replace it', () => {
+    const drafts = adopted();
+    const rate = drafts.kpis.find((d) => d.name === 'Adoption rate')!;
+    const noName = { ...rate, id: 'kpi-x', candidateId: 'okr.kpi:x', name: '', unit: '', target: '', original: { definition: '新規顧客の獲得数', period: '2027年3月' } };
+    const typed = { ...rate, id: 'kpi-y', candidateId: 'okr.kpi:y', current: 'abc' };
+    const r = provisionalFill({ ...drafts, kpis: [...drafts.kpis, noName, typed] }, ext, 'ja', '2026-11-26');
+    for (const d of r.drafts.kpis) expect(emptyKpiFields(d)).toEqual([]);
+    const filledRate = r.drafts.kpis.find((d) => d.id === rate.id)!;
+    // "20〜30%" states 20 % in the material; nothing states a baseline, current value or a date.
+    expect(filledRate).toMatchObject({ unit: '%', target: '20', baseline: '0', current: '0', deadline: '2027-11-26' });
+    expect(filledRate.provisional).toEqual({ baseline: 'baselineZero', current: 'currentBaseline', deadline: 'deadlineYear' });
+    expect(filledRate.notes).not.toContain('noDeadline');
+    expect(r.drafts.kpis.find((d) => d.id === 'kpi-x')).toMatchObject({
+      name: '新規顧客の獲得数', unit: '件', target: '0', deadline: '2027-03-31',
+      provisional: { name: 'nameDefinition', unit: 'unitDefault', target: 'targetBaseline', deadline: 'deadlinePeriod' },
+    });
+    // A value the user typed stays, even when invalid.
+    expect(r.drafts.kpis.find((d) => d.id === 'kpi-y')!.current).toBe('abc');
+    expect(saveAllDrafts(empty(), { kpis: r.drafts.kpis.filter((d) => d.id !== 'kpi-y'), okrs: [] }).errors).toEqual([]);
+
+    const again = JSON.parse(kpiFillPrompt(fillInput(r.drafts))!.split('\n')[2]!);
+    const asked = again.kpis.find((k: { id: string }) => k.id === rate.id);
+    expect(asked).toMatchObject({ missing: ['baseline', 'current', 'deadline'], baseline: '', deadline: '' });
+    const replaced = applyKpiFill(JSON.stringify({ kpis: [{ id: rate.id, fields: { deadline: { value: '2027-06-30', why: 'FY27 の期末' }, target: { value: '99', why: '上書き不可' } } }] }), r.drafts, objectives);
+    const next = replaced.drafts.kpis.find((d) => d.id === rate.id)!;
+    expect(next).toMatchObject({ deadline: '2027-06-30', target: '20', estimated: { deadline: 'FY27 の期末' }, provisional: { baseline: 'baselineZero', current: 'currentBaseline' } });
+  });
+
+  it.each([
+    ['2026/6/30', '2026-06-30'], ['2027年3月', '2027-03-31'], ['2026-02', '2026-02-28'], ['FY27', ''], ['2026-13-01', ''], [undefined, ''],
+  ])('periodDate(%s) = %s', (text, date) => {
+    expect(periodDate(text)).toBe(date);
   });
 });

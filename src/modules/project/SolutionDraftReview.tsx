@@ -3,6 +3,7 @@ import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/re
 import { Sparkle20Regular } from '@fluentui/react-icons';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import type { AppCheckContext } from './deliverables.ts';
 import { attachmentCandidates, sectionKey } from './solutionDocs.ts';
 import {
@@ -64,10 +65,11 @@ export function SolutionDraftReview({ solutionId, ctx }: { solutionId: string; c
   return (
     <div className="sol-draft" data-testid={`sol-draft-${solutionId}`}>
       <div className="proj-row">
-        <Button icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate()} data-testid={`sol-draft-generate-${solutionId}`}>
+        <Button icon={busy ? <Spinner size="tiny" aria-hidden /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate()} data-testid={`sol-draft-generate-${solutionId}`}>
           {busy ? t('sol.draft.busy') : t('sol.draft.button')}
         </Button>
       </div>
+      {busy && <AiProgress stage="generate" testId={`sol-draft-progress-${solutionId}`} />}
       {error && <p role="alert" data-testid={`sol-draft-error-${solutionId}`}>{t('sol.draft.error', { detail: error })}</p>}
       {draft && (
         <section aria-label={t('sol.draft.title')} className="sol-draft-body" data-testid={`sol-draft-review-${solutionId}`} data-mode={draft.mock ? 'mock' : 'live'}>

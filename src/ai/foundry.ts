@@ -11,7 +11,7 @@ export const CONNECTION_TEST_TIMEOUT_MS = 30_000;
 export const CONNECTION_INPUT_ERRORS = ['invalidBody', 'invalidEndpoint', 'projectEndpoint', 'invalidDeployment', 'invalidApiVersion'] as const;
 export type ConnectionInputError = (typeof CONNECTION_INPUT_ERRORS)[number];
 export const FOUNDRY_ERRORS = [
-  'dnsFailure', 'networkError', 'tlsError', 'unauthorized', 'forbidden', 'deploymentNotFound',
+  'dnsFailure', 'networkError', 'tlsError', 'proxyAuthRequired', 'proxyError', 'unauthorized', 'forbidden', 'deploymentNotFound',
   'invalidApiRequest', 'contentFiltered', 'providerBusy', 'providerError', 'badProviderResponse', 'outputLimit', 'timeout', 'aborted',
 ] as const;
 export type FoundryError = (typeof FOUNDRY_ERRORS)[number];

@@ -57,6 +57,10 @@ async function seed(page: Page, okrExt: Record<string, unknown> = okr, withoutKp
   await expect(page.getByTestId('proj-pack-okr')).toBeVisible();
 }
 
+/** D-46: the fill call after a pick; an empty answer leaves the fields to the provisional rule (the estimate flow has its own test). */
+const isFill = (body: { prompt: string }) => body.prompt.includes('Mode: fill');
+const noEstimates = { json: { text: JSON.stringify({ kpis: [], okrs: [] }), inputTokens: 10, outputTokens: 10 } };
+
 async function enableDraftAi(page: Page) {
   await page.route('**/relay/status', (route) => route.fulfill({ json: {
     secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
@@ -73,6 +77,7 @@ test('a pack without KPI/OKR candidates offers missing-only drafts that survive 
     requests++;
     const body = route.request().postDataJSON();
     expect(body.use).toBe('kpiOkrDraft');
+    if (isFill(body)) return route.fulfill(noEstimates);
     expect(body.prompt).toContain('Mode: proposeMissing');
     expect(body.prompt).toContain('パートナー経由で顧客接点を広げる');
     expect(body.prompt).toContain('issue-lead-time');
@@ -87,12 +92,16 @@ test('a pack without KPI/OKR candidates offers missing-only drafts that survive 
   await page.getByTestId('proj-missing-copilot').click();
   const draft = page.getByTestId('proj-kpi-draft-proposal.kpi:delivery');
   await expect(draft).toContainText('定義案');
-  for (const field of ['基準値', '現在値', '目標値', '期限']) await expect(draft.getByLabel(field, { exact: true })).toHaveValue('');
+  // D-46: Copilot's fill left every number empty, so each holds a provisional rule value that is marked for review.
+  for (const field of ['基準値', '現在値', '目標値', '期限']) await expect(draft.getByLabel(field, { exact: true })).toHaveAttribute('data-provisional', 'true');
+  await expect(draft.getByLabel('基準値', { exact: true })).toHaveValue('0');
+  await expect(page.getByTestId('proj-kpi-draft-provisional-proposal.kpi:delivery')).toBeVisible();
+  await expect(page.getByTestId('proj-adopt-notice')).toContainText('仮置き');
   await expect(page.getByTestId('proj-missing-copilot')).toHaveCount(0);
   await expect(page.getByTestId('proj-okr-drafts')).toContainText('出荷までの流れを改善する');
   await page.reload();
   await expect(draft).toBeVisible();
-  expect(requests).toBe(1);
+  expect(requests).toBe(2);
   await expect(page.getByTestId('proj-missing-copilot')).toHaveCount(0);
   await draft.getByLabel('基準値', { exact: true }).fill('5');
   await draft.getByLabel('現在値', { exact: true }).fill('5');
@@ -121,6 +130,7 @@ test('a pack without KPI/OKR candidates offers missing-only drafts that survive 
 test('missing OKRs link to existing pack KPIs without replacing them', async ({ page }) => {
   await seed(page, {});
   await page.route('**/relay/ai', async (route) => {
+    if (isFill(route.request().postDataJSON())) return route.fulfill(noEstimates);
     expect(route.request().postDataJSON().prompt).toContain('"missing":{"kpis":false,"okrs":true}');
     await route.fulfill({ json: { text: JSON.stringify({
       kpis: [],
@@ -208,8 +218,9 @@ test('Copilot drafts only open candidates, with its reasons and unverified numbe
   const prompts: string[] = [];
   await page.route('**/relay/ai', async (route) => {
     const body = route.request().postDataJSON() as { prompt: string; use: string };
-    prompts.push(body.prompt);
     expect(body.use).toBe('kpiOkrDraft');
+    if (isFill(body)) return route.fulfill(noEstimates);
+    prompts.push(body.prompt);
     await route.fulfill({ json: { text: JSON.stringify({
       kpis: [{ id: 'okr.kpi:k-wins', reason: '顧客接点の成果を件数で測れる' }, { id: 'okr.kpi:k-eng', reason: '売上 300% に効く' }, { id: 'okr.kpi:ghost', reason: 'x' }],
       okrs: [{ kpiIds: ['okr.kpi:k-wins', 'okr.kpi:k-eng'], objective: 'パートナーと顧客接点を広げる', reason: '目的と一致' }],
@@ -240,7 +251,10 @@ test('Copilot drafts only open candidates, with its reasons and unverified numbe
   await expect(set).toContainText('Copilot の案');
   await expect(set).toContainText('保存すると、つながっている KPI のドラフト 2 件も保存します');
 
-  // Saving the OKR is blocked until its linked KPI drafts are complete; then everything saves at once.
+  // Saving the OKR is blocked while a linked KPI draft is incomplete; then everything saves at once.
+  const eng = page.getByTestId('proj-kpi-draft-okr.kpi:k-eng');
+  await expect(eng.getByLabel('期限', { exact: true })).toHaveAttribute('data-provisional', 'true');
+  await eng.getByLabel('期限', { exact: true }).fill('');
   await set.getByRole('button', { name: 'ドラフト「パートナーと顧客接点を広げる」を保存' }).click();
   await expect(set.getByRole('alert')).toBeVisible();
   for (const id of ['k-wins', 'k-eng']) {
@@ -255,6 +269,84 @@ test('Copilot drafts only open candidates, with its reasons and unverified numbe
   await expect(page.getByTestId('proj-okr-panel')).toContainText('パートナーと顧客接点を広げる');
   await expect(page.getByTestId('proj-kpi-panel').locator('table')).toContainText('Frontier Transformation Wins');
   expect(await scan(page)).toEqual([]);
+});
+
+test('D-46: Copilot estimates every empty field after the pick, labels each estimate, and the drafts save as they are', async ({ page }) => {
+  await seed(page);
+  const modes: string[] = [];
+  await page.route('**/relay/ai', async (route) => {
+    const body = route.request().postDataJSON() as { prompt: string; use: string };
+    expect(body.use).toBe('kpiOkrDraft');
+    if (isFill(body)) {
+      modes.push('fill');
+      const data = JSON.parse(body.prompt.split('\n')[2]!) as { kpis: { id: string; missing: string[] }[] };
+      const value: Record<string, string> = { unit: '件', baseline: '1', current: '1', target: '5', deadline: '2027-06-30' };
+      return route.fulfill({ json: { text: JSON.stringify({
+        kpis: data.kpis.map((k) => ({ id: k.id, fields: Object.fromEntries(k.missing.map((f) => [f, { value: value[f], why: `FY27 の期末から推定（${f}）` }])) })), okrs: [],
+      }), inputTokens: 10, outputTokens: 10 } });
+    }
+    modes.push('pick');
+    return route.fulfill({ json: { text: JSON.stringify({ kpis: [{ id: 'okr.kpi:k-reach', reason: '顧客接点の広がりを測れる' }], okrs: [] }), inputTokens: 10, outputTokens: 10 } });
+  });
+  await enableDraftAi(page);
+  await page.getByTestId('proj-adopt-copilot').click();
+  await expect(page.getByTestId('proj-adopt-notice')).toContainText('件を Copilot が推定して埋め');
+  expect(modes).toEqual(['pick', 'fill']);
+  const draft = page.getByTestId('proj-kpi-draft-okr.kpi:k-reach');
+  await expect(page.getByTestId('proj-kpi-draft-estimated-okr.kpi:k-reach')).toBeVisible();
+  await expect(draft.getByLabel('目標値', { exact: true })).toHaveValue('10');
+  await expect(draft.getByLabel('期限', { exact: true })).toHaveValue('2027-06-30');
+  await expect(draft).toContainText('Copilot の推定（要確認）: FY27 の期末から推定（deadline）');
+  // A value the user types is theirs: its estimate label goes away.
+  await draft.getByLabel('現在値', { exact: true }).fill('2');
+  await expect(draft).not.toContainText('推定（current）');
+  await expect(page.getByTestId('proj-fill-drafts')).toHaveCount(0);
+  expect(await scan(page)).toEqual([]);
+  await draft.getByRole('button', { name: 'ドラフト「Customer Reach」を保存' }).click();
+  await expect(draft).toHaveCount(0);
+  await expect(page.getByTestId('proj-kpi-panel').locator('table')).toContainText('Customer Reach');
+});
+
+test('D-46: an unusable estimate is asked again, then set provisionally, and a later Copilot fill replaces it', async ({ page }) => {
+  await seed(page);
+  const modes: string[] = [];
+  let deadline = 'FY27';
+  await page.route('**/relay/ai', async (route) => {
+    const body = route.request().postDataJSON() as { prompt: string; use: string };
+    if (isFill(body)) {
+      modes.push('fill');
+      const data = JSON.parse(body.prompt.split('\n')[2]!) as { kpis: { id: string; missing: string[] }[] };
+      // A period is not a date, so the deadline stays empty after the first answer and the second (it adds nothing).
+      const value: Record<string, string> = { baseline: '1', current: '1', deadline };
+      return route.fulfill({ json: { text: JSON.stringify({
+        kpis: data.kpis.map((k) => ({ id: k.id, fields: Object.fromEntries(k.missing.map((f) => [f, { value: value[f], why: `${f} の推定` }])) })), okrs: [],
+      }), inputTokens: 10, outputTokens: 10 } });
+    }
+    modes.push('pick');
+    return route.fulfill({ json: { text: JSON.stringify({ kpis: [{ id: 'okr.kpi:k-reach', reason: '顧客接点の広がりを測れる' }], okrs: [] }), inputTokens: 10, outputTokens: 10 } });
+  });
+  await enableDraftAi(page);
+  await page.getByTestId('proj-adopt-copilot').click();
+  await expect(page.getByTestId('proj-adopt-notice')).toContainText('仮置きしました');
+  expect(modes).toEqual(['pick', 'fill', 'fill']);
+  const draft = page.getByTestId('proj-kpi-draft-okr.kpi:k-reach');
+  const due = draft.getByLabel('期限', { exact: true });
+  await expect(due).toHaveAttribute('data-provisional', 'true');
+  await expect(due).not.toHaveValue('');
+  await expect(draft).toContainText('仮置き（Copilot の推定なし・要確認）: 期間を日付にできないため、1 年後にしました');
+  await expect(draft.getByLabel('基準値', { exact: true })).toHaveAttribute('data-estimated', 'true');
+  await expect(page.getByTestId('proj-kpi-draft-provisional-okr.kpi:k-reach')).toBeVisible();
+  expect(await scan(page)).toEqual([]);
+
+  deadline = '2027-06-30';
+  await page.getByTestId('proj-fill-copilot').click();
+  await expect(due).toHaveValue('2027-06-30');
+  await expect(due).toHaveAttribute('data-estimated', 'true');
+  await expect(page.getByTestId('proj-kpi-draft-provisional-okr.kpi:k-reach')).toHaveCount(0);
+  await expect(page.getByTestId('proj-fill-drafts')).toHaveCount(0);
+  await draft.getByRole('button', { name: 'ドラフト「Customer Reach」を保存' }).click();
+  await expect(draft).toHaveCount(0);
+  await expect(page.getByTestId('proj-kpi-panel').locator('table')).toContainText('Customer Reach');
 });
 
 test('FR-341: internal KPIs/OKRs show their organisation, a unit-only project is warned, and the organisation is editable (AC-948)', async ({ page }) => {

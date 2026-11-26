@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }} | Business Analytics Studio</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ '/' | relative_url }}">Business Analytics Studio</a>
+    <nav aria-label="サイト">
+      <a href="{{ '/' | relative_url }}">ダウンロード</a>
+      <a href="{{ '/guide.html' | relative_url }}"{% if page.url == '/guide.html' %} aria-current="page"{% endif %}>手順書</a>
+      <a href="https://github.com/{{ site.repository }}/releases">Releases</a>
+    </nav>
+  </header>
+  <main id="main">
+    {{ content }}
+  </main>
+  <footer class="site-footer">
+    <p>MIT License ・ <a href="https://github.com/{{ site.repository }}">ソースコード</a></p>
+  </footer>
+</body>
+</html>

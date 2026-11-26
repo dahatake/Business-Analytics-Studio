@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
 import { Checkmark20Regular, Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { MockBadge } from './common.tsx';
 import type { FormDraft, FormDraftKind, FormDraftRequest } from './formDraft.ts';
 
@@ -30,6 +31,7 @@ export function FormDraftReview<K extends FormDraftKind>({ kind, testId, baselin
 }) {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<'workiq' | 'generate'>('generate');
   const [pending, setPending] = useState<Pending<K> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState(false);
@@ -37,10 +39,11 @@ export function FormDraftReview<K extends FormDraftKind>({ kind, testId, baselin
 
   const create = async () => {
     setBusy(true);
+    setActivity('generate');
     setError(null);
     setApplied(false);
     try {
-      const { response, draft } = await request();
+      const { response, draft } = await request(setActivity);
       if (!draft) {
         setPending(null);
         setError(t('dlv.fd.unreadable'));
@@ -55,11 +58,12 @@ export function FormDraftReview<K extends FormDraftKind>({ kind, testId, baselin
   return (
     <div className="dlv-form-draft" data-testid={testId} data-kind={kind}>
       <div className="proj-row">
-        <Button icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy || disabled} onClick={() => void create()} data-testid={`${testId}-create`}>
+        <Button icon={busy ? <Spinner size="tiny" aria-hidden /> : <Sparkle20Regular />} disabled={busy || disabled} onClick={() => void create()} data-testid={`${testId}-create`}>
           {pending ? t('dlv.fd.recreate') : t('dlv.fd.create')}
         </Button>
         {applied && <span role="status" data-testid={`${testId}-applied`}>{t(`dlv.fd.applied.${kind}`)}</span>}
       </div>
+      {busy && <AiProgress stage="generate" activity={activity} result="process" testId={`${testId}-progress`} />}
       {error && <p role="alert" className="proj-error" data-testid={`${testId}-error`}>{error}</p>}
       {pending && (
         <section className="dlv-form-draft-preview" aria-label={t('dlv.fd.preview')} data-testid={`${testId}-preview`} data-stale={stale}>

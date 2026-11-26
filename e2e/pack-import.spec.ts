@@ -255,6 +255,14 @@ test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
     await expect(regen.getByTestId('gen-start')).toBeDisabled();
     await regen.getByRole('button', { name: 'キャンセル' }).click();
     await expect(regen).toHaveCount(0);
+    // An unmet item opens the entry form whose AI draft proposes the missing data; nothing is saved before review.
+    await expect(page.getByTestId('pack-ready-draft-dataCatalog')).toHaveCount(0);
+    const draftLink = page.locator('[data-testid^="pack-ready-draft-"]').first();
+    await expect(draftLink).toContainText('AIでドラフト');
+    await draftLink.click();
+    await expect(page.getByTestId('entry-dialog')).toBeVisible();
+    await page.getByTestId('entry-dialog').getByRole('button', { name: 'キャンセル', exact: true }).click();
+    await expect(page.getByTestId('entry-dialog')).toHaveCount(0);
 
     await page.evaluate(() => { window.location.hash = '/directory'; });
     await expect(page.locator('main#main')).toContainText('岐阜工場');

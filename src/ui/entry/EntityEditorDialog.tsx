@@ -275,10 +275,11 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
     return fields;
   };
 
-  const draftRequest: FormDraftRequest<'entity'> = async () => {
+  const draftRequest: FormDraftRequest<'entity'> = async (onProgress) => {
     setWorkIqNote(null);
     const evidence: { text: string; source: string }[] = [];
     if (useWorkIq && workIqOk && (ai.provider === 'foundry' || ai.provider === 'copilotSdk')) {
+      onProgress('workiq');
       try {
         const sections = await askWorkIqSections({
           company: company?.name ?? '', project: project?.name ?? '', purpose: project?.brief?.purpose ?? '', focus: project?.brief?.focus ?? '',
@@ -286,8 +287,10 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
           provider: ai.provider as WorkIqProvider, aspects: [], topics: [[kindLabel, form.name, form.description].filter((x) => typeof x === 'string' && x).join(' ')],
         });
         for (const s of sections) if ('answer' in s && s.answer.trim()) evidence.push({ text: s.answer.slice(0, 1500), source: s.citations.slice(0, 3).map((c) => c.title).join(', ') || 'Work IQ' });
-        if (sections.some((s) => 'error' in s && s.error === 'confidentialNotAllowed')) setWorkIqNote(t('workiq.confidentialNotAllowed'));
-        else if (!evidence.length) setWorkIqNote(t('entry.draft.workIqEmpty'));
+        const withheld = sections.some((s) => 'error' in s ? s.error === 'confidentialNotAllowed' : (s.withheld ?? 0) > 0);
+        const failed = sections.filter((s) => 'error' in s && s.error !== 'confidentialNotAllowed').length;
+        const notes = [failed ? t('workiq.partialSearch', { n: failed }) : '', withheld ? t('workiq.excludedMaterial') : '', !evidence.length ? t('entry.draft.workIqEmpty') : ''].filter(Boolean);
+        if (notes.length) setWorkIqNote(notes.join(' '));
       } catch {
         setWorkIqNote(t('entry.draft.workIqFailed'));
       }
@@ -296,6 +299,7 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
       kind: kindLabel, company: company?.name ?? '', project: project?.name ?? '', purpose: project?.brief?.purpose ?? '', focus: project?.brief?.focus ?? '',
       fields: draftFields(), ...(evidence.length ? { evidence } : {}),
     };
+    onProgress('generate');
     return requestFormDraft('entity', context, lang);
   };
 

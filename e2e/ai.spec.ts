@@ -211,6 +211,32 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(page.getByTestId('ai-state')).not.toContainText('モック');
   });
 
+  test('FR-372: shows the proxy route and checks each outbound host', async ({ page }) => {
+    let checked = 0;
+    await page.route('**/relay/network/check', async (route) => {
+      checked++;
+      await route.fulfill({ json: {
+        network: { mode: 'proxy', source: 'system', proxy: 'proxy.example.com:8080', pacUrl: null, systemCa: true, note: null },
+        results: [
+          { host: 'login.microsoftonline.com', via: 'proxy', ok: true, status: 302 },
+          { host: 'api.githubcopilot.com', via: 'proxy', ok: false, error: 'proxyAuthRequired' },
+        ],
+      } });
+    });
+    const settings = await openAiSettings(page, { lang: 'ja' });
+    const network = settings.getByTestId('ai-network');
+    await expect(network.getByTestId('ai-network-mode')).toHaveAttribute('data-mode', /^(direct|proxy|pac)$/);
+    await network.getByTestId('ai-network-check').click();
+    await expect(network.getByTestId('ai-network-mode')).toHaveAttribute('data-mode', 'proxy');
+    await expect(network.getByTestId('ai-network-mode')).toContainText('proxy.example.com:8080');
+    await expect(network.getByTestId('ai-network-ca')).toBeVisible();
+    await expect(network.locator('li[data-host="login.microsoftonline.com"]')).toHaveAttribute('data-ok', 'true');
+    await expect(network.locator('li[data-host="api.githubcopilot.com"]')).toHaveAttribute('data-ok', 'false');
+    await expect(network.locator('li[data-host="api.githubcopilot.com"]')).toContainText('407');
+    expect(checked).toBe(1);
+    expect(await scan(page, ['[data-testid="ai-network"]'])).toEqual([]);
+  });
+
   for (const lang of ['ja', 'en'] as const) {
     test(`${lang}: AI settings explain one-time consent for request data`, async ({ page }) => {
       const settings = await openAiSettings(page, { lang });
@@ -705,7 +731,8 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     test(`${lang}: launch settings explains blocked tests instead of disabling the action`, async ({ page }) => {
       await page.setViewportSize({ width: 768, height: 920 });
       await seedLaunch(page, lang);
-      await page.getByTestId('launch-ai-settings').click();
+      await page.getByTestId('launch-settings').click();
+      await page.getByTestId('settings-tab-ai').click();
       const settings = page.getByTestId('ai-settings-dialog');
       const d4Warning = settings.getByTestId('ai-d4-warning');
       await expect(d4Warning).toBeVisible();
@@ -896,6 +923,39 @@ test.describe('explain current state (FR-274, FR-277)', () => {
 });
 
 test.describe('assistant (FR-017, FR-284, FR-289, FR-291/292)', () => {
+  test('live chat shows its actual stage and elapsed time while waiting', async ({ page }) => {
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+      connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' }, workiq: null,
+    } }));
+    let release!: () => void;
+    const response = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/relay/ai', async (route) => {
+      expect((route.request().postDataJSON() as { use: string }).use).toBe('chat');
+      await response;
+      await route.fulfill({ json: { text: 'Synthetic answer', inputTokens: 10, outputTokens: 10 } }).catch(() => undefined);
+    });
+    try {
+      await open(page, '/assistant', { lang: 'en' });
+      await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
+      await page.reload();
+      await page.getByTestId('ai-chat-input').fill('What should I check?');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      const progress = page.getByTestId('ai-chat-progress');
+      await expect(progress).toHaveAttribute('data-stage', 'generate');
+      await expect(progress).toContainText('AI is generating');
+      await expect(progress).toContainText('Check and process the answer');
+      await expect(progress).not.toContainText('Check and save the answer');
+      await expect(progress.getByTestId('ai-chat-progress-status')).toContainText('0:02 since starting', { timeout: 5000 });
+      expect(await scan(page)).toEqual([]);
+      release();
+      await expect(page.getByTestId('ai-chat-log')).toContainText('Synthetic answer');
+      await expect(progress).toHaveCount(0);
+    } finally {
+      release();
+    }
+  });
+
   test('search returns EntityRef links and chat answers are labelled mock', async ({ page }) => {
     await open(page, '/assistant', { lang: 'en' });
     await page.getByTestId('ai-search-input').fill('lead time');
@@ -1381,7 +1441,8 @@ test.describe('live generation through the relay (D-12)', () => {
       await route.fulfill({ json: { workiq: workiqState() } });
     });
     await seedLaunch(page, 'en');
-    await page.getByTestId('launch-ai-settings').click();
+    await page.getByTestId('launch-settings').click();
+    await page.getByTestId('settings-tab-ai').click();
     const settings = page.getByTestId('ai-settings-dialog');
     await settings.getByTestId('ai-endpoint').fill(stubUrl);
     await settings.getByTestId('ai-deployment').fill('gpt-e2e');

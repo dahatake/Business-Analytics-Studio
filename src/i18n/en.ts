@@ -428,6 +428,8 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'entity.sources': 'Sources',
 
   'settings.title': 'Settings',
+  'settings.tab.label': 'Settings categories',
+  'settings.tab.general': 'General',
   'settings.subtitle': 'Display, motion and sound, plus information for verification.',
   'settings.display': 'Display',
   'settings.theme': 'Theme',
@@ -484,6 +486,8 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'settings.conf.purgeFailed': 'Deleting stopped part way. Press [Delete now] again.',
   'settings.conf.limit': 'Limits of protection on this PC: the store (device.sqlite) is not encrypted. Deleted content is overwritten with zeros inside the database, but copies in your backups or synced folders are not removed.',
   'workiq.confidentialNotAllowed': 'Answers labelled Confidential or higher were not used because the app is set not to handle Confidential information (change it in Settings).',
+  'workiq.partialSearch': '{n} Work IQ search result(s) could not be retrieved.',
+  'workiq.excludedMaterial': 'Some sources or answers labelled Confidential or higher were excluded by the current setting.',
   'settings.validation.ok': 'All {count} sample items match the schema.',
   'settings.validation.issues': '{count} item(s) do not match the schema and are disabled.',
   'settings.storage': 'Data folder',

@@ -206,6 +206,11 @@ export interface WorkIqQuestion {
    * docs/workiq-agentic-retrieval-study.md). The relay builds those searches itself from analysisReadiness.
    */
   expand: boolean;
+  /**
+   * FR-369: leave out, source by source, the Work IQ results labelled Confidential or higher (the user has not allowed
+   * them). Without it the app had to drop a whole section when one of its sources was confidential.
+   */
+  excludeConfidential?: boolean;
 }
 
 /**
@@ -484,7 +489,8 @@ export function parseWorkIqQuestion(input: unknown): WorkIqQuestion | null {
     topics = (o.topics as string[]).map((t) => t.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
   }
   if (o.expand !== undefined && typeof o.expand !== 'boolean') return null;
-  return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics, expand: o.expand === true, ...(unit ? { unit } : {}) };
+  if (o.excludeConfidential !== undefined && typeof o.excludeConfidential !== 'boolean') return null;
+  return { company, project, purpose, focus, asOf, lang, timeZone, aspects, topics, expand: o.expand === true, ...(unit ? { unit } : {}), ...(o.excludeConfidential === true ? { excludeConfidential: true } : {}) };
 }
 
 export function workIqPrompt(q: WorkIqQuestion): string {
@@ -518,6 +524,8 @@ export interface WorkIqAnswer {
   /** Display name of the most restrictive sensitivity label among the resources used, if any. */
   sensitivity: string | null;
   fetchedAt: string;
+  /** Sources left out because their label is Confidential or higher (WorkIqQuestion.excludeConfidential). */
+  withheld?: number;
 }
 
 /** The last response message of a copilotConversation, with its citations (attributionType "citation", https only). */

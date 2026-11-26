@@ -119,7 +119,7 @@ export interface WorkIqQuery {
 export interface WorkIqLike { question: string; answer: string; citations: { title: string; url: string }[]; sensitivity: string | null; fetchedAt: string }
 /** `searches`: the ladder wordings a merged section already searched (the follow-up rounds do not ask them again). */
 /** `deepRead`: the section's top Microsoft 365 files that Work IQ read in full (Work IQ CLI `expand`). */
-export type WorkIqSectionLike = (WorkIqLike & { key: string; searches?: readonly string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };
+export type WorkIqSectionLike = (WorkIqLike & { key: string; searches?: readonly string[]; deepRead?: { files: number; followUp?: boolean; error?: string }; withheld?: number }) | { key: string; error: string };
 
 /**
  * Every Work IQ section the generator asks for first: the internal facts a business discussion needs. kpiCompany
@@ -271,6 +271,8 @@ export interface GenerationReport {
   inputs: Omit<PackGenInput, 'materials'> & { materials: { name: string; chars: number; text: string }[] };
   retrieved: RetrievedItem[];
   retrievalErrors: { what: 'site' | 'news' | 'workiq'; url?: string; error: string }[];
+  /** FR-369: Work IQ sources left out one by one for a Confidential-or-higher label; the rest of their sections were used. */
+  confidentialWithheld?: number;
   calls: { stage: GenStage; inputTokens: number | null; outputTokens: number | null; ms: number; trimmedChars?: number; retried?: boolean }[];
   fixRounds: number;
   /** Items removed because they still failed verification after the fix rounds (with what depended on them). */
@@ -475,7 +477,8 @@ const WORKIQ_SECTION_LABEL: Record<string, [ja: string, en: string]> = {
 };
 
 function sectionLabel(key: string, ja: boolean): string {
-  const base = key.replace(/^[ab]-/, '');
+  // Follow-up sections are keyed by stage and round (`a-topic-1`, `a2-topic-1`).
+  const base = key.replace(/^[ab]\d*-/, '');
   const known = WORKIQ_SECTION_LABEL[base];
   if (known) return ja ? known[0] : known[1];
   const n = /^topic-(\d+)$/.exec(base)?.[1];
@@ -1487,8 +1490,13 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   const workIqBase = {
     company: input.companyName.trim(), project: input.projectName.trim(), purpose: input.purpose.trim(), focus: input.focus.trim(), asOf: input.asOf.trim(), lang: input.lang,
   };
+  let confidentialWithheld = 0;
   const noteSectionErrors = (list: WorkIqLike | WorkIqSectionLike[]) => {
-    if (Array.isArray(list)) for (const s of list) if ('error' in s) retrievalErrors.push({ what: 'workiq', error: `${s.key}: ${s.error}` });
+    if (!Array.isArray(list)) return;
+    for (const s of list) {
+      if ('error' in s) retrievalErrors.push({ what: 'workiq', error: `${s.key}: ${s.error}` });
+      else confidentialWithheld += s.withheld ?? 0;
+    }
   };
   /** Follow-up wordings already searched (by the planned fan-out or an earlier round): never asked twice. */
   const asked = new Set<string>();
@@ -1756,6 +1764,7 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     inputs: { ...input, materials: input.materials.map((m) => ({ name: m.name, chars: m.text.length, text: m.text })) },
     retrieved: entries.map((e) => e.item),
     retrievalErrors,
+    ...(confidentialWithheld ? { confidentialWithheld } : {}),
     calls,
     fixRounds: rounds,
     removed: pruned.removed,

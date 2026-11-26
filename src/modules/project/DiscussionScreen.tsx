@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
-  Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Select, Spinner, Switch, Textarea,
+  Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarActions, MessageBarBody, Select, Switch, Textarea,
 } from '@fluentui/react-components';
 import {
   Add20Regular, ArrowDownload20Regular, ArrowRedo20Regular, ArrowUndo20Regular, ArrowUpload20Regular, ChevronLeft20Regular,
@@ -21,6 +21,7 @@ import { parseImport } from './exportFormat.ts';
 import { requestSuggestions, suggestionRequest } from './mocks.ts';
 import type { AiResponse } from '../../ai/client.ts';
 import { LiveNotice, MockNotice } from '../ai/AiCommon.tsx';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import type { DiscussionRecord, RecordKind, Theme } from './model.ts';
 import {
@@ -465,7 +466,7 @@ function CanvasPanel({ theme, ordered, onSelect, L }: { theme: Theme | null; ord
                       <Badge appearance="outline" size="small" color={live ? 'success' : 'warning'} data-testid="proj-ai-mode">{live ? t('ai.live.badge') : t('ai.mock.badge')}</Badge>
                     </span>
                   )}
-                  {kind === 'suggestion' && busy && <Spinner size="tiny" label={t('ai.loading')} />}
+                  {kind === 'suggestion' && busy && <AiProgress stage="generate" testId="proj-discussion-progress" />}
                   {kind === 'suggestion' && aiOutcome && (
                     <div role="status" data-testid="proj-ai-outcome">
                       {aiOutcome.mode === 'live'

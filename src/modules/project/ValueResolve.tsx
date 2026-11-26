@@ -6,6 +6,7 @@ import { PER_USE_LIMITS } from '../../ai/policy.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
 import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { openAiSettings } from '../ai/uiStore.ts';
 import '../ai/liveTransport.ts';
 import { ScrollRegion } from './common.tsx';
@@ -93,10 +94,11 @@ export function DraftBar({ draftCtx, scope }: { draftCtx: DraftContext; scope: s
       <h3 id="val-resolve-title" className="step-chart-title">{t('val.draft.title')}</h3>
       <p className="step-chart-read muted">{t('val.draft.read')}</p>
       <div className="proj-row" role="toolbar" aria-label={t('val.draft.title')}>
-        <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy} onClick={() => void copilot()} data-testid="val-draft-copilot">{t('val.draft.copilot')}</Button>
+        <Button appearance="primary" icon={busy ? <Spinner size="tiny" aria-hidden /> : <Sparkle20Regular />} disabled={busy} onClick={() => void copilot()} data-testid="val-draft-copilot">{t('val.draft.copilot')}</Button>
         <Button icon={<Wand20Regular />} disabled={busy} onClick={rules} data-testid="val-draft-rules">{t('val.draft.rules')}</Button>
         {busy && <Button onClick={() => abort.current?.abort()}>{t('proj.cancel')}</Button>}
       </div>
+      {busy && <AiProgress stage="generate" testId="val-draft-progress" />}
       <p className="muted" data-testid="val-draft-hint">{t('val.draft.hint')}</p>
       {notice && (
         <MessageBar intent={notice.intent} data-testid="val-draft-notice">

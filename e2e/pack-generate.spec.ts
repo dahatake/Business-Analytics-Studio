@@ -33,7 +33,8 @@ async function seed(page: Page, lang: 'ja' | 'en', withInputs = false) {
 
 test('launch screen: AI settings and the generator are reachable; missing required fields are listed and block the start', async ({ page }) => {
   await seed(page, 'en');
-  await page.getByTestId('launch-ai-settings').click();
+  await page.getByTestId('launch-settings').click();
+  await page.getByTestId('settings-tab-ai').click();
   const settings = page.getByTestId('ai-settings-dialog');
   await expect(settings).toBeVisible();
   await expect(settings.getByTestId('ai-endpoint')).toBeVisible();
@@ -79,7 +80,7 @@ test('launch screen: AI settings and the generator are reachable; missing requir
 test('Japanese labels on the launch screen', async ({ page }) => {
   await seed(page, 'ja');
   await expect(page.getByTestId('launch-generate')).toHaveText('Projectパックを Copilot で作成');
-  await expect(page.getByTestId('launch-ai-settings')).toHaveText('AI 設定');
+  await expect(page.getByTestId('launch-settings')).toHaveText('設定');
   await page.getByTestId('launch-generate').click();
   await expect(page.getByRole('alert')).toBeVisible();
 });
@@ -292,7 +293,8 @@ test('generator fits narrow screens and can be resized in both directions', asyn
 
 test('D-14: with GitHub Copilot as the provider Work IQ is optional and does not block the start until it is set up', async ({ page }) => {
   await seed(page, 'en');
-  await page.getByTestId('launch-ai-settings').click();
+  await page.getByTestId('launch-settings').click();
+  await page.getByTestId('settings-tab-ai').click();
   const settings = page.getByTestId('ai-settings-dialog');
   await settings.getByTestId('ai-provider-copilot').check();
   await settings.getByTestId('ai-settings-dialog-close').click();
@@ -311,7 +313,8 @@ test('D-14: with GitHub Copilot and a verified Work IQ CLI, Work IQ is used by d
     await route.fulfill({ json: { ...await response.json(), workiq: { method: 'cli', tenantId: null, clientId: null, account: null, signedIn: true, verifiedAt: '2026-11-19T00:00:00.000Z' } } });
   });
   await seed(page, 'en');
-  await page.getByTestId('launch-ai-settings').click();
+  await page.getByTestId('launch-settings').click();
+  await page.getByTestId('settings-tab-ai').click();
   const settings = page.getByTestId('ai-settings-dialog');
   await settings.getByTestId('ai-provider-copilot').check();
   await settings.getByTestId('ai-settings-dialog-close').click();
@@ -357,4 +360,16 @@ test('company information is entered once and reused; the project inputs come ba
   await expect(dialog.getByTestId('gen-industry')).toHaveValue('IT サービス');
   await expect(dialog.getByTestId('gen-url')).toHaveValue('https://www.contoso.example');
   await expect(dialog.getByTestId('gen-purpose')).toHaveValue('');
+});
+
+test('the launch screen opens the settings with 一般 and AI 設定 tabs', async ({ page }) => {
+  await seed(page, 'ja');
+  await page.getByTestId('launch-settings').click();
+  const settings = page.getByTestId('ai-settings-dialog');
+  await expect(settings.getByTestId('settings-tab-general')).toHaveText('一般');
+  await expect(settings.getByTestId('confidential-days')).toBeVisible();
+  await settings.getByTestId('settings-tab-ai').click();
+  await expect(settings.getByTestId('ai-provider-copilot')).toBeVisible();
+  await settings.getByTestId('settings-tab-general').click();
+  await expect(settings.getByTestId('confidential-days')).toBeVisible();
 });

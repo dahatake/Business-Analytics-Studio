@@ -16,7 +16,9 @@
     "integrations:check": "node scripts/bas.ts integrations check",
     "workiq:check": "node scripts/bas.ts workiq check",
     "measure": "playwright test --project=measure --workers=1",
-    "kpi1": "node scripts/kpi1.ts"
+    "kpi1": "node scripts/kpi1.ts",
+    "package:portable": "node scripts/portable.ts",
+    "guide:screenshots": "node scripts/guide-screenshots.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^7.2.2",

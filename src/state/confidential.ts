@@ -145,7 +145,7 @@ export function bindConfidentialHoldings() {
 
 /** Registers the Work IQ gate and deletes expired material at start and every 10 minutes while the app is open. */
 export function startConfidentialGuard() {
-  setWorkIqConfidentialGate(admitConfidential);
+  setWorkIqConfidentialGate(admitConfidential, () => useConfidential.getState().allow);
   bindConfidentialHoldings();
   if (!bound) {
     bound = true;

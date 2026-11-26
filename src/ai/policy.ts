@@ -64,7 +64,8 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
   stepBrief: { maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS },
   // D-42: business objectives are drafted in the all-step batch too, so like D-41 only the output size is fixed.
   objectiveDraft: { maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS },
-  kpiOkrDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
+  // D-46: KPI/OKR drafts (pick, then fill) run in the all-step batch too, so like D-41 only the output size is fixed.
+  kpiOkrDraft: { maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS },
   valueDraft: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 8000 },
   valueExplain: { dailyCalls: 30, minIntervalMs: 5000, maxInputTokens: 16_000, maxOutputTokens: 4000 },
 };

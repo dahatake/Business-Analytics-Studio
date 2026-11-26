@@ -3,6 +3,7 @@ import { isMediaType, type MediaCapability } from '../../ai/attachments.ts';
 import { CONNECTION_INPUT_ERRORS, CONNECTION_TEST_TIMEOUT_MS, FOUNDRY_ERRORS, type ConnectionInputError, type FoundryError } from '../../ai/foundry.ts';
 import { FOUNDRY_SERVICES_CHECK_TIMEOUT_MS, FoundryServices, MEDIA_TEST_TIMEOUT_MS, type FoundryServicesInfo, type MediaService, type MediaUnavailable, type SpeechRoute } from '../../ai/mediaConnection.ts';
 import { DECISION_INPUT_ERRORS, DECISION_TEST_TIMEOUT_MS, DECISION_TIMEOUT_MS, validateDecisionConnection, type DecisionConnection, type DecisionRequest, type DecisionResult } from '../../ai/decision.ts';
+import { isConfidentialLabel } from '../../ai/sensitivity.ts';
 
 /** Browser side of the localhost relay (FR-011). Secret values only travel in PUT bodies and are never read back. */
 export type SecretName = 'foundryKey';
@@ -210,6 +211,69 @@ export async function fetchRelayStatus(): Promise<RelayStatus> {
     };
   } catch {
     return UNREACHABLE;
+  }
+}
+
+/** FR-372: how the relay reaches the internet (never proxy credentials or a PAC query). */
+export interface NetworkInfo {
+  mode: 'direct' | 'proxy' | 'pac';
+  source: 'bas' | 'env' | 'system' | 'none';
+  proxy: string | null;
+  pacUrl: string | null;
+  systemCa: boolean;
+  note: 'pacUnavailable' | null;
+}
+export const NETWORK_CHECK_ERRORS = ['proxyAuthRequired', 'proxyError', 'dnsFailure', 'tlsError', 'timeout', 'networkError'] as const;
+export interface NetworkHostCheck {
+  host: string;
+  via: 'direct' | 'proxy';
+  ok: boolean;
+  status: number | null;
+  error: (typeof NETWORK_CHECK_ERRORS)[number] | null;
+}
+
+function asNetwork(v: unknown): NetworkInfo | null {
+  if (!v || typeof v !== 'object') return null;
+  const n = v as Record<string, unknown>;
+  if (n.mode !== 'direct' && n.mode !== 'proxy' && n.mode !== 'pac') return null;
+  return {
+    mode: n.mode,
+    source: n.source === 'bas' || n.source === 'env' || n.source === 'system' ? n.source : 'none',
+    proxy: str(n.proxy),
+    pacUrl: str(n.pacUrl),
+    systemCa: n.systemCa === true,
+    note: n.note === 'pacUnavailable' ? 'pacUnavailable' : null,
+  };
+}
+
+export async function fetchNetworkStatus(): Promise<NetworkInfo | null> {
+  try {
+    const res = await relayFetch('/relay/status');
+    return res.ok ? asNetwork(((await res.json()) as { network?: unknown }).network) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Opens each outbound host BAS uses (Entra ID, Azure Resource Manager, the saved Foundry host, GitHub Copilot); sends no data. */
+export async function checkNetwork(): Promise<{ network: NetworkInfo | null; results: NetworkHostCheck[] } | null> {
+  try {
+    const res = await relayFetch('/relay/network/check', { method: 'POST', extraHeaders: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { network?: unknown; results?: unknown };
+    const results = Array.isArray(body.results) ? body.results : [];
+    return {
+      network: asNetwork(body.network),
+      results: results.flatMap((r): NetworkHostCheck[] => {
+        if (!r || typeof r !== 'object') return [];
+        const o = r as Record<string, unknown>;
+        if (typeof o.host !== 'string') return [];
+        const error = NETWORK_CHECK_ERRORS.find((e) => e === o.error) ?? null;
+        return [{ host: o.host, via: o.via === 'proxy' ? 'proxy' : 'direct', ok: o.ok === true, status: typeof o.status === 'number' ? o.status : null, error: o.ok === true ? null : error ?? 'networkError' }];
+      }),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -760,7 +824,8 @@ export interface WorkIqQuestionInput {
 export const WORKIQ_ASPECTS = ['org', 'kpi', 'process', 'data', 'locations', 'people', 'engagements', 'issues', 'kpiCompany', 'kpiUnit', 'rules', 'systems', 'voice', 'objectivesCompany', 'objectivesUnit'] as const;
 export type WorkIqAspect = (typeof WORKIQ_ASPECTS)[number];
 
-export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[]; deepRead?: { files: number; followUp?: boolean; error?: string } }) | { key: string; error: string };
+/** `withheld`: sources the relay left out because their label is Confidential or higher and the user has not allowed it. */
+export type WorkIqSectionInfo = (WorkIqAnswerInfo & { key: string; searches?: string[]; deepRead?: { files: number; followUp?: boolean; error?: string }; withheld?: number }) | { key: string; error: string };
 
 function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
   if (typeof b.answer !== 'string' || typeof b.question !== 'string' || typeof b.fetchedAt !== 'string' || !Array.isArray(b.citations)) return null;
@@ -770,21 +835,17 @@ function answerInfo(b: Partial<WorkIqAnswerInfo>): WorkIqAnswerInfo | null {
   };
 }
 
-/**
- * FR-369: a Microsoft 365 sensitivity label of Confidential or higher. The relay joins the label names and cuts the
- * text at 100 characters, so a cut text may hide a higher label and counts as confidential too.
- */
-export function isConfidentialLabel(label: string | null | undefined): boolean {
-  if (!label) return false;
-  return label.length >= 100 || /confidential|secret|restricted|機密|社外秘|極秘|秘密/i.test(label);
-}
+export { isConfidentialLabel };
 
 /** Decides whether confidential Work IQ material may enter the app for a company (and records it when it may). */
 export type WorkIqConfidentialGate = (company: string, labels: string[]) => boolean;
 // Refused until state/confidential.ts registers the user's choice, so nothing confidential slips in by default.
 let confidentialGate: WorkIqConfidentialGate = () => false;
-export function setWorkIqConfidentialGate(gate: WorkIqConfidentialGate) {
+/** Whether the user lets confidential material in at all (asked before a search, without recording anything). */
+let confidentialAllowed: () => boolean = () => false;
+export function setWorkIqConfidentialGate(gate: WorkIqConfidentialGate, allowed?: () => boolean) {
   confidentialGate = gate;
+  if (allowed) confidentialAllowed = allowed;
 }
 
 /** A confidential answer the user has not allowed comes back as a failed section; the answer text never leaves here. */
@@ -801,7 +862,7 @@ function gateSections(company: string, sections: WorkIqSectionInfo[]): WorkIqSec
  * permission, EULA, CLI missing).
  */
 export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: readonly WorkIqAspect[]; topics?: readonly string[]; expand?: boolean; provider?: WorkIqProvider }, signal?: AbortSignal): Promise<WorkIqSectionInfo[]> {
-  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { ...q, provider: q.provider ?? 'foundry', aspects: q.aspects ?? [], topics: q.topics ?? [] }), signal });
+  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { ...q, provider: q.provider ?? 'foundry', aspects: q.aspects ?? [], topics: q.topics ?? [], excludeConfidential: !confidentialAllowed() }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const b = (await res.json()) as { sections?: unknown };
   if (!Array.isArray(b.sections)) throw new RelayError(502, 'badRelayAnswer');
@@ -815,7 +876,9 @@ export async function askWorkIqSections(q: WorkIqQuestionInput & { aspects?: rea
     const dr = (s as { deepRead?: { files?: unknown; followUp?: unknown; error?: unknown } }).deepRead;
     const deepRead = dr && typeof dr.files === 'number' && Number.isInteger(dr.files) && dr.files > 0
       ? { files: dr.files, ...(dr.followUp === true ? { followUp: true } : {}), ...(typeof dr.error === 'string' ? { error: dr.error.slice(0, 60) } : {}) } : null;
-    return a ? [{ key, ...a, ...(listed.length ? { searches: listed } : {}), ...(deepRead ? { deepRead } : {}) }] : [{ key, error: 'badRelayAnswer' }];
+    const withheld = (s as { withheld?: unknown }).withheld;
+    const held = typeof withheld === 'number' && Number.isInteger(withheld) && withheld > 0 ? { withheld } : {};
+    return a ? [{ key, ...a, ...(listed.length ? { searches: listed } : {}), ...(deepRead ? { deepRead } : {}), ...held }] : [{ key, error: 'badRelayAnswer' }];
   }));
 }
 
@@ -829,7 +892,7 @@ export interface WorkIqAnswerInfo {
 
 /** One question to Work IQ through the relay, which refuses it unless the provider may use Work IQ (D-14). */
 export async function askWorkIq(q: WorkIqQuestionInput & { provider?: WorkIqProvider }, signal?: AbortSignal): Promise<WorkIqAnswerInfo> {
-  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { ...q, provider: q.provider ?? 'foundry' }), signal });
+  const res = await relayFetch('/relay/workiq/ask', { ...jsonInit('POST', { ...q, provider: q.provider ?? 'foundry', excludeConfidential: !confidentialAllowed() }), signal });
   if (!res.ok) throw new RelayError(res.status, await errorCode(res));
   const b = (await res.json()) as Partial<WorkIqAnswerInfo>;
   const a = answerInfo(b);

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Badge, Button, Field, Input, MessageBar, MessageBarBody, Radio, RadioGroup, Spinner, Textarea } from '@fluentui/react-components';
+import { Badge, Button, Field, Input, MessageBar, MessageBarBody, Radio, RadioGroup, Textarea } from '@fluentui/react-components';
 import { Search20Regular, Send20Regular } from '@fluentui/react-icons';
 import { aiComplete, type AiResponse } from '../../ai/client.ts';
 import { selectOutbound } from '../../ai/redact.ts';
@@ -15,6 +15,7 @@ import { EntityRef } from '../../ui/EntityRef.tsx';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { LiveNotice, MockNotice } from './AiCommon.tsx';
+import { AiProgress } from './AiProgress.tsx';
 import { CHAT_CONTEXT_PAIRS, buildIndex, chatPrompt, search, type ChatTurn } from './search.ts';
 import { isConfigured, useAiSettings } from './settingsStore.ts';
 import { StoryVideoSection } from './StoryVideo.tsx';
@@ -132,7 +133,7 @@ function SearchAndChat() {
             <Button type="submit" appearance="primary" icon={<Send20Regular />} disabled={busy || question.trim() === ''}>{t('ai.chat.send')}</Button>
             {history.length > 0 && <Button onClick={() => setHistory([])}>{t('ai.chat.clear')}</Button>}
           </form>
-          {busy && <Spinner size="tiny" label={t('ai.loading')} />}
+          {busy && <AiProgress stage="generate" result="process" testId="ai-chat-progress" />}
         </div>
       </Panel>
     </div>
@@ -168,7 +169,7 @@ function UsageAnalysis() {
         <div>
           <Button onClick={() => void run()} disabled={busy || text.trim() === ''} data-testid="ai-usage-run">{t('ai.usageAnalysis.run')}</Button>
         </div>
-        {busy && <Spinner size="tiny" label={t('ai.loading')} />}
+        {busy && <AiProgress stage="generate" result="process" testId="ai-usage-progress" />}
         {error && <MessageBar intent="error"><MessageBarBody>{t(error === 'timeout' ? 'ai.usageAnalysis.timeout' : 'ai.usageAnalysis.failed')}</MessageBarBody></MessageBar>}
         {result && (
           <MockNotice reasons={result.blockedReasons}>

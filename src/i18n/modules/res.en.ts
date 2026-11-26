@@ -59,7 +59,6 @@ export const resEn: Record<keyof typeof resJa, string> = {
   'res.ai.title': 'AI commentary',
   'res.ai.run': 'Generate commentary with AI',
   'res.ai.rerun': 'Regenerate for the current simulation',
-  'res.ai.loading': 'AI is writing the commentary…',
   'res.ai.offline': 'Once the AI connection is enabled, a commentary grounded only in the facts above appears here.',
   'res.ai.settings': 'Open AI settings',
   'res.ai.personAlias': 'Person {n}',

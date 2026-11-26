@@ -186,7 +186,6 @@ export const showJa = {
   'show.ai.intro': 'ペルソナを選んで作成します。応答は最大 {seconds} 秒待ち、出力は最大 {tokens} トークンです。',
   'show.ai.persona': 'ペルソナ',
   'show.ai.generate': '作成',
-  'show.ai.busy': '作成中…',
   'show.ai.fail.timeout': '時間内に応答がありませんでした。もう一度お試しください。',
   'show.ai.fail.error': '作成できませんでした。もう一度お試しください。',
   'show.ai.mock': 'モック',

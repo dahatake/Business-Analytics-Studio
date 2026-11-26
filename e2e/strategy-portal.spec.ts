@@ -46,9 +46,9 @@ test('a KPI opens its row on the KPI tab and a lane heading opens its list', asy
   await expect.poll(() => focusedId(page)).toBe('proj-okr-panel');
 });
 
-async function seedProject(page: Page) {
+async function seedProject(page: Page, unit = '') {
   await setup(page, { lang: 'en' });
-  await page.addInitScript(() => {
+  await page.addInitScript(({ unit }) => {
     if (sessionStorage.getItem('bas.e2e.portal')) return;
     sessionStorage.setItem('bas.e2e.portal', '1');
     const createdAt = '2026-11-10T00:00:00.000Z';
@@ -56,13 +56,13 @@ async function seedProject(page: Page) {
       version: 1,
       state: {
         companies: [{ id: 'co-a', name: 'Contoso', createdAt }],
-        projects: [{ id: 'pj-alpha', companyId: 'co-a', name: 'Alpha', createdAt, step: 'kpi' }],
+        projects: [{ id: 'pj-alpha', companyId: 'co-a', name: 'Alpha', createdAt, step: 'kpi', ...(unit ? { brief: { orgUnit: unit } } : {}) }],
         target: { kind: 'project', projectId: 'pj-alpha' },
         lastProjectId: 'pj-alpha',
         demoStep: 'define',
       },
     }));
-  });
+  }, { unit });
   await page.goto('/#/');
   await expect(page.locator('main#main')).toBeVisible();
   const anchor = {
@@ -148,6 +148,7 @@ test('FR-367: Copilot gets the business objectives, registering stated ones and 
     ];
     await route.fulfill({ json: { text: JSON.stringify({ objectives }), inputTokens: 100, outputTokens: 100 } });
   });
+
   await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
   await page.reload();
   await expect(page.getByTestId('strategy-map')).toBeVisible();
@@ -172,6 +173,171 @@ test('FR-367: Copilot gets the business objectives, registering stated ones and 
   await page.reload();
   await expect(page.locator('[id^="stg-node-objective:OBJ-"]')).toHaveCount(1);
   await expect(page.locator('[id^="stg-node-objective:draft:objd-"]')).toHaveCount(0);
+});
+
+for (const fixture of [
+  {
+    name: 'a Work IQ fallback',
+    sections: [{ key: 'objectivesCompany', error: 'workiqUnavailable' }],
+    notices: ['Work IQ did not provide objectives', 'workiqUnavailable'],
+  },
+  {
+    name: 'partial and confidential exclusions',
+    sections: [
+      { key: 'objectivesCompany', question: 'What are the objectives?', answer: 'A synthetic objective.', citations: [], sensitivity: null, fetchedAt: '2026-01-01T00:00:00Z', withheld: 2 },
+      { key: 'objectivesUnit', error: 'workiqUnavailable' },
+    ],
+    notices: ['1 Work IQ search result(s) could not be retrieved', 'Some sources or answers labelled Confidential or higher were excluded'],
+  },
+]) test(`batch progress follows Work IQ and Copilot and reports ${fixture.name}`, async ({ page }) => {
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' },
+    workiq: { method: 'cli', account: null, signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  let releaseWorkIq!: () => void;
+  let releaseObjective!: () => void;
+  let releaseNext!: () => void;
+  const workIq = new Promise<void>((resolve) => { releaseWorkIq = resolve; });
+  const objective = new Promise<void>((resolve) => { releaseObjective = resolve; });
+  const next = new Promise<void>((resolve) => { releaseNext = resolve; });
+  await page.route('**/relay/workiq/ask', async (route) => {
+    expect((route.request().postDataJSON() as { aspects: string[] }).aspects).toEqual(['objectivesCompany', 'objectivesUnit']);
+    await workIq;
+    await route.fulfill({ json: { sections: fixture.sections } }).catch(() => undefined);
+  });
+  await page.route('**/relay/ai', async (route) => {
+    const request = route.request().postDataJSON() as { use: string };
+    if (request.use === 'objectiveDraft') {
+      await objective;
+      await route.fulfill({ json: { text: '{"objectives":[]}', inputTokens: 10, outputTokens: 10 } }).catch(() => undefined);
+    } else {
+      await next;
+      await route.fulfill({ status: 504, json: { error: 'fixtureTimeout' } }).catch(() => undefined);
+    }
+  });
+  try {
+    await seedProject(page, 'Synthetic unit');
+    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
+    await page.reload();
+    await expect(page.getByTestId('strategy-map')).toBeVisible();
+    await page.goto('/#/deliverables?step=asis');
+    await page.getByTestId('dlv-draft').click();
+    await page.getByTestId('dlv-batch-generate').click();
+    const progress = page.getByTestId('dlv-batch-current-progress');
+    await expect(page.getByTestId('dlv-batch-objectives')).toHaveAttribute('data-status', 'working');
+    await expect(progress).toHaveAttribute('data-activity', 'workiq');
+    await expect(progress).toContainText('Searching for information with Work IQ');
+    await expect(progress).toContainText('time remaining are unknown');
+    releaseWorkIq();
+    await expect(progress).toHaveAttribute('data-activity', 'generate');
+    await expect(progress).toContainText('AI is generating');
+    await expect(page.getByTestId('dlv-batch-objectives')).toHaveAttribute('data-status', 'working');
+    for (const notice of fixture.notices) await expect(page.getByTestId('dlv-batch-objectives-note')).toContainText(notice);
+    releaseObjective();
+    await expect(page.getByTestId('dlv-batch-objectives')).toHaveAttribute('data-status', 'done');
+    for (const notice of fixture.notices) await expect(page.getByTestId('dlv-batch-objectives-note')).toContainText(notice);
+    await page.getByTestId('dlv-batch-stop').click();
+    releaseNext();
+    await expect(page.getByTestId('dlv-batch-current')).toHaveCount(0);
+    await expect(page.getByTestId('dlv-batch-objectives')).toHaveAttribute('data-status', 'done');
+  } finally {
+    releaseWorkIq();
+    releaseObjective();
+    releaseNext();
+  }
+});
+
+test('individual objective progress reports a search failure while Copilot is still working', async ({ page }) => {
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' },
+    workiq: { method: 'cli', account: null, signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  let releaseWorkIq!: () => void;
+  let releaseAi!: () => void;
+  const workIq = new Promise<void>((resolve) => { releaseWorkIq = resolve; });
+  const ai = new Promise<void>((resolve) => { releaseAi = resolve; });
+  await page.route('**/relay/workiq/ask', async (route) => {
+    await workIq;
+    await route.fulfill({ json: { sections: [{ key: 'objectivesCompany', error: 'workiqUnavailable' }] } }).catch(() => undefined);
+  });
+  await page.route('**/relay/ai', async (route) => {
+    await ai;
+    await route.fulfill({ json: { text: '{"objectives":[]}', inputTokens: 10, outputTokens: 10 } }).catch(() => undefined);
+  });
+  try {
+    await seedProject(page);
+    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
+    await page.reload();
+    await page.getByTestId('strategy-objectives-fetch').click();
+    const progress = page.getByTestId('strategy-objectives-progress');
+    await expect(progress).toHaveAttribute('data-activity', 'workiq');
+    releaseWorkIq();
+    await expect(progress).toHaveAttribute('data-activity', 'generate');
+    const searchStatus = page.getByTestId('strategy-objectives-search-status');
+    await expect(searchStatus).toContainText('Work IQ gave no answer');
+    await expect(searchStatus).toContainText('1 Work IQ search result(s) could not be retrieved');
+    await expect(page.getByTestId('strategy-objectives-result')).toHaveCount(0);
+    expect(await scan(page)).toEqual([]);
+    releaseAi();
+    await expect(page.getByTestId('strategy-objectives-result')).toContainText('Work IQ gave no answer');
+    await expect(progress).toHaveCount(0);
+  } finally {
+    releaseWorkIq();
+    releaseAi();
+  }
+});
+
+test('a form draft shows Work IQ before Copilot without claiming the draft is finished', async ({ page }) => {
+  await page.route('**/relay/status', (route) => route.fulfill({ json: {
+    secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+    connectionVerifiedAt: '2026-01-01T00:00:00Z', copilot: { model: 'fixture-model' },
+    workiq: { method: 'cli', account: null, signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+  } }));
+  let releaseWorkIq!: () => void;
+  let releaseAi!: () => void;
+  const workIq = new Promise<void>((resolve) => { releaseWorkIq = resolve; });
+  const ai = new Promise<void>((resolve) => { releaseAi = resolve; });
+  await page.route('**/relay/workiq/ask', async (route) => {
+    await workIq;
+    await route.fulfill({ json: { sections: [{ key: 'topic-0', error: 'workiqUnavailable' }] } }).catch(() => undefined);
+  });
+  await page.route('**/relay/ai', async (route) => {
+    await ai;
+    await route.fulfill({ json: { text: '{"values":{"name":"Synthetic issue (assumption)"}}', inputTokens: 10, outputTokens: 10 } }).catch(() => undefined);
+  });
+  try {
+    await seedProject(page);
+    await seedDeviceData(page, { 'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }) });
+    await page.reload();
+    await page.goto('/#/workspace');
+    await page.getByTestId('entry-bar-summary').getByTestId('entry-add-issue').click();
+    const dialog = page.getByTestId('entry-dialog');
+    await dialog.getByTestId('entry-draft-workiq').check();
+    await dialog.getByTestId('entry-draft-create').click();
+    const progress = dialog.getByTestId('entry-draft-progress');
+    await expect(progress).toHaveAttribute('data-activity', 'workiq');
+    await expect(progress).toContainText('Searching for information with Work IQ');
+    await expect(progress).toContainText('time remaining are unknown');
+    releaseWorkIq();
+    await expect(progress).toHaveAttribute('data-activity', 'generate');
+    await expect(progress).toContainText('AI is generating');
+    await expect(progress).toContainText('Check and process the answer');
+    await expect(dialog.getByTestId('entry-draft-workiq-note')).toContainText('1 Work IQ search result(s) could not be retrieved');
+    await expect(dialog.getByTestId('entry-draft-workiq-note')).toContainText('Work IQ returned nothing usable; the draft does not use it.');
+    await expect(dialog.getByTestId('entry-field-name')).toHaveValue('');
+    expect(await scan(page)).toEqual([]);
+    releaseAi();
+    await expect(dialog.getByTestId('entry-draft-preview')).toBeVisible();
+    await expect(progress).toHaveCount(0);
+    await expect(dialog.getByTestId('entry-field-name')).toHaveValue('');
+    await dialog.getByTestId('entry-draft-approve').click();
+    await expect(dialog.getByTestId('entry-field-name')).toHaveValue('Synthetic issue (assumption)');
+  } finally {
+    releaseWorkIq();
+    releaseAi();
+  }
 });
 
 test('the external view shows confirmed data only and keeps company objectives non-interactive', async ({ page }) => {

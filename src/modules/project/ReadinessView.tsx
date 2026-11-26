@@ -1,15 +1,17 @@
-import { Badge } from '@fluentui/react-components';
+import { Badge, Link } from '@fluentui/react-components';
 import { useI18n } from '../../i18n/index.ts';
-import type { GenStageKey, ReadinessItem } from './analysisReadiness.ts';
+import type { GenStageKey, ReadinessItem, ReadinessKey } from './analysisReadiness.ts';
 import type { CollectionRound, StopReason } from './packGenerate.ts';
 import { ScrollRegion } from './common.tsx';
 
 /** The app's own count of what the analysis needs, with the Work IQ follow-up log when there is one. */
-export function ReadinessView({ items, rounds, stopReasons, testId }: {
+export function ReadinessView({ items, rounds, stopReasons, testId, draftHref }: {
   items: ReadinessItem[];
   rounds?: CollectionRound[];
   stopReasons?: Partial<Record<GenStageKey, StopReason>>;
   testId: string;
+  /** Inside a project: the form whose AI draft proposes the data an unmet item lacks. */
+  draftHref?: (key: ReadinessKey) => string | undefined;
 }) {
   const { t, fmt } = useI18n();
   const met = items.filter((i) => i.met).length;
@@ -25,15 +27,22 @@ export function ReadinessView({ items, rounds, stopReasons, testId }: {
             <th scope="col">{t('proj.ready.col.have')}</th>
             <th scope="col">{t('proj.ready.col.need')}</th>
             <th scope="col">{t('proj.ready.col.status')}</th>
+            {draftHref && <th scope="col">{t('proj.ready.col.draft')}</th>}
           </tr></thead>
-          <tbody>{items.map((i) => (
-            <tr key={i.key} data-testid={`${testId}-${i.key}`} data-met={i.met}>
-              <th scope="row">{t(`proj.ready.${i.key}`)}</th>
-              <td>{fmt.integer(i.have)}</td>
-              <td>{fmt.integer(i.need)}</td>
-              <td><Badge appearance="tint" color={i.met ? 'success' : 'warning'}>{t(i.met ? 'proj.ready.met' : 'proj.ready.unmet')}</Badge></td>
-            </tr>
-          ))}</tbody>
+          <tbody>{items.map((i) => {
+            const href = !i.met && draftHref ? draftHref(i.key) : undefined;
+            return (
+              <tr key={i.key} data-testid={`${testId}-${i.key}`} data-met={i.met}>
+                <th scope="row">{t(`proj.ready.${i.key}`)}</th>
+                <td>{fmt.integer(i.have)}</td>
+                <td>{fmt.integer(i.need)}</td>
+                <td><Badge appearance="tint" color={i.met ? 'success' : 'warning'}>{t(i.met ? 'proj.ready.met' : 'proj.ready.unmet')}</Badge></td>
+                {draftHref && <td>{href && (
+                  <Link href={href} data-testid={`${testId}-draft-${i.key}`}>{t('proj.ready.draft', { item: t(`proj.ready.${i.key}`) })}</Link>
+                )}</td>}
+              </tr>
+            );
+          })}</tbody>
         </table>
       </ScrollRegion>
       {rounds && rounds.length > 0 && (

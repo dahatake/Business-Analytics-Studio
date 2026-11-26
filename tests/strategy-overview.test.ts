@@ -11,7 +11,7 @@ import {
   validateOverviewProposal, type OverviewProposal,
 } from '../src/modules/project/overviewModel.ts';
 import {
-  appendObjective, emptyDestination, laneHref, nodeDestination, packObjectiveDrafts, type ObjectiveInput,
+  appendObjective, emptyDestination, laneHref, nodeDestination, packObjectiveDrafts, readinessDraftHref, type ObjectiveInput,
 } from '../src/modules/project/strategyPortal.ts';
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 
@@ -218,6 +218,11 @@ describe('strategy map portal and drafts (FR-349, FR-350)', () => {
     expect(emptyDestination('kpi', '', false)).toEqual({ kind: 'link', href: '#/analysis?tab=kpi&target=proj-kpi-name' });
     expect(emptyDestination('solution', '', false)).toEqual({ kind: 'link', href: '#/relations?view=table&target=relation-table&create=solution&field=name' });
     expect(laneHref('okr', '')).toBe('#/analysis?tab=kpi&target=proj-okr-panel');
+    // Unmet readiness items open the form whose AI draft proposes the missing data.
+    expect(readinessDraftHref('org')).toBe('#/relations?view=table&target=relation-table&create=person&field=name');
+    expect(readinessDraftHref('customers')).toBe('#/relations?view=table&target=relation-table&create=customer&field=name');
+    expect(readinessDraftHref('kpi')).toBe('#/analysis?tab=kpi&target=proj-kpi-panel');
+    expect(readinessDraftHref('workflow')).toBeUndefined();
   });
 
   const input = (patch: Partial<ObjectiveInput> = {}): ObjectiveInput => ({

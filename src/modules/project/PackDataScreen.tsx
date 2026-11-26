@@ -38,6 +38,7 @@ import { analyzePackPriority } from './priorityAnalysis.ts';
 import { packEntityName } from './priorityRobustness.ts';
 import { DelayCostSummary } from './CostOfDelay.tsx';
 import { ReadinessView } from './ReadinessView.tsx';
+import { readinessDraftHref } from './strategyPortal.ts';
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from './companyAlignment.ts';
 import './project.css';
 
@@ -246,6 +247,7 @@ function ReadinessPanel() {
         rounds={Array.isArray(gen?.collectionRounds) ? gen.collectionRounds : undefined}
         stopReasons={gen?.stopReasons && typeof gen.stopReasons === 'object' ? gen.stopReasons : undefined}
         testId="pack-ready"
+        draftHref={target.kind === 'project' ? readinessDraftHref : undefined}
       />
       {canRefetch && <p className="muted">{t('proj.ready.refetchHint')}</p>}
       {open && canRefetch && (

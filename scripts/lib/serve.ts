@@ -3,7 +3,7 @@
  * Binds to 127.0.0.1 only. No dependencies: this file is copied into offline packages and run with `node serve.ts`.
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createDeviceService } from './device.ts';
@@ -22,28 +22,41 @@ export interface Served {
   close: () => Promise<void>;
 }
 
+/** Serves files of a built app folder; the app routes with the URL hash, so unknown files are 404. */
+export function serveStatic(root: string, req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  let rel: string;
+  try {
+    rel = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
+  if (rel.endsWith('/')) rel += 'index.html';
+  const file = normalize(join(root, rel));
+  if (file !== root && !file.startsWith(root + sep)) {
+    res.writeHead(403).end();
+    return;
+  }
+  const target = existsSync(file) && statSync(file).isFile() ? file : null;
+  if (!target) {
+    // Unknown files are 404 (so data/pack.json falls back to the built-in sample).
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Not found');
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  createReadStream(target).pipe(res);
+}
+
 export function startServer(dir: string, port = 4180, host = '127.0.0.1', deviceDir = process.env.BAS_DEVICE_DIR ?? resolve('.bas-local')): Promise<Served> {
   const root = resolve(dir);
   if (!existsSync(join(root, 'index.html'))) return Promise.reject(new Error(`No index.html in ${root}. Build first (npm run build, or bas build <customer>).`));
   const device = createDeviceService(deviceDir, false, { servedRoots: [root], fixed: process.env.BAS_DEVICE_DIR !== undefined });
-  const server = createServer((req, res) => device.handle(req, res, () => {
-    const url = new URL(req.url ?? '/', `http://${host}`);
-    let rel = decodeURIComponent(url.pathname);
-    if (rel.endsWith('/')) rel += 'index.html';
-    const file = normalize(join(root, rel));
-    if (file !== root && !file.startsWith(root + sep)) {
-      res.writeHead(403).end();
-      return;
-    }
-    const target = existsSync(file) && statSync(file).isFile() ? file : null;
-    if (!target) {
-      // The app routes with the URL hash; unknown files are 404 (so data/pack.json falls back to the built-in sample).
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Not found');
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
-    createReadStream(target).pipe(res);
-  }));
+  const server = createServer((req, res) => device.handle(req, res, () => serveStatic(root, req, res)));
   server.once('close', device.close);
   return new Promise((ok, fail) => {
     server.once('error', fail);
@@ -60,7 +73,8 @@ function arg(name: string, fallback: string): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1]! : fallback;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// The file-name test keeps this from running when the module is bundled into another entry (server/main.mjs).
+if (process.argv[1] && /serve\.[cm]?[jt]s$/.test(process.argv[1]) && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   startServer(arg('dir', 'app'), Number(arg('port', '4180')))
     .then((s) => console.log(`Business Analytics Studio: ${s.url}  (Ctrl+C to stop)`))
     .catch((e: Error) => {

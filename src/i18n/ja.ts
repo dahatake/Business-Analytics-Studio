@@ -427,6 +427,8 @@ export const coreJa = {
   'entity.sources': '出典',
 
   'settings.title': '設定',
+  'settings.tab.label': '設定の分類',
+  'settings.tab.general': '一般',
   'settings.subtitle': '表示・動き・サウンドと、確認用の情報。',
   'settings.display': '表示',
   'settings.theme': 'テーマ',
@@ -483,6 +485,8 @@ export const coreJa = {
   'settings.conf.purgeFailed': '削除の途中で失敗しました。もう一度 [今すぐ削除] を押してください。',
   'settings.conf.limit': 'このPCの中での保護の限界: 保存先（device.sqlite）は暗号化していません。削除した内容はデータベースの中で 0 で上書きしますが、バックアップや同期フォルダーに置いた場合のコピーまでは消せません。',
   'workiq.confidentialNotAllowed': 'Confidential 以上のラベルが付いた回答は、Confidential 情報を扱わない設定のため使いませんでした（設定の画面で変えられます）。',
+  'workiq.partialSearch': 'Work IQ の検索で {n} 件の結果を取得できませんでした。',
+  'workiq.excludedMaterial': 'Confidential 以上の資料または回答の一部は設定により除外されました。',
   'settings.validation.ok': 'サンプルデータ {count} 件はすべてスキーマに合っています。',
   'settings.validation.issues': '{count} 件の項目がスキーマに合わず、無効にしています。',
   'settings.storage': 'データの保存先',

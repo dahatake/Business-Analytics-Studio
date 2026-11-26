@@ -7,6 +7,7 @@ import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { loc } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import type { WorkIqAspect } from '../ai/relayClient.ts';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { downloadText, ScrollRegion, useTargetNames } from './common.tsx';
 import { rankedIssues, threadOf, type AppCheckContext as CheckContext } from './deliverables.ts';
 import { evidenceViews } from './docInputs.ts';
@@ -125,6 +126,7 @@ export function EvidencePanel({ ctx }: { ctx: CheckContext }) {
           </Button>
         ))}
       </div>
+      {busy && <AiProgress stage="generate" activity="workiq" result="process" testId="sol-ev-progress" />}
       <p className="muted">{wi.ready ? t('sol.ev.dataNote') : t('sol.ev.notReady')}</p>
       {error && <p role="alert" data-testid="sol-ev-error">{error}</p>}
 

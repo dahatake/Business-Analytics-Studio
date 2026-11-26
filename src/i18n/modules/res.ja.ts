@@ -58,7 +58,6 @@ export const resJa = {
   'res.ai.title': 'AIによる解説',
   'res.ai.run': 'AIで解説を生成',
   'res.ai.rerun': '現在のシミュレーションで再生成',
-  'res.ai.loading': 'AIが解説を作成しています…',
   'res.ai.offline': 'AI接続が有効になると、上の事実だけを根拠にした解説をここに表示します。',
   'res.ai.settings': 'AI設定を開く',
   'res.ai.personAlias': '担当者{n}',

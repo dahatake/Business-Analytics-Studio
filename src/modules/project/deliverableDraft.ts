@@ -418,6 +418,12 @@ function completeTaskDraft(text: string, lang: Lang): boolean {
  */
 export const DRAFT_SPLIT_SECTIONS = 16;
 export type DraftPart = 'fields' | 'tasks';
+export interface DraftCallProgress {
+  part: DraftPart | null;
+  current: number;
+  total: number;
+  retry: boolean;
+}
 
 /** The calls a step's draft needs: one with every section, or the fields and the tasks separately. */
 export function draftParts(step: ImprovementStep): (DraftPart | null)[] {
@@ -505,10 +511,13 @@ export function draftRequest(input: DraftInput, part: DraftPart | null = null): 
  * Sends the draft in the calls draftParts asks for. A single call cut off at the output cap ('outputLimit') is retried
  * once as separate fields and tasks calls (D-44), so the user gets the draft instead of the error.
  */
-export async function requestDeliverableDraft(input: DraftInput, request: AiRequest, signal?: AbortSignal): Promise<{ response: AiResponse; fields: Record<string, string>; tasks: Record<string, string> }> {
-  const send = async (parts: (DraftPart | null)[]) => {
+export async function requestDeliverableDraft(
+  input: DraftInput, request: AiRequest, signal?: AbortSignal, onProgress?: (progress: DraftCallProgress) => void,
+): Promise<{ response: AiResponse; fields: Record<string, string>; tasks: Record<string, string> }> {
+  const send = async (parts: (DraftPart | null)[], retry = false) => {
     const answers: { part: DraftPart | null; text: string; inputTokens: number | null; outputTokens: number | null }[] = [];
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
+      onProgress?.({ part, current: index + 1, total: parts.length, retry });
       const req = part ? { ...request, prompt: draftPrompt(input, part), ...(request.stage ? { stage: `${request.stage}:${part}` } : {}) } : request;
       answers.push({ part, ...(await aiLive(req, signal)) });
     }
@@ -520,7 +529,7 @@ export async function requestDeliverableDraft(input: DraftInput, request: AiRequ
     answers = await send(planned);
   } catch (err) {
     if (planned[0] !== null || signal?.aborted || liveErrorCode(err) !== 'outputLimit') throw err;
-    answers = await send(['fields', 'tasks']);
+    answers = await send(['fields', 'tasks'], true);
   }
   const fields = Object.assign({}, ...answers.filter((a) => a.part !== 'tasks').map((a) => parseDraftText(input.step, a.text))) as Record<string, string>;
   const tasks = Object.assign({}, ...answers.filter((a) => a.part !== 'fields').map((a) => parseTaskDrafts(input.step, a.text))) as Record<string, string>;

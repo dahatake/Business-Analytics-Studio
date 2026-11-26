@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Badge, Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components';
 import { Dismiss20Regular, Sparkle20Regular } from '@fluentui/react-icons';
-import { DEFAULT_LIVE_TIMEOUT_MS } from '../../ai/client.ts';
+import { STEP_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { currentScope, useCurrentScope } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
@@ -161,12 +161,12 @@ export function StepBriefPanel({ d, ctx, audience }: { d: StepDashboard; ctx: Ap
         </div>
         <div className="step-brief-col" data-testid="step-dash-brief-ai-col">
           <div className="step-brief-head">
-            <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate()} data-testid="step-dash-brief-generate">
+            <Button appearance="primary" icon={busy ? <Spinner size="tiny" aria-hidden /> : <Sparkle20Regular />} disabled={busy} onClick={() => void generate()} data-testid="step-dash-brief-generate">
               {t(generated ? 'proj.dash.brief.regenerate' : 'proj.dash.brief.generate')}
             </Button>
           </div>
           <p className="muted">{t(live ? 'proj.dash.brief.liveHint' : 'proj.dash.brief.mockHint')}</p>
-          {progress && <AiProgress stage={progress.stage} startedAt={progress.startedAt} limitMs={live ? DEFAULT_LIVE_TIMEOUT_MS : undefined} testId="step-dash-brief-progress" />}
+          {progress && <AiProgress stage={progress.stage} startedAt={progress.startedAt} limitMs={live ? STEP_DRAFT_TIMEOUT_MS : undefined} testId="step-dash-brief-progress" />}
           {cancelled && <p className="muted" data-testid="step-dash-brief-cancelled">{t('proj.dash.brief.cancelled')}</p>}
           {error && <p role="alert">{error}</p>}
           {generated && (

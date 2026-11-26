@@ -23,7 +23,7 @@ import { NotFound } from './screens/NotFound.tsx';
 import { EntityPage } from './screens/EntityPage.tsx';
 import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
 import { ActionSlots, ContextSlot, Overlays, StepBandSlot } from './app/globals.tsx';
-import { AiSettingsDialogHost } from './modules/ai/AiSettingsPanel.tsx';
+import { SettingsDialogHost } from './screens/SettingsDialog.tsx';
 import { openAiSettings } from './modules/ai/uiStore.ts';
 import { useBrandVariants } from './modules/ops/theme.ts';
 import { DeviceStorageStatus, useDeviceBlocked } from './ui/DeviceStorageStatus.tsx';
@@ -155,7 +155,7 @@ function Screen() {
   const route = useRoute();
   const [first, second] = route.segments;
   if (first === 'entity') return second ? <EntityPage id={second} /> : <NotFound />;
-  // The former AI settings screen: AiSettingsDialogHost redirects to Home and opens the dialog.
+  // The former AI settings screen: SettingsDialogHost redirects to Home and opens the settings on the AI tab.
   if (first === 'ai-settings') return null;
   const def = screenFor(route.path);
   if (!def) return <NotFound />;
@@ -258,7 +258,7 @@ export function App() {
           {!restricted && <Overlays />}
         </>
       ) : null}
-      {stage !== 'opening' && <AiSettingsDialogHost />}
+      {stage !== 'opening' && <SettingsDialogHost />}
       <Opening />
       </div>
       </MotionBehaviourProvider>

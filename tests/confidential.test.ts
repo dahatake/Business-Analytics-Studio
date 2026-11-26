@@ -61,6 +61,21 @@ describe('FR-369 confidential Work IQ material', () => {
     expect(useConfidential.getState().holdings).toEqual([expect.objectContaining({ since, labels: ['Confidential', 'Highly Confidential', '社外秘'] })]);
   });
 
+  it('asks the relay to drop confidential sources one by one while the toggle is off, and reports how many', async () => {
+    useConfidential.setState({ allow: false });
+    setWorkIqConfidentialGate(admitConfidential, () => useConfidential.getState().allow);
+    relayAnswers({ sections: [{ ...section('org', 'General'), withheld: 3 }] });
+    const out = await askWorkIqSections(q);
+    const body = (url: string) => JSON.parse(((vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes(url)) ?? [])[1] as RequestInit).body as string);
+    expect(body('/relay/workiq/')).toMatchObject({ excludeConfidential: true });
+    expect(out).toEqual([expect.objectContaining({ key: 'org', answer: 'A-org', withheld: 3 })]);
+
+    useConfidential.getState().setAllow(true);
+    relayAnswers({ sections: [section('org', 'General')] });
+    await askWorkIqSections(q);
+    expect(body('/relay/workiq/')).toMatchObject({ excludeConfidential: false });
+  });
+
   it('refuses confidential answers when no gate decision is registered', async () => {
     setWorkIqConfidentialGate(() => false);
     useConfidential.getState().setAllow(true);

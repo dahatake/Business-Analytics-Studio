@@ -14,9 +14,9 @@ or wildcards stop the server at startup (`relayConfigFromEnv`, tested in `tests/
 | `Origin` header | Must be exactly `http://127.0.0.1:<listening port>`. Requests without `Origin` are refused, except `GET /relay/status`. |
 | Fetch Metadata | `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`. |
 | Per-launch token | 32 random bytes per server start, handed out by `POST /relay/session` (browsers always send `Origin` on POST) and required in `X-BAS-Relay` on every other route. Compared in constant time; kept in browser memory only. |
-| Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`, `stage`), prompt + context ≤ 32 000 characters (200 000 for "packBuild" and the all-step batch uses "deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft", D-41, D-42, D-44), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild", "stepBrief" and "objectiveDraft", 32 000 for "deliverableDraft", "solutionDraft" and "strategyOverview"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild", "deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview" and "objectiveDraft"). |
+| Request bodies | JSON only (`Content-Type: application/json`), at most 1 MiB; `/relay/ai` accepts only known fields (`use`, `provider`, `lang`, `prompt`, `context`, `maxOutputTokens`, `timeoutMs`, `stage`), prompt + context ≤ 32 000 characters (200 000 for "packBuild" and the all-step batch uses "deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft", "kpiOkrDraft", D-41, D-42, D-44, D-46), `maxOutputTokens` ≤ the use's cap (1500 for "explain", 16 000 for "packBuild", "stepBrief" and "objectiveDraft", 32 000 for "deliverableDraft", "solutionDraft" and "strategyOverview"), `timeoutMs` ≤ 120 000 (300 000 for "packBuild", "deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft" and "kpiOkrDraft"). |
 | C-03 | `/relay/ai` validates the request-use identifier and provider-specific technical limits, then re-checks the broad AI-settings consent, configured connection, live switch, and safety-limit gates (token caps, interval, daily calls; no monetary budget). There is no per-use approval table. A connection test remains a separate fixed synthetic request through `PUT /relay/connection`; it never includes customer or project data. |
-| Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. The all-step batch uses ("deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft") have no interval (D-41, D-42, D-44). |
+| Interval | Server-side minimum interval per use (PARAM-116: 5 s for "explain") → `429 tooSoon`. The all-step batch uses ("deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", "objectiveDraft", "kpiOkrDraft") have no interval (D-41, D-42, D-44, D-46). |
 | Outbound | AI calls use only `https` URLs whose hostname exactly equals the saved endpoint. Company news uses the fixed `https://news.google.com/rss/search` endpoint. Work IQ (D-14: Microsoft Foundry, or GitHub Copilot when the user opts in) uses the fixed `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/{devicecode,token}` and `https://workiq.svc.cloud.microsoft/rest/conversations` endpoints. Redirects are not followed. |
 | Errors | Provider bodies and credentials are never returned or logged. Foundry failures report sanitized codes: DNS (`dnsFailure`), network, TLS, authentication (`unauthorized`, HTTP 401), access/network restrictions (`forbidden`, 403), API/deployment not found (404), invalid API request (400), busy/quota (429), malformed response or service failure. Only the numeric provider HTTP status and an optional numeric retry delay are returned. Copilot retains its existing error codes. Browser cancellation aborts the upstream call. |
 
@@ -70,7 +70,7 @@ Foundry and GitHub billing for GitHub Copilot.
 
 What remains are safety guards, not budgets: per-call input/output token caps, the minimum interval between calls and
 the per-use daily call count (`PER_USE_LIMITS`), plus consent and timeouts. The uses of the all-step batch draft
-("deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", and "objectiveDraft" for business objectives, D-42) keep only their output cap: no daily count, interval or input-token cap (D-41, D-44).
+("deliverableDraft", "solutionDraft", "stepBrief", "strategyOverview", and "objectiveDraft" for business objectives, D-42, and "kpiOkrDraft" for KPI/OKR drafts and their estimated fields, D-46) keep only their output cap: no daily count, interval or input-token cap (D-41, D-44).
 
 ### Token usage per job
 
@@ -269,6 +269,96 @@ The shared Speech test must succeed before the service is considered configured;
 
 Wildcards (`*`) are refused in every list. A malformed entry or a flag other than `0`/`1` stops the server with an error
 that names the variable (the value is not printed).
+
+## Proxy and certificates on customer PCs (FR-372)
+
+Every outbound call of the relay process goes through one routing dispatcher (`server/network.ts`). That covers
+Foundry, Microsoft Entra ID (MSAL), Azure Resource Manager, Work IQ, public research and news. For each host, the
+dispatcher picks a direct connection or a proxy. Loopback is always direct. The proxy comes from the first source that
+is set, in this order:
+
+1. BAS settings: `BAS_PROXY`, `BAS_PAC_URL` and `BAS_NO_PROXY`. The portable package also reads them from `network.json`.
+2. The standard variables `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, in either case.
+3. The operating system settings:
+   - Windows: Internet Options, including the machine-wide policy, the automatic configuration script (PAC) and WPAD (`http://wpad/wpad.dat`).
+   - macOS: the network settings, read with `scutil --proxy`.
+4. A direct connection.
+
+| Variable | Values | Effect |
+|---|---|---|
+| `BAS_PROXY` | `http://host:port`, `host:port`, `https://…`, `socks5://…`, `system`/`auto`, `direct` | Fixed proxy for every outbound host. Basic credentials may be in the URL. They are never shown in the UI or the logs. `system` skips the standard variables and uses the operating system settings. `direct` turns proxies off. |
+| `BAS_PAC_URL` | `http(s)://…` or `file://…` | PAC script. It runs in a sandbox with a time limit. If the script cannot be loaded, the manual proxy is used, or else a direct connection. |
+| `BAS_NO_PROXY` | comma-separated hosts, `.suffix`, `*.suffix`, `host:port`, IP/CIDR | Hosts that bypass a fixed proxy. |
+| `BAS_SYSTEM_CA` | `1` (default) or `0` | `1` adds the operating system certificate store to Node's bundled roots. This covers the Windows certificate store and the macOS keychain. It lets corporate TLS inspection work without turning off certificate checks. `NODE_EXTRA_CA_CERTS` is also honoured. |
+
+Child processes use the same route. These are the GitHub Copilot runtime and the Work IQ CLI started through npx. They
+receive the resolved proxy as `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` and the trusted roots as `NODE_EXTRA_CA_CERTS`
+(`system-ca.pem` in the data folder).
+
+Proxies that require NTLM or Kerberos (Negotiate) authentication are not supported. The relay reports a `407` as
+"proxy authentication required" and asks for an unauthenticated route or Basic credentials. Ask IT to allow the
+outbound hosts listed under `BAS_RELAY_OUTBOUND_HOSTS`, or run a local authenticating proxy (for example Px) and point
+`BAS_PROXY` at it.
+
+AI settings show the route in use (direct, proxy or PAC, and where it came from). They do not show credentials or the
+PAC query. The settings also have a check that opens each outbound host in use (`POST /relay/network/check`) and names
+the failure for each host: proxy authentication, proxy error, DNS, TLS (certificate), timeout or network.
+
+## Portable package for customer PCs (FR-373, D-47)
+
+`npm run package:portable -- --target win-x64,win-arm64,mac-arm64,mac-x64,linux-x64,linux-arm64` writes
+`release/BusinessAnalyticsStudio-<version>-<commit>-<target>.zip` and a `.sha256` file for each target. The packager
+does the following:
+
+1. Builds the app.
+2. Bundles the server (`server/main.ts` → `server/main.mjs`). Native and large modules stay external: MSAL, the
+   Copilot SDK, undici, zod and fast-xml-parser.
+3. Downloads the official Node runtime and checks it against `SHASUMS256.txt`. The download is cached under
+   `.bas-local/portable/node-cache` and goes through the same proxy detection.
+4. Installs the external modules from the lock file (`npm ci --omit=dev --ignore-scripts`) for the target OS and CPU.
+
+Other options:
+
+- `--no-copilot` leaves out the GitHub Copilot runtime, which is about 180 MB. The Copilot provider then reports that
+  it is unavailable.
+- `--node <version>` pins the Node runtime version.
+- `--skip-build` reuses an existing `dist`.
+
+The customer extracts the zip and starts `start.cmd` (Windows), `start.command` (macOS) or `start.sh` (Linux). Nothing
+is installed, and no administrator rights are needed. The launcher behaves as follows:
+
+- Serves the app and the relay on `127.0.0.1`, from the first free port in 4300–4309, and opens the browser.
+- Keeps all data in a per-user folder outside the extracted folder:
+  - Windows: `%LOCALAPPDATA%\BusinessAnalyticsStudio`
+  - macOS: `~/Library/Application Support/BusinessAnalyticsStudio`
+  - Linux: `$XDG_DATA_HOME/BusinessAnalyticsStudio`
+
+  The data folder holds the secrets, the device database, `system-ca.pem` and `instance.json`. Replacing or deleting
+  the extracted folder keeps the data.
+- A second start with the same data folder opens the running instance instead of starting another one.
+
+Proxy settings can be distributed by IT as `network.json`, placed next to the start file or in the data folder:
+
+```json
+{ "proxy": "http://proxy.example.com:8080", "noProxy": ["intranet.example.com", ".corp.example.com"], "systemCa": true }
+```
+
+The keys are `proxy`, `pacUrl`, `noProxy` (a string or an array) and `systemCa`. Keys that start with `$` or `_` are
+comments. Any other key stops the launch with an error. Variables that are already set override the file.
+
+Launcher options: `--data-dir <path>` (pins the data folder, as `BAS_DEVICE_DIR` does), `--port <n>`, `--no-open`,
+`--help`. The same settings are available as `BAS_DATA_DIR` and `BAS_NO_OPEN=1`.
+
+### Releases, download page and customer guide (FR-374, D-48)
+
+- Pushing a tag `v<version>` (equal to `version` in `package.json`) runs `.github/workflows/release.yml`. It type-checks,
+  runs the unit tests, builds the six portable zips, writes `SHA256SUMS.txt`, attests build provenance and creates
+  the GitHub Release with notes from `.github/release-notes.md`. A manual run builds only and keeps the zips as a
+  workflow artifact.
+- `site/` is published to GitHub Pages by `.github/workflows/pages.yml` (Settings → Pages → Source: GitHub Actions,
+  once). `index.html` reads the latest Release from the GitHub API and recommends the zip for the visitor's PC.
+  `guide.md` is the customer guide (Japanese) with screenshots, linked from each zip's `README.txt`.
+- `npm run guide:screenshots` retakes `site/images/` from a real zip in `release/`. See `site/README.md`.
 
 ## Company news endpoint
 

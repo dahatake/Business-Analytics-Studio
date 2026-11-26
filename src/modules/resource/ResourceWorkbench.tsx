@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Badge, Button, Caption1, Field, MessageBar, MessageBarBody, Select, Slider, SpinButton, Spinner, Switch, Tab, TabList,
+  Badge, Button, Caption1, Field, MessageBar, MessageBarBody, Select, Slider, SpinButton, Switch, Tab, TabList,
 } from '@fluentui/react-components';
 import { ArrowReset20Regular, DismissCircle20Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { aiComplete, type AiResponse } from '../../ai/client.ts';
@@ -17,6 +17,7 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
 import { LiveNotice, MockNotice } from '../ai/AiCommon.tsx';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import { openAiSettings } from '../ai/uiStore.ts';
 import { buildFacts, narrativePrompt, RESOURCE_STAGE, type Fact } from './facts.ts';
@@ -237,7 +238,7 @@ function Narrative({ facts, industryLabel, signature }: { facts: Fact[]; industr
       {state.status === 'idle' && !live && (
         <p className="muted">{t('res.ai.offline')} <Button size="small" appearance="transparent" onClick={openAiSettings}>{t('res.ai.settings')}</Button></p>
       )}
-      {state.status === 'loading' && <Spinner size="tiny" label={t('res.ai.loading')} />}
+      {state.status === 'loading' && <AiProgress stage="generate" result="process" testId="resource-ai-progress" />}
       {state.status === 'done' && state.res.mode === 'live' && (
         <LiveNotice usage={state.res.usage}>
           <p className={`res-ai-text${stale ? ' is-stale' : ''}`} data-testid="resource-ai-text">{state.res.text}</p>

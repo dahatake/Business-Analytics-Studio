@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Field, Select, Spinner } from '@fluentui/react-components';
+import { Badge, Button, Field, Select } from '@fluentui/react-components';
 import { ArrowDownload20Regular, Video20Regular } from '@fluentui/react-icons';
 import { aiLive, preflight, type AiRequest, type TokenCount } from '../../ai/client.ts';
 import { StoryOutput, StoryScenes } from '../../ai/storyOutput.ts';
@@ -12,6 +12,7 @@ import { isHidden } from '../../ui/cardSpecs.ts';
 import { useUseCases } from '../usecases/store.ts';
 import { downloadText } from '../project/common.tsx';
 import { LiveNotice, MockNotice, reasonKey } from './AiCommon.tsx';
+import { AiProgress } from './AiProgress.tsx';
 import { useAiSettings } from './settingsStore.ts';
 import { liveStoryPrompt, sourceFromUseCase, sourcesFromSolutions, STORY_OUTPUT_TOKENS, storyMock, storyPrompt, storyState, useStories, type StoryVideo } from './story.ts';
 import { storyHtml } from './storyHtml.ts';
@@ -139,7 +140,7 @@ export function StoryVideoSection() {
         <Badge appearance="outline" data-testid="ai-story-state">{t(`ai.story.state.${state}`)}</Badge>
       </div>
       {error && <p role="alert">{error}</p>}
-      {busy && <Spinner size="tiny" label={t('ai.loading')} />}
+      {busy && <AiProgress stage="generate" limitMs={request.timeoutMs} testId="ai-story-progress" />}
       {video && !busy && <>
         {video.mode === 'live'
           ? <LiveNotice usage={{ inputTokens: video.inputTokens ?? null, outputTokens: video.outputTokens ?? null }} />

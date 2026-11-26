@@ -17,12 +17,13 @@ import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
 import { wrap } from '../../ui/textWrap.ts';
 import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
+import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
 import { openAiSettings } from '../ai/uiStore.ts';
 import { ScrollRegion } from './common.tsx';
 import type { AppCheckContext as CheckContext } from './deliverables.ts';
 import { todayIn, todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.tsx';
-import { collectObjectives, objectiveDraftInput, storeObjectives } from './objectiveDraft.ts';
+import { collectObjectives, objectiveDraftInput, storeObjectives, type ObjectiveProgress, type ObjectiveSearch } from './objectiveDraft.ts';
 import {
   availableAxes, itemNames, overviewBaseline, overviewContext, overviewPrompt, parseOverviewResponse, proposalEntities, recommendedAxis, strategyMap,
   useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyDrafts, type StrategyMap, type StrategyNode,
@@ -301,6 +302,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   const approved = state.approved?.audience === audience && state.approved.lang === lang ? state.approved : undefined;
   const stale = !!draft && (draft.baseline !== baseline || draft.lang !== lang);
   const [busy, setBusy] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<{ stage: AiStage; startedAt: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<'draft' | 'approved' | null>(null);
   const latest = useRef({ raw, state, scope, audience, lang, step });
@@ -324,6 +326,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   };
   const generate = async () => {
     setBusy(true); setError(null); setSaved(null);
+    setGenerationProgress({ stage: 'generate', startedAt: Date.now() });
     const provider = useAiSettings.getState().provider;
     const previousDraft = JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]);
     const request = { use: 'strategyOverview' as const, lang, prompt: overviewPrompt(ctx, audience === 'internal' ? state : { ...state, objectiveIssues: [] }, lang, audience, step), scope, timeoutMs: STEP_DRAFT_TIMEOUT_MS };
@@ -335,6 +338,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       if (useAiSettings.getState().provider !== provider) throw new Error(t('stg.stale'));
       abort.current = new AbortController();
       const result = await aiLive(request, abort.current.signal);
+      if (alive.current) setGenerationProgress({ stage: 'verify', startedAt: Date.now() });
       current();
       if (!alive.current) return;
       if (JSON.stringify(useOverview.getState().value.stepDrafts?.[draftKey]) !== previousDraft) throw new Error(t('stg.draftChanged'));
@@ -344,7 +348,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
     } catch (e) { fail(e); }
-    finally { if (alive.current) setBusy(false); }
+    finally { if (alive.current) { setBusy(false); setGenerationProgress(null); } }
   };
   const saveDraft = async () => {
     if (!draft) return;
@@ -381,23 +385,32 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
   };
   const d = useMemo(() => stepDashboard(step, ctx), [step, ctx]);
   const [objectiveBusy, setObjectiveBusy] = useState(false);
-  const [objectiveResult, setObjectiveResult] = useState<{ registered: number; drafts: number; workIq: 'used' | 'failed' | 'off'; withheld: number } | null>(null);
+  const [objectiveProgress, setObjectiveProgress] = useState<{ stage: AiStage; activity: ObjectiveProgress; startedAt: number } | null>(null);
+  const [objectiveSearch, setObjectiveSearch] = useState<ObjectiveSearch | null>(null);
+  const [objectiveResult, setObjectiveResult] = useState<{ registered: number; drafts: number; workIq: 'used' | 'failed' | 'off'; failedSections: number; withheld: number } | null>(null);
   const [objectiveError, setObjectiveError] = useState<string | null>(null);
   const fetchObjectives = async () => {
-    setObjectiveBusy(true); setObjectiveResult(null); setObjectiveError(null);
+    setObjectiveBusy(true); setObjectiveResult(null); setObjectiveSearch(null); setObjectiveError(null);
+    setObjectiveProgress({ stage: 'confirm', activity: 'generate', startedAt: Date.now() });
     abort.current = new AbortController();
     try {
-      const c = await collectObjectives(loaded.pack, lang, abort.current.signal, todayIn());
+      const c = await collectObjectives(loaded.pack, lang, abort.current.signal, todayIn(), (activity, search) => {
+        if (alive.current) {
+          if (search) setObjectiveSearch(search);
+          setObjectiveProgress({ stage: 'generate', activity, startedAt: Date.now() });
+        }
+      });
+      if (alive.current) setObjectiveProgress({ stage: 'verify', activity: 'generate', startedAt: Date.now() });
       const r = { ...c, ...storeObjectives(c) };
       await flushDeviceStorage();
       if (deviceStatus() !== 'saved') throw new Error(t('device.error'));
       if (!alive.current) return;
-      setObjectiveResult({ registered: r.registered.length, drafts: r.drafts, workIq: !r.workIqUsed ? 'off' : r.workIqError || !r.workIqAnswers ? 'failed' : 'used', withheld: r.workIqWithheld });
+      setObjectiveResult({ registered: r.registered.length, drafts: r.drafts, workIq: !r.workIqUsed ? 'off' : r.workIqError || !r.workIqAnswers ? 'failed' : 'used', failedSections: r.workIqFailedSections, withheld: r.workIqWithheld });
     } catch (e) {
       if (!alive.current) return;
       const message = e instanceof AiLiveError ? e.reasons.map((r) => t(reasonKey(r))).join(', ') + `: ${e.message}` : e instanceof Error ? e.message : String(e);
       setObjectiveError(message === 'stale' ? t('stg.stale') : message);
-    } finally { if (alive.current) setObjectiveBusy(false); }
+    } finally { if (alive.current) { setObjectiveBusy(false); setObjectiveProgress(null); } }
   };
   const briefs = useMemo(() => (analysis ? IMPROVEMENT_STEPS.map((s) => buildStepBrief(stepDashboard(s, ctx), ctx, lang, audience)) : []), [analysis, ctx, lang, audience]);
   const limit = usePaybackLimit();
@@ -417,12 +430,22 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
           <label>{t('stg.sort')}<Select aria-label={t('stg.sort')} data-testid="strategy-sort" value={descending ? 'desc' : 'asc'} onChange={(_, data) => set((v) => ({ ...v, descending: data.value === 'desc' }))}>
             <option value="desc">{t('stg.desc')}</option><option value="asc">{t('stg.asc')}</option>
           </Select></label>
-          <Button icon={busy ? <Spinner size="tiny" /> : <Sparkle20Regular />} appearance="primary" onClick={() => void generate()} disabled={busy || !map.nodes.length} data-testid="strategy-optimize">{t('stg.optimize')}</Button>
-          {internal && company && <Button icon={objectiveBusy ? <Spinner size="tiny" /> : <Sparkle20Regular />} onClick={() => void fetchObjectives()} disabled={objectiveBusy} data-testid="strategy-objectives-fetch">{t('stg.objFetch')}</Button>}
+          <Button icon={busy ? <Spinner size="tiny" aria-hidden /> : <Sparkle20Regular />} appearance="primary" onClick={() => void generate()} disabled={busy || !map.nodes.length} data-testid="strategy-optimize">{t('stg.optimize')}</Button>
+          {internal && company && <Button icon={objectiveBusy ? <Spinner size="tiny" aria-hidden /> : <Sparkle20Regular />} onClick={() => void fetchObjectives()} disabled={objectiveBusy} data-testid="strategy-objectives-fetch">{t('stg.objFetch')}</Button>}
         </div>
+        {generationProgress && <AiProgress stage={generationProgress.stage} startedAt={generationProgress.startedAt} elapsedKind="stage"
+          limitMs={STEP_DRAFT_TIMEOUT_MS} testId="strategy-optimize-progress" />}
+        {objectiveProgress && <AiProgress stage={objectiveProgress.stage} activity={objectiveProgress.activity} startedAt={objectiveProgress.startedAt}
+          elapsedKind="stage" limitMs={objectiveProgress.activity === 'workiq' ? undefined : STEP_DRAFT_TIMEOUT_MS} testId="strategy-objectives-progress" />}
+        {objectiveBusy && objectiveSearch && <p role="status" data-testid="strategy-objectives-search-status">
+          {t(`stg.objFetchWorkIq.${!objectiveSearch.workIqUsed ? 'off' : objectiveSearch.workIqError || !objectiveSearch.workIqAnswers ? 'failed' : 'used'}`)}
+          {' '}{objectiveSearch.workIqFailedSections > 0 && t('workiq.partialSearch', { n: objectiveSearch.workIqFailedSections })}
+          {' '}{objectiveSearch.workIqWithheld > 0 && t('workiq.excludedMaterial')}
+        </p>}
         {internal && company && <p className="muted">{t('stg.objFetchHint')}</p>}
         {objectiveResult && <p role="status" data-testid="strategy-objectives-result">{t('stg.objFetchDone', { registered: objectiveResult.registered, drafts: objectiveResult.drafts })} {t(`stg.objFetchWorkIq.${objectiveResult.workIq}`)}</p>}
-        {objectiveResult && objectiveResult.withheld > 0 && <p className="muted" data-testid="strategy-objectives-confidential">{t('workiq.confidentialNotAllowed')}</p>}
+        {objectiveResult && objectiveResult.failedSections > 0 && <p role="status">{t('workiq.partialSearch', { n: objectiveResult.failedSections })}</p>}
+        {objectiveResult && objectiveResult.withheld > 0 && <p className="muted" role="status" data-testid="strategy-objectives-confidential">{t('workiq.excludedMaterial')}</p>}
         {objectiveError && <MessageBar intent="error" data-testid="strategy-objectives-error"><MessageBarBody>{t('stg.objFetchError', { message: objectiveError })}</MessageBarBody></MessageBar>}
         <p>{t('stg.recommended', { axis: t(`stg.axis.${recommended}`) })}</p>
         <p className="muted">{t(`stg.axisHint.${axis}`)}</p>

@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n/index.ts';
 import './ai.css';
 
 export type AiStage = 'confirm' | 'generate' | 'verify';
+export type AiActivity = 'generate' | 'workiq' | 'decision' | 'fill' | 'fields' | 'tasks';
 const STAGES: readonly AiStage[] = ['confirm', 'generate', 'verify'];
 
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -14,43 +15,59 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds
  * never moves backwards, a stage list, and the elapsed time as a sign of life. The provider reports no partial
  * progress, so no remaining time is guessed; the automatic time limit is stated instead.
  */
-export function AiProgress({ stage, startedAt, limitMs, testId = 'ai-progress' }: {
+export function AiProgress({ stage, activity = 'generate', startedAt, elapsedKind, limitMs, detail, result = 'save', testId = 'ai-progress' }: {
   stage: AiStage;
+  activity?: AiActivity;
   /** When the request was sent (ms epoch); the elapsed time is shown from then. */
   startedAt?: number;
+  elapsedKind?: 'send' | 'start' | 'stage';
   limitMs?: number;
+  detail?: string;
+  result?: 'save' | 'process';
   testId?: string;
 }) {
   const { t } = useI18n();
+  const [mountedAt] = useState(() => Date.now());
+  const start = startedAt ?? mountedAt;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (startedAt === undefined) return;
     setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [startedAt]);
+  }, [start]);
   const index = STAGES.indexOf(stage);
-  const elapsed = startedAt === undefined ? null : Math.max(0, Math.floor((now - startedAt) / 1000));
+  const elapsed = Math.max(0, Math.floor((now - start) / 1000));
+  const timeKey = elapsedKind ?? (startedAt === undefined ? 'start' : 'send');
+  const currentLabel = stage === 'generate' && activity !== 'generate'
+    ? t(`ai.progress.activity.${activity}`)
+    : stage === 'verify' && result === 'process' ? t('ai.progress.now.process') : t(`ai.progress.now.${stage}`);
   return (
-    <div className="ai-progress" data-testid={testId} data-stage={stage}>
-      <p className="ai-progress-now" role="status">{t(`ai.progress.now.${stage}`)}</p>
-      <ProgressBar value={index / STAGES.length} thickness="large" aria-label={t('ai.progress.label')} data-testid={`${testId}-bar`} />
+    <div className="ai-progress" data-testid={testId} data-stage={stage} data-activity={activity}>
+      <p className="ai-progress-now" role="status">{currentLabel}</p>
+      {detail && <p className="muted" data-testid={`${testId}-detail`}>{detail}</p>}
+      <ProgressBar value={index / STAGES.length} thickness="large" aria-label={t('ai.progress.label')}
+        aria-valuetext={t('ai.progress.status', { done: index, total: STAGES.length })} data-testid={`${testId}-bar`} />
       <p className="muted" data-testid={`${testId}-status`}>
         {t('ai.progress.status', { done: index, total: STAGES.length })}
-        {elapsed !== null && <> {t('ai.progress.elapsed', { elapsed: clock(elapsed) })}</>}
+        {' '}{t(`ai.progress.time.${timeKey}`, { elapsed: clock(elapsed) })}
       </p>
       <ol className="ai-progress-steps">
         {STAGES.map((s, i) => {
           const status = i < index ? 'done' : i === index ? 'running' : 'pending';
+          const label = s === 'generate' && activity !== 'generate'
+            ? t('ai.progress.step.work')
+            : s === 'verify' && result === 'process' ? t('ai.progress.step.process') : t(`ai.progress.step.${s}`);
           return (
             <li key={s} data-step={s} data-status={status}>
-              {status === 'done' ? <CheckmarkCircle20Filled className="ai-progress-ok" /> : status === 'running' ? <Spinner size="extra-tiny" /> : <span className="ai-progress-dot" aria-hidden />}
-              <span>{t(`ai.progress.step.${s}`)}</span>
+              {status === 'done' ? <CheckmarkCircle20Filled className="ai-progress-ok" aria-hidden /> : status === 'running' ? <Spinner size="extra-tiny" aria-hidden /> : <span className="ai-progress-dot" aria-hidden />}
+              <span>{label} <span className="visually-hidden">{t(`ai.progress.stepStatus.${status}`)}</span></span>
             </li>
           );
         })}
       </ol>
-      {stage === 'generate' && limitMs !== undefined && <p className="muted">{t('ai.progress.limit', { minutes: Math.round(limitMs / 60_000) })}</p>}
+      {stage === 'generate' && <p className="muted">{limitMs !== undefined
+        ? t('ai.progress.limit', { minutes: limitMs / 60_000 })
+        : t('ai.progress.unknown')}</p>}
     </div>
   );
 }

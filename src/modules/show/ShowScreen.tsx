@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Badge, Button, Field, Radio, RadioGroup, Select, Spinner } from '@fluentui/react-components';
+import { Badge, Button, Field, Radio, RadioGroup, Select } from '@fluentui/react-components';
 import { Play24Regular, ArrowClockwise24Regular, VideoClip24Regular, Sparkle24Regular } from '@fluentui/react-icons';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { useSettings } from '../../state/settings.ts';
 import { PERSONA_VIEWS, personaLabel, type PersonaView } from '../../state/personas.ts';
 import { TokensInline } from '../ai/AiCommon.tsx';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { buildChapters, buildStory, CHAPTER_IDS, chapterPoints, chapterTitleKey, INTENSITIES, SHOW_PARAMS, type Intensity } from './model.ts';
 import { generateStory, type GenerateResult } from './aiOutline.ts';
@@ -130,7 +131,7 @@ function AiStoryPanel() {
         </Field>
         <Button appearance="primary" icon={<Sparkle24Regular />} onClick={() => void run()} disabled={busy} data-testid="show-ai-generate">{t('show.ai.generate')}</Button>
       </div>
-      {busy && <Spinner size="small" label={t('show.ai.busy')} />}
+      {busy && <AiProgress stage="generate" result="process" testId="show-ai-progress" />}
       {result && !result.ok && <p role="alert">{t(`show.ai.fail.${result.reason}` as MessageKey)}</p>}
       {result?.ok && (
         <div className="show-ai-result" data-testid="show-ai-result" aria-live="polite">

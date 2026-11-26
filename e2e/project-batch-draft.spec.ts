@@ -205,6 +205,67 @@ test.describe('all-step live drafts', () => {
     expect(kpi[1]!.stage).toBe('fields-kpi:fields');
   });
 
+  test('shows the current split call, elapsed time and a wider responsive dialog', async ({ page }) => {
+    await setupBatch(page, 'foundry');
+    let releaseFields!: () => void;
+    let releaseTasks!: () => void;
+    const fields = new Promise<void>((resolve) => { releaseFields = resolve; });
+    const tasks = new Promise<void>((resolve) => { releaseTasks = resolve; });
+    await page.route('**/relay/ai', async (route) => {
+      const request = route.request().postDataJSON() as RelayRequest;
+      if (request.stage === 'fields-asis:fields') await fields;
+      else if (request.stage === 'fields-asis:tasks') await tasks;
+      else return route.fallback();
+      await route.fulfill({ json: { text: answer(request), inputTokens: 100, outputTokens: 100 } }).catch(() => undefined);
+    });
+    try {
+      await openBatch(page);
+      const dialog = page.getByTestId('dlv-batch-dialog');
+      const desktop = await dialog.boundingBox();
+      expect(desktop!.width).toBeGreaterThan(1000);
+      await confirmBatch(page);
+      const current = page.getByTestId('dlv-batch-current');
+      const progress = page.getByTestId('dlv-batch-current-progress');
+      await expect(current).toContainText('現状分析: 成果物とタスク別の提案');
+      await expect(progress).toHaveAttribute('data-activity', 'fields');
+      await expect(progress).toContainText('成果物の各項目を作成しています');
+      await expect(progress.getByTestId('dlv-batch-current-progress-detail')).toContainText('2 回のうち 1 回目');
+      await expect(progress.getByTestId('dlv-batch-current-progress-status')).toContainText('この処理の開始から 0:02 経過', { timeout: 5000 });
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('0/16');
+      await expect(page.getByTestId('dlv-batch-progress-bar')).toHaveAttribute('aria-valuenow', '0');
+      await expect(progress.getByTestId('dlv-batch-current-progress-bar')).toHaveAttribute('aria-valuetext', '3 段階中 1 段階完了');
+      const scan = await new AxeBuilder({ page } as unknown as ConstructorParameters<typeof AxeBuilder>[0])
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .exclude('[data-tabster-dummy]').analyze();
+      expect(scan.violations.map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target) }))).toEqual([]);
+
+      releaseFields();
+      await expect(progress).toHaveAttribute('data-activity', 'tasks');
+      await expect(progress).toContainText('タスク別の推奨案を作成しています');
+      await expect(progress.getByTestId('dlv-batch-current-progress-detail')).toContainText('2 回のうち 2 回目');
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('0/16');
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      const mobile = await dialog.boundingBox();
+      expect(mobile!.width).toBeGreaterThan(340);
+      expect(mobile!.width).toBeLessThanOrEqual(358);
+      await expect(page.getByTestId('dlv-batch-stop')).toBeVisible();
+      await page.getByTestId('dlv-batch-stop').click();
+      releaseTasks();
+      await expect(page.getByTestId('dlv-batch-fields-asis')).toHaveAttribute('data-status', 'pending');
+      await expect(current).toHaveCount(0);
+      await expect(dialog).toContainText('実行を中断しました');
+
+      await page.getByTestId('dlv-batch-generate').click();
+      await expect(page.getByTestId('dlv-batch-progress')).toContainText('16/16', { timeout: 110_000 });
+      await expect(page.getByTestId('dlv-batch-progress-bar')).toHaveAttribute('aria-valuenow', '1');
+      await expect(page.getByTestId('dlv-batch-progress-bar')).toHaveAttribute('aria-valuemax', '1');
+    } finally {
+      releaseFields();
+      releaseTasks();
+    }
+  });
+
   test('stopping while a job is in flight preserves completed drafts', async ({ page }) => {
     const requests = await setupBatch(page, 'foundry');
     const release = await holdTobe(page);

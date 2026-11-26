@@ -13,6 +13,7 @@ import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useProjects, type Company, type Project } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
 import { TokensInline } from '../ai/AiCommon.tsx';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { liveReady, useAiSettings } from '../ai/settingsStore.ts';
 import '../ai/liveTransport.ts';
 import { ALIGNMENT_KINDS, alignmentPrompt, assessAlignment, emptyAlignment, orderedCompanyObjectives, parseAlignmentProposal, projectEvidenceSources, type Alignment, type ProjectEvidenceSource } from './companyAlignment.ts';
@@ -229,6 +230,7 @@ function ProjectAlignmentDialog({ company, project, onClose }: { company: Compan
                   {(!estimate?.allowed || proposal.length > 32_000) && <p className="muted">{t('proj.align.aiNotReady', { reason: proposal.length > 32_000 ? 'inputTooLarge' : estimate?.reasons.join(', ') ?? '' })}</p>}
                   <Button disabled={busy || !liveReady(ai) || !aiApproved || !estimate?.allowed || proposal.length > 32_000 || !purpose.trim()}
                     onClick={() => void suggest()} data-testid="alignment-ai-run">{t('proj.align.aiRun')}</Button>
+                  {busy && <AiProgress stage="generate" result="process" testId="alignment-ai-progress" />}
                   {tokens && <TokensInline usage={tokens} testId="alignment-ai-tokens" />}
                 </details>
               )}

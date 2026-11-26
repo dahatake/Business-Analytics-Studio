@@ -14,6 +14,7 @@ import { threadOf } from './deliverables.ts';
 import { DEFINITION_STATUSES, kpiBasis, kpiDefinitionState, proposeKpiDefinition, type DefinitionStatus, type KpiBasisInfo } from './kpiOkr.ts';
 import { FormDraftReview } from './FormDraftReview.tsx';
 import { requestFormDraft } from './formDraft.ts';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { inputLabels } from './handoff.ts';
 import { newId, type KpiData, type KpiOrigin } from './model.ts';
 import type { QualityIssue } from './requirementQuality.ts';
@@ -618,6 +619,7 @@ function SectionEditor({ solutionId, id, text, edited, kind, facts, quality, sta
           <Button size="small" icon={<Search20Regular />} disabled={!wi.ready || found?.state === 'busy'} onClick={() => void search()} data-testid={`sol-doc-find-${solutionId}-${id}`}>
             {found?.state === 'busy' ? t('sol.doc.finding') : t('sol.doc.findEvidence')}
           </Button>
+          {found?.state === 'busy' && <AiProgress stage="generate" activity="workiq" result="process" testId={`sol-doc-find-progress-${solutionId}-${id}`} />}
           {!wi.ready && <span className="muted">{t('sol.ev.notReady')}</span>}
           {found?.state === 'error' && <span role="alert">{found.code === 'confidentialNotAllowed' ? t('workiq.confidentialNotAllowed') : t('sol.ev.error', { code: found.code ?? 'unknown' })}</span>}
           {found?.state === 'done' && (found.items.length === 0

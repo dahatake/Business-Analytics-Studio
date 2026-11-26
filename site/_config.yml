@@ -1,0 +1,14 @@
+# FR-374: customer download page and guide, published by .github/workflows/pages.yml.
+title: Business Analytics Studio
+lang: ja
+repository: dahatake/Business-Analytics-Studio
+markdown: kramdown
+kramdown:
+  input: GFM
+  auto_ids: true
+defaults:
+  - scope: { path: "" }
+    values: { layout: default }
+exclude:
+  - README.md
+  - assets/download.d.ts

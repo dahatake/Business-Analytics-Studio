@@ -214,7 +214,7 @@ export function TaskResolutionDialog({ todoId }: { todoId: string }) {
             <p>{t('dlv.resolve.note')}</p>
             <p>{t(resultKey(result.outcome!.code), result.outcome!.vars)}</p>
             <Refs refs={result.outcome?.refs ?? []} />
-            {progress && <AiProgress stage={progress.stage} startedAt={progress.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS} testId="dlv-resolve-progress" />}
+            {progress && <AiProgress stage={progress.stage} startedAt={progress.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS} result="process" testId="dlv-resolve-progress" />}
             {error && <p role="alert" data-testid="dlv-resolve-error">{error}</p>}
             {cancelled && <p role="status">{t('dlv.batch.interrupted')}</p>}
             {stale && <p role="alert">{t('dlv.resolve.changed')}</p>}

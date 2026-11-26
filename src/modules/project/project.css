@@ -414,6 +414,8 @@
 .dlv-field-approval { margin: 0; font-size: var(--fontSizeBase200); }
 
 .dlv-draft-surface { max-width: min(960px, 96vw); }
+.dlv-batch-surface.dlv-batch-surface { width: min(1120px, calc(100vw - 32px)); max-width: min(1120px, calc(100vw - 32px)); }
+.dlv-batch-current { padding: 12px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground2); }
 .dlv-resolve-recommendation { border-inline-start: 3px solid var(--colorBrandStroke1); padding-inline-start: 12px; margin-block: 8px; }
 .dlv-resolve-choice { border: 1px solid var(--colorNeutralStroke2); border-radius: 6px; padding: 8px 12px; margin-block-end: 8px; }
 .dlv-resolve-choice[data-recommended='true'] { border-color: var(--colorBrandStroke1); }

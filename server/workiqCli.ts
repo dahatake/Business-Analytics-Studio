@@ -2,6 +2,7 @@ import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } fr
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WORKIQ_ITEM_MAX_CHARS, WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
+import { isConfidentialLabel } from '../src/ai/sensitivity.ts';
 import { REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
 import { WORKIQ_SCOPED_ASPECTS, WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer, type WorkIqSource } from './workiq.ts';
 
@@ -40,8 +41,9 @@ export function workIqCliCommand(env: Record<string, string | undefined> = proce
   if (override) {
     return /\.[cm]?js$/i.test(override) ? { command: execPath, args: [override, 'mcp'], shell: false } : { command: override, args: ['mcp'], shell: false };
   }
-  const npxCli = join(dirname(execPath), 'node_modules', 'npm', 'bin', 'npx-cli.js');
-  if (existsSync(npxCli)) return { command: execPath, args: [npxCli, '-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: false };
+  // Windows keeps npm next to node.exe; the macOS/Linux distributions keep it in lib/ beside bin/node.
+  const npxCli = [join(dirname(execPath), 'node_modules', 'npm', 'bin', 'npx-cli.js'), join(dirname(execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js')].find((p) => existsSync(p));
+  if (npxCli) return { command: execPath, args: [npxCli, '-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: false };
   return platform === 'win32'
     ? { command: 'npx.cmd', args: ['-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: true }
     : { command: 'npx', args: ['-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: false };
@@ -134,14 +136,19 @@ function httpsUrl(v: unknown): URL | null {
  * A result whose `contentProtection` is not explicitly "allowed" keeps its citation in a single answer,
  * but its text is not passed on and it is not selected for merged grounding or a deep read.
  */
-export function parseRetrieveResult(result: unknown, question: string, fetchedAt: string, maxChars = WORKIQ_MAX_ANSWER_CHARS): WorkIqAnswer {
+export function parseRetrieveResult(result: unknown, question: string, fetchedAt: string, maxChars = WORKIQ_MAX_ANSWER_CHARS, excludeConfidential = false): WorkIqAnswer {
   const { markdown: top, entries } = readRetrieve(result);
   const seen = new Set<string>();
   const citations: WorkIqCitation[] = [];
   const labels: string[] = [];
   const sections: string[] = [];
+  const withheld = new Set<string>();
   if (top) sections.push(top);
   for (const e of entries) {
+    if (excludeConfidential && isConfidentialLabel(e.label)) {
+      withheld.add(e.url?.href ?? e.title);
+      continue;
+    }
     if (e.label && !labels.includes(e.label)) labels.push(e.label);
     if (!e.url || seen.has(e.url.href) || citations.length >= MAX_CITATIONS) continue;
     seen.add(e.url.href);
@@ -152,7 +159,7 @@ export function parseRetrieveResult(result: unknown, question: string, fetchedAt
   }
   const markdown = sections.join('\n\n');
   const answer = markdown.length > maxChars ? `${markdown.slice(0, maxChars)}…` : markdown;
-  return { question, answer, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt };
+  return { question, answer, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt, ...(withheld.size ? { withheld: withheld.size } : {}) };
 }
 
 interface RetrieveEntry {
@@ -255,13 +262,14 @@ export function termCoverage(text: string, terms: readonly string[], idf: (t: st
  * Organisation-scoped sections retain their own evidence. Within an item, sources are reranked by termCoverage,
  * then share the character budget so one long excerpt cannot crowd out every other source.
  */
-export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars = WORKIQ_SECTION_MAX_CHARS): WorkIqSectionAnswer[] {
+export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars = WORKIQ_SECTION_MAX_CHARS, excludeConfidential = false): WorkIqSectionAnswer[] {
   type Candidate = RetrieveEntry & { id: string; passages: Map<string, { text: string; items: Set<number> }> };
   const best = new Map<string, Candidate>();
   const scores = new Map<string, number[]>();
   const answered = items.map(() => 0);
   const firstError = items.map((): WorkIqErrorCode | null => null);
   const terms = items.map(() => new Set<string>());
+  const withheld = items.map(() => new Set<string>());
   items.forEach((item, i) => item.results.forEach((r) => {
     const code = retrieveError(r);
     if (code) {
@@ -272,7 +280,11 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
     const read = readRetrieve(r);
     for (const t of read.terms) terms[i]!.add(t);
     const list: (RetrieveEntry & { id: string })[] = read.markdown ? [{ id: `md:${read.markdown}`, url: null, title: '', kind: '', date: null, label: null, body: read.markdown, result: true, allowed: true }] : [];
-    for (const e of read.entries) if (e.url && e.allowed) list.push({ ...e, id: e.url.href });
+    for (const e of read.entries) {
+      // FR-369: a confidential source is left out on its own, so the General sources of the same search still count.
+      if (excludeConfidential && isConfidentialLabel(e.label)) withheld[i]!.add(e.url?.href ?? e.title);
+      else if (e.url && e.allowed) list.push({ ...e, id: e.url.href });
+    }
     const ranked = new Set<string>();
     list.forEach((c) => {
       const sc = scores.get(c.id) ?? items.map(() => 0);
@@ -337,6 +349,7 @@ export function mergeByItem(items: ItemSearches[], fetchedAt: string, maxChars =
     return {
       key: item.key, question: item.queries.join('\n').slice(0, 2_000), searches: item.wordings,
       answer: text, citations, sensitivity: labels.length ? labels.join(', ').slice(0, 100) : null, fetchedAt,
+      ...(withheld[i]!.size ? { withheld: withheld[i]!.size } : {}),
     };
   });
 }
@@ -988,14 +1001,14 @@ export class WorkIqCliService {
     }
   }
 
-  private async retrieve(query: string, timeZone: string, signal?: AbortSignal): Promise<WorkIqAnswer> {
+  private async retrieve(query: string, timeZone: string, signal?: AbortSignal, excludeConfidential = false): Promise<WorkIqAnswer> {
     const result = await this.call('retrieve', { query, strategy: 'grounding', timeZone }, signal);
-    return parseRetrieveResult(result, query, new Date(this.now()).toISOString());
+    return parseRetrieveResult(result, query, new Date(this.now()).toISOString(), undefined, excludeConfidential);
   }
 
   /** Evidence about the customer for the pack (Foundry writes from it). */
   ask(question: WorkIqQuestion, signal?: AbortSignal): Promise<WorkIqAnswer> {
-    return this.run(() => this.retrieve(workIqRetrieveQuery(question), question.timeZone, signal));
+    return this.run(() => this.retrieve(workIqRetrieveQuery(question), question.timeZone, signal, question.excludeConfidential === true));
   }
 
   /** The pack-search session: reused while alive, started once when several searches need it at the same moment. */
@@ -1131,18 +1144,19 @@ export class WorkIqCliService {
         throw new WorkIqError(codes[0]!);
       }
       const fetchedAt = new Date(this.now()).toISOString();
+      const exclude = question.excludeConfidential === true;
       const single = (i: number): WorkIqSectionAnswer => {
         const r = raw[i]!;
         const key = plan[i]!.key;
         if (codes[i]) return { key, error: codes[i]! };
-        return { key, ...parseRetrieveResult(r, plan[i]!.query, fetchedAt, WORKIQ_SECTION_MAX_CHARS) };
+        return { key, ...parseRetrieveResult(r, plan[i]!.query, fetchedAt, WORKIQ_SECTION_MAX_CHARS, exclude) };
       };
       // A follow-up topic searched with several wordings is one section, its results fused by reciprocal rank.
       const topicKeys = [...new Set(plan.flatMap((p) => (p.kind === 'topic' ? [p.key] : [])))];
       const topicSections = (): WorkIqSectionAnswer[] => topicKeys.map((key) => {
         const idx = plan.flatMap((p, i) => (p.kind === 'topic' && p.key === key ? [i] : []));
         if (idx.length === 1) return single(idx[0]!);
-        return mergeByItem([{ key, queries: idx.map((i) => plan[i]!.query), wordings: [], results: idx.map((i) => raw[i]!) }], fetchedAt, WORKIQ_SECTION_MAX_CHARS)[0]!;
+        return mergeByItem([{ key, queries: idx.map((i) => plan[i]!.query), wordings: [], results: idx.map((i) => raw[i]!) }], fetchedAt, WORKIQ_SECTION_MAX_CHARS, exclude)[0]!;
       });
       if (!question.expand) return [...plan.flatMap((p, i) => (p.kind === 'topic' ? [] : [single(i)])), ...topicSections()];
       const items: ItemSearches[] = REQUIREMENTS.map((req) => {
@@ -1156,7 +1170,7 @@ export class WorkIqCliService {
         const idx = plan.flatMap((p, i) => (p.kind === 'scoped' && (p.key === a || p.key === `${a}-en`) ? [i] : []));
         items.push({ key: a, queries: idx.map((i) => plan[i]!.query), wordings: [], results: idx.map((i) => raw[i]!) });
       }
-      const merged = mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS);
+      const merged = mergeByItem(items, fetchedAt, WORKIQ_ITEM_MAX_CHARS, exclude);
       const reads = deepReadPlan(merged);
       if (reads.length) {
         let answers: { result: Json | WorkIqError; followUp: boolean }[];

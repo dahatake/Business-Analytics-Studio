@@ -19,7 +19,8 @@ import { MAX_PROJECTS_PER_COMPANY, useProjects } from '../../state/projects.ts';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { useSettings } from '../../state/settings.ts';
 import { AiReadiness } from '../ai/AiConnectionForm.tsx';
-import { AiSettingsDialog } from '../ai/AiSettingsPanel.tsx';
+import { SettingsDialog } from '../../screens/SettingsDialog.tsx';
+import { setSettingsTab } from '../ai/uiStore.ts';
 import { TokenTable } from '../ai/AiCommon.tsx';
 import { askWorkIqSections, fetchNewsHeadlines, fetchSitePages, type WorkIqAspect, type WorkIqProvider } from '../ai/relayClient.ts';
 import { liveReady, useAiSettings, workIqReady } from '../ai/settingsStore.ts';
@@ -574,7 +575,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
                     </p>
                     <AiReadiness />
                     <div className="proj-row">
-                      <Button icon={<Settings20Regular />} onClick={() => setSettingsOpen(true)} data-testid="gen-open-settings">{t('proj.gen.openSettings')}</Button>
+                      <Button icon={<Settings20Regular />} onClick={() => { setSettingsTab('ai'); setSettingsOpen(true); }} data-testid="gen-open-settings">{t('proj.gen.openSettings')}</Button>
                     </div>
                     <dl className="gen-estimate" data-testid="gen-estimate">
                       <dt>{t('proj.gen.calls')}</dt><dd>{t('proj.gen.callsValue', { min: 2, max: estimate.calls })}</dd>
@@ -654,7 +655,7 @@ export function PackGenerateDialog({ open, target, prefill, onClose, onOpenProje
             </DialogActions>
           </DialogBody>
           {/* Nested inside the surface so the modal stack restores this dialog, not the page behind it, on close. */}
-          <AiSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+          <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         </DialogSurface>
       </Dialog>
     </>
@@ -724,6 +725,7 @@ function SavedSummary({ result }: { result: GenResult }) {
         </section>
       )}
       {report.retrievalErrors.some((e) => e.what === 'workiq' && e.error.includes('confidentialNotAllowed')) && <p role="status" data-testid="gen-sum-workiq-confidential">{t('workiq.confidentialNotAllowed')}</p>}
+      {(report.confidentialWithheld ?? 0) > 0 && <p role="status" data-testid="gen-sum-workiq-withheld">{t('proj.gen.sum.workIqWithheld', { count: report.confidentialWithheld ?? 0 })}</p>}
       {report.retrievalErrors.some((e) => e.what === 'workiq' && e.error.includes('workiqModelLimit')) && <p role="status" data-testid="gen-sum-workiq-model-limit">{t('ai.workiq.msg.workiqModelLimit')}</p>}
       {report.retrievalErrors.some((e) => e.what === 'workiq') && <p className="muted" data-testid="gen-sum-workiq-failed">{t('proj.gen.sum.workIqFailed', { error: report.retrievalErrors.filter((e) => e.what === 'workiq').map((e) => e.error).join(' / ') })}</p>}
       {report.retrievalErrors.length > 0 && <p className="muted">{t('proj.gen.sum.retrievalErrors', { count: report.retrievalErrors.length })}</p>}

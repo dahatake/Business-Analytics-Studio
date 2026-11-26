@@ -3,8 +3,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { AI_USES } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loaded } from '../src/data/pack.ts';
@@ -524,7 +524,7 @@ describe('relay secrets and connection', () => {
 
   it.each([
     ['ENOTFOUND', 'dnsFailure'], ['EAI_AGAIN', 'dnsFailure'], ['ECONNREFUSED', 'networkError'],
-    ['CERT_HAS_EXPIRED', 'tlsError'], ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'tlsError'],
+    ['CERT_HAS_EXPIRED', 'tlsError'], ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'tlsError'], ['UND_ERR_CONNECT_TIMEOUT', 'networkError'],
   ] as const)('reports transport error %s without saving', async (code, error) => {
     vault.set('foundryKey', FAKE_KEY);
     const result = await call(req('PUT', '/relay/connection', c), {
@@ -581,11 +581,29 @@ describe('relay secrets and connection', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('FR-372: the network check opens the outbound hosts in use, honours the allowlist and only accepts POST', async () => {
+    const checked: string[] = [];
+    const checkHost = async (host: string) => {
+      checked.push(host);
+      return host === 'api.githubcopilot.com'
+        ? { host, via: 'proxy' as const, ok: false, error: 'proxyAuthRequired' as const }
+        : { host, via: 'direct' as const, ok: true, status: 404 };
+    };
+    expect((await call(req('GET', '/relay/network/check'), { checkHost })).status).toBe(405);
+    const all = await call(req('POST', '/relay/network/check', {}), { checkHost });
+    expect(all.status).toBe(200);
+    expect(checked).toEqual(['login.microsoftonline.com', 'management.azure.com', 'api.githubcopilot.com']);
+    expect(all.body).toMatchObject({ network: { mode: 'direct' }, results: expect.arrayContaining([{ host: 'api.githubcopilot.com', via: 'proxy', ok: false, error: 'proxyAuthRequired' }]) });
+    checked.length = 0;
+    await call(req('POST', '/relay/network/check', {}), { checkHost, config: { ...STRICT_RELAY_CONFIG, outboundHosts: ['login.microsoftonline.com'] } });
+    expect(checked).toEqual(['login.microsoftonline.com']);
+  });
+
   it('PUT stores the key and no response ever contains it', async () => {
     const put = await call(req('PUT', '/relay/secrets/foundryKey', { value: FAKE_KEY }));
     expect(put.status).toBe(200);
     const status = await call(req('GET', '/relay/status'));
-    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null }, speechConnection: { route: 'foundry', eligible: false, separate: null }, decision: null } });
+    expect(status).toEqual({ status: 200, body: { relay: 'ok', secrets: { foundryKey: true }, connection: null, connectionVerifiedAt: null, configured: false, keyProtection: 'file', network: { mode: 'direct', source: 'none', proxy: null, pacUrl: null, systemCa: false, note: null }, copilot: null, workiq: null, entra: { signedIn: false, account: null, tenantId: null, signIn: { status: 'idle' } }, media: { endpoint: null, auth: null, unavailable: 'noConnection', speech: null, vision: null }, speechConnection: { route: 'foundry', eligible: false, separate: null }, decision: null } });
     for (const m of ['GET', 'POST']) expect((await call(req(m, '/relay/secrets/foundryKey', m === 'POST' ? {} : undefined))).status).toBe(405);
     const del = await call(req('DELETE', '/relay/secrets/foundryKey'));
     expect(del.body).toEqual({ name: 'foundryKey', configured: false });
@@ -1425,6 +1443,11 @@ process.stdin.on('data', (d) => {
     expect(workIqCliCommand({ BAS_WORKIQ_CLI: '/opt/workiq/bin/workiq.js' }, '/usr/bin/node')).toEqual({ command: '/usr/bin/node', args: ['/opt/workiq/bin/workiq.js', 'mcp'], shell: false });
     expect(workIqCliCommand({}, process.execPath).args.slice(-3)).toEqual(['-y', WORKIQ_CLI_PACKAGE, 'mcp']);
     expect(workIqCliCommand({}, join(dir, 'no-node-here'), 'win32')).toEqual({ command: 'npx.cmd', args: ['-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: true });
+    // The macOS/Linux Node layout in the portable package: bin/node with npm under lib/.
+    const npxCli = join(dir, 'rt', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js');
+    mkdirSync(dirname(npxCli), { recursive: true });
+    writeFileSync(npxCli, '');
+    expect(workIqCliCommand({}, join(dir, 'rt', 'bin', 'node'), 'darwin')).toEqual({ command: join(dir, 'rt', 'bin', 'node'), args: [join(dir, 'rt', 'bin', '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js'), '-y', WORKIQ_CLI_PACKAGE, 'mcp'], shell: false });
   });
 
   it('verifies only with a Microsoft 365 source URL, seals the result in the vault, and saves no retrieved content', async () => {
@@ -1490,6 +1513,15 @@ process.stdin.on('data', (d) => {
     expect(body.answer).toContain('[3] Contoso contract (Emails, 2026-09-30)');
     expect(body.answer).not.toContain('PROTECTED BODY');
     expect(body.sensitivity).toBe('Confidential');
+
+    // FR-369: the relay drops the Confidential source itself and keeps the unlabelled ones of the same answer.
+    const ex = await call(req('POST', '/relay/workiq/ask', { ...question, excludeConfidential: true }), { workiqCli: cli('results') });
+    const exBody = ex.body as { answer: string; citations: { title: string }[]; sensitivity: string | null; withheld?: number };
+    expect(exBody.citations.map((c) => c.title)).toEqual(['Contoso KPI review', 'Contoso contract']);
+    expect(exBody.answer).not.toContain('92% in FY26');
+    expect(exBody.sensitivity).toBeNull();
+    expect(exBody.withheld).toBe(1);
+    expect((await call(req('POST', '/relay/workiq/ask', { ...question, excludeConfidential: 'yes' }), { workiqCli: cli('results') })).body).toEqual({ error: 'invalidQuestion' });
   });
 
   it('answers one section per aspect and follow-up topic in one CLI session, and rejects unknown aspects', async () => {
@@ -1931,6 +1963,15 @@ process.stdin.on('data', (d) => {
     const small = mergeByItem(items.slice(0, 1), '2026-11-12T00:00:00.000Z', 40)[0] as { answer: string; citations: unknown[] };
     expect(small.citations).toHaveLength(0);
     expect(small.answer).toBe('');
+
+    // FR-369: with Confidential not allowed, only the labelled source is dropped (b already went to kpi by fused rank).
+    const [kpiEx, kept] = mergeByItem(items, '2026-11-12T00:00:00.000Z', undefined, true) as { answer: string; citations: { title: string }[]; sensitivity: string | null; withheld?: number }[];
+    expect(kpiEx!.citations.map((c) => c.title)).toEqual(['b', 'a']);
+    expect(kpiEx!.withheld).toBeUndefined();
+    expect(kept!.citations).toEqual([]);
+    expect(kept!.answer).not.toContain('D text');
+    expect(kept!.sensitivity).toBeNull();
+    expect(kept!.withheld).toBe(1);
   });
 
   it('retrieves customer evidence with citations and labels for a Foundry pack; Copilot needs its own saved model', async () => {

@@ -9,7 +9,7 @@ import { useLaunch } from '../../state/launch.ts';
 import { useProjects, MAX_PROJECTS_PER_COMPANY, type WorkTarget } from '../../state/projects.ts';
 import { hrefFor, navigate } from '../../state/router.ts';
 import { LanguageToggle } from '../../ui/LanguageToggle.tsx';
-import { openAiSettings } from '../ai/uiStore.ts';
+import { openSettings } from '../ai/uiStore.ts';
 import { generatePrefillFor, PackGenerateDialog, type PackGenTarget } from './PackGenerateDialog.tsx';
 import type { PackGenInput } from './packGenerate.ts';
 import { useProjectManagement } from './useProjectManagement.tsx';
@@ -84,7 +84,7 @@ export function LaunchScreen() {
           <span className="brand-name">{t('app.title')}</span>
         </div>
         <div className="proj-row launch-header-actions">
-          <Button appearance="subtle" icon={<Settings20Regular />} onClick={openAiSettings} data-testid="launch-ai-settings">{t('proj.gen.aiSettings')}</Button>
+          <Button appearance="subtle" icon={<Settings20Regular />} onClick={() => openSettings('general')} data-testid="launch-settings">{t('nav.settings')}</Button>
           <LanguageToggle />
         </div>
       </header>

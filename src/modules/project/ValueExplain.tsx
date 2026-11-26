@@ -5,6 +5,7 @@ import { aiComplete, registerMock, type AiResponse } from '../../ai/client.ts';
 import { PER_USE_LIMITS } from '../../ai/policy.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { LiveNotice, MockNotice } from '../ai/AiCommon.tsx';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import '../ai/liveTransport.ts';
 import { ScrollRegion } from './common.tsx';
 import { Glyph } from './stepCharts.tsx';
@@ -62,12 +63,13 @@ export function ExplainSection({ input, scope }: { input: ExplainInput; scope: s
   return (
     <section className="val-section val-explain" aria-labelledby="val-explain-title" data-testid="val-explain">
       <div className="proj-row">
-        <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Lightbulb20Regular />} disabled={busy} onClick={() => void run()} data-testid="val-explain-run">
+        <Button appearance="primary" icon={busy ? <Spinner size="tiny" aria-hidden /> : <Lightbulb20Regular />} disabled={busy} onClick={() => void run()} data-testid="val-explain-run">
           {t(generated ? 'val.x.again' : 'val.x.run')}
         </Button>
         {generated && <Button appearance="subtle" icon={<Dismiss20Regular />} onClick={() => setGenerated(null)} data-testid="val-explain-close">{t('val.x.close')}</Button>}
         <span className="muted">{t('val.x.hint')}</span>
       </div>
+      {busy && <AiProgress stage="generate" result="process" testId="val-explain-progress" />}
       {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {generated && (
         <div className="val-explain-body" data-testid="val-explain-body" data-mode={generated.mode} data-stale={stale}>

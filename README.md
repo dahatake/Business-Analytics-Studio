@@ -25,6 +25,10 @@
 
 ## 起動
 
+> **Node.js をインストールせずに使う（顧客の PC 向け）:** [ダウンロード ページ](https://dahatake.github.io/Business-Analytics-Studio/)または [Releases](https://github.com/dahatake/Business-Analytics-Studio/releases/latest) から PC に合うポータブル zip を入手し、展開して `start.cmd` を開くだけで使えます。手順は[スクリーンショット付きの手順書](site/guide.md)、公開の仕方は [site/README.md](site/README.md) にあります。
+
+以下は、このリポジトリーから起動する手順です。
+
 Node.js 22.18 以上と npm が必要です。
 
 Windows では、初回にセットアップした後、ルート直下の [run.cmd](run.cmd) をダブルクリックするか、コマンドプロンプトから実行してください。

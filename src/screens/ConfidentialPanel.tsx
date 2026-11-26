@@ -52,7 +52,7 @@ export function ConfidentialPanel() {
       </Field>
       <h3>{t('settings.conf.held')}</h3>
       {holdings.length === 0 ? <p className="muted" data-testid="confidential-none">{t('settings.conf.none')}</p> : (
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label={t('settings.conf.held')}>
           <table className="data-table" data-testid="confidential-holdings">
             <thead><tr>
               <th scope="col">{t('settings.conf.col.company')}</th>

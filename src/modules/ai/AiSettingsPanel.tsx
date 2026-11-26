@@ -1,15 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  Badge, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody, Switch,
-} from '@fluentui/react-components';
+import { useEffect, useState } from 'react';
+import { Badge, Button, Checkbox, MessageBar, MessageBarBody, Switch } from '@fluentui/react-components';
 import { useI18n } from '../../i18n/index.ts';
-import { hrefFor, useRoute } from '../../state/router.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import { D4Warning } from './AiCommon.tsx';
 import { AiReadiness, CopilotSettings, FoundryFields, ProviderChoice } from './AiConnectionForm.tsx';
+import { NetworkStatus } from './NetworkStatus.tsx';
 import { copyLegacyPatch, legacyState, readLegacyFoundry } from './legacy.ts';
 import { isConfigured, liveReady, useAiSettings } from './settingsStore.ts';
-import { closeAiSettings, openAiSettings, useAiSettingsDialog } from './uiStore.ts';
 import './mocks.ts';
 import './ai.css';
 
@@ -75,6 +72,7 @@ export function AiSettingsContent() {
             <ProviderChoice />
             {s.provider === 'copilotSdk' ? <CopilotSettings /> : <FoundryFields />}
             <AiReadiness />
+            <NetworkStatus />
             <p className="ai-status" data-testid="ai-configured">
               <span>{t('ai.settings.configuredLabel')}</span>
               <Badge appearance="tint" color={configured ? 'success' : 'informative'}>{configured ? t('ai.settings.configured') : t('ai.settings.notConfigured')}</Badge>
@@ -104,53 +102,4 @@ export function AiSettingsContent() {
       <LegacyPanel />
     </>
   );
-}
-
-/**
- * D-25: the only place to change AI settings. A dialog rather than a screen, so the launch screen (before a project is
- * chosen) and the pack generator (unsaved input) keep their state while settings are changed.
- */
-export function AiSettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t } = useI18n();
-  return (
-    <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface
-        className="ai-settings-dialog"
-        style={{ width: 'min(960px, calc(100vw - 32px))', maxWidth: 'min(960px, calc(100vw - 32px))' }}
-        data-testid="ai-settings-dialog"
-      >
-        <DialogBody>
-          <DialogTitle>{t('ai.nav.settings')}</DialogTitle>
-          <DialogContent>
-            <div className="ai-settings-body ai-stack">
-              <p className="muted">{t('ai.settings.subtitle')}</p>
-              <AiSettingsContent />
-            </div>
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="primary" onClick={onClose} data-testid="ai-settings-dialog-close">{t('ai.dialog.close')}</Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-}
-
-/**
- * Mounted once by the App, at every start-up stage, for every entry point outside the pack generator. Moving to another
- * route closes it; a bookmark of the former /ai-settings screen opens it over Home.
- */
-export function AiSettingsDialogHost() {
-  const open = useAiSettingsDialog((s) => s.open);
-  const path = useRoute().path;
-  const redirected = useRef(false);
-  useEffect(() => {
-    if (path === '/ai-settings') {
-      redirected.current = true;
-      openAiSettings();
-      window.location.replace(hrefFor('/home'));
-    } else if (redirected.current) redirected.current = false;
-    else closeAiSettings();
-  }, [path]);
-  return <AiSettingsDialog open={open} onClose={closeAiSettings} />;
 }

@@ -603,7 +603,9 @@ test.describe('step deliverables and to-do band', () => {
     const progress = dialog.getByTestId('dlv-draft-progress');
     await expect(page.getByTestId('ai-live-confirm')).toHaveCount(0);
     await expect(progress).toHaveAttribute('data-stage', 'generate');
-    await expect(progress.getByRole('status')).toHaveText('AI が作成しています…');
+    await expect(progress).toHaveAttribute('data-activity', 'fields');
+    await expect(progress.getByRole('status')).toHaveText('成果物の各項目を作成しています…');
+    await expect(progress.getByTestId('dlv-draft-progress-detail')).toContainText('2 回のうち 1 回目');
     await expect(progress.locator('[data-step="confirm"]')).toHaveAttribute('data-status', 'done');
     await expect(progress.locator('[data-step="generate"]')).toHaveAttribute('data-status', 'running');
     await expect(progress.getByTestId('dlv-draft-progress-bar')).toBeVisible();

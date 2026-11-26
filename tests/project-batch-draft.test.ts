@@ -2,19 +2,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { preflight, readLedger, setLiveTransport, setRuntimeSettingsProvider, writeLedger, type LiveCall } from '../src/ai/client.ts';
 import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, type Provider } from '../src/ai/policy.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
-import { loadPack } from '../src/data/pack.ts';
+import { activatePack, loadPack } from '../src/data/pack.ts';
 import { samplePack } from '../src/data/sample.ts';
-import { IMPROVEMENT_STEPS, type ImprovementStep } from '../src/state/projects.ts';
+import { IMPROVEMENT_STEPS, useProjects, type ImprovementStep } from '../src/state/projects.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { demoAnalyses } from '../src/modules/project/analysis.ts';
-import { batchIntervalMs, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval } from '../src/modules/project/batchDraft.ts';
+import { batchIntervalMs, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJobProgress } from '../src/modules/project/batchDraft.ts';
 import { demoDiscussion } from '../src/modules/project/discussion.ts';
 import { emptyDeliverables, setField, setSignOff, STEP_DEFS, type AppCheckContext } from '../src/modules/project/deliverables.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { overviewBaseline, stepBriefContext, useOverview } from '../src/modules/project/overviewModel.ts';
 import { buildStepBrief, useStepBriefs } from '../src/modules/project/stepBrief.ts';
 import { stepDashboard } from '../src/modules/project/stepDashboard.ts';
-import { useDeliverables, useFieldDrafts, useSolutionDrafts, useStrategy } from '../src/modules/project/stores.ts';
+import { useDeliverables, useFieldDrafts, useKpiDrafts, useSolutionDrafts, useStrategy } from '../src/modules/project/stores.ts';
+import { emptyKpiFields } from '../src/modules/project/kpiAdopt.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
 import { mockSolutionDraft } from '../src/modules/project/solutionDraft.ts';
 
@@ -209,6 +210,38 @@ describe('all-step drafts', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('reports the actual split calls and the output-limit retry in order', async () => {
+    const ctx = context();
+    const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', { objectiveIssues: [] });
+    const asis = jobs.find((job) => job.kind === 'fields' && job.step === 'asis')!;
+    const tobe = jobs.find((job) => job.kind === 'fields' && job.step === 'tobe')!;
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    let failNext = false;
+    setLiveTransport(async (call) => {
+      if (failNext) {
+        failNext = false;
+        throw Object.assign(new Error('outputLimit'), { code: 'outputLimit' });
+      }
+      return { text: response(call, ctx), inputTokens: 10, outputTokens: 10 };
+    });
+    const signal = new AbortController().signal;
+    const progress: BatchJobProgress[] = [];
+    await runBatchJob(asis, signal, (phase) => progress.push(phase));
+    expect(progress).toEqual([
+      { activity: 'fields', part: { current: 1, total: 2 }, retry: false },
+      { activity: 'tasks', part: { current: 2, total: 2 }, retry: false },
+    ]);
+
+    progress.length = 0;
+    failNext = true;
+    await runBatchJob(tobe, signal, (phase) => progress.push(phase));
+    expect(progress).toEqual([
+      { activity: 'generate', retry: false },
+      { activity: 'fields', part: { current: 1, total: 2 }, retry: true },
+      { activity: 'tasks', part: { current: 2, total: 2 }, retry: true },
+    ]);
+  });
+
   it('waits for the latest ledger or attempt and cancels waiting', async () => {
     const now = Date.now();
     const interval = PER_USE_LIMITS.explain?.minIntervalMs;
@@ -248,5 +281,89 @@ describe('all-step drafts', () => {
     const before = batchSourceStamp();
     useFieldDrafts.getState().set({ 'internal:asis': { fields: { problem: '他の作業' }, lang: 'ja', at: '2026-11-09' } });
     expect(batchSourceStamp()).not.toBe(before);
+  });
+});
+
+describe('D-46: KPI/OKR drafts in the all-step batch', () => {
+  const okr = {
+    kpis: [
+      { id: 'k-reach', name: 'Customer Reach', definition: 'FY27の顧客リーチ拡大', target: '10倍', unit: '倍', current: '未計測', period: 'FY27', sourceIds: [] },
+      { id: 'k-wins', name: 'Platform Wins', definition: '最低5件', period: 'FY27', sourceIds: [] },
+    ],
+    objectives: [],
+  };
+  const savedProjects = useProjects.getState().projects;
+  afterEach(() => {
+    activatePack(samplePack, { kind: 'sample' });
+    useProjects.setState({ projects: savedProjects });
+    useKpiDrafts.getState().reset();
+  });
+
+  it('runs for the project\'s own pack: picks candidates, then estimates every empty field, and stores only drafts', async () => {
+    const packData = { ...samplePack, extensions: { ...samplePack.extensions, okr } } as typeof samplePack;
+    activatePack(packData, { kind: 'imported', projectId: 'pj-kpi' });
+    useProjects.setState({ projects: [{ id: 'pj-kpi', companyId: '', brief: { purpose: '顧客接点の拡大' } } as never] });
+    const ctx = context(packData);
+    const jobs = createBatchPlan(ctx, 'ja', 'internal', 'pj-kpi', useOverview.getState().value);
+    const job = jobs.find((j) => j.kind === 'kpiOkr');
+    expect(job).toBeDefined();
+    expect(createBatchPlan(ctx, 'ja', 'external', 'pj-kpi', useOverview.getState().value).some((j) => j.kind === 'kpiOkr')).toBe(false);
+
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    const calls: LiveCall[] = [];
+    setLiveTransport(async (call) => {
+      calls.push(call);
+      if (call.prompt.includes('Mode: fill')) {
+        const data = JSON.parse(call.prompt.split('\n')[2]!) as { kpis: { id: string; missing: string[] }[] };
+        const value: Record<string, string> = { unit: '件', baseline: '0', current: '0', target: '5', deadline: '2027-06-30' };
+        return { text: JSON.stringify({ kpis: data.kpis.map((k) => ({ id: k.id, fields: Object.fromEntries(k.missing.map((f) => [f, { value: value[f], why: '推定' }])) })), okrs: [] }), inputTokens: 1, outputTokens: 1 };
+      }
+      return { text: JSON.stringify({ kpis: [{ id: 'okr.kpi:k-reach', reason: '目的に合う' }, { id: 'okr.kpi:k-wins', reason: '目的に合う' }], okrs: [] }), inputTokens: 1, outputTokens: 1 };
+    });
+    const result = await runBatchJob(job!, new AbortController().signal);
+    expect(calls.map((c) => c.use)).toEqual(['kpiOkrDraft', 'kpiOkrDraft']);
+    expect(useKpiDrafts.getState().value.kpis).toHaveLength(0);
+    saveBatchResult(job!, result, ctx, 'internal', 'foundry');
+    const drafts = useKpiDrafts.getState().value.kpis;
+    expect(drafts.map((d) => d.name)).toEqual(['Customer Reach', 'Platform Wins']);
+    for (const d of drafts) expect(emptyKpiFields(d)).toEqual([]);
+    expect(drafts[1]!.estimated).toMatchObject({ target: '推定', deadline: '推定' });
+  });
+
+  it('asks again while an answer leaves fields empty, then sets the rest provisionally so no field stays blank', async () => {
+    const packData = { ...samplePack, extensions: { ...samplePack.extensions, okr } } as typeof samplePack;
+    activatePack(packData, { kind: 'imported', projectId: 'pj-kpi' });
+    useProjects.setState({ projects: [{ id: 'pj-kpi', companyId: '', brief: { purpose: '顧客接点の拡大' } } as never] });
+    const ctx = context(packData);
+    const job = createBatchPlan(ctx, 'ja', 'internal', 'pj-kpi', useOverview.getState().value).find((j) => j.kind === 'kpiOkr')!;
+    setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+    const fills: string[][] = [];
+    setLiveTransport(async (call) => {
+      if (!call.prompt.includes('Mode: fill')) {
+        return { text: JSON.stringify({ kpis: [{ id: 'okr.kpi:k-reach', reason: '目的に合う' }, { id: 'okr.kpi:k-wins', reason: '目的に合う' }], okrs: [] }), inputTokens: 1, outputTokens: 1 };
+      }
+      const data = JSON.parse(call.prompt.split('\n')[2]!) as { kpis: { id: string; name: string; missing: string[] }[] };
+      fills.push(data.kpis.flatMap((k) => k.missing.map((f) => `${k.name}.${f}`)));
+      // Round 1 completes Customer Reach but answers Platform Wins with a period instead of a date; round 2 adds nothing.
+      const answer = fills.length > 1 ? [] : data.kpis.map((k) => ({
+        id: k.id,
+        fields: k.name === 'Customer Reach'
+          ? { baseline: { value: '1', why: '推定' }, current: { value: '1', why: '推定' }, deadline: { value: '2027-06-30', why: 'FY27 の期末' } }
+          : { unit: { value: '件', why: '推定' }, deadline: { value: 'FY27', why: '日付でない' } },
+      }));
+      return { text: JSON.stringify({ kpis: answer, okrs: [] }), inputTokens: 1, outputTokens: 1 };
+    });
+    const result = await runBatchJob(job, new AbortController().signal);
+    expect(fills).toEqual([
+      ['Customer Reach.baseline', 'Customer Reach.current', 'Customer Reach.deadline', 'Platform Wins.unit', 'Platform Wins.baseline', 'Platform Wins.current', 'Platform Wins.target', 'Platform Wins.deadline'],
+      ['Platform Wins.baseline', 'Platform Wins.current', 'Platform Wins.target', 'Platform Wins.deadline'],
+    ]);
+    expect(result).toMatchObject({ kind: 'kpiOkr', run: { fill: { rounds: 2, fields: 4, provisional: 4, remaining: 0 } } });
+    saveBatchResult(job, result, ctx, 'internal', 'foundry');
+    const wins = useKpiDrafts.getState().value.kpis.find((d) => d.name === 'Platform Wins')!;
+    expect(emptyKpiFields(wins)).toEqual([]);
+    expect(wins).toMatchObject({ unit: '件', baseline: '0', current: '0', target: '0', deadline: '2027-06-30' });
+    expect(wins.estimated).toEqual({ unit: '推定' });
+    expect(wins.provisional).toEqual({ baseline: 'baselineZero', current: 'currentBaseline', target: 'targetBaseline', deadline: 'deadlineSamePeriod' });
   });
 });

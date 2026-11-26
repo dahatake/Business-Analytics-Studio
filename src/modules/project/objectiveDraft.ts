@@ -344,29 +344,41 @@ export interface ObjectiveRun {
   /** Work IQ sections that answered (0 when Work IQ was not used or failed). */
   workIqAnswers: number;
   workIqError: string | null;
-  /** FR-369: Work IQ sections left out because they were labelled Confidential or higher and the user has not allowed that. */
+  /** Sections that failed for a reason other than the confidential-information gate. */
+  workIqFailedSections: number;
+  /** FR-369: withheld sources, plus whole sections refused by the client gate. */
   workIqWithheld: number;
   workIqUsed: boolean;
   inputTokens: number | null;
   outputTokens: number | null;
 }
 
+export type ObjectiveSearch = Pick<ObjectiveRun, 'workIqAnswers' | 'workIqError' | 'workIqFailedSections' | 'workIqWithheld' | 'workIqUsed'>;
+export type ObjectiveProgress = 'workiq' | 'generate';
+
 /** Work IQ (when ready) → Microsoft Foundry / GitHub Copilot → the app's grading. Nothing is saved here. */
 export async function runObjectiveDraft(
   input: Omit<ObjectiveDraftInput, 'workiq'>, target: ObjectiveTarget, scope: string | null,
-  workIq: { provider: WorkIqProvider } | null, signal?: AbortSignal,
+  workIq: { provider: WorkIqProvider } | null, signal?: AbortSignal, onProgress?: (progress: ObjectiveProgress, search?: ObjectiveSearch) => void,
 ): Promise<ObjectiveRun> {
   // Checked before Work IQ so a blocked AI setup does not search Microsoft 365 for nothing.
   const pf = preflight(objectiveRequest({ ...input, workiq: [] }, scope));
   if (!pf.allowed) throw new AiLiveError(pf.reasons, pf.budget.reasons.join(', '), pf.budget);
+  if (workIq) onProgress?.('workiq');
   const fetched = workIq ? await fetchObjectiveWorkIq(target, input.lang, input.today, workIq.provider, signal) : { sections: [], error: null };
   const full: ObjectiveDraftInput = { ...input, workiq: fetched.sections };
   const evidence = objectiveEvidence(full);
+  const search: ObjectiveSearch = {
+    workIqAnswers: fetched.sections.filter((s) => !('error' in s) && !!s.answer.trim()).length,
+    workIqError: fetched.error, workIqUsed: !!workIq,
+    workIqFailedSections: fetched.sections.filter((s) => 'error' in s && s.error !== 'confidentialNotAllowed').length,
+    workIqWithheld: fetched.sections.reduce((n, s) => n + ('error' in s ? Number(s.error === 'confidentialNotAllowed') : s.withheld ?? 0), 0),
+  };
+  onProgress?.('generate', search);
   const live = await aiLive(objectiveRequest(full, scope, evidence), signal);
   return {
-    classified: classifyObjectives(live.text, full, evidence), workIqAnswers: fetched.sections.filter((s) => !('error' in s)).length,
-    workIqError: fetched.error, workIqUsed: !!workIq, inputTokens: live.inputTokens, outputTokens: live.outputTokens,
-    workIqWithheld: fetched.sections.filter((s) => 'error' in s && s.error === 'confidentialNotAllowed').length,
+    classified: classifyObjectives(live.text, full, evidence), ...search,
+    inputTokens: live.inputTokens, outputTokens: live.outputTokens,
   };
 }
 
@@ -407,14 +419,16 @@ function objectiveInputFor(target: ObjectiveTarget, pack: CustomerPack, lang: La
  * FR-367 for the active project (strategy map button and the all-step batch): Work IQ when it is verified, one AI
  * answer and the app's grading. Nothing is saved here; see storeObjectives.
  */
-export async function collectObjectives(pack: CustomerPack, lang: Lang, signal?: AbortSignal, today = objectiveToday()): Promise<ObjectiveCollection> {
+export async function collectObjectives(
+  pack: CustomerPack, lang: Lang, signal?: AbortSignal, today = objectiveToday(), onProgress?: (progress: ObjectiveProgress, search?: ObjectiveSearch) => void,
+): Promise<ObjectiveCollection> {
   const target = objectiveTarget();
   if (!target) throw new Error('noCompany');
   const scope = currentScope();
   const ai = useAiSettings.getState();
   const workIq = workIqReady(ai) && (ai.provider === 'foundry' || ai.provider === 'copilotSdk') ? { provider: ai.provider as WorkIqProvider } : null;
   const { workiq: _none, ...input } = objectiveInputFor(target, pack, lang, today, []);
-  const run = await runObjectiveDraft(input, target, scope, workIq, signal);
+  const run = await runObjectiveDraft(input, target, scope, workIq, signal, onProgress);
   return { ...run, target, scope, today, lang };
 }
 

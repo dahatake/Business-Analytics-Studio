@@ -187,7 +187,6 @@ export const showEn: Record<keyof typeof showJa, string> = {
   'show.ai.intro': 'Pick a persona and create. The app waits up to {seconds} seconds for an answer of at most {tokens} tokens.',
   'show.ai.persona': 'Persona',
   'show.ai.generate': 'Create',
-  'show.ai.busy': 'Creating…',
   'show.ai.fail.timeout': 'No answer arrived in time. Please try again.',
   'show.ai.fail.error': 'The story could not be created. Please try again.',
   'show.ai.mock': 'Mock',

@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setLiveTransport, setRuntimeSettingsProvider, writeLedger } from '../src/ai/client.ts';
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 import { loadPack } from '../src/data/pack.ts';
 import { samplePack } from '../src/data/sample.ts';
+import * as relayClient from '../src/modules/ai/relayClient.ts';
 import type { WorkIqSectionInfo } from '../src/modules/ai/relayClient.ts';
 import {
-  applyObjectives, classifyObjectives, objectiveAspects, objectiveEvidence, objectivePrompt, OBJECTIVE_DRAFT_MARK, type ObjectiveDraftInput,
+  applyObjectives, classifyObjectives, objectiveAspects, objectiveEvidence, objectivePrompt, OBJECTIVE_DRAFT_MARK, runObjectiveDraft, type ObjectiveDraftInput, type ObjectiveSearch,
 } from '../src/modules/project/objectiveDraft.ts';
 
 const PLAN = '中期経営計画2027: 2027年度までにエンゲージメント実施件数を年間300件に拡大する。顧客にAIとCopilotの真の価値を伝える。';
@@ -31,6 +33,46 @@ describe('FR-367 business objectives from Work IQ, OKRs and sources', () => {
     const wiq = objectiveEvidence(input()).find((e) => e.ref === 'wiq:objectivesUnit')!;
     expect(wiq).toMatchObject({ quotable: true, public: false, url: 'https://contoso.sharepoint.com/sites/hub/FY27.pptx', accessedDate: '2026-11-25' });
     expect(wiq.locator).toContain('FY27 Hub Plan.pptx');
+  });
+
+  describe('objective search progress and notices', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      setLiveTransport(null);
+      setRuntimeSettingsProvider(() => ({ liveEnabled: false, configured: false }));
+      writeLedger([]);
+    });
+
+    it.each([
+      {
+        label: 'partial failure and excluded sources',
+        sections: [section({ withheld: 2 }), { key: 'objectivesCompany', error: 'workiqUnavailable' }],
+        expected: { workIqAnswers: 1, workIqFailedSections: 1, workIqWithheld: 2, workIqError: null },
+      },
+      {
+        label: 'an empty answer and an excluded section',
+        sections: [section({ answer: '   ' }), { key: 'objectivesCompany', error: 'confidentialNotAllowed' }],
+        expected: { workIqAnswers: 0, workIqFailedSections: 0, workIqWithheld: 1, workIqError: null },
+      },
+      {
+        label: 'a complete failure',
+        sections: [{ key: 'objectivesCompany', error: 'workiqUnavailable' }],
+        expected: { workIqAnswers: 0, workIqFailedSections: 1, workIqWithheld: 0, workIqError: 'workiqUnavailable' },
+      },
+    ])('reports $label without mistaking it for a complete search', async ({ sections, expected }) => {
+      vi.spyOn(relayClient, 'askWorkIqSections').mockResolvedValue(sections);
+      setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
+      setLiveTransport(async () => ({ text: answer([]), inputTokens: 10, outputTokens: 10 }));
+      const { workiq: _workiq, ...draft } = input();
+      const progress: { phase: string; search?: ObjectiveSearch }[] = [];
+      const result = await runObjectiveDraft(draft, {
+        companyId: 'company', companyName: draft.companyName, unit: draft.unit, projectName: draft.projectName,
+        purpose: draft.purpose, focus: draft.focus,
+      }, 'project', { provider: 'foundry' }, undefined, (phase, search) => progress.push({ phase, search }));
+      expect(progress.map((entry) => entry.phase)).toEqual(['workiq', 'generate']);
+      expect(progress[1]?.search).toMatchObject({ workIqUsed: true, ...expected });
+      expect(result).toMatchObject({ workIqUsed: true, ...expected });
+    });
   });
 
   it('registers an objective stated word for word as it is, with its Microsoft 365 source', () => {

@@ -1,6 +1,7 @@
 import { CompanyAnchorSchema, CompanyAnchorVersionSchema, type CompanyAnchor } from '../../data/companyAnchor.ts';
 import { hrefFor } from '../../state/router.ts';
 import type { StrategyNode } from './overviewModel.ts';
+import type { ReadinessKey } from './analysisReadiness.ts';
 
 /** FR-347: the strategy map is a portal; every node, lane header and empty lane opens the place where that item is entered or checked. */
 export type Lane = StrategyNode['lane'];
@@ -120,3 +121,15 @@ export function appendObjective(latest: CompanyAnchor | null, input: ObjectiveIn
 }
 
 export type ObjectiveField = 'text' | 'horizon' | 'title' | 'url' | 'locator' | 'accessedDate';
+
+const READINESS_KINDS: Partial<Record<ReadinessKey, string>> = { org: 'person', locations: 'site', customers: 'customer', engagements: 'initiative', issues: 'issue' };
+
+/**
+ * An unmet readiness item: the form whose AI draft proposes the missing data (with Work IQ evidence when chosen); nothing is
+ * saved until the user reviews it. Workflow and data catalog are not entities with an entry form, so they have none here.
+ */
+export function readinessDraftHref(key: ReadinessKey): string | undefined {
+  if (key === 'kpi') return kpiTab('proj-kpi-panel');
+  const kind = READINESS_KINDS[key];
+  return kind ? relations({ create: kind, field: 'name' }) : undefined;
+}

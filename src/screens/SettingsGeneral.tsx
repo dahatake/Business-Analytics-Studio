@@ -6,7 +6,7 @@ import type { EntityKind } from '../data/schema.ts';
 import { useI18n, type Lang } from '../i18n/index.ts';
 import { useSettings, type Audience, type MotionPref, type ThemePref } from '../state/settings.ts';
 import { percentile, runFeed, stopFeed, useFeed } from '../state/feed.ts';
-import { PageHeader, Panel } from '../ui/Panel.tsx';
+import { Panel } from '../ui/Panel.tsx';
 import { cardSpecs, type CardSpec } from '../ui/cardSpecs.ts';
 import { kindIcon } from '../ui/icons.ts';
 import { hrefFor } from '../state/router.ts';
@@ -68,15 +68,15 @@ function LoadTest() {
   );
 }
 
-export function SettingsScreen() {
+/** The 一般 tab of the settings: everything that is not an AI connection. */
+export function SettingsGeneral() {
   const { t } = useI18n();
   const s = useSettings();
   const kinds = Object.keys(cardSpecs) as EntityKind[];
   const retentionDays = useConfidential((c) => c.retentionDays);
 
   return (
-    <div className="screen screen-settings">
-      <PageHeader title={t('settings.title')} subtitle={t('settings.subtitle')} />
+    <div className="settings-general">
       <div className="grid-2">
         <Panel title={t('settings.display')}>
           <RadioGroup value={s.lang} onChange={(_, d) => s.setLang(d.value as Lang)} aria-labelledby="lbl-lang">
@@ -126,7 +126,7 @@ export function SettingsScreen() {
       </Panel>
       <Panel title={t('settings.cardTargets')} rationale="visual.cardTargets" testId="card-targets">
         <p>{t('settings.cardTargetsIntro')}</p>
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label={t('settings.cardTargets')}>
           <table className="data-table">
             <thead><tr>
               <th scope="col">{t('settings.col.kind')}</th>
@@ -153,7 +153,7 @@ export function SettingsScreen() {
       </Panel>
       <Panel title={t('retention.title')} rationale="retention.why" testId="retention">
         <p>{t('retention.intro')}</p>
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label={t('retention.title')}>
           <table className="data-table">
             <thead><tr>
               <th scope="col">{t('retention.col.target')}</th>

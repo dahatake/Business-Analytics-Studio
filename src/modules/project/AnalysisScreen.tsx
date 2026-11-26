@@ -18,6 +18,7 @@ import { useSettings } from '../../state/settings.ts';
 import { replaceQuery, useRoute } from '../../state/router.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { useUseCases } from '../usecases/store.ts';
+import { AiProgress } from '../ai/AiProgress.tsx';
 import { analysisDraftBaseline, approveAnalysisDraft, categoriesOf, categoryWeight, clampScore, computeAnalysis, newAnalysis, shownMethodsOf, validateItems, WEIGHT_MAX, WEIGHT_MIN, SCORE_MAX, SCORE_MIN } from './analysis.ts';
 import { itemKey, relatedItems, type Link, type LinkSelection } from './analysisLinks.ts';
 import { evidenceLinks, overviewFacts, scoreAllSteps, targetsOfItem, type ScoredTarget } from './analysisTargets.ts';
@@ -553,6 +554,7 @@ function AnalysisEditor({ analysis, link, split }: { analysis: Analysis; link: L
         <Button icon={<Sparkle20Regular />} onClick={() => void draft()} disabled={busy} data-testid="proj-ai-draft">{t('proj.an.aiDraft')}</Button>
         <Button icon={<Delete20Regular />} onClick={removeAnalysis}>{t('proj.an.deleteAnalysis')}</Button>
       </div>
+      {busy && <AiProgress stage="generate" testId="proj-analysis-progress" />}
       {error && <p role="alert">{error}</p>}
       {pending && pending.audience === audience && pending.lang === lang && (
         <section data-testid="proj-ai-review" aria-label={t('proj.an.reviewDraft')}>

@@ -9,14 +9,17 @@ import { hrefFor } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { recordsOfJob, summarizeTokens, type TokenSummary } from '../../ai/tokenUsage.ts';
 import { reasonKey, TokenTable } from '../ai/AiCommon.tsx';
+import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
-import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob } from './batchDraft.ts';
+import { batchIntervalMs, batchJobId, batchSourceStamp, createBatchPlan, runBatchJob, saveBatchResult, waitForBatchInterval, type BatchJob, type BatchJobProgress } from './batchDraft.ts';
 import { useCheckContext } from './deliverablesUi.tsx';
+import type { ObjectiveSearch } from './objectiveDraft.ts';
 import { useOverview } from './overviewModel.ts';
 import { useProjTransient, useProjUi } from './stores.ts';
 
 type JobStatus = 'pending' | 'working' | 'waiting' | 'done' | 'failed';
 type JobStatuses = Record<string, JobStatus>;
+type ActiveProgress = BatchJobProgress & { job: BatchJob; stage: AiStage; startedAt: number };
 
 export function BatchDraftDialog() {
   const { t, lang } = useI18n();
@@ -33,6 +36,8 @@ export function BatchDraftDialog() {
   const [error, setError] = useState<string | null>(null);
   const [failures, setFailures] = useState<{ id: string; name: string; message: string }[]>([]);
   const [interrupted, setInterrupted] = useState(false);
+  const [activeProgress, setActiveProgress] = useState<ActiveProgress | null>(null);
+  const [objectiveNotice, setObjectiveNotice] = useState<string | null>(null);
   const completed = useRef(new Set<string>());
   const attempts = useRef(new Map<AiUse, number>());
   const [startedAt] = useState(() => new Date().toISOString());
@@ -51,6 +56,7 @@ export function BatchDraftDialog() {
   const nameOf = (job: BatchJob): string => {
     if (job.kind === 'strategy') return t('dlv.batch.strategy');
     if (job.kind === 'objectives') return t('dlv.batch.objectives');
+    if (job.kind === 'kpiOkr') return t('dlv.batch.kpiOkr');
     if (job.kind === 'solution') return t('dlv.batch.solution', { name: job.name });
     return t(job.kind === 'fields' ? 'dlv.batch.fields' : 'dlv.batch.brief', { step: t(`proj.step.${job.step}`) });
   };
@@ -74,6 +80,16 @@ export function BatchDraftDialog() {
         : value.reasons.map((reason) => t(reasonKey(reason))).join(' ');
     }
     return value instanceof Error ? value.message : String(value);
+  };
+  const searchNotice = (c: ObjectiveSearch) => {
+    const notice = !c.workIqUsed ? t('dlv.batch.objectivesWorkIqOff')
+      : c.workIqError || !c.workIqAnswers ? t('dlv.batch.objectivesWorkIqFailed', { detail: c.workIqError ?? t('dlv.batch.objectivesWorkIqEmpty') })
+        : '';
+    return [
+      notice,
+      c.workIqFailedSections ? t('workiq.partialSearch', { n: c.workIqFailedSections }) : '',
+      c.workIqWithheld ? t('workiq.excludedMaterial') : '',
+    ].filter(Boolean).join(' ') || null;
   };
 
   // D-41: only consent and the connection are checked; there is no daily count, interval or input-size limit.
@@ -108,6 +124,7 @@ export function BatchDraftDialog() {
       assertCurrent();
       for (const job of pending) {
         active = job;
+        if (job.kind === 'objectives') setObjectiveNotice(null);
         assertCurrent();
         const delay = batchIntervalMs(job.request.use, attempts.current);
         if (delay > 0) setStatus(job, 'waiting');
@@ -117,9 +134,15 @@ export function BatchDraftDialog() {
         attempts.current.set(job.request.use, Date.now());
         let result;
         try {
-          result = await runBatchJob(job, abort.signal).finally(refreshTokens);
+          result = await runBatchJob(job, abort.signal, (progress) => {
+            if (!abort.signal.aborted) {
+              if (progress.objectiveSearch) setObjectiveNotice(searchNotice(progress.objectiveSearch));
+              setActiveProgress({ job, stage: 'generate', startedAt: Date.now(), ...progress });
+            }
+          }).finally(refreshTokens);
         } catch (value) {
           if (abort.signal.aborted) throw value;
+          setActiveProgress(null);
           failed.push({ id: batchJobId(job), name: nameOf(job), message: errorText(value) });
           setFailures([...failed]);
           setStatus(job, 'failed');
@@ -128,13 +151,16 @@ export function BatchDraftDialog() {
         }
         if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         assertCurrent();
+        setActiveProgress({ job, stage: 'verify', activity: 'generate', startedAt: Date.now() });
         saveBatchResult(job, result, ctx, audience, provider);
         source.current = batchSourceStamp();
         await flushDeviceStorage();
         if (deviceStatus() !== 'saved') throw new Error(t('dlv.batch.storageError'));
         assertCurrent();
+        if (result.kind === 'objectives') setObjectiveNotice(searchNotice(result.collection));
         completed.current.add(batchJobId(job));
         setStatus(job, 'done');
+        setActiveProgress(null);
         active = undefined;
       }
       if (failed.length) setError(t('dlv.batch.someFailed', { n: failed.length }));
@@ -149,6 +175,7 @@ export function BatchDraftDialog() {
     } finally {
       controller.current = null;
       running.current = false;
+      setActiveProgress(null);
       setBusy(false);
     }
   };
@@ -163,7 +190,7 @@ export function BatchDraftDialog() {
 
   return (
       <Dialog open onOpenChange={(_, data) => { if (!data.open && !busy) close(); }}>
-        <DialogSurface className="dlv-draft-surface" data-testid="dlv-batch-dialog">
+        <DialogSurface className="dlv-draft-surface dlv-batch-surface" data-testid="dlv-batch-dialog">
           <DialogBody>
             <DialogTitle>{t('dlv.batch.title')}</DialogTitle>
             <DialogContent tabIndex={0}>
@@ -171,8 +198,20 @@ export function BatchDraftDialog() {
               <p>{t('dlv.batch.note')}</p>
               <p className="muted">{t('dlv.batch.limits')}</p>
               {strategySkipped && <p role="status">{t('dlv.batch.strategySkipped')}</p>}
-              <ProgressBar value={jobs.length ? done / jobs.length : 0} aria-label={t('dlv.batch.progress', { done, total: jobs.length })} />
+              <ProgressBar value={jobs.length ? done / jobs.length : 0} aria-label={t('dlv.batch.progress', { done, total: jobs.length })} data-testid="dlv-batch-progress-bar" />
               <p role="status" data-testid="dlv-batch-progress">{t('dlv.batch.progress', { done, total: jobs.length })}</p>
+              {activeProgress && (
+                <section className="dlv-batch-current" aria-label={t('dlv.batch.current', { name: nameOf(activeProgress.job) })} data-testid="dlv-batch-current">
+                  <strong>{t('dlv.batch.current', { name: nameOf(activeProgress.job) })}</strong>
+                  <AiProgress stage={activeProgress.stage} activity={activeProgress.activity} startedAt={activeProgress.startedAt} elapsedKind="stage"
+                    limitMs={activeProgress.activity === 'workiq' ? undefined : activeProgress.job.request.timeoutMs}
+                    detail={[
+                      activeProgress.part ? t('ai.progress.part', activeProgress.part) : '',
+                      activeProgress.retry ? t('ai.progress.retry') : '',
+                    ].filter(Boolean).join(' ')}
+                    testId="dlv-batch-current-progress" />
+                </section>
+              )}
               {error && (
                 <div role="alert" data-testid="dlv-batch-error">
                   <p>{error}</p>
@@ -190,11 +229,13 @@ export function BatchDraftDialog() {
                   return (
                     <li key={id} data-testid={`dlv-batch-${id}`} data-status={status}>
                       <strong>{nameOf(job)}</strong>{' — '}{t(statusKey)}
-                      {(status === 'working' || status === 'waiting') && <Spinner size="tiny" />}
+                      {(status === 'working' || status === 'waiting') && <Spinner size="tiny" aria-hidden />}
+                      {job.kind === 'objectives' && objectiveNotice && <p role="status" data-testid="dlv-batch-objectives-note">{objectiveNotice}</p>}
                       {!busy && status === 'done' && job.kind === 'fields' && <Button size="small" onClick={() => review(job)}>{t('dlv.batch.review')}</Button>}
                       {!busy && status === 'done' && job.kind === 'brief' && <a href={hrefFor('/step', { step: job.step })} onClick={close}>{t('dlv.batch.briefLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'strategy' && <a href={hrefFor('/', { draft: 'shared' })} onClick={close}>{t('dlv.batch.strategyLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'objectives' && <a href={hrefFor('/')} onClick={close}>{t('dlv.batch.objectivesLink')}</a>}
+                      {!busy && status === 'done' && job.kind === 'kpiOkr' && <a href={hrefFor('/analysis', { tab: 'kpi' })} onClick={close}>{t('dlv.batch.kpiOkrLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'solution' && <a href={`${hrefFor('/deliverables', { step: 'deliverable' })}`} onClick={close}>{t('dlv.batch.solutionLink')}</a>}
                     </li>
                   );

@@ -1,0 +1,98 @@
+# FR-374: builds the portable packages (FR-373) for every OS and CPU and publishes them to a GitHub Release.
+#   git tag v0.1.0 && git push origin v0.1.0   -> builds, tests, attests and publishes the Release
+#   Actions > Release > Run workflow            -> same build without publishing (packages are kept as a workflow artifact)
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Node runtime bundled in every package; nodejs.org SHASUMS256.txt is checked by the packager.
+  NODE_RUNTIME: 26.12.1
+  TARGETS: win-x64,win-arm64,mac-arm64,mac-x64,linux-x64,linux-arm64
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_RUNTIME }}
+          cache: npm
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${version} (expected v${version})"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Type check and unit tests
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build the portable packages
+        run: |
+          # Zip timestamps come from the commit, so the same commit gives the same files.
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          npm run package:portable -- --target "${TARGETS}" --node "${NODE_RUNTIME}" --out release
+          cd release
+          cat ./*.zip.sha256 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ls -l
+
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/*.zip
+
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          pages="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
+          sed -e "s|{{VERSION}}|${version}|g" -e "s|{{TAG}}|${GITHUB_REF_NAME}|g" \
+              -e "s|{{REPO}}|${GITHUB_REPOSITORY}|g" -e "s|{{PAGES}}|${pages}|g" \
+              .github/release-notes.md > release-notes.md
+          {
+            echo
+            echo '```text'
+            cat release/SHA256SUMS.txt
+            echo '```'
+          } >> release-notes.md
+          gh release create "${GITHUB_REF_NAME}" release/*.zip release/SHA256SUMS.txt \
+            --verify-tag --title "Business Analytics Studio ${version}" --notes-file release-notes.md
+
+      - name: Keep the packages (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: portable-packages
+          path: |
+            release/*.zip
+            release/SHA256SUMS.txt
+          retention-days: 7

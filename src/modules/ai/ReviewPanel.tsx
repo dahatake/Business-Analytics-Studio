@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
-  Badge, Button, DrawerBody, DrawerFooter, DrawerHeader, DrawerHeaderTitle, Field, MessageBar, MessageBarBody, OverlayDrawer, Spinner, Textarea,
+  Badge, Button, DrawerBody, DrawerFooter, DrawerHeader, DrawerHeaderTitle, Field, MessageBar, MessageBarBody, OverlayDrawer, Textarea,
 } from '@fluentui/react-components';
 import { ArrowUndo20Regular, Delete20Regular, Dismiss24Regular, Sparkle20Regular } from '@fluentui/react-icons';
 import { aiComplete, type TokenCount } from '../../ai/client.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
 import { LiveNotice, MockNotice } from './AiCommon.tsx';
+import { AiProgress } from './AiProgress.tsx';
 import { componentsForRoute, entitiesOfComponents } from './explain.ts';
 import { commitApply, overrideKey, parseProposals, reviewPrompt, undoLastApply, useAiOverrides, type Proposal } from './review.ts';
 import { isConfigured, useAiSettings } from './settingsStore.ts';
@@ -97,7 +98,7 @@ export function ReviewPanel() {
                 {proposals ? t('ai.review.rerun') : t('ai.review.run')}
               </Button>
             </div>
-            {running && <Spinner size="tiny" label={t('ai.loading')} />}
+            {running && <AiProgress stage="generate" result="process" testId="ai-review-progress" />}
             {notice && (
               <MessageBar intent={notice.kind === 'applied' || notice.kind === 'undone' ? 'success' : 'error'} role="status" data-testid="ai-review-notice">
                 <MessageBarBody>

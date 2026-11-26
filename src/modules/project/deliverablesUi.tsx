@@ -18,7 +18,7 @@ import { EntityRef } from '../../ui/EntityRef.tsx';
 import { useUseCases } from '../usecases/store.ts';
 import { catalogForScope, useCatalogImport } from '../usecases/catalog.ts';
 import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
-import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
+import { AiProgress, type AiActivity, type AiStage } from '../ai/AiProgress.tsx';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS, DRAFT_MAX_PROMPT_CHARS } from '../../ai/policy.ts';
 import { MockBadge } from './common.tsx';
 import { draftEntities, draftRequest, requestDeliverableDraft } from './deliverableDraft.ts';
@@ -425,7 +425,7 @@ export function StepTodoBand() {
 type DraftTextMap = Record<string, string>;
 type DraftState =
   | { status: 'idle' }
-  | { status: 'working'; stage: AiStage; startedAt?: number }
+  | { status: 'working'; stage: AiStage; startedAt?: number; activity?: AiActivity; part?: { current: number; total: number }; retry?: boolean }
   | { status: 'ready'; response: AiResponse; fields: DraftTextMap; tasks: DraftTextMap; at: string; fills: FillProposal[]; fillError?: string }
   | { status: 'cancelled' }
   | { status: 'error'; message: string };
@@ -504,7 +504,7 @@ export function DraftDialog() {
       setState({ status: 'error', message: t('dlv.draft.tooLarge') });
       return;
     }
-    setState({ status: 'working', stage: 'generate', startedAt: Date.now() });
+    setState({ status: 'working', stage: 'generate', activity: fillReq ? 'fill' : 'generate', startedAt: Date.now() });
     const controller = new AbortController();
     try {
       if (!targetCurrent()) return;
@@ -513,7 +513,7 @@ export function DraftDialog() {
         return;
       }
       abortRef.current = controller;
-      setState({ status: 'working', stage: 'generate', startedAt: Date.now() });
+      setState({ status: 'working', stage: 'generate', activity: fillReq ? 'fill' : 'generate', startedAt: Date.now() });
       // Missing data first, so the deliverable text is written from the filled (and labelled) values.
       let proposals: FillProposal[] = [];
       let fillError: string | undefined;
@@ -528,7 +528,12 @@ export function DraftDialog() {
           fillError = t('dlv.fill.failed', { detail: error instanceof AiLiveError ? error.reasons.map((r) => t(reasonKey(r))).join(' ') || error.message : error instanceof Error ? error.message : String(error) });
         }
       }
-      const r = await requestDeliverableDraft(input, input.ctx === ctx ? request : draftRequest(input), controller.signal);
+      const r = await requestDeliverableDraft(input, input.ctx === ctx ? request : draftRequest(input), controller.signal, (progress) => {
+        if (!controller.signal.aborted && targetCurrent()) setState({
+          status: 'working', stage: 'generate', activity: progress.part ?? 'generate', startedAt: Date.now(),
+          ...(progress.total > 1 ? { part: { current: progress.current, total: progress.total } } : {}), retry: progress.retry,
+        });
+      });
       if (targetCurrent()) {
         if (!draftsUnchanged()) {
           setState({ status: 'error', message: t('dlv.draft.changed') });
@@ -639,7 +644,9 @@ export function DraftDialog() {
         <DialogBody>
           <DialogTitle>{t('dlv.draft.title', { name: t(deliverableNameKey(step)) })}</DialogTitle>
           <DialogContent>
-            {state.status === 'working' && <AiProgress stage={state.stage} startedAt={state.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS} testId="dlv-draft-progress" />}
+            {state.status === 'working' && <AiProgress stage={state.stage} activity={state.activity} startedAt={state.startedAt} limitMs={DELIVERABLE_DRAFT_TIMEOUT_MS}
+              detail={[state.part ? t('ai.progress.part', state.part) : '', state.retry ? t('ai.progress.retry') : ''].filter(Boolean).join(' ')}
+              testId="dlv-draft-progress" />}
             {state.status === 'cancelled' && <p role="status" data-testid="dlv-draft-cancelled">{t('ai.progress.cancelled')}</p>}
             {state.status === 'error' && <p role="alert">{t('dlv.draft.failed')} {state.message}</p>}
             {state.status !== 'working' && (

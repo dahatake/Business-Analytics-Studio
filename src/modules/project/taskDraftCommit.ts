@@ -2,9 +2,12 @@ import { deviceStatus, flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
 import type { Lang } from '../../i18n/core.ts';
 import { commitPackChanges } from '../../state/packEdits.ts';
-import { currentScope } from '../../state/projects.ts';
+import { currentScope, useProjects } from '../../state/projects.ts';
+import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import { normalizeDeliverables, type CheckContext } from './deliverables.ts';
-import { commitDiscussion, useDeliverables, useDiscussion, useProjUi } from './stores.ts';
+import { commitDiscussion, useAnalyses, useDeliverables, useDiscussion, useKpis, useProjUi, useStrategy } from './stores.ts';
+import { useUseCases } from '../usecases/store.ts';
+import { appendObjective } from './strategyPortal.ts';
 import {
   allResults, applyRecordOps, applyTaskOps, approvalOrder, approvalText, doneIds, normalizeTaskDrafts, taskDraftKey, taskStatuses, useTaskDrafts, type TaskDraft,
 } from './taskDrafts.ts';
@@ -37,8 +40,42 @@ export async function approveTaskDrafts(todoIds: string[], ctx: CheckContext, au
   const after = doneIds(allResults(next));
   const regressed = [...before].filter((id) => !after.has(id));
   if (regressed.length) throw new TaskApprovalError('regress', regressed.join(', '));
+  const objectiveOps = ops.filter((op) => op.op === 'companyObjective');
+  let objectiveCommit: { companyId: string; anchor: NonNullable<ReturnType<typeof latestCompanyAnchor>>['anchor'] } | undefined;
+  if (objectiveOps.length) {
+    const state = useProjects.getState();
+    const project = state.projects.find((item) => item.id === scope);
+    const company = state.companies.find((item) => item.id === project?.companyId);
+    if (!project || !company) throw new TaskApprovalError('changed', 'The project company is no longer available');
+    let anchorVersion = latestCompanyAnchor(company.id);
+    let anchor = anchorVersion?.anchor ?? null;
+    let changed = false;
+    for (const op of objectiveOps) {
+      if (op.op !== 'companyObjective') continue;
+      const existing = anchor?.statedObjectives.find((item) => item.id === op.value.id);
+      if (existing) {
+        if (existing.text !== op.value.text || existing.horizon !== op.value.horizon) {
+          throw new TaskApprovalError('changed', `Company objective ${op.value.id} changed after drafting`);
+        }
+        continue;
+      }
+      const result = appendObjective(anchor, op.value, company.name, at.slice(0, 10));
+      if (!result.ok) throw new TaskApprovalError('storage', `Company objective is invalid: ${result.errors.join(', ')}`);
+      anchor = result.anchor;
+      changed = true;
+    }
+    if (changed && anchor) objectiveCommit = { companyId: company.id, anchor };
+  }
   await commitPackChanges(changes, scope, ctx.pack);
   if (currentScope() !== scope) throw new TaskApprovalError('changed');
+  if (objectiveCommit) {
+    const saved = useProjects.getState().setCompanyAnchor(objectiveCommit.companyId, objectiveCommit.anchor);
+    if (!saved.ok) throw new TaskApprovalError('changed', 'The project company is no longer available');
+  }
+  if (ops.some((op) => op.op === 'kpi' || op.op === 'okr')) useKpis.getState().set(next.kpi);
+  if (ops.some((op) => op.op === 'analysis')) useAnalyses.getState().set(next.analysis);
+  if (ops.some((op) => op.op === 'useCase')) useUseCases.getState().set(next.useCases);
+  if (ops.some((op) => op.op === 'solutionType' || op.op === 'contribution' || op.op === 'section')) useStrategy.getState().set(next.strategy!);
   const records = applyRecordOps(
     { deliverables: normalizeDeliverables(useDeliverables.getState().value), discussion: useDiscussion.getState().value }, ops, at, by,
     (ids) => (ids.some((id) => loaded.byId.get(id)?.classification === 'internal') ? 'internal' : 'shareable'),

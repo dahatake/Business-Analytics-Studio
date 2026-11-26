@@ -11,21 +11,31 @@ import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { loadPack } from '../../data/pack.ts';
 import { extractJson } from '../../data/packImport.ts';
 import { Entity, type EntityOf } from '../../data/schema.ts';
+import { packKpis, needsReview } from './kpiOkr.ts';
 import { translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { applyPackEdits, emptyEdits, mergeEdit, type PackChange } from '../../state/packEdits.ts';
 import { createScopedStore, IMPROVEMENT_STEPS, type ImprovementStep } from '../../state/projects.ts';
 import { loc, type Localizable } from '../../state/text.ts';
+import { ALL_PERSONAS } from '../../state/personas.ts';
 import { addRecord } from './discussion.ts';
-import { draftEntities, entityVisible } from './deliverableDraft.ts';
+import { buildDraft, draftEntities, entityVisible } from './deliverableDraft.ts';
+import { AnalysisSchema, KpiDefSchema, OkrSchema, type Analysis } from './model.ts';
+import { categoriesOf } from './analysis.ts';
+import { ContributionSchema, SOLUTION_TYPES, emptyStrategy, upsertContribution, setSection, setSolutionType } from './strategy.ts';
+import type { UseCase } from '../usecases/store.ts';
+import type { ObjectiveInput } from './strategyPortal.ts';
+import { objectiveTarget, PROVISIONAL_HORIZON } from './objectiveDraft.ts';
+import { useObjectiveDrafts } from './stores.ts';
 import {
-  evaluateStep, fieldKey, pursuedIssues, QUALIFY_VERDICTS, qualificationOf, rankedIssues, setField, setQualification, setSignOff, STEP_DEFS, todoKey,
-  type CheckContext, type CheckOutcome, type DeliverableData, type QualifyVerdict, type TodoResult,
+  evaluateStep, fieldIsVague, fieldKey, fillKey, FillRecordSchema, pursuedIssues, QUALIFY_VERDICTS, qualificationOf, rankedIssues, setField, setQualification, setSignOff, STEP_DEFS, threadOf, todoKey,
+  type CheckContext, type CheckOutcome, type DeliverableData, type FillRecord, type QualifyVerdict, type TodoResult,
 } from './deliverables.ts';
 import type { Classification, DiscussionData } from './model.ts';
 import {
   choiceBasis, completeResolution, generateResolution, NUMBER_FIELDS, ownerRoleBasis, previewResolution, provisionalDraft, repairOptions, suggestOwner,
   unsupportedNumbers, valueBasis, type EntityDraft, type RepairOption, type ResolutionInput, type ResolutionTransport,
 } from './taskResolution.ts';
+import { buildSolutionDoc } from './solutionDocs.ts';
 
 type Audience = 'internal' | 'external';
 
@@ -38,6 +48,12 @@ export type DataState = (typeof DATA_STATES)[number];
 /* ---------- Operations ---------- */
 
 const LinkField = z.enum(['sourceIds', 'causeIds', 'kpiIds', 'issueIds']);
+const LText = z.union([z.string().min(1), z.object({ ja: z.string().min(1), en: z.string().min(1) })]);
+const UseCaseDraft = z.object({
+  id: z.string().min(1), name: LText, summary: LText, persona: z.enum(ALL_PERSONAS),
+  steps: z.array(z.object({ title: LText, description: LText })).min(3), effect: LText.optional(),
+  relatedIds: z.array(z.string()), origin: z.literal('registered'), updatedAt: z.string(), derivedFrom: z.string().optional(),
+});
 export const TaskOpSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('create'), entity: Entity }),
   z.object({ op: z.literal('link'), entityId: z.string().min(1), field: LinkField, relatedId: z.string().min(1) }),
@@ -47,6 +63,19 @@ export const TaskOpSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('qualify'), issueId: z.string().min(1), verdict: z.enum(QUALIFY_VERDICTS), reason: z.string().trim().min(1), different: z.string().trim().min(1).optional() }),
   z.object({ op: z.literal('decision'), themeId: z.string().min(1), title: z.string().trim().min(1).max(200), relatedIds: z.array(z.string()), recordId: z.string().min(1), text: z.string().trim().min(1).max(2000) }),
   z.object({ op: z.literal('signOff'), todoId: z.string().min(1), text: z.string().trim().min(1) }),
+  z.object({ op: z.literal('kpi'), value: KpiDefSchema }),
+  z.object({ op: z.literal('okr'), value: OkrSchema }),
+  z.object({ op: z.literal('useCase'), value: UseCaseDraft }),
+  z.object({ op: z.literal('solutionType'), solutionId: z.string().min(1), type: z.enum(SOLUTION_TYPES) }),
+  z.object({ op: z.literal('contribution'), value: ContributionSchema }),
+  z.object({ op: z.literal('section'), solutionId: z.string().min(1), sectionId: z.string().min(1), text: z.string().trim().min(1) }),
+  z.object({ op: z.literal('fill'), value: FillRecordSchema }),
+  z.object({ op: z.literal('analysis'), value: AnalysisSchema }),
+  z.object({ op: z.literal('companyObjective'), value: z.object({
+    id: z.string().min(1), text: z.string().trim().min(1), horizon: z.string().trim().min(1),
+    basis: z.enum(['published', 'customerStated']), scope: z.enum(['legalEntity', 'group', 'business', 'department']), scopeName: z.string(),
+    source: z.object({ title: z.string(), type: z.enum(['public', 'internal']), url: z.string(), locator: z.string(), accessedDate: z.string(), excerpt: z.string() }),
+  }) }),
 ]);
 export type TaskOp = z.infer<typeof TaskOpSchema>;
 
@@ -109,6 +138,10 @@ export function applyRecordOps(
       if (!discussion.records.some((r) => r.id === op.recordId)) {
         discussion = addRecord(discussion, { themeId: op.themeId, kind: 'decision', author: 'human', text: op.text, classification }, op.recordId, at);
       }
+    } else if (op.op === 'fill') {
+      const fills = { ...(deliverables.fills ?? {}) };
+      fills[fillKey(op.value.entityId, op.value.field)] = { ...op.value, at, reviewed: { at, by } };
+      deliverables = { ...deliverables, fills };
     }
   }
   return { deliverables, discussion };
@@ -118,6 +151,11 @@ export function applyRecordOps(
 export function applyTaskOps(ctx: CheckContext, ops: TaskOp[], at = new Date().toISOString(), by = ''): { ctx: CheckContext; changes: PackChange[] } {
   const upserts = new Map<string, Entity>();
   const current = (id: string) => upserts.get(id) ?? ctx.pack.byId.get(id);
+  let kpi = ctx.kpi;
+  let useCases: UseCase[] = ctx.useCases;
+  let analysis = ctx.analysis;
+  let objectives = ctx.objectives ?? [];
+  let strategy = ctx.strategy ?? emptyStrategy();
   const parse = (value: unknown): Entity => {
     const parsed = Entity.safeParse(value);
     if (!parsed.success) throw new TaskDraftError('invalid', parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
@@ -139,6 +177,24 @@ export function applyTaskOps(ctx: CheckContext, ops: TaskOp[], at = new Date().t
       if (!entity) throw new TaskDraftError('missing', op.entityId);
       if ('id' in op.values || 'kind' in op.values) throw new TaskDraftError('invalid', op.entityId);
       upserts.set(entity.id, parse({ ...entity, ...op.values }));
+    } else if (op.op === 'kpi') {
+      kpi = { ...kpi, kpis: [...kpi.kpis.filter((item) => item.id !== op.value.id), op.value] };
+    } else if (op.op === 'okr') {
+      kpi = { ...kpi, okrs: [...kpi.okrs.filter((item) => item.id !== op.value.id), op.value] };
+    } else if (op.op === 'useCase') {
+      useCases = [...useCases.filter((item) => item.id !== op.value.id), op.value];
+    } else if (op.op === 'analysis') {
+      analysis = { ...analysis, analyses: [...analysis.analyses.filter((item) => item.id !== op.value.id), op.value], activeId: op.value.id };
+    } else if (op.op === 'companyObjective') {
+      objectives = [...objectives.filter((item) => item.id !== op.value.id), { id: op.value.id, text: op.value.text }];
+    } else if (op.op === 'solutionType') {
+      if (current(op.solutionId)?.kind !== 'solution') throw new TaskDraftError('missing', op.solutionId);
+      strategy = setSolutionType(strategy, op.solutionId, op.type, by, at);
+    } else if (op.op === 'contribution') {
+      strategy = upsertContribution(strategy, op.value);
+    } else if (op.op === 'section') {
+      if (current(op.solutionId)?.kind !== 'solution') throw new TaskDraftError('missing', op.solutionId);
+      strategy = setSection(strategy, op.solutionId, op.sectionId, op.text, { by, at });
     }
   }
   const changes: PackChange[] = [...upserts.values()].map((entity) => ({ op: 'upsert', entity }));
@@ -147,7 +203,7 @@ export function applyTaskOps(ctx: CheckContext, ops: TaskOp[], at = new Date().t
   const added = pack.issues.filter((i) => !prior.has(`${i.path}:${i.message}`));
   if (added.length) throw new TaskDraftError('invalid', added.map((i) => `${i.path}: ${i.message}`).join('; '));
   const records = applyRecordOps(ctx, ops, at, by, (ids) => classOf({ ...ctx, pack }, ids));
-  return { ctx: { ...ctx, pack, ...records }, changes };
+  return { ctx: { ...ctx, pack, ...records, kpi, useCases, analysis, objectives, strategy }, changes };
 }
 
 /* ---------- Verification by the checks ---------- */
@@ -354,12 +410,21 @@ function fieldsDraft(input: TaskDraftInput, result: TodoResult): Draft | null {
   const failing = (result.outcome?.refs ?? []).flatMap((ref) => (ref.type === 'field' && ref.step === input.step && !humanField(input.ctx, ref.step, ref.id) ? [ref.id] : []));
   if (!failing.length) return null;
   const options = repairOptions({ ...input, todoId: input.todoId }).filter((o): o is Extract<RepairOption, { kind: 'field' }> => o.kind === 'field');
+  const deterministic = buildDraft({ step: input.step, ctx: input.ctx, lang: input.lang, audience: input.audience });
   const ops: TaskOp[] = [];
   const states: Record<string, DataState> = {};
   for (const field of failing) {
     const copilot = input.fieldDraft?.[field]?.trim();
-    const rule = options.find((o) => o.field === field)?.text;
-    const text = copilot || rule;
+    const definition = STEP_DEFS[input.step].fields.find((item) => item.id === field);
+    let text = copilot || options.find((o) => o.field === field)?.text || deterministic[field]?.trim() || '';
+    if (definition && (!text || fieldIsVague(definition, text))) {
+      const qualifiers = [
+        ...(definition.quantified ? [tr(input.lang, 'dlv.td.ruleDocNumber')] : []),
+        ...(definition.timeBound ? [tr(input.lang, 'dlv.td.ruleDocDate', { date: addDays(input.ctx.today, 365) })] : []),
+        ...(definition.specific ? [tr(input.lang, 'dlv.td.ruleDocSpecific')] : []),
+      ];
+      text = `${text || tr(input.lang, 'dlv.td.ruleDocSection', { name: field, section: field })}${text ? '\n' : ' '}${qualifiers.join(' ')}`;
+    }
     if (!text) continue;
     states[ops.length] = copilot ? 'estimate' : 'provisional';
     ops.push({ op: 'field', step: input.step, field, text });
@@ -749,13 +814,237 @@ function kpiValuesDraft(input: TaskDraftInput, result: TodoResult): Draft | null
   return ops.length ? { ops, states, rationale: tr(input.lang, 'dlv.td.kpiRuleWhy') } : null;
 }
 
+function gapDraft(input: TaskDraftInput, result: TodoResult): Draft | null {
+  const { ctx, todoId } = input;
+  const ops: TaskOp[] = [];
+  const states: Record<string, DataState> = {};
+  const add = (op: TaskOp, state: DataState = 'provisional') => {
+    states[ops.length] = state;
+    ops.push(op);
+  };
+  const projectKpis = () => ctx.kpi.kpis;
+  const solutions = () => ctx.pack.pack.entities.filter((e): e is EntityOf<'solution'> => e.kind === 'solution');
+  const issues = pursuedIssues(ctx);
+
+  if (todoId === 'asis-framework') {
+    if (!ctx.analysis.analyses.some((item) => categoriesOf(item.method).every((category) => item.items.some((entry) => entry.category === category && loc(entry.text, input.lang).trim())))) {
+      const show = entityVisible(ctx, input.audience);
+      const issue = rankedIssues(ctx.pack).find(show);
+      const id = freshId('analysis', 'swot', (value) => ctx.analysis.analyses.some((item) => item.id === value));
+      const at = new Date().toISOString();
+      const value: Analysis = AnalysisSchema.parse({
+        id, method: 'swot', title: both((l) => tr(l, 'dlv.td.ruleAnalysisTitle')), items: categoriesOf('swot').map((category) => ({
+          id: `${id}-${category}`,
+          category,
+          text: category === 'weaknesses' && issue
+            ? both((l) => `${loc(issue.name, l)}: ${loc(issue.description, l)}`)
+            : both((l) => tr(l, 'dlv.td.ruleAnalysisUnknown', { category: tr(l, `proj.cat.${category}`) })),
+          score: 3, weight: 0, author: 'ai',
+        })),
+        weights: Object.fromEntries(categoriesOf('swot').map((category) => [category, 1])), createdAt: at, updatedAt: at,
+      });
+      add({ op: 'analysis', value });
+    }
+  } else if (todoId === 'tobe-link') {
+    if (!(ctx.objectives ?? []).length) {
+      if (input.audience !== 'internal') return null;
+      const target = objectiveTarget();
+      const savedDraft = useObjectiveDrafts.getState().value.find((item) => item.text.trim());
+      const issue = issues[0] ?? ctx.pack.pack.entities.find((e): e is EntityOf<'issue'> => e.kind === 'issue');
+      if (!target || (!savedDraft && !target.purpose.trim() && !issue)) return null;
+      const id = savedDraft?.id ?? freshId('objective', target.companyId, (value) => (ctx.objectives ?? []).some((item) => item.id === value));
+      const objective: ObjectiveInput & { id: string } = savedDraft
+        ? { id, text: savedDraft.text, horizon: savedDraft.horizon, basis: savedDraft.basis, scope: savedDraft.scope, scopeName: savedDraft.scopeName, source: savedDraft.source }
+        : {
+          id,
+          text: target.purpose.trim() || tr(input.lang, 'dlv.td.ruleObjective', { issue: loc(issue!.name, input.lang) }),
+          horizon: PROVISIONAL_HORIZON[input.lang],
+          basis: 'customerStated',
+          scope: target.unit ? 'business' : 'legalEntity',
+          scopeName: target.unit,
+          source: {
+            title: tr(input.lang, 'dlv.td.ruleObjectiveSource'),
+            type: 'internal',
+            url: '',
+            locator: tr(input.lang, 'dlv.td.ruleObjectiveLocator'),
+            accessedDate: ctx.today,
+            excerpt: tr(input.lang, 'dlv.td.ruleObjectiveExcerpt'),
+          },
+        };
+      add({ op: 'companyObjective', value: objective });
+    }
+  } else if (todoId === 'uc-registered') {
+    if (ctx.useCases.some((u) => u.origin === 'registered')) return null;
+    const issue = issues[0] ?? ctx.pack.pack.entities.find((e): e is EntityOf<'issue'> => e.kind === 'issue');
+    if (!issue) return null;
+    const id = freshId('uc', issue.id, (value) => ctx.useCases.some((u) => u.id === value));
+    add({ op: 'useCase', value: {
+      id, name: issue.name, summary: issue.description, persona: 'business',
+      steps: [
+        { title: both((l) => tr(l, 'dlv.td.useCase.step1')), description: loc(issue.description, input.lang) },
+        { title: both((l) => tr(l, 'dlv.td.useCase.step2')), description: both((l) => tr(l, 'dlv.td.useCase.step2Desc', { issue: loc(issue.name, l) })) },
+        { title: both((l) => tr(l, 'dlv.td.useCase.step3')), description: both((l) => tr(l, 'dlv.td.useCase.step3Desc', { issue: loc(issue.name, l) })) },
+      ],
+      effect: both((l) => tr(l, 'dlv.td.useCase.effect', { issue: loc(issue.name, l) })),
+      relatedIds: [issue.id], origin: 'registered', updatedAt: new Date().toISOString(),
+    } });
+  } else if (todoId === 'kpi-definition') {
+    const existing = new Set(ctx.kpi.kpis.map((k) => k.id));
+    for (const kpi of packKpis(ctx.pack.pack, new Date(`${ctx.today}T00:00:00Z`)).kpis) {
+      if (!existing.has(kpi.id)) add({ op: 'kpi', value: kpi }, kpi.sourceIds?.length ? 'evidence' : 'provisional');
+    }
+  } else if (todoId === 'kpi-review') {
+    for (const kpi of ctx.kpi.kpis.filter(needsReview)) add({ op: 'kpi', value: { ...kpi, reviewedAt: new Date().toISOString() } });
+    for (const okr of ctx.kpi.okrs.filter(needsReview)) add({ op: 'okr', value: { ...okr, reviewedAt: new Date().toISOString() } });
+  } else if (todoId === 'kpi-valid') {
+    const names = new Set((result.outcome?.refs ?? []).flatMap((ref) => ref.type === 'text' ? [loc(ref.text, input.lang)] : []));
+    for (const kpi of ctx.kpi.kpis.filter((k) => names.has(loc(k.name, input.lang)))) {
+      if (kpi.target !== kpi.baseline) continue;
+      const pack = ctx.pack.byId.get(kpi.id);
+      const delta = Math.abs(kpi.current || kpi.baseline || 1) * 0.1 || 1;
+      add({ op: 'kpi', value: { ...kpi, target: pack?.kind === 'kpi' && pack.direction === 'decrease' ? kpi.current - delta : kpi.current + delta } });
+    }
+  } else if (todoId === 'kpi-deadline') {
+    for (const kpi of ctx.kpi.kpis.filter((k) => k.deadline < ctx.today)) add({ op: 'kpi', value: { ...kpi, deadline: addDays(ctx.today, 365) } });
+  } else if (todoId === 'kpi-okr') {
+    if (!ctx.kpi.okrs.length && projectKpis().length) {
+      const objective = (ctx.objectives ?? [])[0];
+      const id = freshId('okr', todoId, (value) => ctx.kpi.okrs.some((o) => o.id === value));
+      add({ op: 'okr', value: {
+        id, objective: both((l) => tr(l, 'dlv.td.ruleOkrObjective')),
+        keyResults: projectKpis().map((kpi, i) => ({ id: `${id}-kr-${i + 1}`, text: kpi.name, kpiId: kpi.id })),
+        origin: 'proposed', ...(objective ? { companyObjectiveIds: [objective.id] } : {}), reviewedAt: new Date().toISOString(),
+      } });
+    }
+  } else if (todoId === 'kpi-company') {
+    const objectives = ctx.objectives ?? [];
+    if (objectives.length) for (const okr of ctx.kpi.okrs.filter((o) => !(o.companyObjectiveIds ?? []).some((id) => objectives.some((x) => x.id === id)))) {
+      add({ op: 'okr', value: { ...okr, companyObjectiveIds: [objectives[0]!.id] } });
+    }
+  } else if (todoId === 'uc-trace') {
+    // The registered use case above already traces to the issue that motivates it.
+    return null;
+  } else if (todoId === 'uc-top-issue') {
+    // `uc-registered` covers the highest-ranked pursued issue before this task is reached.
+    return null;
+  } else if (todoId === 'sol-type') {
+    for (const solution of solutions()) {
+      if (!ctx.strategy?.types[solution.id]) add({ op: 'solutionType', solutionId: solution.id, type: solution.msProducts.length ? 'digital' : solution.world === 'digital' ? 'digital' : 'process' });
+    }
+  } else if (todoId === 'sol-contribution' || todoId === 'sol-target') {
+    const targetKpis = projectKpis();
+    const allSolutions = solutions();
+    const traced = new Set(allSolutions.flatMap((solution) => [
+      ...solution.kpiIds,
+      ...(ctx.strategy?.contributions.filter((c) => c.solutionId === solution.id).map((c) => c.kpiId) ?? []),
+    ]));
+    for (const solution of solutions()) {
+      const relatedKpis = [...new Set([
+        ...solution.kpiIds,
+        ...solution.issueIds.flatMap((id) => {
+          const issue = ctx.pack.byId.get(id);
+          return issue?.kind === 'issue' ? issue.kpiIds : [];
+        }),
+      ])];
+      for (const id of relatedKpis) {
+        traced.add(id);
+        const kpi = targetKpis.find((item) => item.id === id);
+        if (!kpi) continue;
+        if (!solution.kpiIds.includes(id)) add({ op: 'link', entityId: solution.id, field: 'kpiIds', relatedId: id });
+        if (ctx.strategy?.contributions.some((c) => c.solutionId === solution.id && c.kpiId === id)) continue;
+        const delta = Math.abs(kpi.target - kpi.current);
+        if (!delta) continue;
+        const end = kpi.deadline > ctx.today ? kpi.deadline : addDays(ctx.today, 30);
+        add({ op: 'contribution', value: {
+          id: `${solution.id}-${id}-draft-contribution`, solutionId: solution.id, kpiId: id,
+          lever: tr(input.lang, 'dlv.td.ruleContributionLever', { solution: loc(solution.name, input.lang) }), leverUnit: 'provisional unit',
+          amount: { low: 1, mode: 1, high: 1 }, effectPerUnit: { low: delta, mode: delta, high: delta },
+          rampStart: ctx.today, fullEffect: end, basis: 'assumption', evidence: tr(input.lang, 'dlv.td.ruleContributionEvidence'),
+        } });
+      }
+    }
+    for (const kpi of targetKpis.filter((item) => !traced.has(item.id))) {
+      const selected = allSolutions
+        .map((solution) => ({ solution, score: overlap(`${loc(solution.name, input.lang)} ${loc(solution.description, input.lang)}`, loc(kpi.name, input.lang)) }))
+        .sort((a, b) => b.score - a.score || a.solution.id.localeCompare(b.solution.id))[0]?.solution;
+      if (!selected) continue;
+      if (!selected.kpiIds.includes(kpi.id)) add({ op: 'link', entityId: selected.id, field: 'kpiIds', relatedId: kpi.id });
+      const delta = Math.abs(kpi.target - kpi.current);
+      if (delta) add({ op: 'contribution', value: {
+        id: `${selected.id}-${kpi.id}-draft-contribution`, solutionId: selected.id, kpiId: kpi.id,
+        lever: tr(input.lang, 'dlv.td.ruleContributionLever', { solution: loc(selected.name, input.lang) }), leverUnit: 'provisional unit',
+        amount: { low: 1, mode: 1, high: 1 }, effectPerUnit: { low: delta, mode: delta, high: delta },
+        rampStart: ctx.today, fullEffect: kpi.deadline > ctx.today ? kpi.deadline : addDays(ctx.today, 30), basis: 'assumption',
+        evidence: tr(input.lang, 'dlv.td.ruleContributionEvidence'),
+      } });
+    }
+  } else if (todoId === 'dlv-trace') {
+    const useCase = ctx.useCases.find((u) => u.origin === 'registered');
+    if (useCase) {
+      let updated = UseCaseDraft.parse({ ...useCase, origin: 'registered' });
+      for (const solution of solutions()) {
+        if (solution.world === 'digital' && !updated.relatedIds.includes(solution.id)) {
+          updated = UseCaseDraft.parse({ ...updated, origin: 'registered', relatedIds: [...updated.relatedIds, solution.id], updatedAt: new Date().toISOString() });
+          add({ op: 'useCase', value: updated });
+        }
+      }
+    }
+    const objectives = ctx.objectives ?? [];
+    for (const kpi of projectKpis().filter((item) => !ctx.kpi.okrs.some((okr) => okr.keyResults.some((kr) => kr.kpiId === item.id)))) {
+      const current = ctx.kpi.okrs.find((okr) => objectives.some((objective) => (okr.companyObjectiveIds ?? []).includes(objective.id)));
+      if (current) {
+        add({ op: 'okr', value: { ...current, keyResults: [...current.keyResults, { id: `${current.id}-kr-${kpi.id}`, text: kpi.name, kpiId: kpi.id }] } });
+      } else {
+        const objective = objectives[0];
+        const id = freshId('okr', `trace-${kpi.id}`, (value) => ctx.kpi.okrs.some((okr) => okr.id === value));
+        add({ op: 'okr', value: {
+          id, objective: both((l) => tr(l, 'dlv.td.ruleOkrObjective')),
+          keyResults: [{ id: `${id}-kr`, text: kpi.name, kpiId: kpi.id }],
+          origin: 'proposed', ...(objective ? { companyObjectiveIds: [objective.id] } : {}), reviewedAt: new Date().toISOString(),
+        } });
+      }
+    }
+  } else if (todoId === 'dlv-docs') {
+    for (const solution of solutions()) {
+      const docCtx = { ...ctx, strategy: ctx.strategy ?? emptyStrategy(), objectives: ctx.objectives ?? [], projectObjectiveIds: ctx.projectObjectiveIds ?? [] };
+      const doc = buildSolutionDoc(solution, threadOf(docCtx).solutions.find((x) => x.id === solution.id)!, threadOf(docCtx), docCtx, 'ja');
+      if (doc.complete) continue;
+      for (const section of doc.sections.filter((x) => x.open)) {
+        add({ op: 'section', solutionId: solution.id, sectionId: section.id, text: tr(input.lang, 'dlv.td.ruleDocSection', { name: loc(solution.name, input.lang), section: section.id }) });
+      }
+    }
+  } else if (todoId === 'plan-payback') {
+    for (const solution of solutions()) {
+      if (solution.costJpy !== undefined && solution.annualBenefitJpy !== undefined) continue;
+      const cost = solution.costJpy ?? 1_000_000;
+      const benefit = solution.annualBenefitJpy ?? cost * 2;
+      for (const [field, value] of [['costJpy', cost], ['annualBenefitJpy', benefit]] as const) {
+        if ((solution as Record<string, unknown>)[field] !== undefined) continue;
+        add({ op: 'set', entityId: solution.id, values: { [field]: value } });
+        const record: FillRecord = {
+          entityId: solution.id, field, basis: 'estimate', value,
+          note: { ja: tr(input.lang, 'dlv.td.rulePaybackNote'), en: tr('en', 'dlv.td.rulePaybackNote') },
+          sourceIds: sourcesOf(ctx, solution.sourceIds), status: 'approved', at: new Date().toISOString(),
+        };
+        add({ op: 'fill', value: record });
+      }
+    }
+  }
+  return ops.length ? { ops, states, rationale: tr(input.lang, 'dlv.td.gapWhy') } : null;
+}
+
 const RESOLVERS_BY_ID: Record<string, 'qualify' | 'decision' | 'solutions' | 'plan' | 'kpiValues'> = {
   'asis-qualify': 'qualify', 'define-decision': 'decision', 'plan-decision': 'decision', 'sol-issues': 'solutions',
   'plan-coverage': 'plan', 'plan-schedule': 'plan', 'plan-owner': 'plan', 'asis-baseline': 'kpiValues', 'kpi-direction': 'kpiValues',
 };
+const GAP_TASKS = new Set([
+  'asis-framework', 'tobe-link', 'uc-registered', 'uc-complete', 'uc-trace', 'uc-top-issue', 'kpi-definition', 'kpi-review', 'kpi-valid', 'kpi-deadline', 'kpi-coverage', 'kpi-okr', 'kpi-company',
+  'sol-type', 'sol-contribution', 'sol-target', 'dlv-trace', 'dlv-docs', 'plan-payback',
+]);
 /** Tasks a BAS resolver can draft; the others are drafted by their own batch jobs (KPI/OKR, objectives, solution documents) or by a person. */
 export const DRAFTABLE_TASKS = new Set([
   ...Object.keys(RESOLVERS_BY_ID), 'define-sources', 'define-causes', 'define-kpi-link', 'asis-cause-evidence',
+  ...GAP_TASKS,
   ...TASK_ORDER.filter((t) => t.todoId.endsWith('-doc')).map((t) => t.todoId),
   ...TASK_ORDER.filter((t) => STEP_DEFS[t.step].todos.find((x) => x.id === t.todoId)?.kind === 'manual').map((t) => t.todoId),
 ]);
@@ -773,6 +1062,7 @@ export async function draftTask(input: TaskDraftInput, ai: TaskAi | null): Promi
     else if (kind === 'solutions') draft = await solutionsDraft(input, ai, result);
     else if (kind === 'plan') draft = await planDraft(input, ai);
     else if (kind === 'kpiValues') draft = kpiValuesDraft(input, result);
+    else if (GAP_TASKS.has(input.todoId)) draft = gapDraft(input, result);
     else if (input.todoId.endsWith('-doc')) draft = fieldsDraft(input, result) ?? await resolutionDraft(input, ai);
     else draft = await resolutionDraft(input, ai);
   }
@@ -849,6 +1139,24 @@ export function draftLines(draft: TaskDraft, ctx: CheckContext, lang: Lang): Dra
       lines.push({ key: k, text: `${op.title}\n${op.text}`, state: state(k) });
     } else if (op.op === 'signOff') {
       lines.push({ key: k, text: op.text, state: state(k) });
+    } else if (op.op === 'kpi') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.kpi', { name: loc(op.value.name, lang), target: op.value.target, unit: loc(op.value.unit, lang) }), state: state(k) });
+    } else if (op.op === 'okr') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.okr', { objective: loc(op.value.objective, lang), n: op.value.keyResults.length }), state: state(k) });
+    } else if (op.op === 'useCase') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.useCase', { name: loc(op.value.name, lang), steps: op.value.steps.length }), state: state(k) });
+    } else if (op.op === 'solutionType') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.solutionType', { name: name(ctx, op.solutionId, lang), type: op.type }), state: state(k) });
+    } else if (op.op === 'contribution') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.contribution', { solution: name(ctx, op.value.solutionId, lang), kpi: name(ctx, op.value.kpiId, lang) }), state: state(k) });
+    } else if (op.op === 'section') {
+      lines.push({ key: k, text: `${op.sectionId}\n${op.text}`, state: state(k) });
+    } else if (op.op === 'fill') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.set', { name: name(ctx, op.value.entityId, lang), values: `${op.value.field}: ${String(op.value.value)}` }), state: state(k) });
+    } else if (op.op === 'companyObjective') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.companyObjective', { text: op.value.text, horizon: op.value.horizon }), state: state(k) });
+    } else if (op.op === 'analysis') {
+      lines.push({ key: k, text: tr(lang, 'dlv.td.line.analysis', { title: loc(op.value.title, lang), method: tr(lang, `proj.method.${op.value.method}`) }), state: state(k) });
     }
   });
   return lines;

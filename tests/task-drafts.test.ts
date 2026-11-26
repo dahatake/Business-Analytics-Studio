@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadPack } from '../src/data/pack.ts';
 import { samplePack } from '../src/data/sample.ts';
-import { IMPROVEMENT_STEPS } from '../src/state/projects.ts';
+import { IMPROVEMENT_STEPS, useProjects } from '../src/state/projects.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { demoAnalyses } from '../src/modules/project/analysis.ts';
-import { emptyDeliverables, evaluateStep, STEP_DEFS, type AppCheckContext, type CheckContext } from '../src/modules/project/deliverables.ts';
+import { emptyDeliverables, STEP_DEFS, type AppCheckContext, type CheckContext } from '../src/modules/project/deliverables.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
 import {
-  allResults, applyTaskOps, approvalOrder, doneIds, draftAllTasks, DRAFTABLE_TASKS, taskDraftKey, taskStatuses, type TaskAi, type TaskDraft,
+  allResults, applyTaskOps, approvalOrder, doneIds, draftAllTasks, taskDraftKey, taskStatuses, type TaskAi, type TaskDraft,
 } from '../src/modules/project/taskDrafts.ts';
 import type { ResolutionTransport } from '../src/modules/project/taskResolution.ts';
 import { useTaskDrafts } from '../src/modules/project/taskDrafts.ts';
+import { useObjectiveDrafts } from '../src/modules/project/stores.ts';
 
 /** A project with no discussion, analyses, KPIs, use cases or deliverables: the state right after a pack is created (like the 18-issue project). */
 function bare(): AppCheckContext {
@@ -20,7 +21,7 @@ function bare(): AppCheckContext {
   const pack = loadPack(raw);
   return {
     pack, discussion: { themes: [], records: [] }, kpi: { kpis: [], okrs: [] }, analysis: { analyses: [], activeId: null }, useCases: [],
-    deliverables: emptyDeliverables(), strategy: emptyStrategy(), objectives: [], projectObjectiveIds: [], today: '2026-11-09',
+    deliverables: emptyDeliverables(), strategy: emptyStrategy(), objectives: [{ id: 'objective-test', text: 'Improve operational reliability' }], projectObjectiveIds: [], today: '2026-11-09',
   };
 }
 function demo(): AppCheckContext {
@@ -39,15 +40,14 @@ describe('FR-376: drafts that resolve every open task', () => {
     const { drafts, failed } = await draftAllTasks({ ctx, lang: 'ja', audience: 'internal', editor: '' }, { recommendation: () => undefined, fieldDraft: () => undefined }, null);
     expect(failed).toEqual([]);
     const statuses = taskStatuses(ctx, byId(drafts), 'internal');
-    const openBefore = [...allResults(ctx)].filter(([id, r]) => !r.done && DRAFTABLE_TASKS.has(id)).map(([id]) => id);
+    const openBefore = [...allResults(ctx)].filter(([, r]) => !r.done).map(([id]) => id);
     expect(openBefore.length).toBeGreaterThan(0);
-    const unresolved = openBefore.filter((id) => !['ready', 'viaOther'].includes(statuses.get(id)!.state));
+    const unresolved = openBefore.filter((id) => !['ready', 'viaOther'].includes(statuses.get(id)?.state ?? 'open'));
     expect(unresolved).toEqual([]);
     // Every manual criterion gets a sign-off record; nothing is applied yet.
     for (const step of IMPROVEMENT_STEPS) {
       for (const todo of STEP_DEFS[step].todos.filter((t) => t.kind === 'manual')) expect(statuses.get(todo.id)!.state).toBe('ready');
     }
-    expect(evaluateStep('asis', ctx).filter((r) => r.done).length).toBe(evaluateStep('asis', ctx).filter((r) => r.done).length);
     // Approving everything (the real replay) completes those tasks and undoes none.
     const after = doneIds(allResults(replay(ctx, drafts)));
     for (const id of doneIds(allResults(ctx))) expect(after.has(id)).toBe(true);
@@ -69,6 +69,34 @@ describe('FR-376: drafts that resolve every open task', () => {
       const order = approvalOrder([dependent.todoId], statuses);
       expect(order.at(-1)).toBe(dependent.todoId);
       for (const req of dependent.requires) expect(order.indexOf(req)).toBeLessThan(order.indexOf(dependent.todoId));
+    }
+  });
+
+  it('creates a labelled company-objective hypothesis when a project has no stated objective', async () => {
+    const previousProjects = useProjects.getState();
+    const previousObjectiveDrafts = useObjectiveDrafts.getState().value;
+    useProjects.setState({
+      companies: [{ id: 'task-draft-company', name: 'Test company', createdAt: '2026-01-01' }],
+      projects: [{ id: 'task-draft-project', companyId: 'task-draft-company', name: 'Reliability project', createdAt: '2026-01-01', step: 'asis', brief: { purpose: 'Improve operational reliability' } }],
+      target: { kind: 'project', projectId: 'task-draft-project' },
+    });
+    useObjectiveDrafts.getState().set([]);
+    try {
+      const ctx = { ...bare(), objectives: [] };
+      const { drafts, failed } = await draftAllTasks({ ctx, lang: 'ja', audience: 'internal', editor: '' }, { recommendation: () => undefined, fieldDraft: () => undefined }, null);
+      expect(failed).toEqual([]);
+      const objectiveDraft = drafts.find((draft) => draft.todoId === 'tobe-link')!;
+      const companyObjective = objectiveDraft.ops.find((op) => op.op === 'companyObjective');
+      expect(companyObjective).toMatchObject({ op: 'companyObjective', value: { text: 'Improve operational reliability', basis: 'customerStated' } });
+      expect(objectiveDraft.states[0]).toBe('provisional');
+      const after = replay(ctx, drafts);
+      if (companyObjective?.op === 'companyObjective') expect(after.objectives?.some((objective) => objective.id === companyObjective.value.id)).toBe(true);
+      const afterDone = doneIds(allResults(after));
+      const unresolved = [...allResults(ctx)].filter(([, result]) => !result.done).map(([id]) => id).filter((id) => !afterDone.has(id));
+      expect(unresolved).toEqual([]);
+    } finally {
+      useProjects.setState(previousProjects);
+      useObjectiveDrafts.getState().set(previousObjectiveDrafts);
     }
   });
 

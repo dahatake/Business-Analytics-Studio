@@ -22,6 +22,8 @@ const label = (t: T, id: string) => t(todoKey(id), { max: PAYBACK_MAX_YEARS });
 /** The reviewer's editor for one operation: every value Copilot or BAS drafted can be changed before approval. */
 function OpEditor({ op, index, onChange }: { op: TaskOp; index: number; onChange: (op: TaskOp, keys: string[]) => void }) {
   const { t, lang } = useI18n();
+  const [raw, setRaw] = useState(() => JSON.stringify(op, null, 2));
+  useEffect(() => setRaw(JSON.stringify(op, null, 2)), [op]);
   const k = String(index);
   const id = `dlv-td-edit-${index}`;
   if (op.op === 'field' || op.op === 'signOff') {
@@ -84,6 +86,25 @@ function OpEditor({ op, index, onChange }: { op: TaskOp; index: number; onChange
           </Field>
         ))}
       </>
+    );
+  }
+  if (['kpi', 'okr', 'useCase', 'solutionType', 'contribution', 'section', 'fill', 'companyObjective', 'analysis'].includes(op.op)) {
+    return (
+      <Field label={t('dlv.td.edit.structured')}>
+        <Textarea
+          resize="vertical"
+          value={raw}
+          onChange={(_, d) => {
+            setRaw(d.value);
+            try {
+              const parsed: unknown = JSON.parse(d.value);
+              const valid = TaskOpSchema.safeParse(parsed);
+              if (valid.success) onChange(valid.data, [k]);
+            } catch { /* Keep incomplete JSON in the editor until it parses. */ }
+          }}
+          data-testid={`${id}-structured`}
+        />
+      </Field>
     );
   }
   return null;

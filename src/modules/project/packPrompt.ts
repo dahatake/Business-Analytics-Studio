@@ -1,5 +1,6 @@
 import doc from '../../../docs/copilot-customer-pack-prompt.md?raw';
 import type { Lang } from '../../i18n/index.ts';
+import { AI_PROMPT_SUFFIX, appendAiPromptSuffix } from '../../ai/promptSuffix.ts';
 
 /** The Microsoft 365 Copilot prompts (docs/copilot-customer-pack-prompt.md is the single source). */
 export const PROMPT_DOC: string = doc;
@@ -11,9 +12,13 @@ export function promptSection(source: string, lang: Lang, stage: 'prompt' | 'res
 }
 
 export function copilotPrompt(lang: Lang): string {
-  return promptSection(PROMPT_DOC, lang);
+  return appendAiPromptSuffix(promptSection(PROMPT_DOC, lang));
 }
 
 export function copilotResearchPrompt(lang: Lang): string {
-  return promptSection(PROMPT_DOC, lang, 'research');
+  return appendAiPromptSuffix(promptSection(PROMPT_DOC, lang, 'research'));
+}
+
+export function copilotPromptDocument(): string {
+  return PROMPT_DOC.replace(/(<!-- (?:prompt|research):(?:ja|en):end -->)/g, `${AI_PROMPT_SUFFIX}\n\n$1`);
 }

@@ -7,6 +7,7 @@ import { checkHost, classifyTransportError, configureNetwork, networkDispatcher,
 import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
 import { AI_DEFAULT_MAX_REQUEST_CHARS, AI_LIMITS, AI_MAX_REQUEST_CHARS_BY_USE, AI_REASONING_EFFORT, DELIVERABLE_DRAFT_TIMEOUT_MS, PACK_BUILD_TIMEOUT_MS, PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS, isAiUse, workIqAllowedFor, type AiUse, type Provider } from '../src/ai/policy.ts';
+import { appendAiPromptSuffix } from '../src/ai/promptSuffix.ts';
 import { MAX_SECRET_LENGTH, SecretVault, isSecretName } from './vault.ts';
 import { NewsRequest } from '../src/data/news.ts';
 import { NEWS_HOST, NewsError, NewsService } from './news.ts';
@@ -720,12 +721,13 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
   const timer = setTimeout(() => controller.abort(), call.timeoutMs);
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
+  const prompt = appendAiPromptSuffix(call.context ? `${call.prompt}\n\n${call.context}` : call.prompt);
   const messages = [
     { role: 'system', content: call.use === 'connectionTest' ? 'Reply briefly to the connection test.' : systemPromptFor(call.use, call.lang) },
     {
       role: 'user',
-      content: call.media.length === 0 ? `${call.prompt}\n\n${call.context}` : [
-        { type: 'text', text: `${call.prompt}\n\n${call.context}` },
+      content: call.media.length === 0 ? prompt : [
+        { type: 'text', text: prompt },
         ...call.media.map((m) => ({ type: 'image_url', image_url: { url: `data:${m.mimeType};base64,${m.data}` } })),
       ],
     },
@@ -824,7 +826,7 @@ async function forward(call: AiCall, conn: RelayConnection, credential: FoundryC
 async function forwardCopilot(call: AiCall, model: string, copilot: CopilotService, signal?: AbortSignal, diagDir?: string): Promise<RelayResponse> {
   try {
     const r = await copilot.complete({
-      model, system: systemPromptFor(call.use, call.lang), prompt: call.context ? `${call.prompt}\n\n${call.context}` : call.prompt, timeoutMs: call.timeoutMs, signal, media: call.media,
+      model, system: systemPromptFor(call.use, call.lang), prompt: appendAiPromptSuffix(call.context ? `${call.prompt}\n\n${call.context}` : call.prompt), timeoutMs: call.timeoutMs, signal, media: call.media,
       maxOutputTokens: call.maxOutputTokens, reasoningEffort: AI_REASONING_EFFORT,
     });
     return json(200, r);

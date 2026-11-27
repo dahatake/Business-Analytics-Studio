@@ -6,6 +6,7 @@ import { SecretVault } from '../server/vault.ts';
 import { STRICT_RELAY_CONFIG, foundryWorkIqServiceFor, handleRelay, newRelayToken, type RelayConfig, type RelayContext, type RelayRequest } from '../server/relay.ts';
 import { EntraError, type EntraTokens } from '../server/entra.ts';
 import { FoundryMcpSession, FoundryWorkIqService, WORKIQ_MCP_URL, argsForSchema, mcpResultFromOutput, parseProjectEndpoint, type FoundryWorkIqTarget } from '../server/workiqFoundry.ts';
+import { AI_PROMPT_SUFFIX } from '../src/ai/promptSuffix.ts';
 
 const TOKEN = newRelayToken();
 const PORT = 4189;
@@ -52,7 +53,9 @@ function foundryStub(mode: () => Mode) {
       }] });
     }
     const choice = body.tool_choice as { name: string };
-    const args = JSON.parse(String(body.input).split('Arguments: ')[1]!) as Record<string, unknown>;
+    const input = String(body.input);
+    expect(input.endsWith(`\n\n${AI_PROMPT_SUFFIX}`)).toBe(true);
+    const args = JSON.parse(input.split('Arguments: ')[1]!.slice(0, -(`\n\n${AI_PROMPT_SUFFIX}`.length))) as Record<string, unknown>;
     if (mode() === 'contextLimit' || (mode() === 'partialLimit' && JSON.stringify(args).includes('oversized-only'))) {
       return Response.json({ error: { code: 'context_length_exceeded' } }, { status: 400 });
     }
@@ -85,6 +88,8 @@ describe('Work IQ through a Microsoft Foundry project connection (transport)', (
     expect(result).toMatchObject({ structuredContent: RETRIEVAL });
     const call = stub.sent.find((s) => typeof s.body?.input === 'string' && s.body.tool_choice !== 'none')!;
     expect(String(call.body!.input)).toContain(query);
+    const list = stub.sent.find((s) => s.body?.tool_choice === 'none')!;
+    expect(String(list.body!.input).endsWith(AI_PROMPT_SUFFIX)).toBe(true);
     expect(stub.sent.some((s) => Array.isArray(s.body?.input))).toBe(true);
     session.close();
   });

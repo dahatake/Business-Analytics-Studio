@@ -673,10 +673,10 @@ test.describe('step deliverables and to-do band', () => {
     await expect(page.getByTestId('proj-method-panel')).toBeVisible();
   });
 
-  test('the band sits right under company news after business outcomes and lists the current step\'s exit criteria', async ({ page }) => {
+  test('news, business outcomes, and tasks appear in order and list the current step\'s exit criteria', async ({ page }) => {
     await go(page, '/home');
     const band = page.getByTestId('dlv-band');
-    const outcomesRegion = page.getByRole('region', { name: '期待されるビジネスの成果', exact: true });
+    const outcomesRegion = page.getByRole('region', { name: '期待されるビジネスの効果', exact: true });
     const newsRegion = page.getByRole('region', { name: '企業ニュース', exact: true });
     await expect(outcomesRegion).toBeVisible();
     await expect(newsRegion).toBeVisible();
@@ -684,10 +684,11 @@ test.describe('step deliverables and to-do band', () => {
     const outcomes = await outcomesRegion.boundingBox();
     const news = await newsRegion.boundingBox();
     const box = await band.boundingBox();
-    expect(news!.y).toBeGreaterThanOrEqual(outcomes!.y + outcomes!.height - 1);
-    expect(Math.abs(box!.y - (news!.y + news!.height))).toBeLessThanOrEqual(1);
+    expect(outcomes!.y).toBeGreaterThanOrEqual(news!.y + news!.height - 1);
+    expect(box!.y).toBeGreaterThanOrEqual(outcomes!.y + outcomes!.height - 1);
     expect(box!.width).toBeGreaterThan(1000); // full width
-    await expect(band).toContainText('ステップ 1/5: 現状分析');
+    await expect(band.getByText('タスク（次にやること）')).toBeVisible();
+    await expect(band).not.toContainText('ステップ 1/5: 現状分析');
     await expect(band).toContainText('成果物: 現状分析レポート（優先順位つき課題一覧と KPI/OKR ギャップ）');
     // Demo: the data checks pass; the issue qualification, the deliverable fields, the field check and the sponsor's agreement are still open.
     await expect(page.getByTestId('dlv-progress')).toHaveText('8/12 完了');

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WORKIQ_ITEM_MAX_CHARS, WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
 import { isConfidentialLabel } from '../src/ai/sensitivity.ts';
+import { appendAiPromptSuffix } from '../src/ai/promptSuffix.ts';
 import { REQUIREMENTS } from '../src/modules/project/analysisReadiness.ts';
 import { WORKIQ_SCOPED_ASPECTS, WORKIQ_TIMEOUT_MS, WorkIqError, workIqPlan, type WorkIqAnswer, type WorkIqCitation, type WorkIqErrorCode, type WorkIqQuestion, type WorkIqSectionAnswer, type WorkIqSource } from './workiq.ts';
 
@@ -1074,8 +1075,8 @@ export class WorkIqCliService {
       try {
         const s = await this.openSession(signal);
         if (opts.files || opts.conversationId || opts.ask || this.searchTool === 'ask') {
-          const args = opts.conversationId ? { question: query, conversationId: opts.conversationId }
-            : opts.files ? { question: query, fileUrls: [...opts.files] } : { question: workIqAskQuestion(query, lang, opts.ctx) };
+          const args = opts.conversationId ? { question: appendAiPromptSuffix(query), conversationId: opts.conversationId }
+            : opts.files ? { question: appendAiPromptSuffix(query), fileUrls: [...opts.files] } : { question: appendAiPromptSuffix(workIqAskQuestion(query, lang, opts.ctx)) };
           const answer = await s.request('tools/call', { name: 'ask', arguments: args }, Math.max(this.timeoutMs, ASK_TIMEOUT_MS), signal);
           r = answer instanceof WorkIqError ? answer : askAsRetrieval(answer, lang);
         } else {

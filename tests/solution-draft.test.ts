@@ -5,6 +5,7 @@ import { samplePack } from '../src/data/sample.ts';
 import { demoUseCases } from '../src/modules/usecases/seed.ts';
 import { demoAnalyses } from '../src/modules/project/analysis.ts';
 import { instructionFiles, instructionReady, systemBundle } from '../src/modules/project/copilotInstruction.ts';
+import { AI_PROMPT_SUFFIX } from '../src/ai/promptSuffix.ts';
 import { demoDiscussion } from '../src/modules/project/discussion.ts';
 import { emptyDeliverables, threadOf, type AppCheckContext } from '../src/modules/project/deliverables.ts';
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
@@ -70,7 +71,7 @@ describe('solution type and whole-document draft (last phase of a Project pack)'
 
     const files = instructionFiles(doc, '技能伝承', candidates, 'ja');
     const byName = Object.fromEntries(files.map((f) => [f.name, String(f.content)]));
-    expect(byName['prompt.txt']).toBe('copilotPrompt の下書き（仮説）');
+    expect(byName['prompt.txt']).toBe(`copilotPrompt の下書き（仮説）\n\n${AI_PROMPT_SUFFIX}`);
     expect(Object.keys(byName).filter((n) => n.startsWith('attachments/')).sort()).toEqual(['attachments/issues.md', 'attachments/kpi.csv']);
     expect(byName['attachments/kpi.csv']!.startsWith('\uFEFFKPI,')).toBe(true);
     expect(byName['指示書.md']).toContain('attachments/kpi.csv');

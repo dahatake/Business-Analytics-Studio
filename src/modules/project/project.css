@@ -26,7 +26,6 @@
 .proj-step-check { flex: none; }
 .proj-step:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 .proj-step-num { font-weight: var(--fontWeightSemibold); }
-.proj-step-label { white-space: nowrap; }
 
 @media (forced-colors: active) {
   .proj-step[aria-current='step'] { border: 2px solid Highlight; }
@@ -49,7 +48,6 @@
 .proj-home { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 .proj-home.help-open { grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); }
 .proj-home-main { min-width: 0; }
-.proj-current-step { margin: 0; font-size: var(--fontSizeBase400); display: flex; align-items: center; flex-wrap: wrap; }
 .proj-help {
   padding: 16px 18px; border-radius: var(--borderRadiusXLarge); background: var(--colorNeutralBackground2); border: 1px solid var(--colorNeutralStroke2);
   display: grid; gap: 14px; animation: proj-slide-in var(--durationNormal) var(--curveDecelerateMid);
@@ -360,6 +358,7 @@
   background: color-mix(in srgb, var(--colorNeutralBackground1) 88%, transparent);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--colorNeutralStroke2);
+  font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
 }
 .dlv-band-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; min-width: 0; }
 .dlv-band-title { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
@@ -370,7 +369,7 @@
 /* The next open criterion stays on the head line (full text in the accessible name, trimmed only visually). */
 .dlv-band-next {
   flex: 1 1 320px; min-width: 0; display: flex; gap: 6px; align-items: baseline;
-  color: var(--colorBrandForegroundLink); font-size: var(--fontSizeBase300); white-space: nowrap;
+  color: var(--colorBrandForegroundLink); font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); white-space: nowrap;
 }
 .dlv-band-next-lead { flex: none; font-weight: var(--fontWeightSemibold); }
 .dlv-band-next-text { overflow: hidden; text-overflow: ellipsis; text-decoration: underline; }

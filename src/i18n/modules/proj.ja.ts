@@ -31,9 +31,8 @@ export const projJa = {
 
 
   'proj.home.subtitle': 'この Project の大きな流れ（経営目標 → OKR → KPI → 課題 → 解決策）と、次にやることを確かめます。',
-  'proj.home.currentStep': '現在のステップ: {step}',
 
-  'proj.outcomes.title': '期待されるビジネスの成果',
+  'proj.outcomes.title': '期待されるビジネスの効果',
   'proj.outcomes.expand': 'ビジネスの成果を広げる',
   'proj.outcomes.collapse': 'ビジネスの成果をたたむ',
   'proj.outcomes.count': '{n}件',

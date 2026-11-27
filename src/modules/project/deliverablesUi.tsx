@@ -9,7 +9,7 @@ import { AiLiveError, preflight, type AiResponse } from '../../ai/client.ts';
 import { PARAMS } from '../../config/params.ts';
 import { loaded, packOrigin } from '../../data/pack.ts';
 import { useI18n, type Lang, type MessageKey } from '../../i18n/index.ts';
-import { currentScope, IMPROVEMENT_STEPS, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
+import { currentScope, useActiveProject, useProjects, type ImprovementStep } from '../../state/projects.ts';
 import { hrefFor, revisitRouteTarget } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { commitPackChanges, usePackVersion } from '../../state/packEdits.ts';
@@ -378,13 +378,12 @@ export function StepTodoBand() {
   const awaitingHere = awaiting.filter((s) => s.step === step).length;
   const applied = useProjTransient((s) => s.draftApplied);
   const listId = useId();
-  const n = IMPROVEMENT_STEPS.indexOf(step) + 1;
   const stepName = t(`proj.step.${step}`);
   return (
     <section className="dlv-band" aria-label={t('dlv.band.label')} data-testid="dlv-band" data-step={step} data-complete={p.complete}>
       <div className="dlv-band-head" ref={setHead}>
         <div className="dlv-band-title">
-          <strong>{t('dlv.band.step', { n, total: IMPROVEMENT_STEPS.length, step: stepName })}</strong>
+          <strong className="chrome-section-label">{t('dlv.band.label')}</strong>
           <span className="dlv-band-deliverable">{t('dlv.band.deliverable', { name: t(deliverableNameKey(step)) })}</span>
         </div>
         <div className="dlv-band-progress">

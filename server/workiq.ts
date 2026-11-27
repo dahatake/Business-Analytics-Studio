@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SecretVault } from './vault.ts';
 import { WORKIQ_MAX_ANSWER_CHARS, WORKIQ_SECTION_MAX_CHARS } from '../src/ai/policy.ts';
+import { appendAiPromptSuffix } from '../src/ai/promptSuffix.ts';
 import { REQUIREMENTS, type ReadinessKey } from '../src/modules/project/analysisReadiness.ts';
 
 /**
@@ -848,7 +849,7 @@ export class WorkIqService {
         const id = created.body && typeof created.body === 'object' ? (created.body as { id?: unknown }).id : undefined;
         if (typeof id !== 'string' || !/^[\w-]{1,100}$/.test(id)) throw new WorkIqError('badWorkiqResponse');
         const chat = await this.post(`${CONVERSATIONS_URL}/${encodeURIComponent(id)}/chat`, token, {
-          message: { text: prompt },
+          message: { text: appendAiPromptSuffix(prompt) },
           locationHint: { timeZone },
           // Work IQ's own web grounding is off: public material comes from the relay's site and news readers.
           contextualResources: { webContext: { isWebEnabled: false } },

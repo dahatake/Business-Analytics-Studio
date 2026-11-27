@@ -1,11 +1,12 @@
 import { translate, type Lang } from '../../i18n/core.ts';
+import { appendAiPromptSuffix } from '../../ai/promptSuffix.ts';
 import { chosenAttachments, kindKey, sectionKey, solutionDocMarkdown, TO_FILL, type AttachmentCandidate, type SolutionDoc } from './solutionDocs.ts';
 import type { ZipEntry } from './zipFiles.ts';
 
 /**
  * The hand-off for software-solvable work. A prompt solution becomes an instruction sheet for Microsoft 365 Copilot: the
  * prompt to paste, the files to attach (built from project data), and how to check the answer. Applications and AI agents
- * become their requirements definition / specification. Everything comes from the approved document; nothing is generated.
+ * become their requirements definition / specification. The shared instruction is appended to the approved prompt.
  */
 
 type Bi = { ja: string; en: string };
@@ -20,7 +21,7 @@ export const instructionReady = (doc: SolutionDoc) => doc.kind === 'promptSpec' 
 export function instructionFiles(doc: SolutionDoc, title: string, candidates: AttachmentCandidate[], lang: Lang, folder = ''): ZipEntry[] {
   const L = (b: Bi) => b[lang];
   const sec = (id: string) => translate(lang, sectionKey(id));
-  const prompt = sectionText(doc, 'copilotPrompt');
+  const prompt = appendAiPromptSuffix(sectionText(doc, 'copilotPrompt'));
   const files = chosenAttachments(sectionText(doc, 'copilotAttachments'), candidates);
   const open = doc.sections.filter((s) => s.open).length;
   const at = (name: string) => `${folder}${name}`;

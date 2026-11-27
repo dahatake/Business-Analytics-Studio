@@ -57,7 +57,7 @@ export function CommandPalette() {
 
   const commands = useMemo<Command[]>(() => [
     ...SCREENS.filter((s) => !s.hiddenFromNav).map((s) => ({ id: `nav:${s.path}`, label: t('ws.cmd.goto', { name: t(s.label) }), run: () => navigate(hrefFor(s.path)) })),
-    { id: 'ai-settings', label: t('ai.nav.settings'), run: () => openAiSettings() },
+    { id: 'ai-settings', label: t('ai.nav.settings'), run: () => openAiSettings(), opensDialog: true },
     ...WS_PERSONAS.map((p) => ({
       id: `persona:${p}`,
       label: t('ws.cmd.persona', { name: t(personaLabel(p)) }),
@@ -99,8 +99,23 @@ export function CommandPalette() {
     return () => cancelAnimationFrame(id);
   }, [open]);
 
+  // A dialog opened while the palette is still modal is left aria-hidden when the palette closes, so it waits.
+  const pending = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (open || !pending.current) return;
+    const next = pending.current;
+    pending.current = null;
+    const id = window.setTimeout(next, 0);
+    return () => window.clearTimeout(id);
+  }, [open]);
+
   const run = (c: Command | undefined) => {
     if (!c) return;
+    if (c.opensDialog) {
+      pending.current = c.run;
+      setOpen(false);
+      return;
+    }
     const before = window.location.hash;
     c.run();
     close(window.location.hash !== before);

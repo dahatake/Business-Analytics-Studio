@@ -5,6 +5,7 @@ import { evaluateGate } from '../src/ai/gate.ts';
 import { selectOutbound } from '../src/ai/redact.ts';
 import { aiComplete, aiRequestFits, aiRequestLength, preflight, readLedger, registerMock, setLiveTransport, setRuntimeSettingsProvider, type LiveCall } from '../src/ai/client.ts';
 import { loaded } from '../src/data/pack.ts';
+import { appendAiPromptSuffix } from '../src/ai/promptSuffix.ts';
 
 const okBudget = checkBudget([], new Date('2026-11-09T00:00:00Z'), { use: 'explain', estimatedInputTokens: 10, maxOutputTokens: 100 });
 const allTrue = { liveEnabled: true, sendConsent: true, configured: true, budget: okBudget };
@@ -162,7 +163,7 @@ describe('AI client', () => {
     const pf = preflight({ use: 'explain', lang: 'en', prompt: 'Explain', entities: loaded.pack.entities });
     expect(pf.internalCount).toBeGreaterThan(0);
     expect(pf.personCount).toBe(10);
-    expect(pf.estimatedInputTokens).toBeGreaterThan(0);
+    expect(pf.estimatedInputTokens).toBe(estimateTokens(appendAiPromptSuffix('Explain' + pf.context)));
     expect(pf.reasons).toEqual([]);
   });
 

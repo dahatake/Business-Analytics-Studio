@@ -1,5 +1,6 @@
 import { WorkIqError } from './workiq.ts';
 import { WorkIqCliService, type McpSessionLike, type WorkIqCliServiceOptions } from './workiqCli.ts';
+import { appendAiPromptSuffix } from '../src/ai/promptSuffix.ts';
 
 /**
  * Work IQ through Microsoft Foundry (user request 2026-11-25): the relay reaches the remote Work IQ MCP server
@@ -179,7 +180,7 @@ export class FoundryMcpSession implements McpSessionLike {
 
   private async listTools(timeoutMs: number, signal?: AbortSignal): Promise<Map<string, Json>> {
     if (this.schemas) return this.schemas;
-    const r = await this.responses({ input: 'List the tools only.', tool_choice: 'none', max_output_tokens: AFTER_CALL_TOKENS, tools: [this.tool()] }, timeoutMs, signal);
+    const r = await this.responses({ input: appendAiPromptSuffix('List the tools only.'), tool_choice: 'none', max_output_tokens: AFTER_CALL_TOKENS, tools: [this.tool()] }, timeoutMs, signal);
     const list = (Array.isArray(r.output) ? r.output : []).find((o) => isObj(o) && o.type === 'mcp_list_tools') as Json | undefined;
     if (!list) throw new WorkIqError('workiqUnavailable');
     if (list.error) throw new WorkIqError('workiqForbidden');
@@ -207,7 +208,7 @@ export class FoundryMcpSession implements McpSessionLike {
     const tool = this.tool([name]);
     const first = await this.responses({
       instructions: 'You relay one tool call. Call the named tool exactly once with exactly the JSON arguments given (same keys and values, nothing added or removed), then reply only "done".',
-      input: `Tool: ${name}\nArguments: ${JSON.stringify(args)}`,
+      input: appendAiPromptSuffix(`Tool: ${name}\nArguments: ${JSON.stringify(args)}`),
       tool_choice: { type: 'mcp', server_label: SERVER_LABEL, name },
       tools: [tool],
     }, timeoutMs, signal);

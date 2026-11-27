@@ -1446,11 +1446,11 @@ test.describe('live generation through the relay (D-12)', () => {
     await page.getByTestId('proj-export').click();
     const exportDialog = page.getByTestId('proj-export-dialog');
     const tokens = exportDialog.getByTestId('proj-export-tokens-table');
-    await expect(tokens.getByTestId('proj-export-tokens-table-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500', '0']);
+    await expect(tokens.getByTestId('proj-export-tokens-table-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500', '8,500', '0']);
     await expect(tokens.getByTestId('proj-export-tokens-table-row').last()).toContainText('Export (uses no generative AI)');
-    await expect(tokens.getByTestId('proj-export-tokens-table-total-value')).toHaveText('34,000');
+    await expect(tokens.getByTestId('proj-export-tokens-table-total-value')).toHaveText('42,500');
     await exportDialog.getByRole('radio', { name: 'Internal' }).check();
-    await expect(exportDialog.getByTestId('proj-export-preview')).toContainText('| **Total** | 4 | 24,000 | 10,000 | 34,000 |');
+    await expect(exportDialog.getByTestId('proj-export-preview')).toContainText('| **Total** | 5 | 30,000 | 12,500 | 42,500 |');
     await exportDialog.getByRole('radio', { name: 'External' }).check();
     await expect(exportDialog.getByTestId('proj-export-preview')).not.toContainText('Generative AI token usage');
     expect(await scan(page)).toEqual([]);

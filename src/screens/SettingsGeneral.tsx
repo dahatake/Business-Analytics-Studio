@@ -120,7 +120,7 @@ export function SettingsGeneral() {
         </Panel>
       </div>
       <DataLocationPanel />
-      <Panel title={t('bp.settings.title')} testId="bp-settings">
+      {s.audience === 'internal' && <Panel title={t('bp.settings.title')} testId="bp-settings">
         <p>{t('bp.settings.note')}</p>
         <Field label={t('bp.settings.worker')}>
           <Input value={s.processWorker} placeholder={t('bp.settings.me')} onChange={(_, d) => s.setProcessWorker(d.value)} data-testid="bp-settings-worker" />
@@ -137,7 +137,7 @@ export function SettingsGeneral() {
             <Field label={t('bp.settings.end')}><Input type="date" value={s.processPeriodEnd} onChange={(_, d) => s.setProcessPeriodEnd(d.value)} data-testid="bp-settings-end" /></Field>
           </div>
         )}
-      </Panel>
+      </Panel>}
       <ConfidentialPanel />
       <Panel title={t('settings.loadTest')}>
         <LoadTest />

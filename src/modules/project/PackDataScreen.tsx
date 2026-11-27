@@ -23,7 +23,7 @@ import { MAX_PROJECTS_PER_COMPANY, useActiveProject, useProjects } from '../../s
 import { useSettings } from '../../state/settings.ts';
 import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import { BackToHome, ConfirmDialog, downloadText, ScrollRegion } from './common.tsx';
-import { copilotPrompt, copilotResearchPrompt, PROMPT_DOC } from './packPrompt.ts';
+import { copilotPrompt, copilotPromptDocument, copilotResearchPrompt } from './packPrompt.ts';
 import { isZipFile, readZipJson, readZipLogo } from '../../data/zipRead.ts';
 import { parseBrand } from '../ops/brand.ts';
 import { yyyymmdd } from './exportFormat.ts';
@@ -333,7 +333,7 @@ function PromptPanel() {
       <div className="proj-row">
         <Button icon={<Copy20Regular />} onClick={() => { void copyText(researchPrompt).then(setCopied); }} data-testid="pack-research-copy">{t('proj.pack.researchCopy')}</Button>
         <Button appearance="primary" icon={<Copy20Regular />} onClick={() => { void copyText(prompt).then(setCopied); }} data-testid="pack-prompt-copy">{t('proj.pack.promptCopy')}</Button>
-        <Button icon={<ArrowDownload20Regular />} onClick={() => downloadText('copilot-customer-pack-prompt.md', PROMPT_DOC, 'text/markdown')} data-testid="pack-prompt-download">{t('proj.pack.promptDownload')}</Button>
+        <Button icon={<ArrowDownload20Regular />} onClick={() => downloadText('copilot-customer-pack-prompt.md', copilotPromptDocument(), 'text/markdown')} data-testid="pack-prompt-download">{t('proj.pack.promptDownload')}</Button>
         <span role="status" className="muted">{copied === true ? t('proj.pack.copied') : copied === false ? t('proj.pack.copyFailed') : ''}</span>
       </div>
       <details className="pack-details">

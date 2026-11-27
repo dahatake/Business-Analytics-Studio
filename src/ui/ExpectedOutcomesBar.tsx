@@ -12,7 +12,6 @@ import { useReducedMotion } from '../state/motion.ts';
 import { useSettings } from '../state/settings.ts';
 import { loc } from '../state/text.ts';
 import { isHidden } from './cardSpecs.ts';
-import { NewsFeedBar } from './NewsFeedBar.tsx';
 
 type Highlight =
   | { kind: 'kpi'; outcome: KpiOutcome }
@@ -372,7 +371,7 @@ export function ExpectedOutcomesBar() {
   return (
     <>
       <div className="business-outcomes-bar" role="region" aria-label={t('proj.outcomes.title')} data-testid="business-outcomes">
-        <strong className="business-outcomes-title">{t('proj.outcomes.title')}</strong>
+        <strong className="business-outcomes-title chrome-section-label">{t('proj.outcomes.title')}</strong>
         <OutcomePreview highlight={highlight} />
         <Button
           size="small"
@@ -416,7 +415,6 @@ export function ExpectedOutcomesBar() {
           </div>
         </div>
       </div>
-      <NewsFeedBar />
       <FeedLatencyRecorder />
     </>
   );

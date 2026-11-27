@@ -7,6 +7,7 @@ import { checkBudget, estimateTokens, type BudgetDecision, type UsageRecord } fr
 import { evaluateGate, type GateReason } from './gate.ts';
 import { selectOutbound, toPromptContext } from './redact.ts';
 import type { MediaPart } from './attachments.ts';
+import { appendAiPromptSuffix } from './promptSuffix.ts';
 
 /** Input tokens assumed per media file before sending (a high-detail image is roughly 1,100 tokens; PDF pages add more). */
 export const MEDIA_TOKEN_ESTIMATE = 1500;
@@ -161,8 +162,9 @@ export function preflight(req: AiRequest, now = new Date()): Preflight {
   const context = req.sendEntityContext === false ? '' : toPromptContext(selection, req.lang);
   const settings = runtime();
   const maxOutputTokens = req.maxOutputTokens ?? PER_USE_LIMITS[req.use]?.maxOutputTokens ?? AI_LIMITS.maxOutputTokens;
-  const estimatedInputTokens = estimateTokens(req.prompt + context) + (req.media?.length ?? 0) * MEDIA_TOKEN_ESTIMATE;
-  const budget = checkBudget(readLedger(), now, { use: req.use, estimatedInputTokens, maxOutputTokens });
+  const estimatedInputTokens = estimateTokens(appendAiPromptSuffix(req.prompt + context)) + (req.media?.length ?? 0) * MEDIA_TOKEN_ESTIMATE;
+  const budgetInputTokens = estimateTokens(req.prompt + context) + (req.media?.length ?? 0) * MEDIA_TOKEN_ESTIMATE;
+  const budget = checkBudget(readLedger(), now, { use: req.use, estimatedInputTokens: budgetInputTokens, maxOutputTokens });
   const gate = evaluateGate({
     liveEnabled: settings.liveEnabled,
     sendConsent: settings.sendConsent ?? false,

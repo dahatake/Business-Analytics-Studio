@@ -5,6 +5,7 @@ import { verifyPack, type Problem, type VerifyResult } from './verify.ts';
 import { parseDecisionReport, type ReportImport } from './reportImport.ts';
 import type { DecisionReport } from './extensionSchemas.ts';
 import { DEFAULT_PRIMARY, parseBrand } from '../modules/ops/brand.ts';
+import { appendAiPromptSuffix } from '../ai/promptSuffix.ts';
 
 /**
  * FR-302〜FR-304: turn files or a pasted Microsoft 365 Copilot answer into one Project pack.
@@ -533,5 +534,5 @@ export function buildFixPrompt(problems: Problem[], lang: 'ja' | 'en'): string {
     `   cause: ${p.cause}`,
     `   action: ${p.action}`,
   ].join('\n'));
-  return [...FIX_INTRO[lang], '', head, ...lines].join('\n');
+  return appendAiPromptSuffix([...FIX_INTRO[lang], '', head, ...lines].join('\n'));
 }

@@ -4,8 +4,7 @@ export const dlvJa = {
   'dlv.title': 'ステップの成果物',
   'dlv.subtitle': '各ステップで作る成果物、終えておくこと（完了条件）、既存のデータに追加する情報です。完了条件はデータから自動で判定し、人の確認が要るものはチェックで記録します。',
 
-  'dlv.band.label': 'ステップの ToDo',
-  'dlv.band.step': 'ステップ {n}/{total}: {step}',
+  'dlv.band.label': 'タスク（次にやること）',
   'dlv.band.deliverable': '成果物: {name}',
   'dlv.band.progress': '{done}/{total} 完了',
   'dlv.band.complete': '完了条件をすべて満たしました',

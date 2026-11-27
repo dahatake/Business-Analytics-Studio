@@ -32,9 +32,8 @@ export const projEn: Record<keyof typeof projJa, string> = {
 
 
   'proj.home.subtitle': 'The overall flow of this project (objective → OKR → KPI → issue → solution) and what to do next.',
-  'proj.home.currentStep': 'Current step: {step}',
 
-  'proj.outcomes.title': 'Expected business outcomes',
+  'proj.outcomes.title': 'Expected business impact',
   'proj.outcomes.expand': 'Expand business outcomes',
   'proj.outcomes.collapse': 'Collapse business outcomes',
   'proj.outcomes.count': '{n} items',

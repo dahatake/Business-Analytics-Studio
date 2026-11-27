@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Badge, Button, Caption1 } from '@fluentui/react-components';
-import { Pause16Regular, Play16Regular } from '@fluentui/react-icons';
+import { Pause20Regular, Play20Regular } from '@fluentui/react-icons';
 import { loaded } from '../data/pack.ts';
 import { PARAMS } from '../config/params.ts';
 import { NEWS_INTERVAL_MS, NewsFeed, type NewsArticle } from '../data/news.ts';
@@ -74,7 +74,7 @@ function CompanyNews({ company }: { company: string }) {
   const state = freshness(feed ? Date.parse(feed.fetchedAt) : null, now, paused, NEWS_INTERVAL_MS);
   return (
     <div className="live-feed company-news" role="region" aria-label={t('news.region')} data-testid="news-feed">
-      <Badge appearance="outline" color="informative">{t('news.label')}</Badge>
+      <Badge appearance="outline" color="informative" className="chrome-section-label">{t('news.label')}</Badge>
       <span className="company-news-target">{company}</span>
       <div className="live-feed-message">
         {feed?.articles[0] && <Article article={feed.articles[0]} />}
@@ -96,7 +96,7 @@ function CompanyNews({ company }: { company: string }) {
         <Button
           size="small"
           appearance="subtle"
-          icon={paused ? <Play16Regular /> : <Pause16Regular />}
+          icon={paused ? <Play20Regular /> : <Pause20Regular />}
           onClick={() => setPaused(!paused)}
           data-testid="news-pause"
         >
@@ -118,8 +118,8 @@ export function NewsFeedBar() {
   // A registered project is authoritative, even if its data still uses the sample pack.
   const name = (project ? company?.name : loaded.pack.isSample ? null : loaded.pack.company.name[lang])?.trim();
   if (!name) return (
-    <div className="live-feed company-news" role="region" aria-label={t('news.region')}>
-      <Badge appearance="outline" color="informative">{t('news.label')}</Badge>
+    <div className="live-feed company-news" role="region" aria-label={t('news.region')} data-testid="news-feed">
+      <Badge appearance="outline" color="informative" className="chrome-section-label">{t('news.label')}</Badge>
       <span>{t('news.sample')}</span>
     </div>
   );

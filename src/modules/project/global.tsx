@@ -110,7 +110,7 @@ function Stepper() {
                 onKeyDown={(e) => onKey(e, i)}
               >
                 <span className="proj-step-num">{i + 1}</span>{' '}
-                <span className={isCurrent ? 'proj-step-label' : 'visually-hidden'}>{t(`proj.step.${s}`)}</span>
+                <span className="visually-hidden">{t(`proj.step.${s}`)}</span>
                 {complete && <><CheckmarkCircle20Filled aria-hidden className="proj-step-check" /><span className="visually-hidden">{t('dlv.status.done')}</span></>}
               </button>
             </li>

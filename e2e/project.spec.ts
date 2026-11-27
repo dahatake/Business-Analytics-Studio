@@ -216,7 +216,30 @@ test.describe('project module', () => {
     const stepper = page.getByTestId('proj-stepper');
     const current = stepper.locator('[aria-current="step"]');
     await expect(current).toContainText('現状分析');
-    await expect(page.getByTestId('proj-home-step')).toContainText('現状分析');
+    await expect(current.locator('.visually-hidden')).toContainText('現状分析');
+    await expect(current.locator('.proj-step-label')).toHaveCount(0);
+    await expect(page.getByTestId('proj-home-step')).toHaveCount(0);
+    const topSections = await page.locator('.chrome').evaluate((chrome) =>
+      [...chrome.querySelectorAll('[data-testid="news-feed"], [data-testid="business-outcomes"], [data-testid="dlv-band"]')]
+        .map((element) => element.getAttribute('data-testid')),
+    );
+    expect(topSections).toEqual(['news-feed', 'business-outcomes', 'dlv-band']);
+    const labelStyles = await page.locator('.chrome').evaluate((chrome) =>
+      ['.live-feed .chrome-section-label', '.business-outcomes-title', '.dlv-band-title .chrome-section-label']
+        .map((selector) => {
+          const label = chrome.querySelector(selector);
+          if (!label) return null;
+          const style = getComputedStyle(label);
+          return [style.fontSize, style.lineHeight, style.fontWeight];
+        }),
+    );
+    expect(labelStyles[0]).toEqual(labelStyles[1]);
+    expect(labelStyles[1]).toEqual(labelStyles[2]);
+    const iconSizes = await page.locator('.live-feed .fui-Button__icon svg, .business-outcomes-bar .fui-Button__icon svg, .dlv-band-actions .fui-Button__icon svg').evaluateAll((icons) =>
+      icons.map((icon) => getComputedStyle(icon).width),
+    );
+    expect(iconSizes.length).toBeGreaterThan(0);
+    expect(iconSizes.every((size) => size === '20px')).toBe(true);
     const box = await current.boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(44);
     expect(box!.height).toBeGreaterThanOrEqual(44);

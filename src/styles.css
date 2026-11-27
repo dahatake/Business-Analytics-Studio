@@ -106,7 +106,7 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   background: color-mix(in srgb, var(--colorNeutralBackground2) 85%, transparent);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--colorNeutralStroke2);
-  font-size: var(--fontSizeBase200);
+  font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
 }
 .business-outcomes-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -114,7 +114,14 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   background: color-mix(in srgb, var(--colorNeutralBackground2) 85%, transparent);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--colorNeutralStroke2);
-  font-size: var(--fontSizeBase200);
+  font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
+}
+.chrome-section-label { font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200); font-weight: var(--fontWeightSemibold); }
+.live-feed .fui-Button, .business-outcomes-bar .fui-Button, .dlv-band-actions .fui-Button {
+  font-size: var(--fontSizeBase200); line-height: var(--lineHeightBase200);
+}
+.live-feed .fui-Button__icon svg, .business-outcomes-bar .fui-Button__icon svg, .dlv-band-actions .fui-Button__icon svg {
+  width: 20px; height: 20px;
 }
 .business-outcomes-title { flex: none; }
 .outcome-preview {

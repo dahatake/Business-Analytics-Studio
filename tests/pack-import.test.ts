@@ -23,7 +23,23 @@ import {
 } from '../src/data/packStore.ts';
 import { composePack, diffCompanyLayers, mergeCompanyLayers, splitPack } from '../src/data/packLayers.ts';
 import { exportProjectPack, importProject, previewProjectPack } from '../src/modules/project/projectFile.ts';
-import { promptSection } from '../src/modules/project/packPrompt.ts';
+import { copilotPrompt, copilotPromptDocument, copilotResearchPrompt, promptSection } from '../src/modules/project/packPrompt.ts';
+import { companyAnchorPrompt } from '../src/data/companyAnchor.ts';
+import { AI_PROMPT_SUFFIX } from '../src/ai/promptSuffix.ts';
+
+it('appends the specified instruction to each prompt offered for copying', () => {
+  const suffix = `私のタスクについての意図を深く理解をしてください。その上で、このタスクを「より大きく」ではなく「より深く」したいです。書き直す前に、次の4点を示してください。(1) この分野のトップ専門家なら、ここで私が頼んでいないどんなことをするか。(2) 私向けにすでに加工・要約された情報ではなく、専門家が出発点にする最も生の素材は何か。(3) 専門家が用いる具体的な手法とツールは何か。(4) あなたや私以外に、結果が正しいことを示してくれるものは何か。そのうえで、まさにそれを求める形に私のプロンプトを書き直してください。
+その後で、書き直したプロンプトを実行してください。`;
+  expect(AI_PROMPT_SUFFIX).toBe(suffix);
+  for (const lang of ['ja', 'en'] as const) {
+    for (const prompt of [copilotPrompt(lang), copilotResearchPrompt(lang), companyAnchorPrompt('Example', lang), buildFixPrompt([], lang)]) {
+      expect(prompt.endsWith(`\n\n${suffix}`)).toBe(true);
+    }
+    for (const stage of ['prompt', 'research'] as const) {
+      expect(promptSection(copilotPromptDocument(), lang, stage).endsWith(suffix)).toBe(true);
+    }
+  }
+});
 
 /** The built-in sample leaves sourceIds of some numbers empty (bas build adds them); give them the report as source. */
 const sourcedSample = { ...samplePack, entities: samplePack.entities.map((e) => (e.sourceIds.length ? e : { ...e, sourceIds: ['src-annual-report'] })) };

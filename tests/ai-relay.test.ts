@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { AI_USES } from '../src/ai/policy.ts';
+import { AI_PROMPT_SUFFIX } from '../src/ai/promptSuffix.ts';
 import { selectOutbound, toPromptContext } from '../src/ai/redact.ts';
 import { loaded } from '../src/data/pack.ts';
 import { SecretVault, protectorWorks, windowsDpapi, type KeyProtector } from '../server/vault.ts';
@@ -421,6 +422,8 @@ describe('relay secrets and connection', () => {
     expect(fetches).toHaveLength(1);
     expect(fetches[0]!.url).toBe(`${v1.endpoint}/chat/completions`);
     expect(fetches[0]!.body).toMatchObject({ model: c.deployment, max_completion_tokens: 256 });
+    const connectionMessages = fetches[0]!.body.messages as { content: string }[];
+    expect(connectionMessages[1]!.content.endsWith(AI_PROMPT_SUFFIX)).toBe(true);
     expect(JSON.stringify(fetches[0]!.body)).not.toContain('Project pack');
     expect((await call(req('GET', '/relay/status'), { vault: new SecretVault(vault.dir, { protector: null }) })).body).toMatchObject({ configured: true });
     expect((await call(req('POST', '/relay/ai', { use: 'packBuild', lang: 'en', prompt: 'Build from synthetic data.', maxOutputTokens: 100, timeoutMs: 1000 }), { fetch })).status).toBe(200);
@@ -723,6 +726,7 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect(sent.messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(sent.messages[1]!.content).toContain('Transferring expert skills'); // D-2: internal items may be sent
     expect(sent.messages[1]!.content.startsWith('Explain this screen.\n\n')).toBe(true);
+    expect(sent.messages[1]!.content).toBe(`Explain this screen.\n\n${context}\n\n${AI_PROMPT_SUFFIX}`);
     expect(sent.max_completion_tokens).toBeLessThanOrEqual(1500);
     expect(Object.keys(sent).sort()).toEqual(['max_completion_tokens', 'messages', 'reasoning_effort']);
     expect((sent as unknown as { reasoning_effort: string }).reasoning_effort).toBe('medium');
@@ -759,6 +763,10 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     }
     expect((await call(req('POST', '/relay/ai', aiBody({ use: 'nope' })), ctx())).status).toBe(400);
     expect(seen).toHaveLength(AI_USES.length - 1);
+    for (const request of seen) {
+      const body = JSON.parse(request.body) as { messages: { content: string }[] };
+      expect(body.messages[1]!.content.endsWith(AI_PROMPT_SUFFIX)).toBe(true);
+    }
   });
 
   it('server-side decision: only requires a complete connection', () => {
@@ -796,7 +804,7 @@ describe('POST /relay/ai forwarding (D-1: "explain" only)', () => {
     expect((await call(req('POST', '/relay/ai', aiBody({ media: [image] })), ctx())).status).toBe(200);
     const sent = JSON.parse(seen[0]!.body) as { messages: { content: unknown }[] };
     expect(sent.messages[1]!.content).toEqual([
-      { type: 'text', text: expect.stringContaining('Explain this screen.') },
+      { type: 'text', text: `Explain this screen.\n\n${context}\n\n${AI_PROMPT_SUFFIX}` },
       { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } },
     ]);
   });
@@ -880,6 +888,17 @@ describe('D-12 packBuild through the relay', () => {
   it('allows each AI use when the provider is configured', () => {
     expect(relayAiDecision(true)).toEqual([]);
     expect(relayAiDecision(false)).toEqual(['notConfigured']);
+  });
+
+  it('appends the instruction after the context for every Copilot use', async () => {
+    const { calls, service } = fakeCopilot();
+    expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
+    for (const use of AI_USES.filter((value) => value !== 'connectionTest')) {
+      const body = { use, provider: 'copilotSdk', lang: 'en', prompt: 'Task', context: 'Evidence', maxOutputTokens: 100, timeoutMs: 1000 };
+      expect((await call(req('POST', '/relay/ai', body), { copilot: service })).status, use).toBe(200);
+    }
+    expect(calls).toHaveLength(AI_USES.length - 1);
+    for (const call of calls) expect(call.prompt).toBe(`Task\n\nEvidence\n\n${AI_PROMPT_SUFFIX}`);
   });
 
   it('D-20 recommend: suggestion instructions for both providers; prompt + context capped at 32,000 characters', async () => {
@@ -1022,14 +1041,14 @@ describe('D-12 packBuild through the relay', () => {
     const sent = JSON.parse(seen[0]!.body) as { messages: { content: string }[]; response_format: { type: string }; max_completion_tokens: number };
     expect(sent.response_format).toEqual({ type: 'json_object' });
     expect(sent.messages[0]!.content).toContain('human review');
-    expect(sent.messages[1]!.content).toBe(`${prompt}\n\n`);
+    expect(sent.messages[1]!.content).toBe(`${prompt}\n\n${AI_PROMPT_SUFFIX}`);
     expect(sent.max_completion_tokens).toBe(3000);
 
     const { calls, service } = fakeCopilot('{"kind":"unaligned"}');
     expect((await call(req('PUT', '/relay/copilot', { model: 'gpt-5' }))).status).toBe(200);
     const result = await call(req('POST', '/relay/ai', { ...body, provider: 'copilotSdk' }), { copilot: service });
     expect(result).toMatchObject({ status: 200, body: { text: '{"kind":"unaligned"}' } });
-    expect(calls[0]).toMatchObject({ prompt, system: expect.stringContaining('human review') });
+    expect(calls[0]).toMatchObject({ prompt: `${prompt}\n\n${AI_PROMPT_SUFFIX}`, system: expect.stringContaining('human review') });
     expect(seen).toHaveLength(1);
   });
 
@@ -1206,7 +1225,8 @@ describe('D-14 Work IQ through the relay (Microsoft Foundry only)', () => {
     const text = (chat.json!.message as { text: string }).text;
     expect(text).toContain('"Contoso"');
     expect(text).toContain('Reduce late deliveries');
-    expect((r.body as { question: string }).question).toBe(text);
+    expect(text.endsWith(AI_PROMPT_SUFFIX)).toBe(true);
+    expect(text).toBe(`${(r.body as { question: string }).question}\n\n${AI_PROMPT_SUFFIX}`);
     // The access token from the sign-in is reused: no Entra call for this question.
     expect(m.calls.some((c) => c.url.includes('login.microsoftonline.com'))).toBe(false);
 
@@ -1772,6 +1792,7 @@ process.stdin.on('data', (d) => {
       const sections = await svc.askSections(q);
       const asks = calls().filter((c) => c.name === 'ask' && (c.arguments.fileUrls || c.arguments.conversationId));
       expect(asks.map((c) => Object.keys(c.arguments).sort())).toEqual([['fileUrls', 'question'], ['conversationId', 'question']]);
+      expect(asks.every((c) => String(c.arguments.question).endsWith(AI_PROMPT_SUFFIX))).toBe(true);
       expect(asks[1]!.arguments.conversationId).toBe('c2');
       expect(String(asks[1]!.arguments.question)).toMatch(/other Microsoft 365 information/);
       const kpi = sections.find((s) => s.key === 'kpi') as { answer: string; citations: { url: string }[]; deepRead: unknown };
@@ -1803,6 +1824,7 @@ process.stdin.on('data', (d) => {
       // Without retrieve: no ladder wordings (one ask per section search and purpose concept), each a Copilot summary with its links,
       // read with the project purpose and date as background; then the top file is read in full.
       expect(calls().map((c) => c.name)).toEqual(['ask', 'ask', 'ask']);
+      expect(calls().every((c) => String(c.arguments.question).endsWith(AI_PROMPT_SUFFIX))).toBe(true);
       expect(String(calls()[0]!.arguments.question)).toMatch(/Microsoft 365[\s\S]*Subject: [\s\S]*\nBackground [\s\S]*purpose: Reduce late deliveries\. As of 2026-11-11/);
       expect(calls()[2]!.arguments.fileUrls).toEqual(['https://contoso.sharepoint.com/kpi.xlsx']);
       const kpi = sections.find((s) => s.key === 'kpi') as { answer: string; citations: { title: string; url: string }[] };

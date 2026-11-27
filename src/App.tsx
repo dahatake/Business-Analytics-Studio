@@ -15,6 +15,7 @@ import { sound } from './audio/sound.ts';
 import { loaded } from './data/pack.ts';
 import { companyAnchorRequiresInternalView } from './data/companyAnchor.ts';
 import { ExpectedOutcomesBar } from './ui/ExpectedOutcomesBar.tsx';
+import { NewsFeedBar } from './ui/NewsFeedBar.tsx';
 import { DetailCardHost } from './ui/DetailCardHost.tsx';
 import { Opening } from './ui/Opening.tsx';
 import { LanguageToggle } from './ui/LanguageToggle.tsx';
@@ -267,6 +268,7 @@ export function App() {
                 navigate(home);
               }
             }} />
+            {!restricted && <NewsFeedBar />}
             {!restricted && <ExpectedOutcomesBar />}
             {!restricted && <StepBandSlot />}
             {!restricted && <PortalReturnBar />}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Button } from '@fluentui/react-components';
+import { Button } from '@fluentui/react-components';
 import { PanelRightExpand20Regular, PanelRightContract20Regular } from '@fluentui/react-icons';
 import { loaded } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
@@ -43,10 +43,6 @@ export function HomeScreen() {
             </Button>
           )}
         />
-        <p className="proj-current-step span-full" data-testid="proj-home-step">
-          {t('proj.home.currentStep', { step: t(`proj.step.${step}`) })}
-          {isDemo && <Badge appearance="tint" color="informative" className="proj-inline-badge">{t('proj.demo')}</Badge>}
-        </p>
         <StrategyOverview ctx={ctx} step={step} analysis />
       </div>
       {/* FR-266 / FR-268: supplementary help on the right; closed by default; falls below on narrow screens. */}

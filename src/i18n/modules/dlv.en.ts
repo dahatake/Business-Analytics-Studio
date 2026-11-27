@@ -5,8 +5,7 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
   'dlv.title': 'Step deliverables',
   'dlv.subtitle': 'What each step produces, what must be finished (exit criteria) and what to add to the existing data. Exit criteria are checked from the data automatically; the ones only a person can confirm are signed off with a check.',
 
-  'dlv.band.label': 'Step to-do',
-  'dlv.band.step': 'Step {n}/{total}: {step}',
+  'dlv.band.label': 'Tasks (next actions)',
   'dlv.band.deliverable': 'Deliverable: {name}',
   'dlv.band.progress': '{done}/{total} done',
   'dlv.band.complete': 'All exit criteria are met',

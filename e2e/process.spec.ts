@@ -73,6 +73,10 @@ test.describe('FR-380 business process', () => {
     await page.getByTestId('bp-measure-confirm').click();
     await expect(page.getByTestId('bp-ai-error')).toContainText('原記録');
     await expect(result).toContainText('案件E');
+    await page.route('**/relay/workiq/ask', (route) => route.fulfill({ status: 502, json: { error: 'workiqUnavailable' } }));
+    await page.getByTestId('bp-ai-draft').click();
+    await expect(page.getByTestId('bp-draft-note')).toContainText('workiqUnavailable');
+    await expect(result).toContainText('案件E');
   });
 
   test('does not expose internal acquisition controls to an external audience', async ({ page }) => {

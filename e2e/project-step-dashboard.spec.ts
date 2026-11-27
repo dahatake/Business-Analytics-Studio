@@ -293,6 +293,132 @@ test.describe('Order by cost of delay, the data each method needs, and a person\
   });
 });
 
+test.describe('Ansoff disposition: impact × urgency from time (FR-383)', () => {
+  test('timing an issue turns it into "respond now", puts it first, flags the step and is kept', async ({ page }) => {
+    await go(page, '/step?step=asis&view=details');
+    await page.getByTestId('simulation-link').click();
+    const panel = page.getByTestId('step-triage');
+    await expect(panel).toBeVisible();
+    const verdict = panel.getByTestId('step-triage-verdict');
+    await expect(verdict).toHaveAttribute('data-unassessed', '5');
+    await expect(verdict).toHaveAttribute('data-timed', '0');
+    await expect(panel.getByTestId('step-triage-untimed')).toBeVisible();
+    await expect(panel.getByTestId('step-triage-next-issue')).toHaveAttribute('data-issue', 'issue-lead-time');
+    await expect(panel.getByTestId('step-triage-row-issue-skills')).toHaveAttribute('data-order', '5');
+
+    await panel.getByTestId('step-triage-estimate-issue-skills').click();
+    const dialog = page.getByTestId('cod-est-dialog');
+    for (const [k, v] of [['low', '6'], ['mode', '12'], ['high', '24']] as const) await dialog.getByTestId(`cod-est-impact-${k}`).fill(v);
+    for (const [k, v] of [['low', '24'], ['mode', '36'], ['high', '48']] as const) await dialog.getByTestId(`cod-est-duration-${k}`).fill(v);
+    await dialog.getByTestId('cod-est-note').fill('HR plan: first retirements within a year');
+    await dialog.getByTestId('cod-est-save').click();
+    await expect(dialog).toHaveCount(0);
+    const row = panel.getByTestId('step-triage-row-issue-skills');
+    await expect(row).toHaveAttribute('data-disposition', 'act');
+    await expect(row).toHaveAttribute('data-urgency', 'pressing');
+    await expect(row).toHaveAttribute('data-order', '1');
+    await expect(verdict).toHaveAttribute('data-act', '1');
+    await expect(panel.getByTestId('step-triage-act')).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByTestId('step-triage-row-issue-skills')).toHaveAttribute('data-disposition', 'act');
+    await page.goto('/#/step?step=asis&view=details');
+    await expect(page.getByTestId('step-priority-emph-pressing')).toBeVisible();
+    await page.getByTestId('simulation-link').click();
+    await page.getByTestId('step-triage-estimate-issue-skills').click();
+    await page.getByTestId('cod-est-clear').click();
+    await expect(page.getByTestId('step-triage-row-issue-skills')).toHaveAttribute('data-disposition', 'unassessed');
+  });
+
+  test('the panel, its table and the time dialog pass axe, in English with no Japanese', async ({ page }) => {
+    await go(page, '/step?step=asis&view=details', 'en');
+    await page.getByTestId('simulation-link').click();
+    const panel = page.getByTestId('step-triage');
+    await expect(panel).toContainText('What to do with each issue');
+    await panel.getByTestId('step-triage-anchors').locator('summary').click();
+    await panel.getByTestId('step-dash-chart-triage-data').locator('summary').click();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+    await panel.getByTestId('step-triage-next-estimate').click();
+    await expect(page.getByTestId('cod-est-impact')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+  });
+});
+
+test.describe('Issue diagnosis: every datum to judge, a Copilot draft, a person\'s approval (FR-385)', () => {
+  test('the draft covers every issue, approval confirms it, and a person\'s own judgment changes the urgency cycle and is kept', async ({ page }) => {
+    await go(page, '/step?step=asis&view=details');
+    const panel = page.getByTestId('step-diagnosis');
+    await expect(panel).toBeVisible();
+    const situation = panel.getByTestId('step-dx-situation');
+    await expect(situation).toHaveAttribute('data-cycle', '12');
+    await expect(panel.getByTestId('step-dx-situation-evidence')).toContainText('改善');
+    await expect(panel.getByTestId('step-dx-noshared')).toBeVisible();
+    const rows = panel.locator('[data-testid^="step-dx-row-"]');
+    await expect(rows).toHaveCount(5);
+    await expect(panel.getByTestId('step-dx-row-issue-skills')).toHaveAttribute('data-state', 'none');
+    await expect(panel.getByTestId('step-dx-row-issue-skills')).toContainText('出典');
+
+    // No live connection: the draft is the labelled mock, every issue covered.
+    await panel.getByTestId('step-dx-generate').click();
+    await expect(panel.getByTestId('step-dx-draft')).toHaveAttribute('data-mode', 'mock');
+    await expect(panel.locator('[data-testid^="step-dx-row-"][data-state="draft-rule"]')).toHaveCount(5);
+    await expect(panel.getByTestId('step-dx-question-issue-cash')).toContainText('？');
+    await expect(situation).toHaveAttribute('data-confirmed', 'none');
+    await panel.getByTestId('step-dx-approve-all').click();
+    await expect(panel.locator('[data-testid^="step-dx-row-"][data-state="confirmed-rule"]')).toHaveCount(5);
+    await expect(panel.getByTestId('step-dx-crux-confirmed')).toBeVisible();
+    await expect(situation).not.toHaveAttribute('data-confirmed', 'none');
+
+    // A person's own situation sets the planning cycle of the urgency.
+    await situation.getByTestId('step-dx-situation-own').locator('summary').click();
+    await situation.getByRole('radio', { name: '立て直し' }).check();
+    await situation.getByTestId('step-dx-situation-reason').fill('受注の減少で資金繰りが厳しい');
+    await situation.getByTestId('step-dx-situation-save').click();
+    await expect(situation).toHaveAttribute('data-confirmed', 'turnaround');
+    await expect(situation).toHaveAttribute('data-cycle', '3');
+
+    // A person's framing: the question must end with a question mark.
+    await panel.getByTestId('step-dx-edit-issue-cash').click();
+    const dialog = page.getByTestId('dx-framing-dialog');
+    await dialog.getByTestId('dx-f-question').fill('請求の電子化に投資するか');
+    await dialog.getByTestId('dx-f-save').click();
+    await expect(dialog.getByTestId('dx-f-question')).toHaveAttribute('aria-invalid', 'true');
+    await dialog.getByTestId('dx-f-question').fill('請求の電子化に今期投資するか？');
+    await dialog.getByRole('radio', { name: '機会（利得・制御できる）' }).check();
+    await dialog.getByTestId('dx-f-save').click();
+    await expect(dialog).toHaveCount(0);
+    await expect(panel.getByTestId('step-dx-row-issue-cash')).toHaveAttribute('data-state', 'confirmed-human');
+    await expect(panel.getByTestId('step-dx-frame-issue-cash')).toHaveAttribute('data-frame', 'opportunity');
+
+    await page.reload();
+    await expect(page.getByTestId('step-dx-row-issue-cash')).toHaveAttribute('data-state', 'confirmed-human');
+    await expect(page.getByTestId('step-dx-situation')).toHaveAttribute('data-cycle', '3');
+    await page.goto('/#/step?step=kpi&view=details');
+    await expect(page.getByTestId('step-priority')).toBeVisible();
+    await expect(page.getByTestId('step-diagnosis')).toHaveCount(0);
+  });
+
+  test('the panel, its draft and the framing dialog pass axe, in English with no Japanese', async ({ page }) => {
+    await go(page, '/step?step=asis&view=details', 'en');
+    const panel = page.getByTestId('step-diagnosis');
+    await expect(panel).toContainText('Issue diagnosis');
+    await panel.getByTestId('step-dx-generate').click();
+    await expect(panel.getByTestId('step-dx-draft')).toHaveAttribute('data-mode', 'mock');
+    await panel.getByTestId('step-dx-situation-own').locator('summary').click();
+    await panel.getByTestId('step-dx-crux-own').locator('summary').click();
+    await panel.evaluate((el) => el.scrollIntoView());
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+    await panel.getByTestId('step-dx-edit-issue-quality').click();
+    await expect(page.getByTestId('dx-framing-dialog')).toBeVisible();
+    expect(await scan(page)).toEqual([]);
+    expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
+  });
+});
+
 test.describe('Khalsa advice on every step screen (FR-351)', () => {
   test('each step shows its advice and priority aids (FR-358) on the dashboard and on the deliverable screen', async ({ page }) => {
     await go(page, '/step?step=asis&view=details');

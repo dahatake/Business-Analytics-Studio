@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { PARAMS } from '../src/config/params.ts';
-import { open, seedDeviceData, setup } from './helpers.ts';
+import { open, scan, seedDeviceData, setup } from './helpers.ts';
 
 test.describe('F-3.1.5 motion and sound', () => {
   test('OS reduced-motion: no opening, data-motion=reduced, animations disabled', async ({ page }) => {
@@ -192,6 +192,56 @@ test.describe('F-3.4.1 expected business outcomes', () => {
     // The open state is remembered across reloads.
     await expect(page.getByTestId('outcomes-expand')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('outcomes-strip').getByTestId('outcome-kpi-kpi-lead-time')).toContainText('Forecast available');
+  });
+
+  test('FR-382: compact summary cards pop up their related information and open the outcome in Step 2 with the simulation', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open(page, '/', { lang: 'en' });
+    const nav = page.getByRole('navigation', { name: 'Main screens' });
+    await expect(nav.getByRole('link', { name: 'Simulation' })).toHaveCount(0);
+    await page.getByTestId('outcomes-expand').click();
+    const strip = page.getByTestId('outcomes-strip');
+    await expect(strip).toBeVisible();
+    // The unfolded row is a strip of summaries, not a page of details (it used to be ~700 px tall).
+    await expect.poll(async () => (await strip.boundingBox())!.height).toBeLessThanOrEqual(240);
+    const card = strip.getByTestId('outcome-kpi-kpi-lead-time');
+    await expect(card).toContainText('No forecast');
+    await expect(card).not.toContainText('Sources');
+
+    await card.hover();
+    const popup = page.getByRole('tooltip').filter({ has: page.getByTestId('outcome-popup-kpi-kpi-lead-time') });
+    await expect(popup).toBeVisible();
+    await expect(popup).toContainText('Sources');
+    await page.keyboard.press('Escape');
+    await expect(popup).toBeHidden();
+    // Keyboard focus shows the same popup (WCAG 1.4.13).
+    await card.focus();
+    await expect(popup).toBeVisible();
+
+    await card.click();
+    await expect(page).toHaveURL(/#\/step\?.*step=tobe.*view=outcomes.*outcome=kpi-kpi-lead-time/);
+    await expect(page.getByTestId('step-dash')).toHaveAttribute('data-view', 'outcomes');
+    await expect(page.getByTestId('step-dash-view-outcomes')).toHaveAttribute('aria-selected', 'true');
+    const detail = page.getByTestId('outcome-detail');
+    await expect(detail).toHaveAttribute('data-outcome', 'kpi-kpi-lead-time');
+    await expect(page.getByTestId('outcome-ws-kpi-kpi-lead-time')).toHaveAttribute('aria-current', 'true');
+    // The bar and Step 2 tell the same story about the same outcome.
+    await expect(page.getByTestId('outcome-ws-kpi-kpi-lead-time-headline')).toHaveText(await strip.getByTestId('outcome-kpi-kpi-lead-time-headline').textContent() ?? '');
+    await expect(page.getByTestId('simulation-workbench')).toBeVisible();
+    await expect(page.getByTestId('sim-tab-kpi')).toHaveAttribute('aria-current', 'page');
+
+    // Editing the KPI here updates the outcome everywhere.
+    await detail.getByTestId('outcome-kpi-target').fill('3');
+    await detail.getByTestId('outcome-kpi-save').click();
+    await expect(detail.getByRole('status')).toContainText('Saved');
+    await expect(page.getByTestId('outcome-ws-kpi-kpi-lead-time-headline')).toContainText('target 3');
+    await expect(strip.getByTestId('outcome-kpi-kpi-lead-time-headline')).toContainText('target 3');
+    expect(await scan(page)).toEqual([]);
+
+    // Old simulation links still work.
+    await page.goto('/#/optimize?tab=solutions');
+    await expect(page).toHaveURL(/#\/step\?.*view=outcomes.*sim=solutions/);
+    await expect(page.getByTestId('simulation-workbench')).toBeVisible();
   });
 
   test(`@perf agreed load: ${PARAMS.liveFeedLoadRatePerSec}/s for ${PARAMS.liveFeedLoadDurationMs / 1000}s keeps p95 latency ≤ ${PARAMS.liveFeedLatencyBudgetP95Ms} ms`, async ({ page }) => {

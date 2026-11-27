@@ -37,6 +37,7 @@ import { downloadProjectFile } from './ProjectMergeDialog.tsx';
 import { analyzePackPriority } from './priorityAnalysis.ts';
 import { packEntityName } from './priorityRobustness.ts';
 import { DelayCostSummary } from './CostOfDelay.tsx';
+import { TriageSummaryLine } from './IssueTriage.tsx';
 import { ReadinessView } from './ReadinessView.tsx';
 import { readinessDraftHref } from './strategyPortal.ts';
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from './companyAlignment.ts';
@@ -788,6 +789,7 @@ function PackRobustness({ pack }: { pack: Record<string, unknown> }) {
           </dd>
         </div>
       )}
+      {analysis.triage && <div><TriageSummaryLine summary={analysis.triage} pack={pack} testId="pack-triage" /></div>}
       {analysis.costOfDelay && <div><DelayCostSummary summary={analysis.costOfDelay} pack={pack} testId="pack-cod" /></div>}
     </>
   );

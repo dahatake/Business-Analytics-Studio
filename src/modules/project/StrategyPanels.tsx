@@ -29,8 +29,8 @@ import { SolutionDraftReview } from './SolutionDraftReview.tsx';
 import { downloadZip } from './zipFiles.ts';
 import { useSettings } from '../../state/settings.ts';
 import {
-  gapCount, isSystemType, normalizeStrategy, removeContribution, setSection, setSolutionType, SOLUTION_TYPES, upsertContribution,
-  type Contribution, type SolutionType, type StrategyData, type StrategyThread,
+  AI_APPROACHES, gapCount, isSystemType, normalizeStrategy, removeContribution, setSection, setSolutionApproach, setSolutionType, SOLUTION_TYPES, upsertContribution,
+  type AiApproach, type Contribution, type SolutionType, type StrategyData, type StrategyThread,
 } from './strategy.ts';
 import { useKpis, useProjUi, useScopeKpis, useSolutionDrafts, useStrategy } from './stores.ts';
 import { errorCodeOf, useWorkIqSearch, type WorkIqFinding } from './useWorkIqSearch.ts';
@@ -341,7 +341,7 @@ function RangeFields({ label, value, onChange, testId }: { label: string; value:
   );
 }
 
-function ContributionEditor({ solutionId, ctx }: { solutionId: string; ctx: CheckContext }) {
+export function ContributionEditor({ solutionId, ctx }: { solutionId: string; ctx: CheckContext }) {
   const { t, lang, fmt } = useI18n();
   const write = useStrategyWriter();
   const mine = ctx.strategy.contributions.filter((c) => c.solutionId === solutionId);
@@ -466,27 +466,39 @@ export function SolutionStrategyPanel({ ctx }: { ctx: CheckContext }) {
   const write = useStrategyWriter();
   const thread = threadOf(ctx);
   const setType = (id: string, v: string) => write((d) => setSolutionType(d, id, v === '' ? null : (v as SolutionType), by(), new Date().toISOString()));
+  const setApproach = (id: string, v: string) => write((d) => setSolutionApproach(d, id, v === '' ? null : (v as AiApproach), by(), new Date().toISOString()));
+  const approachOf = (id: string): AiApproach | undefined => ctx.strategy?.approaches?.[id]?.approach;
   return (
     <>
       <Panel title={t('sol.type.title')} className="span-full" testId="sol-types" id="sol-types">
         <p className="muted">{t('sol.type.intro')}</p>
         {thread.solutions.length === 0 && <p className="muted">{t('sol.doc.none')}</p>}
-        {thread.solutions.map((s) => (
-          <details key={s.id} className="sol-solution" data-testid={`sol-solution-${s.id}`} open={thread.solutions.length <= 3}>
-            <summary>
-              <strong>{entityName(s.id, lang)}</strong>{' '}
-              <Badge size="small" appearance={s.typeConfirmed ? 'filled' : 'outline'} color="informative">{t(`sol.type.${s.type}`)}</Badge>{' '}
-              <span className="muted">{t('sol.type.deliverable', { kind: t(kindKey(s.deliverable)) })}</span>
-            </summary>
-            <Field label={t('sol.type.label')}>
-              <Select value={s.typeConfirmed ? s.type : ''} onChange={(_, d) => setType(s.id, d.value)} data-testid={`sol-type-${s.id}`}>
-                <option value="">{t('sol.type.inferred')}{': '}{t(`sol.type.${s.type}`)}</option>
-                {SOLUTION_TYPES.map((x) => <option key={x} value={x}>{t(`sol.type.${x}`)}</option>)}
-              </Select>
-            </Field>
-            <ContributionEditor solutionId={s.id} ctx={ctx} />
-          </details>
-        ))}
+        {thread.solutions.map((s) => {
+          const approach = approachOf(s.id);
+          return (
+            <details key={s.id} className="sol-solution" data-testid={`sol-solution-${s.id}`} open={thread.solutions.length <= 3}>
+              <summary>
+                <strong>{entityName(s.id, lang)}</strong>{' '}
+                <Badge size="small" appearance={s.typeConfirmed ? 'filled' : 'outline'} color="informative">{t(`sol.type.${s.type}`)}</Badge>{' '}
+                {approach && <><Badge size="small" appearance="tint" color="brand" data-testid={`sol-approach-badge-${s.id}`}>{t(`sol.approach.short.${approach}`)}</Badge>{' '}</>}
+                <span className="muted">{t('sol.type.deliverable', { kind: t(kindKey(s.deliverable)) })}</span>
+              </summary>
+              <Field label={t('sol.type.label')}>
+                <Select value={s.typeConfirmed ? s.type : ''} onChange={(_, d) => setType(s.id, d.value)} data-testid={`sol-type-${s.id}`}>
+                  <option value="">{t('sol.type.inferred')}{': '}{t(`sol.type.${s.type}`)}</option>
+                  {SOLUTION_TYPES.map((x) => <option key={x} value={x}>{t(`sol.type.${x}`)}</option>)}
+                </Select>
+              </Field>
+              <Field label={t('sol.approach.label')} hint={approach ? t(`sol.approach.desc.${approach}`) : t('sol.approach.hint')}>
+                <Select value={approach ?? ''} onChange={(_, d) => setApproach(s.id, d.value)} data-testid={`sol-approach-${s.id}`}>
+                  <option value="">{t('sol.approach.none')}</option>
+                  {AI_APPROACHES.map((x) => <option key={x} value={x}>{t(`sol.approach.${x}`)}</option>)}
+                </Select>
+              </Field>
+              <ContributionEditor solutionId={s.id} ctx={ctx} />
+            </details>
+          );
+        })}
       </Panel>
       <SimulationLink step="solution" tab="kpi" target="sol-sim" />
     </>

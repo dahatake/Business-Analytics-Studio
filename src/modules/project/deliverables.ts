@@ -84,15 +84,64 @@ export type Qualification = z.infer<typeof QualificationSchema>;
  */
 const EstimateRangeSchema = z.object({ low: z.number().positive(), mode: z.number().positive(), high: z.number().positive() })
   .refine((r) => r.low <= r.mode && r.mode <= r.high);
+/** FR-383: months until the impact arrives; 0 = it has arrived already. */
+const ImpactRangeSchema = z.object({ low: z.number().nonnegative(), mode: z.number().nonnegative(), high: z.number().nonnegative() })
+  .refine((r) => r.low <= r.mode && r.mode <= r.high);
 export const DelayEstimateSchema = z.object({
   valuePerMonthJpy: EstimateRangeSchema.optional(),
   durationMonths: EstimateRangeSchema.optional(),
+  /** FR-383: months until the issue's impact arrives (Ansoff's time of impact, compared with durationMonths = time to respond). */
+  impactMonths: ImpactRangeSchema.optional(),
   /** How the numbers were reached (who said it, which document). */
   note: z.string().trim().min(1),
   at: z.string(),
   by: z.string(),
-}).refine((e) => e.valuePerMonthJpy !== undefined || e.durationMonths !== undefined);
+}).refine((e) => e.valuePerMonthJpy !== undefined || e.durationMonths !== undefined || e.impactMonths !== undefined);
 export type DelayEstimate = z.infer<typeof DelayEstimateSchema>;
+
+/**
+ * FR-385: the issue diagnosis a person confirmed (or approved from a Copilot draft). origin: ai = an approved Copilot draft,
+ * rule = an approved BAS placeholder (the model left it open), human = written or edited by a person.
+ */
+export const SITUATIONS = ['startUp', 'turnaround', 'acceleratedGrowth', 'realignment', 'sustainingSuccess'] as const;
+export type Situation = (typeof SITUATIONS)[number];
+export const ISSUE_FRAMES = ['threat', 'opportunity'] as const;
+export type IssueFrame = (typeof ISSUE_FRAMES)[number];
+export const ISSUE_CONTROLS = ['full', 'partial', 'none'] as const;
+export type IssueControl = (typeof ISSUE_CONTROLS)[number];
+export const JUDGMENT_ORIGINS = ['ai', 'rule', 'human'] as const;
+export type JudgmentOrigin = (typeof JUDGMENT_ORIGINS)[number];
+const judged = { origin: z.enum(JUDGMENT_ORIGINS), at: z.string(), by: z.string() };
+const judgedText = z.string().trim().min(1);
+export const SituationJudgmentSchema = z.object({ type: z.enum(SITUATIONS), reason: judgedText, ...judged });
+export type SituationJudgment = z.infer<typeof SituationJudgmentSchema>;
+export const CruxJudgmentSchema = z.object({
+  /** An existing cause, or absent for a hypothesis the pack does not hold yet. */
+  causeId: z.string().min(1).optional(),
+  name: judgedText,
+  issueIds: z.array(z.string().min(1)).min(1),
+  /** Why it is the most important point (Rumelt: the greatest progress). */
+  reason: judgedText,
+  /** Why it can be overcome (Rumelt: surmountable). */
+  addressable: judgedText,
+  ...judged,
+});
+export type CruxJudgment = z.infer<typeof CruxJudgmentSchema>;
+export const IssueFramingSchema = z.object({
+  /** The decision question the issue asks (Minto's Q), ending with a question mark. */
+  question: judgedText.refine((q) => /[?？]$/.test(q)),
+  /** The role that decides (never a personal name). */
+  owner: judgedText,
+  /** Day-one answer to the question. */
+  hypothesis: judgedText,
+  /** The evidence that would show the hypothesis wrong. */
+  falsifier: judgedText,
+  frame: z.enum(ISSUE_FRAMES),
+  control: z.enum(ISSUE_CONTROLS),
+  reason: judgedText,
+  ...judged,
+});
+export type IssueFraming = z.infer<typeof IssueFramingSchema>;
 
 /**
  * Missing-data fill: a value Copilot (or a person) put into a field that the Project pack left empty, with its label.
@@ -178,6 +227,17 @@ export const DeliverableDataSchema = z.object({
     .transform((r): Record<string, DelayEstimate> => Object.fromEntries(Object.entries(r).flatMap(([id, v]) => {
       const e = DelayEstimateSchema.safeParse(v);
       return e.success ? [[id, e.data]] : [];
+    })))
+    .optional().catch(undefined),
+  /** FR-385: the business situation (Watkins' STARS) a person confirmed. A broken value is dropped. */
+  situation: SituationJudgmentSchema.optional().catch(undefined),
+  /** FR-385: the crux (Rumelt) a person confirmed. A broken value is dropped. */
+  crux: CruxJudgmentSchema.optional().catch(undefined),
+  /** FR-385: issue id → its confirmed decision question, owner, hypothesis, falsifier, frame and control. A broken entry is dropped alone. */
+  framings: z.record(z.string(), z.unknown())
+    .transform((r): Record<string, IssueFraming> => Object.fromEntries(Object.entries(r).flatMap(([id, v]) => {
+      const f = IssueFramingSchema.safeParse(v);
+      return f.success ? [[id, f.data]] : [];
     })))
     .optional().catch(undefined),
   /** `entityId:field` → how a missing pack value was filled and whether a person reviewed it. A broken entry is dropped alone. */
@@ -479,6 +539,26 @@ export function setDelayEstimate(data: DeliverableData, issueId: string, value: 
   if (value === null) delete delayEstimates[issueId];
   else delayEstimates[issueId] = DelayEstimateSchema.parse(value);
   return { ...data, delayEstimates };
+}
+
+/** FR-385: store (or with null remove) the confirmed situation. */
+export function setSituation(data: DeliverableData, value: SituationJudgment | null): DeliverableData {
+  const { situation: _old, ...rest } = data;
+  return value === null ? rest : { ...rest, situation: SituationJudgmentSchema.parse(value) };
+}
+
+/** FR-385: store (or with null remove) the confirmed crux. */
+export function setCrux(data: DeliverableData, value: CruxJudgment | null): DeliverableData {
+  const { crux: _old, ...rest } = data;
+  return value === null ? rest : { ...rest, crux: CruxJudgmentSchema.parse(value) };
+}
+
+/** FR-385: store (or with null remove) one issue's confirmed framing. */
+export function setFraming(data: DeliverableData, issueId: string, value: IssueFraming | null): DeliverableData {
+  const framings = { ...(data.framings ?? {}) };
+  if (value === null) delete framings[issueId];
+  else framings[issueId] = IssueFramingSchema.parse(value);
+  return { ...data, framings };
 }
 
 /** Issues still on the path to a solution, in priority order: every issue except those qualified out. */

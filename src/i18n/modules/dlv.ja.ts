@@ -626,6 +626,8 @@ export const dlvJa = {
   'dlv.batch.tasks': '全ステップ共通: 未完了タスクを解決するデータのドラフト',
   'dlv.batch.tasksSummary': '{n} 件のタスクにドラフトを保存しました。承認するまでデータは変わりません。',
   'dlv.batch.tasksLink': 'タスクのドラフトを確認して承認',
+  'dlv.batch.diagnosis': '課題の診断（状況・crux・論点）',
+  'dlv.batch.diagnosisLink': '課題の診断を確認して承認',
   'dlv.state.evidence': '根拠あり',
   'dlv.state.estimate': 'Copilot のドラフト',
   'dlv.state.provisional': 'BAS の仮置き',

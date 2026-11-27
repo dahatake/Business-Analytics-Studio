@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useCheckContext } from '../src/modules/project/deliverablesUi.tsx';
+import { OutcomesWorkspace } from '../src/modules/project/OutcomesWorkspace.tsx';
 import { useProjUi, useStrategy } from '../src/modules/project/stores.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
 import { useProjects } from '../src/state/projects.ts';
@@ -79,5 +81,40 @@ describe('expected business outcomes: inline card row (FR-337)', () => {
 
     act(() => { vi.advanceTimersByTime(3000); });
     expect(document.querySelectorAll('[data-change]').length).toBe(0);
+  });
+});
+
+describe('expected business outcomes: compact cards linked to Step 2 (FR-382)', () => {
+  function Step2() {
+    return <OutcomesWorkspace ctx={useCheckContext()} />;
+  }
+
+  it('shows a one-line summary per card and links it to the outcome in the Step 2 (To-Be) view', () => {
+    useProjUi.setState({ outcomesOpen: true });
+    render(<ExpectedOutcomesBar />);
+    const card = screen.getByTestId('outcome-kpi-kpi-lead-time');
+    expect(card.tagName).toBe('A');
+    const href = new URL(card.getAttribute('href')!.replace('#', ''), 'http://x');
+    expect(href.pathname).toBe('/step');
+    expect(href.searchParams.get('step')).toBe('tobe');
+    expect(href.searchParams.get('view')).toBe('outcomes');
+    expect(href.searchParams.get('outcome')).toBe('kpi-kpi-lead-time');
+    // The detail (sources, contributions) is in the popup, not in the card itself.
+    expect(card.textContent).not.toContain('Sources');
+  });
+
+  it('shows the same headline for an outcome on the bar and on Step 2, and Step 2 opens the selected one', () => {
+    useProjUi.setState({ outcomesOpen: true });
+    window.location.hash = '#/step?step=tobe&view=outcomes&outcome=kpi-kpi-lead-time';
+    render(<><ExpectedOutcomesBar /><Step2 /></>);
+    const barCards = [...document.querySelectorAll<HTMLElement>('.outcome-strip-list [data-testid$="-headline"]')];
+    expect(barCards.length).toBeGreaterThan(1);
+    for (const bar of barCards) {
+      const key = bar.dataset.testid!.replace(/^outcome-/, '').replace(/-headline$/, '');
+      expect(screen.getByTestId(`outcome-ws-${key}-headline`).textContent).toBe(bar.textContent);
+    }
+    expect(screen.getByTestId('outcome-detail').dataset.outcome).toBe('kpi-kpi-lead-time');
+    expect(screen.getByTestId('outcome-ws-kpi-kpi-lead-time').getAttribute('aria-current')).toBe('true');
+    expect(screen.getByTestId('simulation-workbench')).toBeTruthy();
   });
 });

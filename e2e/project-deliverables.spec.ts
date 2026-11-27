@@ -868,7 +868,7 @@ test.describe('step deliverables and to-do band', () => {
       }
     }
     await page.evaluate(() => { location.hash = '/deliverables?step=asis&task=asis-doc&target=dlv-task-workbench'; });
-    await expect(page).toHaveURL(/#\/optimize\?/);
+    await expect(page).toHaveURL(/#\/step\?.*view=outcomes/);
     const sim = page.getByTestId('dlv-impact-simulation');
     for (const [key, value] of Object.entries({ baselineBenefit: '1000', baselineCost: '200', benefit: '1800', cost: '300', investment: '1400', years: '3' })) {
       await sim.getByTestId(`dlv-impact-${key}`).fill(value);

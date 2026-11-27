@@ -6,7 +6,7 @@ import { card, open, scan } from './helpers.ts';
 test.describe('FR-379 collapsible nav rail', () => {
   test('collapsing widens main, keeps names and headings, shows tooltips and survives a reload', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    await open(page, '/optimize', { lang: 'en' });
+    await open(page, '/plan', { lang: 'en' });
     const main = page.locator('main#main');
     const nav = page.getByRole('navigation', { name: 'Main screens' });
     const toggle = page.getByTestId('nav-collapse-toggle');
@@ -19,9 +19,9 @@ test.describe('FR-379 collapsible nav rail', () => {
     await expect(toggle).toBeFocused();
     await expect.poll(async () => (await main.boundingBox())!.width).toBeGreaterThan(before + 120);
     expect((await nav.boundingBox())!.width).toBeLessThanOrEqual(60);
-    await expect(nav.getByRole('link', { name: 'Simulation' })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('link', { name: 'Plan', exact: true })).toHaveAttribute('aria-current', 'page');
     await expect(nav.getByRole('heading', { name: 'Analyze' })).toBeAttached();
-    expect((await nav.getByText('Simulation').boundingBox())!.width).toBeLessThanOrEqual(1);
+    expect((await nav.getByText('Plan', { exact: true }).boundingBox())!.width).toBeLessThanOrEqual(1);
     await nav.getByRole('link', { name: 'Map' }).hover();
     await expect(page.getByRole('tooltip').filter({ hasText: /^Map$/ })).toBeVisible();
     expect(await scan(page)).toEqual([]);

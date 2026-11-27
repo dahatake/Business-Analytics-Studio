@@ -781,6 +781,22 @@
 .step-chart-quadrant.is-majorBet { border: 2px dashed var(--colorBrandStroke1); background: var(--colorBrandBackground2); }
 .step-chart-quadrant-name { display: block; font-size: var(--fontSizeBase200); font-weight: var(--fontWeightSemibold); }
 .step-chart-quadrant-list { margin: 4px 0 0; padding-left: 0; list-style: none; font-size: var(--fontSizeBase200); }
+/* FR-383: Ansoff's urgency × impact table (three impact columns; the last row is "urgency not rated"). */
+.step-chart-matrix-grid.tri-grid { grid-template-columns: repeat(3, 1fr); }
+.tri-cell.is-act { border: 2px solid var(--colorPaletteRedBorder2); background: var(--colorPaletteRedBackground1); }
+.tri-cell.is-plan { border: 2px dashed var(--colorPaletteMarigoldBorder2); background: var(--colorPaletteMarigoldBackground1); }
+.tri-cell.is-unassessed { border: 1px dashed var(--colorBrandStroke1); }
+.tri-cell-disp { display: block; font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
+.tri-anchors { margin: 4px 0 8px; padding-left: 1.6em; display: grid; gap: 2px; }
+/* FR-385: issue diagnosis. */
+.dx-framing { display: grid; grid-template-columns: minmax(96px, max-content) 1fr; gap: 2px 8px; margin: 4px 0; }
+.dx-framing dt { color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200); }
+.dx-framing dd { margin: 0; }
+.dx-data, .dx-warnings { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; font-size: var(--fontSizeBase200); }
+.dx-warnings { color: var(--colorPaletteDarkOrangeForeground1); }
+.dx-evidence { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 2px 12px; margin: 4px 0 8px; }
+.dx-evidence dt { color: var(--colorNeutralForeground2); }
+.dx-evidence dd { margin: 0; }
 .step-chart-data[open] > summary { margin-bottom: 4px; }
 @media (max-width: 600px) {
   .step-chart-row { grid-template-columns: 1fr minmax(72px, max-content); }

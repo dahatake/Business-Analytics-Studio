@@ -128,7 +128,9 @@ export function rankIssues(r: DecisionReport, inputs: DecisionInputs): IssueRow[
     const confidence = issue.evidence.length ? Math.min(...issue.evidence.map((e) => CONFIDENCE[e] ?? 3)) : undefined;
     const ratings = {
       impact: rated(u.impact, ordinalTo5(issue.priority)),
-      urgency: rated(u.urgency, ordinalTo5(issue.priority)),
+      // FR-383: the report states one priority, not a timing. Copying it into urgency counted it twice (5/6 of the score) and
+      // labelled the copy as the report's; urgency stays unrated until a person rates it.
+      urgency: rated(u.urgency, undefined),
       confidence: rated(u.confidence, confidence),
     };
     return {

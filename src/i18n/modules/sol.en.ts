@@ -192,6 +192,15 @@ export const solEn = {
 
   'sol.type.prompt': 'Prompt (instruction to a generative AI)',
   'sol.type.agent': 'AI agent',
+  'sol.approach.label': 'AI approach',
+  'sol.approach.hint': 'If the solution uses AI, choose whether it embeds AI in the current process (AI Adoption) or redesigns the process from its purpose with AI as a premise (AI First). Both need the same AI platform; the depth, order of investment and owner differ.',
+  'sol.approach.none': 'Not chosen',
+  'sol.approach.adoption': 'AI Adoption (embed AI in the current process)',
+  'sol.approach.first': 'AI First (redesign from the purpose with AI, BPR)',
+  'sol.approach.short.adoption': 'AI Adoption',
+  'sol.approach.short.first': 'AI First',
+  'sol.approach.desc.adoption': 'Keeps the flow and adds AI to the bottleneck task. Quick to show results and easy to reverse; watch for local optimisation and tool sprawl. Measured with the current KPIs such as work time and volume.',
+  'sol.approach.desc.first': 'Questions the purpose of the work and rebuilds the flow, roles and data with AI as a premise (BPR). Larger effect, but needs time, investment and change management and is hard to reverse. Measured with end-to-end KPIs such as lead time, customer experience and revenue.',
   'sol.kind.promptSpec': 'Prompt specification',
   'sol.kind.agentSpec': 'AI agent requirements specification',
 

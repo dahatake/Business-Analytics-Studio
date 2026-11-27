@@ -35,6 +35,7 @@ import { CollectSources, GenProgressBar } from './GenProgressBar.tsx';
 import { invalidateProjectEvidence } from './companyAlignment.ts';
 import { packEntityName } from './priorityRobustness.ts';
 import { DelayCostSummary } from './CostOfDelay.tsx';
+import { TriageSummaryLine } from './IssueTriage.tsx';
 
 /** Where the generated pack goes: an existing project, or a company/project created when the pack is saved. */
 export type PackGenTarget =
@@ -692,6 +693,7 @@ function SavedSummary({ result }: { result: GenResult }) {
             </dd>
           </>
         )}
+        {result.priority.triage && <TriageSummaryLine summary={result.priority.triage} pack={result.pack} testId="gen-triage" />}
         {result.priority.costOfDelay && <DelayCostSummary summary={result.priority.costOfDelay} pack={result.pack} testId="gen-cod" />}
       </dl>
       <TokenTable summary={tokens} testId="gen-tokens" caption={t('proj.gen.sum.tokens')} />

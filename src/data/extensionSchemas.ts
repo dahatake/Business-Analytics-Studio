@@ -275,19 +275,24 @@ export type EngagementsExtension = z.infer<typeof EngagementsExtension>;
 /** low ≤ mode ≤ high, all positive. */
 export const PositiveRangeSchema = z.object({ low: z.number().positive(), mode: z.number().positive(), high: z.number().positive() })
   .refine((r) => r.low <= r.mode && r.mode <= r.high, { message: 'low ≤ mode ≤ high' });
+/** low ≤ mode ≤ high, all zero or more. */
+export const NonNegativeRangeSchema = z.object({ low: z.number().nonnegative(), mode: z.number().nonnegative(), high: z.number().nonnegative() })
+  .refine((r) => r.low <= r.mode && r.mode <= r.high, { message: 'low ≤ mode ≤ high' });
 
 /**
  * FR-365: the two numbers a Cost of Delay ranking needs per issue, as stated in the material: the value lost per month
  * while the issue stays unsolved, and the months left until it is solved. Only stated figures, each with its quote.
+ * FR-383: also the months until the issue's impact arrives (0 = already), compared with the time to respond for urgency.
  */
 export const DelayCostExtension = z.object({
   items: z.array(z.object({
     issueId: z.string().min(1),
     valuePerMonthJpy: PositiveRangeSchema.optional(),
     durationMonths: PositiveRangeSchema.optional(),
+    impactMonths: NonNegativeRangeSchema.optional(),
     quote: z.string().trim().min(1),
     sourceIds: z.array(z.string().min(1)).min(1),
-  }).passthrough().refine((i) => i.valuePerMonthJpy !== undefined || i.durationMonths !== undefined, { message: 'valuePerMonthJpy or durationMonths is required' })),
+  }).passthrough().refine((i) => i.valuePerMonthJpy !== undefined || i.durationMonths !== undefined || i.impactMonths !== undefined, { message: 'valuePerMonthJpy, durationMonths or impactMonths is required' })),
 }).passthrough();
 export type DelayCostExtension = z.infer<typeof DelayCostExtension>;
 

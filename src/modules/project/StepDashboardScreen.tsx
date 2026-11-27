@@ -16,6 +16,8 @@ import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLim
 import { QualifyCell } from './IssueQualification.tsx';
 import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
 import { PriorityBriefPanel } from './PriorityBrief.tsx';
+import { IssueDiagnosisPanel } from './IssueDiagnosis.tsx';
+import { OutcomesWorkspace } from './OutcomesWorkspace.tsx';
 import { SimulationLink } from './SimulationLink.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
 import { HandoffPanel } from './HandoffPanel.tsx';
@@ -671,7 +673,10 @@ export function StepDashboardScreen() {
   const n = IMPROVEMENT_STEPS.indexOf(step) + 1;
   const report = useDecisionReport(ctx.pack.pack.extensions);
   // FR-378: the decision view is the default; a deep link to a detail panel (`target`) opens the details.
-  const view: 'decision' | 'details' = route.query.get('view') === 'details' || (route.query.get('view') === null && !!route.query.get('target')) ? 'details' : 'decision';
+  // FR-382: Step 2 (To-Be) also holds the business outcomes and the simulation that values them.
+  const view: 'decision' | 'details' | 'outcomes' = step === 'tobe' && route.query.get('view') === 'outcomes'
+    ? 'outcomes'
+    : route.query.get('view') === 'details' || (route.query.get('view') === null && !!route.query.get('target')) ? 'details' : 'decision';
   return (
     <div className="screen proj-screen step-dash" data-testid="step-dash" data-step={step} data-view={view}>
       <PageHeader
@@ -683,16 +688,18 @@ export function StepDashboardScreen() {
           </Button>
         )}
       />
-      <TabList selectedValue={view} onTabSelect={(_, data) => replaceQuery({ view: data.value === 'details' ? 'details' : undefined })} aria-label={t('ck.views')} data-testid="step-dash-views">
+      <TabList selectedValue={view} onTabSelect={(_, data) => replaceQuery({ view: data.value === 'details' || data.value === 'outcomes' ? data.value : undefined })} aria-label={t('ck.views')} data-testid="step-dash-views">
         <Tab value="decision" data-testid="step-dash-view-decision">{t('ck.view.decision')}</Tab>
+        {step === 'tobe' && <Tab value="outcomes" data-testid="step-dash-view-outcomes">{t('ck.view.outcomes')}</Tab>}
         <Tab value="details" data-testid="step-dash-view-details">{t('ck.view.details')}</Tab>
       </TabList>
-      {view === 'decision' ? <StepCockpit step={step} d={d} ctx={ctx} audience={audience} visible={visible} nameOf={nameOf} /> : (
+      {view === 'outcomes' ? <OutcomesWorkspace ctx={ctx} /> : view === 'decision' ? <StepCockpit step={step} d={d} ctx={ctx} audience={audience} visible={visible} nameOf={nameOf} /> : (
         <>
           <StrategyOverview ctx={ctx} step={step} />
           <StepBriefPanel d={d} ctx={ctx} audience={audience} />
           <Summary d={d} />
           <PriorityBriefPanel step={step} ctx={ctx} />
+          {step === 'asis' && <IssueDiagnosisPanel ctx={ctx} />}
           <SimulationLink step={step} />
           <DiscoveryAdvicePanel step={step} ctx={ctx} />
           <HandoffPanel ctx={ctx} step={step} />

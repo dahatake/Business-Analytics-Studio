@@ -70,7 +70,9 @@ test.describe('FR-326 resource optimization', () => {
   });
   test('the screen is renamed and explains the current state above the visual', async ({ page }) => {
     await open(page, '/optimize', { lang: 'ja' });
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('シミュレーション');
+    // FR-382: the simulation now lives in Step 2 (To-Be); old links redirect there.
+    await expect(page).toHaveURL(/#\/step\?.*step=tobe.*view=outcomes/);
+    await expect(page.getByTestId('simulation-workbench').getByRole('heading', { level: 2, name: 'To-Be の価値シミュレーション' })).toBeVisible();
     const brief = page.getByTestId('resource-brief');
     await expect(brief).toBeVisible();
     await expect(page.getByTestId('resource-archetype')).toBeVisible();

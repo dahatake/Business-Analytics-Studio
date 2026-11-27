@@ -157,7 +157,7 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
 .outcome-strip-scroll:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
 .outcome-strip-list { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; align-items: stretch; }
 .outcome-strip-item {
-  position: relative; flex: 0 0 300px; display: flex;
+  position: relative; flex: 0 0 220px; display: flex;
   opacity: 0; transform: translateY(-8px) scale(0.98);
   transition: opacity var(--durationNormal) var(--curveAccelerateMid), transform var(--durationNormal) var(--curveAccelerateMid);
 }
@@ -167,13 +167,43 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   animation-delay: calc(min(var(--i, 0), 10) * 45ms + 80ms);
 }
 @keyframes outcome-card-in { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
-.outcome-strip-item > .outcome-card {
-  flex: 1; border-left: 4px solid var(--colorBrandStroke1);
+/* FR-382: compact summary cards; the full detail is in the hover/focus popup and on Step 2. */
+.outcome-summary {
+  flex: 1; display: grid; grid-template-rows: auto auto 1fr auto; gap: 4px; min-width: 0;
+  padding: 8px 10px; border: 1px solid var(--colorNeutralStroke2); border-left: 4px solid var(--colorBrandStroke1); border-radius: var(--borderRadiusMedium);
+  background: var(--colorNeutralBackground1); color: inherit; text-decoration: none;
   transition: transform var(--durationFast) var(--curveDecelerateMid), box-shadow var(--durationFast) var(--curveDecelerateMid);
 }
-.outcome-strip-item > .outcome-card:hover { transform: translateY(-2px); box-shadow: var(--shadow8); }
-.outcome-strip-item > .outcome-card[data-testid^='outcome-solution-'] { border-left-color: var(--colorPaletteBlueBorderActive, var(--colorBrandStroke2)); }
-.outcome-strip-item > .outcome-card[data-testid^='outcome-issue-'] { border-left-color: var(--colorPaletteMarigoldBorderActive, var(--colorNeutralStroke1)); }
+.outcome-summary:hover { transform: translateY(-2px); box-shadow: var(--shadow8); background: var(--colorNeutralBackground1Hover); }
+.outcome-summary:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.outcome-summary[data-kind='solution'] { border-left-color: var(--colorPaletteBlueBorderActive, var(--colorBrandStroke2)); }
+.outcome-summary[data-kind='issue'] { border-left-color: var(--colorPaletteMarigoldBorderActive, var(--colorNeutralStroke1)); }
+.outcome-summary[data-kind='okr'] { border-left-color: var(--colorPaletteGreenBorderActive, var(--colorBrandStroke2)); }
+.outcome-summary[aria-current='true'] { border-color: var(--colorBrandStroke1); box-shadow: 0 0 0 1px var(--colorBrandStroke1), var(--shadow4); }
+.outcome-summary .outcome-card-kind { margin: 0; }
+.outcome-summary-name {
+  font-weight: var(--fontWeightSemibold); font-size: var(--fontSizeBase300); line-height: var(--lineHeightBase300);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+.outcome-summary-headline {
+  color: var(--colorNeutralForeground2); font-size: var(--fontSizeBase200);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+.outcome-summary-status { display: flex; flex-wrap: wrap; gap: 4px; }
+.outcome-popup { max-width: min(440px, 92vw); max-height: min(60vh, 520px); overflow: auto; white-space: normal; }
+.outcome-popup .outcome-card { border: 0; padding: 0; box-shadow: none; background: transparent; }
+.outcome-ws-list { list-style: none; margin: 8px 0 0; padding: 2px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.outcome-ws-list > li { display: flex; }
+.outcome-ws-detail { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusLarge); background: var(--colorNeutralBackground1); scroll-margin-top: 96px; }
+.outcome-ws-detail:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.outcome-ws-detail h2 { margin: 0; font-size: var(--fontSizeBase500); }
+.outcome-ws-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 16px; align-items: start; }
+.outcome-ws-editor { display: grid; gap: 8px; min-width: 0; }
+.outcome-ws-editor h3, .outcome-ws-editor h4 { margin: 4px 0 0; }
+.outcome-ws-links { margin: 0; padding-left: 20px; }
+.outcome-ws-adopt, .outcome-ws-form { display: grid; gap: 8px; justify-items: start; }
+.sim-back { display: inline-flex; align-items: center; min-height: 32px; justify-self: start; }
+.outcome-ws-solution { border-top: 1px solid var(--colorNeutralStroke2); padding-top: 8px; }
 .outcome-card-kind { display: block; margin-bottom: 4px; color: var(--colorNeutralForeground3); font-size: var(--fontSizeBase100); font-weight: var(--fontWeightSemibold); letter-spacing: 0.04em; text-transform: uppercase; }
 /* A changed card glows and gets a badge, so it is clear which outcome moved. */
 .outcome-flash {
@@ -188,13 +218,13 @@ body { font-family: 'Segoe UI Variable', 'Segoe UI', 'Yu Gothic UI', 'Hiragino S
   35% { box-shadow: 0 0 0 2px var(--flash, var(--colorBrandBackground2)); }
   100% { opacity: 0; box-shadow: 0 0 0 0 transparent; }
 }
-.outcome-strip-item[data-change] > .outcome-card { animation: outcome-nudge var(--durationUltraSlow) var(--curveDecelerateMid); }
+.outcome-strip-item[data-change] .outcome-summary { animation: outcome-nudge var(--durationUltraSlow) var(--curveDecelerateMid); }
 @keyframes outcome-nudge { 20% { transform: translateY(-4px) scale(1.015); } }
 .outcome-change-badge { position: absolute; top: -6px; right: 8px; animation: outcome-pop var(--durationSlow) var(--curveDecelerateMid); }
 @keyframes outcome-pop { from { opacity: 0; transform: scale(0.6); } 70% { transform: scale(1.08); } }
 @media (max-width: 860px) {
   .outcome-strip-body { padding: 6px 12px 8px; }
-  .outcome-strip-item { flex-basis: min(280px, 82vw); }
+  .outcome-strip-item { flex-basis: min(220px, 70vw); }
 }
 .outcome-tooltip { display: grid; gap: 6px; max-width: 400px; white-space: normal; }
 .outcome-tooltip p { margin: 0; }

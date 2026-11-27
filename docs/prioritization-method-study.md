@@ -145,6 +145,95 @@ Howard（1966）の情報価値理論に基づき、Coyle & Oakley（2008）の 
 - 数字は互いに独立と仮定している。値の幅（PARAM-195・PARAM-196）は暫定値で、実績の見積もり誤差が分かったら置き換える。
 - 実機のパックは課題が 1 件なので、作成の規則に「資料に書かれた課題をすべて別々に出す」と「資料が数字で述べる遅延コストだけを `extensions.delayCost` に書く」を加えた。次に実機で作成したとき、課題の件数と金額の有無を数え直す。
 
+## 9. 影響度×緊急度の対応区分（FR-383、2026-11-27）
+
+依頼: 監査（[20261127-BusinesAnalyticsResearch.md](../20261127-BusinesAnalyticsResearch.md)）の結果を深く理解し、分析機能を強化する。監査は、課題の順位が影響度と実現性の 2 軸の加算だけで決まり、緊急度・拡大性・非補償の関門がないこと（G2・G3）、【仮評価】の 3 が根拠ありとして扱われること（G4）、業務分析レポートで緊急度が優先度の写しであること（G1）を示した。
+
+### 9.1 手法
+
+- **緊急度は時期の比較。** Ansoff（1980）は緊急度を「影響が出る時期」と「対応に要する時間」の見積もりの比較で決める。着手の余裕 = E[影響まで] − E[対応]。0 以下は切迫（今始めても間に合わない）、1 計画周期（PARAM-218、12 か月）以内は中程度、それより長いと低い。範囲から 2,000 回試して遅れる確率も示す（課題ごとに固定の種）。
+- **組み合わせは表（非補償）。** 影響度を大（4〜5）・中（3）・小（1〜2）に分け（PARAM-217）、Ansoff の表 5 のセルで対応を決める。
+
+  | 緊急度 \ 影響度 | 小 | 中 | 大 |
+  |---|---|---|---|
+  | 低い | 外す | 定期確認 | 継続して監視 |
+  | 中程度 | 定期確認（原典は「外すか定期確認」） | 継続して監視（原典は「定期確認か監視」） | 遅らせて計画 |
+  | 切迫 | 監視 | 継続して監視 | 即応 |
+  | 未評価（BAS） | 定期確認 | 着手候補 | 着手候補 |
+
+  影響度が小の課題は、どの行でも行動（即応・計画）にならない。そのため緊急度が未評価でも着手の候補から外し、FR-364（順位の確かさ）と FR-365（CD3）の計算にも入れない。
+- **拡大性。** Kepner-Tregoe の状況把握の 3 軸（Seriousness・Urgency・Growth）の Growth を、課題の KPI が基準値から現在値で目標と逆に動いたか（悪化中・変化なし・改善中）で示す。区分は変えず、「次に期間を見積もる 1 件」を悪化中 → 影響度 → 順位で選ぶのに使う。
+- **【仮評価】と評価の定義。** 生成の規則が付ける【仮評価】の課題は、出典や KPI があっても順位の確かさで根拠なし（PARAM-192 の ±1.5）とする。影響度・実現性の各段の定義（PARAM-219）を作成の規則と画面に置く。
+
+### 9.2 データの経路
+
+| 値 | 優先する順 | 保存先 |
+|---|---|---|
+| 影響が出るまでの月数（新規） | 人の見積もり → 資料に数字で書かれたもの | `delayEstimates.<課題>.impactMonths`（根拠必須）、`extensions.delayCost.items[].impactMonths`（引用・出典必須） |
+| 対応に要する月数 | FR-365 の残り期間と同じ（人 → 資料 → 施策の期間と進捗） | 既存の `durationMonths` |
+| 拡大性 | 課題の KPI の基準値・現在値・向き | 既存の KPI |
+
+パックの実体には項目を足していない。どちらかの月数がない課題は「未評価」とし、KPI の期限や既定値で埋めない。
+
+### 9.3 検証
+
+- **原典との一致:** 表 5 の 9 セルを原典の文言から写した表と 1 つずつ比べる（`tests/issue-triage.test.ts`）。
+- **閉じた式:** 影響までが 10 か月で固定、対応が三角分布 (5, 10, 15) のとき、遅れる確率 = 0.5。計算は ±0.03 以内で一致する。
+- **後方互換:** 期間のないサンプルでは全件が着手候補で、並びは影響度×実現性と同じになる。FR-364 の 1 位の割合（68.8%）と、FR-365 の CD3 の 1 位・差額（16,508,485 円）も変わらない。
+- **関門:** 影響度 1・実現性 5 の課題は、今の加算では影響度 3・実現性 2 と同じ 40 点。資料に大きな遅延コストがあっても、外す側に置かれ CD3 の 1 位にならない。
+- **画面:** `e2e/project-step-dashboard.spec.ts`（FR-383）で、見積もりの保存・再読み込み・削除、ステップの要約の強調、axe、英語に日本語がないことを確かめる。
+
+### 9.4 結果（サンプルと実機のパック）
+
+| パック | 課題 | 変更前（1 位・割合・CD3 の 1 位） | 変更後 | 対応区分 |
+|---|---|---|---|---|
+| サンプル | 5 | 受注から出荷までが長い・68.8%・請求・入金の遅れ | 同じ | 全件が着手候補（対応の期間は施策から分かり、影響までの期間が未入力）。次に見積もるのは受注から出荷までが長い |
+| live-copilot-pack | 1 | 自明 | 同じ | 着手候補 1 |
+| regen-pack | 1 | 自明 | 同じ | 着手候補 1 |
+| regen-pack5 | 1（影響度 3・実現性 3、【仮評価】） | 自明 | 同じ。根拠不足に数える | 着手候補 1 |
+
+実機のパックでは、Copilot が【仮評価】の 3 を実際に出していた（regen-pack5）。期間はどのパックにもまだない。サンプルの「熟練技能の継承」（5 年で熟練者の 3 割が退職）に、影響まで 6〜12〜24 か月・対応 24〜36〜48 か月を入れると、余裕は −22 か月で切迫・即応となり、5 番目から 1 番目に移る。影響度×実現性でも CD3 でも最下位だった課題が、期限と取り返せなさから最初に扱う課題になる。
+
+### 9.5 限界
+
+- Ansoff の表は経営の戦略課題向けで、影響度 3 の課題は緊急度を評価すると監視・定期確認になる。現場の改善として着手する判断は、FR-347 の見極めで人が行う。
+- 影響度の段（PARAM-217）と計画周期（PARAM-218）、評価の定義（PARAM-219）は暫定値。
+- 拡大性は基準値と現在値の 2 点だけで判断している。
+- 状況類型（立て直し・再編・急成長など）による重みの切り替え、原因の階層と共通原因（crux 候補）、課題の論点化、機会の区別は扱っていない（D-54）。→ §10（FR-385）で、状況・crux・論点・脅威か機会かを実装した。重みの切り替えは行わず、状況は計画周期に効かせた。
+
+## 10. 課題の診断: 状況・crux・論点・脅威か機会か（FR-385、2026-11-27）
+
+依頼: D-54 で対象外にした G5〜G8 は必要。人が判断するための全てのデータを画面に表示し、ドラフトのデータの作成を AI で必ず実装する。
+
+### 10.1 判断と、その材料
+
+| 判断 | 出典 | 画面に並べる材料 | 計算への反映 |
+|---|---|---|---|
+| 事業の状況（立ち上げ・立て直し・急成長・再編・成功の維持） | Watkins 2009（HBR、STARS） | KPI の基準値 → 現在値の推移（件数と悪化した KPI）、SWOT の位置、課題の対応区分の件数、今の計画周期 | 計画周期（PARAM-220）→ FR-383 の緊急度 |
+| crux（最も前進をもたらし、克服できる 1 点） | Rumelt 2011・2022 | 2 件以上の候補に共通する原因（効く課題・影響度の合計・即応の件数・出典） | 確定した crux に効く課題を区分の中の先頭に |
+| 論点（答えるべき問い・決める人・初期仮説・反証条件） | Minto（SCQ）、Spradlin 2012 | 課題ごとの評価・【仮評価】・区分・緊急度・悪化・KPI・原因・出典 | 表示（現状分析の判断の記録） |
+| 脅威か機会か・制御できるか | Jackson & Dutton 1988、Thomas ほか 1993 | 同上 | 判断とデータの食い違いを警告（制御なしなのに実現性 4 以上、機会なのに KPI 悪化） |
+
+### 10.2 Copilot のドラフトと「必ず」
+
+- 1 回の依頼で、状況・crux・すべての候補の課題の論点と枠組みを JSON で作らせる。文脈には課題・原因・KPI・区分・推移を入れ、人名は入れない。
+- 答えは部品ごとに検査する。抜けた部品だけを、REPAIR として聞き直す（3 回まで）。それでも残る部品は、規則による仮置き（例: 状況は KPI の悪化の割合と SWOT から、crux は影響度の合計が最大の共通原因から、問いは課題と KPI の目標から）とし、「BAS の仮置き（要確認）」と件数を示す。
+- 承認するまで確定しない。まとめて承認しても、人が自分で判断した部分は上書きしない。
+- 全ステップの一括作成に加えたので、他のドラフトと同じく一度に作れる。
+
+### 10.3 検証
+
+- 答えの検査: 「？」のない問い、人名を含む決める人、決められていない枠組みは通らない。存在しない課題は crux から外れ、存在しない原因は仮説になる。
+- エージェントループ: 1 回目に crux と 1 件の課題が抜けた答えに対し、2 回目のプロンプトは REPAIR とその 2 つだけを求め、完成する。何も返さない場合は全部品が仮置きになり、件数が示される。
+- 計算: 立て直しを確定すると計画周期が 3 か月になり、余裕 6 か月の課題は「遅らせて計画」から「継続して監視」に、余裕が負の課題は即応のまま。crux を確定すると熟練技能の継承が区分の先頭（5 番目 → 1 番目）になる。
+- 画面と一括作成: `e2e/project-step-dashboard.spec.ts`（FR-385）、`e2e/project-batch-draft.spec.ts`（社内向け 19 件、axe）。
+
+### 10.4 限界
+
+- 規則による仮置きは、確かめるための叩き台で、事実ではない。承認すると「BAS の仮置きを承認・要確認」として残る。
+- 決める人の人名の検査は、端末内の人物の名前だけを照合する。
+- 状況ごとの計画周期（PARAM-220）は暫定値。
+
 ## 出典
 
 - Kahneman, D., Rosenfield, A. M., Gandhi, L., & Blaser, T. (2016). Noise: How to Overcome the High, Hidden Cost of Inconsistent Decision Making. *Harvard Business Review*, October 2016. <https://hbr.org/2016/10/noise>
@@ -161,3 +250,11 @@ Howard（1966）の情報価値理論に基づき、Coyle & Oakley（2008）の 
 - Kano, N., Seraku, N., Takahashi, F., & Tsuji, S. (1984). 魅力的品質と当り前品質. *品質*, 14(2), 147–156.
 - Saaty, T. L. (1980). *The Analytic Hierarchy Process*. McGraw-Hill.
 - van der Aalst, W. (2016). *Process Mining: Data Science in Action* (2nd ed.). Springer.
+- Ansoff, H. I. (1980). Strategic issue management. *Strategic Management Journal*, 1(2), 131–148. <https://doi.org/10.1002/smj.4250010204>
+- Dutton, J. E., & Duncan, R. B. (1987). The creation of momentum for change through the process of strategic issue diagnosis. *Strategic Management Journal*, 8(3), 279–295. <https://doi.org/10.1002/smj.4250080306>
+- Jackson, S. E., & Dutton, J. E. (1988). Discerning Threats and Opportunities. *Administrative Science Quarterly*, 33(3), 370–387. <https://doi.org/10.2307/2392714>
+- Kepner-Tregoe. Using Situation Appraisal to Keep Track of Priority Situations（Seriousness・Urgency・Growth の定義）. <https://kepner-tregoe.com/wp-content/uploads/2021/10/SA_Using-SA-to-Keep-Track-of-Priority-Situations.pdf>
+- Watkins, M. D. (2009). Picking the Right Transition Strategy. *Harvard Business Review*, January 2009. <https://hbr.org/2009/01/picking-the-right-transition-strategy>
+- Rumelt, R. P. (2011). The perils of bad strategy. *McKinsey Quarterly*, June 2011. <https://www.mckinsey.com/capabilities/strategy-and-corporate-finance/our-insights/the-perils-of-bad-strategy>
+- Spradlin, D. (2012). Are You Solving the Right Problem? *Harvard Business Review*, September 2012. <https://hbr.org/2012/09/are-you-solving-the-right-problem>
+- Thomas, J. B., Clark, S. M., & Gioia, D. A. (1993). Strategic sensemaking and organizational performance. *Academy of Management Journal*, 36(2), 239–270. <https://doi.org/10.2307/256522>

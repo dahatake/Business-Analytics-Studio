@@ -28,7 +28,7 @@ test.describe('FR-378 step decision view', () => {
       await expect(page.getByTestId('ck-question')).toBeVisible();
       await expect(page.getByTestId('ck-answer')).not.toBeEmpty();
       await expect(page.getByTestId('ck-cards').locator('li')).toHaveCount(4);
-      await expect(page.getByTestId('simulation-link')).toHaveAttribute('href', /#\/optimize\?/);
+      await expect(page.getByTestId('simulation-link')).toHaveAttribute('href', /#\/step\?.*view=outcomes/);
       // The detail panels are not shown in the decision view.
       await expect(page.getByTestId('step-dash-tiles')).toHaveCount(0);
       await expect(page.getByTestId('strategy-panel')).toHaveCount(0);

@@ -59,6 +59,7 @@ export function BatchDraftDialog() {
 
   const nameOf = (job: BatchJob): string => {
     if (job.kind === 'workflow') return t('bp.title');
+    if (job.kind === 'diagnosis') return t('dlv.batch.diagnosis');
     if (job.kind === 'strategy') return t('dlv.batch.strategy');
     if (job.kind === 'objectives') return t('dlv.batch.objectives');
     if (job.kind === 'kpiOkr') return t('dlv.batch.kpiOkr');
@@ -254,6 +255,7 @@ export function BatchDraftDialog() {
                       {!busy && status === 'done' && job.kind === 'fields' && <Button size="small" onClick={() => review(job)}>{t('dlv.batch.review')}</Button>}
                       {!busy && status === 'done' && job.kind === 'brief' && <a href={hrefFor('/step', { step: job.step })} onClick={close}>{t('dlv.batch.briefLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'workflow' && <a href={hrefFor('/process')} onClick={close}>{t('bp.title')}</a>}
+                      {!busy && status === 'done' && job.kind === 'diagnosis' && <a href={hrefFor('/step', { step: 'asis', view: 'details', target: 'step-diagnosis' })} onClick={close}>{t('dlv.batch.diagnosisLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'strategy' && <a href={hrefFor('/', { draft: 'shared' })} onClick={close}>{t('dlv.batch.strategyLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'objectives' && <a href={hrefFor('/')} onClick={close}>{t('dlv.batch.objectivesLink')}</a>}
                       {!busy && status === 'done' && job.kind === 'kpiOkr' && <a href={hrefFor('/analysis', { tab: 'kpi' })} onClick={close}>{t('dlv.batch.kpiOkrLink')}</a>}

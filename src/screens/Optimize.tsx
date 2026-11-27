@@ -8,7 +8,8 @@ export function OptimizeRedirect() {
   useEffect(() => {
     const q = route.query;
     const query = simulationQuery({
-      tab: SIM_TABS.find((tab) => tab === q.get('tab')),
+      // The old screen opened on time/resources; keep that rather than following the selected KPI.
+      tab: SIM_TABS.find((tab) => tab === q.get('tab')) ?? 'time',
       step: q.get('step') ?? undefined,
       task: q.get('task') ?? undefined,
       target: q.get('target') ?? undefined,

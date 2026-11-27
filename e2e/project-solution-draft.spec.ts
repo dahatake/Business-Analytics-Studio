@@ -83,4 +83,23 @@ test.describe('solution drafts and the software hand-off', () => {
     await expect(page.getByTestId(`sol-draft-review-${SOL}`)).toContainText('Copilot draft (not approved)');
     expect(await visibleTextExcludingOtherLang(page, 'en')).not.toMatch(JAPANESE);
   });
+
+  test('FR-384: a person chooses AI Adoption or AI First per solution and the choice is kept', async ({ page }) => {
+    await open(page, '/deliverables?step=solution');
+    const solution = page.getByTestId(`sol-solution-${SOL}`);
+    await solution.evaluate((el) => { (el as HTMLDetailsElement).open = true; });
+    const select = page.getByTestId(`sol-approach-${SOL}`);
+    await expect(select).toHaveValue('');
+    await expect(page.getByTestId(`sol-approach-badge-${SOL}`)).toHaveCount(0);
+    await select.selectOption('first');
+    await expect(page.getByTestId(`sol-approach-badge-${SOL}`)).toHaveText('AI First');
+    await expect(solution).toContainText('BPR');
+    expect(await scan(page)).toEqual([]);
+
+    await page.goto('/#/deliverables?step=solution');
+    await expect(page.getByTestId(`sol-approach-badge-${SOL}`)).toHaveText('AI First');
+    await page.getByTestId(`sol-solution-${SOL}`).evaluate((el) => { (el as HTMLDetailsElement).open = true; });
+    await page.getByTestId(`sol-approach-${SOL}`).selectOption('');
+    await expect(page.getByTestId(`sol-approach-badge-${SOL}`)).toHaveCount(0);
+  });
 });

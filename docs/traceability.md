@@ -33,7 +33,7 @@
 | F-3.3.2 最適な Visual | 表・ガント・サンキー・2×2・地図・リング／数直線・棒。業務の流れは明示された次工程・外部への引き継ぎをたどる工程マップと段階一覧を切り替える。各図に「この表現を選んだ理由」と代替の表 | `e2e/visuals.spec.ts`「every visual explains why」・工程マップの表示と操作 |
 | F-3.3.3 KPI の目標と達成度 | 名前・実績・目標・基準値・単位・望ましい方向を常に表示 | `tests/domain.test.ts`、`e2e/visuals.spec.ts` |
 | F-3.3.4 前後比較 | 指標ごとに同じ単位・0 始まりの同じ軸。期間・対象（母集団）を明記し、元の数値の表を添える。最適化は最小費用流で厳密に解く | `tests/domain.test.ts`（総当たりとの一致、需要の一致）、`e2e/visuals.spec.ts` |
-| F-3.4.1 期待されるビジネスの成果 | Project の KPI/OKR 試算を上部に表示し、ホバーで根拠を確認、全成果は ToDo と同じく画面内で開閉する横一列のカード（FR-337、ポップアップなし、変わったカードの強調と通知）。試算とパック記載値を区別し、指標がない場合は根拠のある提案・課題候補を表示する | `tests/expected-outcomes.test.ts`、`tests/expected-outcomes-bar.test.tsx`、`e2e/motion-feed.spec.ts`（一列・画面内・axe）。表示遅延の負荷測定は設定画面の明示操作時のみ実行 |
+| F-3.4.1 期待されるビジネスの成果 | Project の KPI/OKR 試算を上部に表示し、ホバーで根拠を確認、全成果は ToDo と同じく画面内で開閉する横一列のカード（FR-337、変わったカードの強調と通知）。カードは要約だけで、詳細はホバー／フォーカスのポップアップ、選ぶとステップ2の成果ビュー（詳細・編集・シミュレーション）を開く（FR-382）。試算とパック記載値を区別し、指標がない場合は根拠のある提案・課題候補を表示する | `tests/expected-outcomes.test.ts`、`tests/expected-outcomes-bar.test.tsx`、`e2e/motion-feed.spec.ts`（一列・画面内・axe、FR-382 の高さ・ポップアップ・ステップ2 への移動・`/optimize` の転送）。表示遅延の負荷測定は設定画面の明示操作時のみ実行 |
 | F-3.4.2 使い方・容量レポート・サマリー | 最適化画面の 3 つのパネル | `e2e/visuals.spec.ts`。人による利用テストは [計画](usability-test.md) のみ |
 | F-3.5.1 2 言語 | UI・サンプルデータ・API の応答 | `tests/i18n.test.ts`、`tests/api.test.ts`、`e2e/i18n.spec.ts`（英語表示に日本語が 1 文字もないこと） |
 | F-3.5.2 言語トグル | 上部バーに配置。再読み込みなしで切り替え、`localStorage` に保持、`<html lang>` を更新 | `e2e/i18n.spec.ts` |
@@ -76,6 +76,7 @@
 | インク・ホワイトボード | FR-086〜099、NFR-PERF-004 | `src/modules/ink/`（依存なしの PDF 1.4 出力、端末保存、自動保存） | `tests/ink.test.ts`（PDF の xref を検証）、`e2e/ink.spec.ts`（20 000 本での描画時間） |
 | 3D | FR-018、FR-020〜021、FR-023、FR-030〜034、FR-036、FR-040、FR-065〜069、FR-146〜147、FR-217 | `src/modules/threed/`（three.js、手続き生成のモデル、WebGL がない場合は 2D） | `tests/threed.test.ts`、`e2e/threed.spec.ts`（最初のフレーム・大きさの追従） |
 | 業務プロセス（現状とあるべき姿） | FR-380（関係グラフ・Twin・空間の FR-212〜214、FR-218、FR-235〜241、FR-245〜248 は D-53 で廃止） | `src/modules/process/`、`src/data/extensionSchemas.ts`（`WorkflowExtension`）、`src/modules/project/packGenerate.ts` | `tests/process.test.ts`、`e2e/process.spec.ts`、`e2e/visuals.spec.ts`「business process from a pack workflow」 |
+| 解決策の AI の適用アプローチ（AI Adoption／AI First） | FR-384（AC-1063〜AC-1064） | `src/modules/project/strategy.ts`（`AI_APPROACHES`・`setSolutionApproach`）、`StrategyPanels.tsx`（`SolutionStrategyPanel`）、`solutionDraft.ts`（文脈とプロンプト）、`src/i18n/modules/sol.*.ts` | `tests/solution-draft.test.ts`（FR-384）、`e2e/project-solution-draft.spec.ts`（FR-384・axe） |
 | ユースケース・データカタログ | FR-043、FR-155〜167、FR-169〜172、FR-180、NFR-A11Y-006〜007、NFR-UX-010〜012 | `src/modules/usecases/` | `tests/usecases.test.ts`、`e2e/usecases*.spec.ts` |
 | 生成 AI | FR-010〜011、FR-017、FR-132、FR-167〜168、FR-182、FR-274〜292、NFR-SEC-001・002・005・012、NFR-COST-001 | `src/modules/ai/`、`server/`（localhost だけの中継。鍵は AES-256-GCM で暗号化） | `tests/ai-*.test.ts`、`e2e/ai.spec.ts`（鍵がページと通信に出ないこと） |
 | 生成パイプライン・ブランド・外部連携 | FR-058〜064、FR-100〜108、FR-118〜131、FR-141、FR-188〜203、NFR-SEC-006・008、NFR-OPS-001 | `scripts/bas.ts`（research・build・verify・launch・package・feedback・integrations）、`src/modules/ops/`、`docs/integration-catalog.md`、`docs/pack.schema.json`、起動・セットアップのスクリプト | `tests/ops-*.test.ts`、`e2e/ops.spec.ts`、壊したパックで `verify` が終了コード 1 |

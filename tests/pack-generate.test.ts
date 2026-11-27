@@ -16,6 +16,7 @@ import { PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS } from '../src/ai/policy.ts
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 import { AiLiveError } from '../src/ai/client.ts';
 import { RelayError } from '../src/modules/ai/relayClient.ts';
+import { RATING_ANCHORS } from '../src/modules/project/issueTriage.ts';
 import { workflowAnswer } from './fixtures/workflow.ts';
 
 const NOW = new Date('2026-11-10T03:00:00Z');
@@ -131,6 +132,17 @@ describe('FR-311 pack generation (D-12)', () => {
     const p = stageAPrompt(input(), []);
     expect(p).toContain('source エンティティと extensions.collection は作らない');
     expect(p).toContain('納期遅延を減らす');
+  });
+
+  it('FR-383: the rules define the impact and feasibility ratings and ask for a stated time of impact', () => {
+    const p = stageAPrompt(input(), []);
+    expect(p).toContain(`impact: 5 = ${RATING_ANCHORS.impact[5].ja}`);
+    expect(p).toContain(`feasibility: 5 = ${RATING_ANCHORS.feasibility[5].ja}`);
+    expect(p).toContain(`1 = ${RATING_ANCHORS.feasibility[1].ja}`);
+    expect(p).toContain('impactMonths?:{low,mode,high}');
+    const en = stageAPrompt(input({ lang: 'en' }), []);
+    expect(en).toContain(`impact: 5 = ${RATING_ANCHORS.impact[5].en}`);
+    expect(en).toContain('impactMonths?:{low,mode,high}');
   });
 
   it('generates, drops invented sources, fixes only failing items, prunes the rest, and the result verifies', async () => {

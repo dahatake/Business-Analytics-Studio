@@ -11,9 +11,9 @@ import { emptyDeliverables, threadOf, type AppCheckContext } from '../src/module
 import { demoKpis } from '../src/modules/project/kpiOkr.ts';
 import { attachmentCandidates, buildSolutionDoc, hasToFill } from '../src/modules/project/solutionDocs.ts';
 import {
-  applySolutionDraft, checkSolutionDraft, requestLiveSolutionDraft, solutionDraftContext, solutionDraftRequest, type SolutionDraft, type SolutionDraftInput,
+  applySolutionDraft, checkSolutionDraft, requestLiveSolutionDraft, solutionBaseline, solutionDraftContext, solutionDraftRequest, type SolutionDraft, type SolutionDraftInput,
 } from '../src/modules/project/solutionDraft.ts';
-import { emptyStrategy, setSection, setSolutionType, type StrategyData } from '../src/modules/project/strategy.ts';
+import { emptyStrategy, normalizeStrategy, setSection, setSolutionApproach, setSolutionType, type StrategyData } from '../src/modules/project/strategy.ts';
 import { crc32, zipFiles } from '../src/modules/project/zipFiles.ts';
 
 const SOLUTION = 'sol-knowledge-copilot';
@@ -105,6 +105,19 @@ describe('solution type and whole-document draft (last phase of a Project pack)'
     expect(repairs).toHaveLength(1);
     expect(repaired.sections[first!]).toBe('fixed 1');
     expect(Object.keys(repaired.sections).sort()).toEqual(Object.keys(full.sections).sort());
+  });
+
+  it('FR-384: the chosen AI approach is stored defensively and reaches the draft context and baseline', () => {
+    const first = setSolutionApproach(emptyStrategy(), SOLUTION, 'first', '担当者', '2026-11-27');
+    const c = solutionDraftContext(input(context(first))) as { solution: { aiApproach: string | null } };
+    expect(c.solution.aiApproach).toBe('first');
+    expect((solutionDraftContext(input(context())) as typeof c).solution.aiApproach).toBeNull();
+    expect(solutionBaseline(first, SOLUTION)).not.toBe(solutionBaseline(emptyStrategy(), SOLUTION));
+    expect(solutionBaseline(emptyStrategy(), SOLUTION)).toBe(JSON.stringify({ type: null, sections: {} }));
+
+    const stored = normalizeStrategy(JSON.parse(JSON.stringify({ ...first, approaches: { ...first.approaches, other: { approach: 'bpr', by: 'x', at: 'y' } } })));
+    expect(stored.approaches).toEqual({ [SOLUTION]: { approach: 'first', by: '担当者', at: '2026-11-27' } });
+    expect(setSolutionApproach(first, SOLUTION, null, '担当者', '2026-11-27')).toEqual(emptyStrategy());
   });
 
   it('bundles only software-solvable work and lists the rest as not included', () => {

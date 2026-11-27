@@ -1,4 +1,5 @@
 import { isQualifiedOut, rankedIssues, type CheckContext } from './deliverables.ts';
+import { isProvisionalRating, projectTriage } from './issueTriage.ts';
 import { analyzeCandidates, sourcesOf, STEP_METHODS, type PriorityCandidate, type PriorityInput, type PriorityMethodId, type PriorityStats, type PrioritySource, type PriorityStep } from './priorityAnalysis.ts';
 import { stepDashboard } from './stepDashboard.ts';
 
@@ -31,13 +32,20 @@ export interface PriorityBrief {
 
 const TOP = 3;
 
-/** The issues still being pursued, with whether each cites a source and is measured by a KPI (as the As-is step counts them). */
+/**
+ * The issues still being pursued, with whether each cites a source and is measured by a KPI (as the As-is step counts them).
+ * FR-383: issues that Ansoff's table sets aside (monitor, review, drop) are not candidates for action and are left out.
+ */
 export function priorityInputs(c: CheckContext): PriorityInput[] {
   const asis = stepDashboard('asis', c).detail;
   const evidence = new Map((asis.step === 'asis' ? asis.issues : []).map((i) => [i.id, i]));
+  const gated = new Set(projectTriage(c).gated);
   return rankedIssues(c.pack)
-    .filter((i) => !isQualifiedOut(c.deliverables, i.id))
-    .map((i) => ({ id: i.id, impact: i.impact, feasibility: i.feasibility, sourced: evidence.get(i.id)?.sourced ?? false, measured: evidence.get(i.id)?.measured ?? false }));
+    .filter((i) => !isQualifiedOut(c.deliverables, i.id) && !gated.has(i.id))
+    .map((i) => ({
+      id: i.id, impact: i.impact, feasibility: i.feasibility, sourced: evidence.get(i.id)?.sourced ?? false, measured: evidence.get(i.id)?.measured ?? false,
+      provisional: isProvisionalRating(i.description),
+    }));
 }
 
 export function priorityBrief(step: PriorityStep, c: CheckContext): PriorityBrief {
@@ -63,6 +71,10 @@ export function priorityBrief(step: PriorityStep, c: CheckContext): PriorityBrie
         vars.top = d.topIssues.length;
         if (uncovered > 0) push('uncovered', 'focus', { n: uncovered });
       }
+      // FR-383: Ansoff's table first — a pressing major issue outranks a quick win; set-aside issues are named, not ranked.
+      const tri = projectTriage(c);
+      if (tri.counts.act > 0) push('pressing', 'focus', { n: tri.counts.act });
+      if (tri.gated.length > 0) push('gated', 'info', { n: tri.gated.length });
       if (stats.quickWin > 0) push('quickWin', 'focus', { n: stats.quickWin });
       else if (stats.bigBet > 0) push('bigBetOnly', 'caution', { n: stats.bigBet });
       if (stats.unproven > 0) push('unproven', 'caution', { n: stats.unproven });

@@ -192,6 +192,15 @@ export const solJa = {
 
   'sol.type.prompt': 'プロンプト（生成 AI への指示）',
   'sol.type.agent': 'AI エージェント',
+  'sol.approach.label': 'AI の適用アプローチ',
+  'sol.approach.hint': 'AI を使う解決策なら、現行の業務に AI を組み込む（AI Adoption）か、業務の目的から AI を前提に作り直す（AI First）かを選びます。どちらでも必要な AI 基盤は同じで、投資の深さ・順序・責任者が変わります。',
+  'sol.approach.none': '未選択',
+  'sol.approach.adoption': 'AI Adoption（現行業務に AI を組み込む）',
+  'sol.approach.first': 'AI First（目的から AI 前提で再設計・BPR）',
+  'sol.approach.short.adoption': 'AI Adoption',
+  'sol.approach.short.first': 'AI First',
+  'sol.approach.desc.adoption': '業務の流れは変えず、ボトルネックの作業に AI を足します。短期間で効果が出て元に戻しやすい一方、部分最適とツールの乱立に注意します。成果は作業時間・処理件数など現行の KPI で測ります。',
+  'sol.approach.desc.first': '業務の目的から問い直し、AI を前提に業務の流れ・役割・データを作り直します（BPR）。効果は大きい一方、時間・投資・変革の管理が要り、元に戻しにくい判断です。成果はリードタイム・顧客体験・収益など業務全体の KPI で測ります。',
   'sol.kind.promptSpec': 'プロンプト仕様書',
   'sol.kind.agentSpec': 'AI エージェント要求定義書',
 

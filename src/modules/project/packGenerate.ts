@@ -16,6 +16,7 @@ import { readiness, readinessScore, requirementOf, type GenStageKey, type Readin
 import { alignmentSnapshot, type Alignment } from './companyAlignment.ts';
 import { categoriesOf } from './analysis.ts';
 import { analyzePackPriority, type PriorityAnalysis } from './priorityAnalysis.ts';
+import { ratingAnchorRule } from './issueTriage.ts';
 import { AnalysisDataSchema, METHODS, newId, type AnalysisData, type AnalysisItem, type MethodId } from './model.ts';
 import { methodKey } from './analysisText.ts';
 import { translate } from '../../i18n/core.ts';
@@ -618,7 +619,8 @@ function rules(lang: Lang): string {
       '- 実施した案件・取り組みは extensions.engagements.items に保存する。各項目に id・name・sourceIds（1 件以上）、および period・customer・status の少なくとも 1 つを資料どおりに書く。任意: type（workshop/briefing/poc/programme/deliverable/deal/other）、customerId（既存の customer の id）、owner（氏名と役職のみ）、count・outcome。name は文字列または ja/en、他の事実は原文の文字列。金額・進捗・日付を補わない。deal は金額・製品・顧客・日付・担当が、initiative は進捗・期間・担当と費用・効果のある solution が資料にそろう時だけ。同じ実施情報をエンティティと engagements の両方に書かない。',
       '- extensions.dataCatalog.items: 組織が管理・利用するデータ（Power BI レポート、ダッシュボード、CRM、リスト、Excel 等）を name・description・domain・columns（分かる列）・url（引用の URL）で書く。',
       '- 課題（issue）: 資料に書かれた課題は、目的に関係するものをすべて別々の issue として出す（着手順を比べるには 2 件以上が必要）。資料にない課題は作らない。',
-      '- extensions.delayCost.items: 資料が課題ごとに「解決しない間に失う金額（月・年あたり）」または「解決までの期間」を数字で述べている時だけ、{issueId（既存の issue の id）, valuePerMonthJpy?:{low,mode,high}（円/月。年額は 12 で割る）, durationMonths?:{low,mode,high}（か月）, quote（その数字を含む原文）, sourceIds} を書く。資料に幅がなければ low=mode=high。数字を推定・補完しない。1 つの課題に 1 項目。',
+      `- issue の impact・feasibility は次の定義で付ける（根拠がなければ上の規則どおり暫定 3 と【仮評価】）。${ratingAnchorRule('ja')}`,
+      '- extensions.delayCost.items: 資料が課題ごとに「解決しない間に失う金額（月・年あたり）」「解決までの期間」または「影響が出る時期（例: 3 年後に熟練者の 3 割が退職、来年 4 月に規制が施行）」を数字で述べている時だけ、{issueId（既存の issue の id）, valuePerMonthJpy?:{low,mode,high}（円/月。年額は 12 で割る）, durationMonths?:{low,mode,high}（か月）, impactMonths?:{low,mode,high}（今から影響が出るまでのか月。すでに出ていれば 0）, quote（その数字を含む原文）, sourceIds} を書く。資料に幅がなければ low=mode=high。数字を推定・補完しない。1 つの課題に 1 項目。',
       `- 1 回の回答は ${MAX_STAGE_ENTITIES} エンティティまで。`,
       '- 回答は JSON オブジェクト 1 つだけ（説明文・コードブロックなし）。',
     ].join('\n')
@@ -643,7 +645,8 @@ function rules(lang: Lang): string {
       '- Work records go in extensions.engagements.items. Each item needs id, name, sourceIds (at least one), and at least one of period, customer or status stated in the material. Optional: type (workshop/briefing/poc/programme/deliverable/deal/other), customerId (an existing customer id), owner (name and title only), count, outcome. name is a string or ja/en; other facts are verbatim strings. Never fill in amounts, progress or dates. Use deal only when value, products, customer, date and owner are known; initiative only when progress, dates, owner and a solution with cost and benefit are known. Do not duplicate the same work in entities and engagements.',
       '- extensions.dataCatalog.items: data the organisation owns or uses (Power BI reports, dashboards, CRM, lists, workbooks…) with name, description, domain, columns (when known) and url (the cited URL).',
       '- Issues: output every issue the material states that bears on the purpose as its own issue entity (ordering needs at least 2). Never create issues the material does not state.',
-      '- extensions.delayCost.items: only when the material states, per issue, a number for the money lost while it stays unsolved (per month or year) or the time until it is solved, write {issueId (an existing issue id), valuePerMonthJpy?:{low,mode,high} (JPY per month; divide yearly figures by 12), durationMonths?:{low,mode,high} (months), quote (the wording with the number), sourceIds}. With no stated range use low=mode=high. Never estimate or fill in numbers. One item per issue.',
+      `- Rate issue impact and feasibility on these definitions (without evidence, use the provisional 3 and [Provisional rating] as above). ${ratingAnchorRule('en')}`,
+      '- extensions.delayCost.items: only when the material states, per issue, a number for the money lost while it stays unsolved (per month or year), the time until it is solved, or when its impact arrives (e.g. 30% of experts retire within 3 years, a regulation applies next April), write {issueId (an existing issue id), valuePerMonthJpy?:{low,mode,high} (JPY per month; divide yearly figures by 12), durationMonths?:{low,mode,high} (months), impactMonths?:{low,mode,high} (months from now until the impact arrives; 0 if it has already), quote (the wording with the number), sourceIds}. With no stated range use low=mode=high. Never estimate or fill in numbers. One item per issue.',
       `- At most ${MAX_STAGE_ENTITIES} entities per answer.`,
       '- Answer with a single JSON object only (no prose, no code fences).',
     ].join('\n');

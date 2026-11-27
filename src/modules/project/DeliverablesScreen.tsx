@@ -5,7 +5,7 @@ import { PARAMS } from '../../config/params.ts';
 import { loadPack } from '../../data/pack.ts';
 import { useI18n } from '../../i18n/index.ts';
 import { IMPROVEMENT_STEPS, useActiveProject, type ImprovementStep } from '../../state/projects.ts';
-import { hrefFor, replaceQuery, revisitRouteTarget, useRoute } from '../../state/router.ts';
+import { replaceQuery, revisitRouteTarget, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';

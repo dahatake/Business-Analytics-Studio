@@ -627,6 +627,8 @@ export const dlvEn: Record<keyof typeof dlvJa, string> = {
   'dlv.batch.tasks': 'All steps: data drafts that resolve the open tasks',
   'dlv.batch.tasksSummary': 'Saved drafts for {n} tasks. No data changes until you approve.',
   'dlv.batch.tasksLink': 'Review and approve the task drafts',
+  'dlv.batch.diagnosis': 'Issue diagnosis (situation, crux, questions)',
+  'dlv.batch.diagnosisLink': 'Review and approve the issue diagnosis',
   'dlv.state.evidence': 'Evidence',
   'dlv.state.estimate': 'Copilot draft',
   'dlv.state.provisional': 'BAS placeholder',

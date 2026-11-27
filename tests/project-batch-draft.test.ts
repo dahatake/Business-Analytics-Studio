@@ -21,7 +21,7 @@ import { mockSolutionDraft } from '../src/modules/project/solutionDraft.ts';
 import { useTaskDrafts } from '../src/modules/project/taskDrafts.ts';
 import { workflowAnswer } from './fixtures/workflow.ts';
 import { useProcessEdits } from '../src/modules/process/store.ts';
-
+import { DIAGNOSIS_MARK, diagnosisContext, diagnosisMockAnswer, useDiagnosisDrafts } from '../src/modules/project/issueDiagnosis.ts';
 function context(data = samplePack): AppCheckContext {
   const pack = loadPack(data);
   return {
@@ -37,6 +37,7 @@ const taskText = [
 
 function response(call: LiveCall, ctx: AppCheckContext): string {
   if (call.prompt.startsWith('[bas-proj:workflowDraft]')) return JSON.stringify(workflowAnswer(call.prompt));
+  if (call.prompt.startsWith(DIAGNOSIS_MARK)) return diagnosisMockAnswer(call.prompt);
   if (call.prompt.startsWith('[bas-proj:solution:')) {
     return JSON.stringify(mockSolutionDraft(JSON.parse(call.prompt.slice(call.prompt.indexOf('CONTEXT: ') + 9)), 'ja'));
   }
@@ -69,6 +70,7 @@ afterEach(() => {
   useStepBriefs.getState().reset();
   useOverview.getState().reset();
   useProcessEdits.getState().reset();
+  useDiagnosisDrafts.getState().reset();
 });
 
 describe('all-step drafts', () => {
@@ -83,12 +85,13 @@ describe('all-step drafts', () => {
     const ctx = context();
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value);
     const solutions = ctx.pack.pack.entities.filter((e) => e.kind === 'solution').map((e) => e.id);
-    expect(jobs).toHaveLength(13 + solutions.length);
+    expect(jobs).toHaveLength(14 + solutions.length);
     expect(jobs.filter((job) => job.kind === 'fields').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.filter((job) => job.kind === 'brief').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.at(0)?.kind).toBe('workflow');
     expect(jobs.at(11)?.kind).toBe('strategy');
-    expect(jobs.slice(12, -1).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
+    expect(jobs.slice(12, -2).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
+    expect(jobs.at(-2)?.kind).toBe('diagnosis'); // FR-385: after the drafts, before the tasks
     expect(jobs.at(-1)?.kind).toBe('tasks'); // FR-376: last, after the drafts its sign-off records and fields come from
 
     setRuntimeSettingsProvider(() => ({ provider, liveEnabled: true, sendConsent: true, configured: true }));
@@ -107,10 +110,15 @@ describe('all-step drafts', () => {
     // D-44: asis (22 sections) is drafted as separate fields and tasks calls, so there is one call more than jobs.
     // FR-376: the task phase's calls are tagged tasks:<todo> and counted separately.
     const before = calls.filter((call) => !call.stage?.startsWith('tasks:'));
-    expect(before.map((call) => call.provider)).toEqual(Array(13 + solutions.length).fill(provider));
+    expect(before.map((call) => call.provider)).toEqual(Array(14 + solutions.length).fill(provider));
     expect(calls.every((call) => call.provider === provider)).toBe(true);
     expect(before.filter((call) => call.use === 'deliverableDraft').map((call) => call.stage))
-      .toEqual(['workflow', 'fields-asis:fields', 'fields-asis:tasks', 'fields-tobe', 'fields-kpi', 'fields-solution', 'fields-deliverable']);
+      .toEqual(['workflow', 'fields-asis:fields', 'fields-asis:tasks', 'fields-tobe', 'fields-kpi', 'fields-solution', 'fields-deliverable', 'diagnosis']);
+    // FR-385: the diagnosis is a draft covering every candidate issue, not confirmed data.
+    const diagnosis = useDiagnosisDrafts.getState().value.internal;
+    expect(diagnosis).toMatchObject({ mock: false, lang: 'ja', placeholders: [] });
+    expect(Object.keys(diagnosis!.issues).sort()).toEqual(diagnosisContext(ctx, 'ja').issues.map((i) => i.id).sort());
+    expect(useDeliverables.getState().value.framings).toBeUndefined();
     expect(useProcessEdits.getState().value?.workflow).toBeDefined();
     expect(calls.filter((call) => call.use === 'solutionDraft')).toHaveLength(solutions.length);
     const solutionDrafts = useSolutionDrafts.getState().value;

@@ -62,7 +62,8 @@ export function draftableSolutions(ctx: AppCheckContext, audience: Audience): En
 }
 
 export function solutionBaseline(strategy: StrategyData, solutionId: string): string {
-  return JSON.stringify({ type: strategy.types[solutionId]?.type ?? null, sections: strategy.sections[solutionId] ?? {} });
+  const approach = strategy.approaches?.[solutionId]?.approach;
+  return JSON.stringify({ type: strategy.types[solutionId]?.type ?? null, sections: strategy.sections[solutionId] ?? {}, ...(approach ? { approach } : {}) });
 }
 
 function prepare(input: SolutionDraftInput): Prepared | null {
@@ -112,6 +113,7 @@ export function solutionDraftContext(input: SolutionDraftInput): Record<string, 
       costJpy: p.solution.costJpy, annualBenefitJpy: p.solution.annualBenefitJpy,
       issues: issues.map((i) => ({ name: name(i), description: loc(i.description, lang) })),
       currentType: p.thread.type, typeConfirmed: p.thread.typeConfirmed,
+      aiApproach: ctx.strategy?.approaches?.[p.solution.id]?.approach ?? null,
     },
     kpis: kpis.map((k) => ({ name: loc(k.name, lang), unit: loc(k.unit, lang), current: k.current, target: k.target, deadline: k.deadline })),
     useCases: ucs.map((u) => ({ name: loc(u.name, lang), summary: loc(u.summary, lang), steps: u.steps.map((st) => loc(st.title, lang)) })),
@@ -132,6 +134,7 @@ export function solutionDraftPrompt(input: SolutionDraftInput, context: Record<s
     '- agent: an AI that acts or decides repeatedly within limits, or that must connect to systems or run unattended.',
     '- process, people, asset, partner: a business change (process, policy/organisation, equipment, outside partner) that needs no software.',
     'Prefer the simplest type that reaches the KPIs: choose "prompt" when it is enough, "digital" or "agent" only when the facts need them.',
+    'CONTEXT.solution.aiApproach is the AI approach a person chose. "adoption": keep the current process, add AI to the bottleneck task, measure with the current KPIs and keep the change reversible. "first": redesign the process from its purpose with AI as a premise (remove, merge or reorder steps, change roles and data), measure end-to-end KPIs and state the change management needed. Shape every section to the chosen approach; when it is null, say in "reason" which approach the facts support.',
     'Fill every section id listed in CONTEXT.types[<your type>].open, using CONTEXT.sections for titles, guides and current text. One verifiable statement per line (a number, a bound or a yes/no check).',
     'Use only CONTEXT facts and never invent company facts, numbers or sources. Mark each inference "(仮説)" / "(assumption)". Never leave a section or line open: where a fact is missing, write the best-supported hypothesis marked "(仮説)" / "(assumption)", then how to confirm it and who confirms it. Never write 【要記入】 or [TO FILL].',
     'For type "prompt": section "copilotPrompt" is the complete text a person pastes into Microsoft 365 Copilot (role, input that names the attached files, constraints, output format, evaluation criteria, what to confirm, grounds to cite), and attachmentIds lists the CONTEXT.attachments ids to attach (only those ids). Leave attachmentIds out for other types.',

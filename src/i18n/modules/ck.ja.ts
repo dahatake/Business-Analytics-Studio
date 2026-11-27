@@ -1,8 +1,9 @@
 /** FR-378: the decision view of each step (cockpit), the what-if simulation and the action plan. */
 export const ckJa = {
   'ck.sim.open': 'このステップのシミュレーションを開く',
-  'ck.sim.back': 'ステップの判断画面に戻る',
   'ck.sim.intro': '条件を変えて、いつ効果が現れるかを比較します。試算は実績ではありません。',
+  'ck.sim.back': 'ステップの判断画面に戻る',
+  'ck.sim.workbench': 'To-Be の価値シミュレーション',
   'ck.sim.tab.time': '時間軸とリソース',
   'ck.sim.tab.issues': '課題と遅延コスト',
   'ck.sim.tab.kpi': 'KPI・OKR と試行判定',
@@ -37,6 +38,7 @@ export const ckJa = {
   'ck.views': 'ステップの表示',
   'ck.view.decision': '判断',
   'ck.view.details': '詳細分析',
+  'ck.view.outcomes': 'ビジネスの成果とシミュレーション',
   'ck.summary': 'エグゼクティブサマリー',
   'ck.summaryWhy': '結論を先に示し（ピラミッド原則）、裏付けは 3 点までに絞っています。数値はすべて事実の台帳から規則で作っており、生成 AI の文章ではありません。KPI カードは Power BI の設計ガイドに従い、最も重要な数値を上に大きく示します。',
   'ck.questionLabel': 'このステップで決めること',

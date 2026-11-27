@@ -29,7 +29,9 @@ export const ROBUST_SHARE = 0.7;
 export const VOI_FLOOR = 0.05;
 export const TOP_N = 3;
 
-export function evidenceLevel(i: Pick<PriorityInput, 'sourced' | 'measured'>): EvidenceLevel {
+export function evidenceLevel(i: Pick<PriorityInput, 'sourced' | 'measured' | 'provisional'>): EvidenceLevel {
+  // FR-383: a provisional rating has no evidence behind the number, whatever backs the issue itself.
+  if (i.provisional) return 'none';
   return i.sourced && i.measured ? 'strong' : i.sourced || i.measured ? 'partial' : 'none';
 }
 

@@ -1,8 +1,9 @@
 import type { ckJa } from './ck.ja.ts';
 export const ckEn: Record<keyof typeof ckJa, string> = {
   'ck.sim.open': 'Open simulation for this step',
-  'ck.sim.back': 'Return to the step decision',
   'ck.sim.intro': 'Compare assumptions and see when their effects emerge. Scenarios are not actuals.',
+  'ck.sim.back': 'Return to the step decision',
+  'ck.sim.workbench': 'To-Be value simulation',
   'ck.sim.tab.time': 'Timeline and resources',
   'ck.sim.tab.issues': 'Issues and delay costs',
   'ck.sim.tab.kpi': 'KPIs, OKRs and pilot gate',
@@ -37,6 +38,7 @@ export const ckEn: Record<keyof typeof ckJa, string> = {
   'ck.views': 'Step views',
   'ck.view.decision': 'Decision',
   'ck.view.details': 'Detailed analysis',
+  'ck.view.outcomes': 'Business outcomes & simulation',
   'ck.summary': 'Executive summary',
   'ck.summaryWhy': 'The answer comes first (pyramid principle) with at most three supporting points. Every figure is built by rules from the fact ledger, not written by generative AI. The KPI cards follow the Power BI design guidance: the most important numbers large and at the top.',
   'ck.questionLabel': 'This step decides',

@@ -32,6 +32,10 @@ import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpiDraf
 import type { WorkflowExtension } from '../../data/extensionSchemas.ts';
 import { generateProcess, processDraftRequest } from '../process/generate.ts';
 import { saveWorkflow, useProcessEdits } from '../process/store.ts';
+import {
+  diagnosisBaseline, diagnosisContext, diagnosisRequest, diagnosisRules, requestLiveDiagnosis, useDiagnosisDrafts,
+  type DiagnosisContext, type DiagnosisRules, type DiagnosisRun, type SavedDiagnosis,
+} from './issueDiagnosis.ts';
 
 type FieldJob = { kind: 'fields'; step: ImprovementStep; input: DraftInput; request: AiRequest };
 type BriefJob = { kind: 'brief'; step: ImprovementStep; brief: StepBrief; request: AiRequest };
@@ -44,7 +48,9 @@ type KpiOkrJob = { kind: 'kpiOkr'; request: AiRequest; today: string };
 /** FR-376: the last phase, a draft for every open task built on the data as it is when the job runs (the request is for the checks). */
 type TasksJob = { kind: 'tasks'; request: AiRequest; ctx: AppCheckContext; audience: Audience };
 type WorkflowJob = { kind: 'workflow'; request: AiRequest };
-export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob | KpiOkrJob | TasksJob | WorkflowJob;
+/** FR-385: the issue diagnosis (situation, crux, each issue's question and frame), drafted for a person to approve. */
+type DiagnosisJob = { kind: 'diagnosis'; request: AiRequest; context: DiagnosisContext; rules: DiagnosisRules };
+export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob | KpiOkrJob | TasksJob | WorkflowJob | DiagnosisJob;
 export type BatchResult =
   | { kind: 'fields'; fields: Record<string, string>; tasks: Record<string, string> }
   | { kind: 'brief'; brief: GeneratedBrief }
@@ -53,6 +59,7 @@ export type BatchResult =
   | { kind: 'objectives'; collection: ObjectiveCollection }
   | { kind: 'kpiOkr'; run: KpiOkrRun }
   | { kind: 'workflow'; workflow: WorkflowExtension }
+  | { kind: 'diagnosis'; run: DiagnosisRun }
   | { kind: 'tasks'; drafts: TaskDraft[]; failed: { todoId: string; message: string }[] };
 
 export interface BatchJobProgress {
@@ -64,7 +71,7 @@ export interface BatchJobProgress {
 
 export function batchJobId(job: BatchJob): string {
   if (job.kind === 'solution') return `solution-${job.solutionId}`;
-  if (job.kind === 'objectives' || job.kind === 'kpiOkr' || job.kind === 'tasks' || job.kind === 'workflow') return job.kind;
+  if (job.kind === 'objectives' || job.kind === 'kpiOkr' || job.kind === 'tasks' || job.kind === 'workflow' || job.kind === 'diagnosis') return job.kind;
   return job.kind === 'strategy' ? 'strategy' : `${job.kind}-${job.step}`;
 }
 
@@ -97,6 +104,11 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
     const request = solutionDraftRequest(input);
     if (request) jobs.push({ kind: 'solution', solutionId: solution.id, name: loc(solution.name, lang), input, request: { ...request, scope } });
   }
+  // FR-385: internal only (the issues may be internal); after the drafts above, before the tasks.
+  if (audience === 'internal') {
+    const context = diagnosisContext(ctx, lang, 'internal');
+    if (context.issues.length) jobs.push({ kind: 'diagnosis', context, rules: diagnosisRules(ctx, context), request: diagnosisRequest(context, scope) });
+  }
   // FR-376: last, so each task is drafted after the deliverable drafts its sign-off records and fields come from.
   jobs.push({ kind: 'tasks', ctx, audience, request: { use: 'deliverableDraft', lang, prompt: '[bas-proj:task:all]', scope, timeoutMs: DELIVERABLE_DRAFT_TIMEOUT_MS } });
   return jobs;
@@ -106,6 +118,10 @@ export async function runBatchJob(job: BatchJob, signal: AbortSignal, onProgress
   // The job id goes to the relay's diagnostics log, so a failure there names the job it belongs to (D-44).
   const request: AiRequest = { ...job.request, stage: batchJobId(job) };
   if (job.kind === 'workflow') return { kind: 'workflow', workflow: await generateProcess(request, signal, (activity) => onProgress?.({ activity })) };
+  if (job.kind === 'diagnosis') {
+    onProgress?.({ activity: 'generate' });
+    return { kind: 'diagnosis', run: await requestLiveDiagnosis(job.context, job.rules, request, signal) };
+  }
   if (job.kind === 'fields') {
     const result = await requestDeliverableDraft(job.input, { ...request, prompt: draftRequest(job.input).prompt }, signal, (progress) => onProgress?.({
       activity: progress.part ?? 'generate',
@@ -178,6 +194,7 @@ export function batchSourceStamp(includePack = true): string {
     useCases: useUseCases.getState().value, deliverables: useDeliverables.getState().value, strategy: useStrategy.getState().value,
     fieldDrafts: useFieldDrafts.getState().value, objectiveDrafts: useObjectiveDrafts.getState().value, kpiDrafts: useKpiDrafts.getState().value, solutionDrafts: useSolutionDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,
     taskDrafts: useTaskDrafts.getState().value,
+    diagnosisDrafts: useDiagnosisDrafts.getState().value,
     workflow: useProcessEdits.getState().value,
     audience: useSettings.getState().audience, lang: useSettings.getState().lang,
     provider: ai.provider, liveEnabled: ai.liveEnabled, model: ai.copilotModel, connection: ai.relayConnection,
@@ -208,6 +225,9 @@ export function saveBatchResult(
 ): void {
   if (job.kind === 'workflow' && result.kind === 'workflow') {
     saveWorkflow(result.workflow);
+  } else if (job.kind === 'diagnosis' && result.kind === 'diagnosis') {
+    const saved: SavedDiagnosis = { ...result.run, lang: job.request.lang, at: new Date().toISOString(), baseline: diagnosisBaseline(job.context) };
+    useDiagnosisDrafts.getState().set((value) => ({ ...value, [audience]: saved }));
   } else if (job.kind === 'fields' && result.kind === 'fields') {
     const at = new Date().toISOString();
     useDeliverables.getState().set((value) => {

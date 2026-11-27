@@ -20,6 +20,7 @@ import {
 } from './deliverables.ts';
 import { todayIn } from './deliverablesUi.tsx';
 import { priorityInputs } from './priorityBrief.ts';
+import { projectTriage } from './issueTriage.ts';
 import { analyzeRobustness, packEntityName, summarizeRobustness } from './priorityRobustness.ts';
 import { ChartFigure, LegendItem } from './stepCharts.tsx';
 import { useDeliverables, useProjUi } from './stores.ts';
@@ -36,11 +37,11 @@ function Bar({ value, brand }: { value: number; brand: boolean }) {
   );
 }
 
-/** The project's inputs: its issues (less the ones qualified out), its estimates and its unapproved Copilot benefit estimates. */
+/** The project's inputs: its issues (less the ones qualified out or set aside by the triage), its estimates and its unapproved Copilot benefit estimates. */
 export function projectDelayOptions(ctx: CheckContext, excluded: IdSet = new Set()): DelayOptions & { entities: ReturnType<typeof entitiesOf> } {
   const entities = entitiesOf(ctx);
   const unreviewed = new Set(entities.filter((e) => e.kind === 'solution' && unreviewedEstimate(ctx.deliverables, e, 'annualBenefitJpy')).map((e) => e.id));
-  const out = new Set([...excluded, ...entities.filter((e) => e.kind === 'issue' && isQualifiedOut(ctx.deliverables, e.id)).map((e) => e.id)]);
+  const out = new Set([...excluded, ...projectTriage(ctx).gated, ...entities.filter((e) => e.kind === 'issue' && isQualifiedOut(ctx.deliverables, e.id)).map((e) => e.id)]);
   return { entities, extension: ctx.pack.pack.extensions?.delayCost, estimates: ctx.deliverables.delayEstimates, unreviewed, excluded: out };
 }
 const entitiesOf = (ctx: CheckContext) => [...ctx.pack.byId.values()];
@@ -324,47 +325,53 @@ export function CostOfDelayPanel({ step, ctx }: { step: ImprovementStep; ctx: Ch
 const NUM_FIELDS = ['low', 'mode', 'high'] as const;
 type Draft = Record<(typeof NUM_FIELDS)[number], string>;
 const draftOf = (r: Range3 | undefined): Draft => ({ low: r ? String(r.low) : '', mode: r ? String(r.mode) : '', high: r ? String(r.high) : '' });
-/** null = left blank (not given); undefined = invalid. */
-function rangeOf(d: Draft): Range3 | null | undefined {
+/** null = left blank (not given); undefined = invalid. `zero` allows 0 (months until an impact that has arrived already). */
+function rangeOf(d: Draft, zero = false): Range3 | null | undefined {
   if (NUM_FIELDS.every((k) => d[k].trim() === '')) return null;
   const [low, mode, high] = NUM_FIELDS.map((k) => Number(d[k]));
   const r = { low: low!, mode: mode!, high: high! };
-  return [r.low, r.mode, r.high].every((x) => Number.isFinite(x) && x > 0) && r.low <= r.mode && r.mode <= r.high ? r : undefined;
+  return [r.low, r.mode, r.high].every((x) => Number.isFinite(x) && (zero ? x >= 0 : x > 0)) && r.low <= r.mode && r.mode <= r.high ? r : undefined;
 }
 
-/** A person's estimate of one issue's value per month and months left; overrides the pack and the derived values. */
-function DelayEstimateDialog({ ctx, issueId, name, onClose }: { ctx: CheckContext; issueId: string; name: string; onClose: () => void }) {
+/**
+ * A person's estimate of one issue's value per month, months left (= time to respond) and months until its impact arrives (FR-383);
+ * overrides the pack and the derived values.
+ */
+export function DelayEstimateDialog({ ctx, issueId, name, onClose }: { ctx: CheckContext; issueId: string; name: string; onClose: () => void }) {
   const { t, fmt } = useI18n();
   const saved: DelayEstimate | undefined = ctx.deliverables.delayEstimates?.[issueId];
   const [value, setValue] = useState<Draft>(draftOf(saved?.valuePerMonthJpy));
   const [duration, setDuration] = useState<Draft>(draftOf(saved?.durationMonths));
+  const [impact, setImpact] = useState<Draft>(draftOf(saved?.impactMonths));
   const [note, setNote] = useState(saved?.note ?? '');
   const [tried, setTried] = useState(false);
   const v = rangeOf(value);
   const d = rangeOf(duration);
+  const im = rangeOf(impact, true);
   const noteMissing = note.trim() === '';
-  const nothing = v === null && d === null;
+  const nothing = v === null && d === null && im === null;
   const write = (next: DelayEstimate | null) => {
     useDeliverables.getState().set((raw) => setDelayEstimate(normalizeDeliverables(raw), issueId, next));
     onClose();
   };
   const save = () => {
     setTried(true);
-    if (v === undefined || d === undefined || nothing || noteMissing) return;
+    if (v === undefined || d === undefined || im === undefined || nothing || noteMissing) return;
     write({
-      ...(v ? { valuePerMonthJpy: v } : {}), ...(d ? { durationMonths: d } : {}),
+      ...(v ? { valuePerMonthJpy: v } : {}), ...(d ? { durationMonths: d } : {}), ...(im ? { impactMonths: im } : {}),
       note: note.trim(), at: new Date().toISOString(), by: useProjUi.getState().editor.trim(),
     });
   };
-  const rangeFields = (kind: 'value' | 'duration', draft: Draft, set: (d: Draft) => void, invalid: boolean) => (
+  const rangeFields = (kind: 'value' | 'duration' | 'impact', draft: Draft, set: (d: Draft) => void, invalid: boolean) => (
     <fieldset className="dec-weights" data-testid={`cod-est-${kind}`}>
-      <legend>{t(kind === 'value' ? 'proj.cod.est.value' : 'proj.cod.est.duration')}</legend>
+      <legend>{t(`proj.cod.est.${kind}`)}</legend>
+      {kind === 'impact' && <p className="muted">{t('proj.cod.est.impactHint')}</p>}
       {NUM_FIELDS.map((k) => (
         <Field key={k} label={t(`proj.cod.est.${k}`)} size="small" validationState={tried && invalid ? 'error' : 'none'}>
           <Input type="number" min={0} inputMode="decimal" value={draft[k]} onChange={(_, x) => set({ ...draft, [k]: x.value })} data-testid={`cod-est-${kind}-${k}`} />
         </Field>
       ))}
-      {tried && invalid && <MessageBar intent="error"><MessageBarBody>{t('proj.cod.est.invalid')}</MessageBarBody></MessageBar>}
+      {tried && invalid && <MessageBar intent="error"><MessageBarBody>{t(kind === 'impact' ? 'proj.cod.est.invalidImpact' : 'proj.cod.est.invalid')}</MessageBarBody></MessageBar>}
     </fieldset>
   );
   const savedDate = saved ? fmt.date(todayIn(PARAMS.timeZone, new Date(saved.at))) : '';
@@ -378,6 +385,7 @@ function DelayEstimateDialog({ ctx, issueId, name, onClose }: { ctx: CheckContex
               <p className="muted">{t('proj.cod.est.lead')}</p>
               {rangeFields('value', value, setValue, v === undefined)}
               {rangeFields('duration', duration, setDuration, d === undefined)}
+              {rangeFields('impact', impact, setImpact, im === undefined)}
               {tried && nothing && <MessageBar intent="error"><MessageBarBody>{t('proj.cod.est.nothing')}</MessageBarBody></MessageBar>}
               <Field label={t('proj.cod.est.note')} hint={t('proj.cod.est.noteHint')} required validationState={tried && noteMissing ? 'error' : 'none'} validationMessage={tried && noteMissing ? t('proj.qualify.required') : undefined}>
                 <Textarea value={note} onChange={(_, x) => setNote(x.value)} resize="vertical" rows={3} data-testid="cod-est-note" />

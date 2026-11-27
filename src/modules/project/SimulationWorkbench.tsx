@@ -21,6 +21,7 @@ import { SimulationTimeline } from './SimulationTimeline.tsx';
 import { useActionPlan } from './cockpitStore.ts';
 import { PriorityRobustnessPanel } from './PriorityRobustness.tsx';
 import { CostOfDelayPanel } from './CostOfDelay.tsx';
+import { IssueTriagePanel } from './IssueTriage.tsx';
 import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
 import { ValueModelPanel } from './ValuePanel.tsx';
 import { SimulationPanel } from './StrategyPanels.tsx';
@@ -78,6 +79,7 @@ export function SimulationWorkbench({ kpiId }: { kpiId?: string }) {
       <nav className="simulation-nav" aria-label={t('ck.sim.workbench')}>
         {SIM_TABS.map(key => <a key={key} aria-current={key === tab ? 'page' : undefined} href={simulationHref({ tab: key, step, outcome, task: key === 'task' ? route.query.get('task') ?? undefined : undefined })} data-testid={`sim-tab-${key}`}>{t(`ck.sim.tab.${key}`)}</a>)}
       </nav>
+      {step !== 'tobe' && <a className="sim-back" href={hrefFor('/step', { step })} data-testid="sim-back">{t('ck.sim.back')}</a>}
       {tab === 'time' && <>
         <SimulationTimeline {...clock}>{(date, share) => <>
           <header className="span-full"><h3>{t('optimize.title')}</h3><p>{t('optimize.subtitle')}</p></header>
@@ -87,7 +89,7 @@ export function SimulationWorkbench({ kpiId }: { kpiId?: string }) {
       </>}
       {tab === 'issues' && <>
         <WhatIfPanel kind="issue" cands={issueCandidates(ctx, visible)} nameOf={nameOf} />
-        <PriorityRobustnessPanel step={step} ctx={ctx} /><CostOfDelayPanel step={step} ctx={ctx} />
+        <IssueTriagePanel step={step} ctx={ctx} /><PriorityRobustnessPanel step={step} ctx={ctx} /><CostOfDelayPanel step={step} ctx={ctx} />
       </>}
       {tab === 'kpi' && <>
         <SimulationTimeline {...clock} />

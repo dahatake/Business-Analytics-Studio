@@ -1,7 +1,8 @@
 import { rankIssues, type PriorityWeights } from '../../domain/priority.ts';
 import type { EntityOf } from '../../data/schema.ts';
 import { analyzeRobustness, summarizeRobustness, type RobustnessSummary } from './priorityRobustness.ts';
-import { analyzeCostOfDelay, methodReadiness, summarizeCostOfDelay, type CostOfDelaySummary, type DelayEntity, type ReadinessRow } from './costOfDelay.ts';
+import { analyzeCostOfDelay, methodReadiness, summarizeCostOfDelay, type CostOfDelaySummary, type ReadinessRow } from './costOfDelay.ts';
+import { analyzeTriage, isProvisionalRating, summarizeTriage, type TriageEntity, type TriageSummary } from './issueTriage.ts';
 
 /**
  * FR-358: prioritisation aids for every step and for the Project pack run.
@@ -43,6 +44,10 @@ export const PRIORITY_SOURCES: readonly PrioritySource[] = [
   { id: 'smith1956', kind: 'paper', cite: 'Wayne E. Smith, "Various optimizers for single-stage production", Naval Research Logistics Quarterly 3(1-2), 1956, 59–66', url: 'https://doi.org/10.1002/nav.3800030106' },
   { id: 'rothkopf1966', kind: 'paper', cite: 'Michael H. Rothkopf, "Scheduling with Random Service Times", Management Science 12(9), 1966, 707–713', url: 'https://doi.org/10.1287/mnsc.12.9.707' },
   { id: 'reinertsen2009', kind: 'book', cite: 'Donald G. Reinertsen, "The Principles of Product Development Flow: Second Generation Lean Product Development", 2009' },
+  { id: 'ansoff1980', kind: 'paper', cite: 'H. Igor Ansoff, "Strategic issue management", Strategic Management Journal 1(2), 1980, 131–148', url: 'https://doi.org/10.1002/smj.4250010204' },
+  { id: 'duttonDuncan1987', kind: 'paper', cite: 'Jane E. Dutton and Robert B. Duncan, "The creation of momentum for change through the process of strategic issue diagnosis", Strategic Management Journal 8(3), 1987, 279–295', url: 'https://doi.org/10.1002/smj.4250080306' },
+  { id: 'jacksonDutton1988', kind: 'paper', cite: 'Susan E. Jackson and Jane E. Dutton, "Discerning Threats and Opportunities", Administrative Science Quarterly 33(3), 1988, 370–387', url: 'https://doi.org/10.2307/2392714' },
+  { id: 'kepnerTregoe', kind: 'book', cite: 'Charles H. Kepner and Benjamin B. Tregoe, "The New Rational Manager" (Situation Appraisal: seriousness, urgency, growth)', url: 'https://kepner-tregoe.com/wp-content/uploads/2021/10/SA_Using-SA-to-Keep-Track-of-Priority-Situations.pdf' },
 ];
 
 export const PRIORITY_METHODS = {
@@ -56,6 +61,7 @@ export const PRIORITY_METHODS = {
   outsideView: ['lovallo2003', 'kahneman2011', 'buehler1994'],
   robustness: ['kahneman2016', 'lahdelma1998', 'howard1966', 'coyle2008'],
   costOfDelay: ['reinertsen2009', 'smith1956', 'rothkopf1966', 'buehler1994'],
+  triage: ['ansoff1980', 'duttonDuncan1987', 'kepnerTregoe', 'jacksonDutton1988'],
 } as const satisfies Record<string, readonly string[]>;
 export type PriorityMethodId = keyof typeof PRIORITY_METHODS;
 
@@ -64,8 +70,8 @@ export type PriorityStep = (typeof PRIORITY_STEPS)[number];
 
 /** The methods worth reading at each step, most useful first. */
 export const STEP_METHODS: Record<PriorityStep, readonly PriorityMethodId[]> = {
-  asis: ['qualify', 'impactEffort', 'robustness', 'costOfDelay', 'framing', 'jobs', 'anchoring'],
-  tobe: ['jobs', 'impactEffort', 'robustness', 'costOfDelay', 'forces', 'anchoring'],
+  asis: ['qualify', 'triage', 'impactEffort', 'robustness', 'costOfDelay', 'framing', 'jobs', 'anchoring'],
+  tobe: ['jobs', 'triage', 'impactEffort', 'robustness', 'costOfDelay', 'forces', 'anchoring'],
   kpi: ['scorecard', 'qualify', 'anchoring'],
   solution: ['impactEffort', 'outsideView', 'anchoring'],
   deliverable: ['outsideView', 'qualify', 'impactEffort'],
@@ -98,6 +104,8 @@ export interface PriorityInput {
   sourced: boolean;
   /** Is measured by at least one KPI. */
   measured: boolean;
+  /** FR-383: the rating was given without evidence (a provisional 3, marked in the description); a source of the issue is not evidence of its rating. */
+  provisional?: boolean;
 }
 
 export interface PriorityCandidate extends PriorityInput {
@@ -112,7 +120,7 @@ export interface PriorityStats {
   bigBet: number;
   fillIn: number;
   reconsider: number;
-  /** Candidates whose rating rests on no source or no measurement: rank them after finding evidence. */
+  /** Candidates whose rating rests on no source, no measurement or a provisional rating: rank them after finding evidence. */
   unproven: number;
 }
 
@@ -130,6 +138,8 @@ export interface PriorityAnalysis {
   costOfDelay?: CostOfDelaySummary;
   /** FR-365: which prioritisation methods the data now held can support, recomputed at every ingest. */
   readiness?: ReadinessRow[];
+  /** FR-383: Ansoff's disposition of each issue; robustness and Cost of Delay cover only the issues it keeps for action. */
+  triage?: TriageSummary;
 }
 
 export const PRIORITY_WEIGHTS: PriorityWeights = { impact: 60, feasibility: 40 };
@@ -153,27 +163,31 @@ export function analyzeCandidates(inputs: PriorityInput[]): { candidates: Priori
       bigBet: count('bigBet'),
       fillIn: count('fillIn'),
       reconsider: count('reconsider'),
-      unproven: candidates.filter((c) => !c.sourced || !c.measured).length,
+      unproven: candidates.filter((c) => !c.sourced || !c.measured || c.provisional === true).length,
     },
   };
 }
 
 /** The analysis run on the issues a Project pack run has just produced (or a pack being imported). */
-export function analyzePackPriority(entities: readonly (DelayEntity & { sourceIds?: unknown; kpiIds?: unknown })[], extensions?: Readonly<Record<string, unknown>>): PriorityAnalysis {
+export function analyzePackPriority(entities: readonly (TriageEntity & { sourceIds?: unknown })[], extensions?: Readonly<Record<string, unknown>>): PriorityAnalysis {
   const inputs: PriorityInput[] = entities.flatMap((e) =>
     e.kind === 'issue' && typeof e.id === 'string' && typeof e.impact === 'number' && typeof e.feasibility === 'number'
       ? [{
         id: e.id, impact: e.impact, feasibility: e.feasibility,
         sourced: Array.isArray(e.sourceIds) && e.sourceIds.length > 0,
         measured: Array.isArray(e.kpiIds) && e.kpiIds.length > 0,
+        provisional: isProvisionalRating(e.description),
       }]
       : []);
   const { candidates, stats } = analyzeCandidates(inputs);
-  const methods: PriorityMethodId[] = ['qualify', 'impactEffort', 'robustness', 'costOfDelay', 'anchoring'];
-  const robustness = summarizeRobustness(analyzeRobustness(inputs));
-  const cod = analyzeCostOfDelay(entities, { extension: extensions?.delayCost });
+  const methods: PriorityMethodId[] = ['qualify', 'triage', 'impactEffort', 'robustness', 'costOfDelay', 'anchoring'];
+  const triage = analyzeTriage(entities, { extension: extensions?.delayCost });
+  const gated = new Set(triage.gated);
+  const action = inputs.filter((i) => !gated.has(i.id));
+  const robustness = summarizeRobustness(analyzeRobustness(action));
+  const cod = analyzeCostOfDelay(entities, { extension: extensions?.delayCost, excluded: gated });
   return {
     version: 1, basis: 'pack', stats, candidates, methods, sourceIds: sourcesOf(methods).map((s) => s.id), robustness,
-    costOfDelay: summarizeCostOfDelay(cod), readiness: methodReadiness(inputs.length, cod, robustness),
+    costOfDelay: summarizeCostOfDelay(cod), readiness: methodReadiness(action.length, cod, robustness), triage: summarizeTriage(triage),
   };
 }

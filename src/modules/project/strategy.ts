@@ -65,12 +65,23 @@ export const ContributionSchema = z.object({
 });
 export type Contribution = z.infer<typeof ContributionSchema>;
 
+/**
+ * FR-384: how AI is applied when a solution uses it. "adoption" embeds AI in the current process (As-Is plus AI, local
+ * gains, reversible); "first" redesigns the process from its purpose with AI as a premise (BPR, To-Be first). The AI
+ * platform under both is the same; the depth, the order of investment and the owner differ. Absent = not chosen.
+ */
+export const AI_APPROACHES = ['adoption', 'first'] as const;
+export type AiApproach = (typeof AI_APPROACHES)[number];
+
 const ByWhom = z.object({ at: z.string(), by: z.string() });
 const TypeEntrySchema = z.object({ type: z.enum(SOLUTION_TYPES), at: z.string(), by: z.string() });
+const ApproachEntrySchema = z.object({ approach: z.enum(AI_APPROACHES), at: z.string(), by: z.string() });
 
 export const StrategyDataSchema = z.object({
   /** Solution id → its type, set by a person. Absent = inferred (not confirmed). */
   types: z.record(z.string(), TypeEntrySchema),
+  /** FR-384: solution id → the AI approach chosen by a person. */
+  approaches: z.record(z.string(), ApproachEntrySchema).optional(),
   contributions: z.array(ContributionSchema),
   /** Solution id → section id → text written by a person (overrides the generated text). */
   sections: z.record(z.string(), z.record(z.string(), z.string())),
@@ -90,6 +101,11 @@ export function normalizeStrategy(raw: unknown): StrategyData {
     const p = TypeEntrySchema.safeParse(v);
     return p.success ? [[k, p.data]] : [];
   }));
+  const approaches = z.record(z.string(), z.unknown()).safeParse(r.approaches);
+  const okApproaches = Object.fromEntries(Object.entries(approaches.success ? approaches.data : {}).flatMap(([k, v]) => {
+    const p = ApproachEntrySchema.safeParse(v);
+    return p.success ? [[k, p.data]] : [];
+  }));
   const contributions = Array.isArray(r.contributions) ? r.contributions.flatMap((c) => {
     const p = ContributionSchema.safeParse(c);
     return p.success ? [p.data] : [];
@@ -98,6 +114,7 @@ export function normalizeStrategy(raw: unknown): StrategyData {
   const definition = StrategyDataSchema.shape.definition.safeParse(r.definition);
   return {
     types: okTypes, contributions, sections: sections.success ? sections.data : {},
+    ...(Object.keys(okApproaches).length ? { approaches: okApproaches } : {}),
     ...(definition.success && definition.data ? { definition: definition.data } : {}),
     ...normalizeRequirementExtras(r),
   };
@@ -217,6 +234,16 @@ export function setSolutionType(data: StrategyData, solutionId: string, type: So
   if (type === null) delete types[solutionId];
   else types[solutionId] = { type, by, at };
   return { ...data, types };
+}
+
+/** FR-384: records (or clears with null) the AI approach a person chose for a solution. */
+export function setSolutionApproach(data: StrategyData, solutionId: string, approach: AiApproach | null, by: string, at: string): StrategyData {
+  const approaches = { ...(data.approaches ?? {}) };
+  if (approach === null) delete approaches[solutionId];
+  else approaches[solutionId] = { approach, by, at };
+  const next: StrategyData = { ...data, approaches };
+  if (!Object.keys(approaches).length) delete next.approaches;
+  return next;
 }
 
 export function upsertContribution(data: StrategyData, c: Contribution): StrategyData {

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { JAPANESE, scan, setup, visibleTextExcludingOtherLang } from './helpers.ts';
+import { deviceSnapshot, JAPANESE, scan, setup, visibleTextExcludingOtherLang } from './helpers.ts';
 import { METHOD_CATEGORIES } from '../src/modules/project/analysis.ts';
 import { workflowAnswer } from '../tests/fixtures/workflow.ts';
 
@@ -164,6 +164,69 @@ test('a Foundry Work IQ model limit is explained in the saved generation report'
   await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
   await expect(dialog.getByTestId('gen-sum-workiq-model-limit')).toContainText('Foundry モデルの入力または出力の上限');
 });
+
+for (const repairWorks of [true, false]) {
+  test(`invalid workflow party kind is ${repairWorks ? 'repaired and saved' : 'reported as a validation error'}`, async ({ page }) => {
+    const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
+    await page.addInitScript((connection) => {
+      if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
+      sessionStorage.setItem('bas.e2e.ai-seeded', '1');
+      localStorage.setItem('bas.ai.settings', JSON.stringify({
+        version: 4, state: { ...connection, provider: 'foundry', authMethod: 'apiKey', liveEnabled: true, sendConsent: true },
+      }));
+    }, connection);
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: true }, connection, connectionVerifiedAt: '2026-11-18T00:00:00Z', keyProtection: 'file',
+      copilot: null, entra: null, workiq: { method: 'cli', account: 'test@example.com', signedIn: true, verifiedAt: '2026-11-18T00:00:00Z' },
+    } }));
+    const text = (s: string) => ({ ja: s, en: s });
+    const foundation = { packId: 'contoso', company: { name: text('Contoso'), industry: text('IT') }, isSample: false, regions: [], entities: [], flows: [] };
+    const analysis = { analyses: Object.entries(METHOD_CATEGORIES).map(([method, categories]) => ({
+      method, items: categories.map((category) => ({ category, text: text(`${method} ${category}`), score: 3 })),
+    })) };
+    const stages: string[] = [];
+    await page.route('**/relay/ai', (route) => {
+      const request = route.request().postDataJSON() as { prompt: string; stage: string };
+      stages.push(request.stage);
+      let answer: unknown;
+      if (request.stage === 'workflow') {
+        const workflow = workflowAnswer(request.prompt);
+        answer = { workflow: { ...workflow.workflow, parties: [{ ...workflow.workflow.parties![0], kind: 'employee' }] } };
+      } else if (request.stage.startsWith('workflow-repair-')) {
+        answer = { fixes: [{ path: ['parties', 0, 'kind'], value: repairWorks ? 'team' : 'employee' }] };
+      } else if (request.prompt.includes('# 検査済みProjectパック')) answer = analysis;
+      else if (request.stage === 'foundation') answer = foundation;
+      else if (request.stage === 'business') answer = { entities: [] };
+      else answer = { remove: [], replace: [] };
+      return route.fulfill({ json: { text: JSON.stringify(answer), inputTokens: 100, outputTokens: 100 } });
+    });
+    await seed(page, 'ja');
+    await page.getByTestId('launch-generate-pj-c').click();
+    const dialog = page.getByTestId('gen-dialog');
+    await dialog.getByTestId('gen-purpose').fill('配送遅延を減らす');
+    await dialog.getByTestId('gen-news').uncheck();
+    await dialog.getByTestId('gen-workiq').uncheck();
+    await dialog.getByTestId('gen-check-approved').check();
+    await dialog.getByTestId('gen-start').click();
+    if (repairWorks) {
+      await expect(dialog.getByTestId('gen-saved')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId('device-save-status')).toHaveAttribute('data-status', 'saved');
+      const snapshot = await deviceSnapshot(page);
+      const index = JSON.parse(snapshot.records['bas.packs.index']!.value!);
+      expect(index['pj-c'].packId).toBe('contoso');
+      expect(JSON.parse(snapshot.records['bas.binary.pack.pj-c']!.value!).extensions.workflow.parties[0].kind).toBe('team');
+      await page.reload();
+      expect(JSON.parse((await deviceSnapshot(page)).records['bas.binary.pack.pj-c']!.value!).extensions.workflow.parties[0].kind).toBe('team');
+      expect(stages.filter((stage) => stage.startsWith('workflow-repair-'))).toEqual(['workflow-repair-1']);
+    } else {
+      await expect(dialog.getByTestId('gen-error')).toContainText('業務プロセスの生成結果を検証・修正できませんでした');
+      await expect(dialog.getByTestId('gen-error')).not.toContainText('生成AIへの送信が失敗しました');
+      expect(stages.filter((stage) => stage.startsWith('workflow-repair-'))).toEqual(['workflow-repair-1', 'workflow-repair-2']);
+      expect((await deviceSnapshot(page)).records['bas.packs.index']).toBeUndefined();
+      expect((await deviceSnapshot(page)).records['bas.binary.pack.pj-c']).toBeUndefined();
+    }
+  });
+}
 
 test('a Foundry quota rejection explains the cause and does not retry before the requested wait', async ({ page }) => {
   const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };

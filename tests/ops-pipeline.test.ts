@@ -10,7 +10,7 @@ import { cacheAge, CACHE_DAYS, research, researchOfficialSite, slugify } from '.
 import { appendTiming, isoWithOffset, ISO_WITH_OFFSET, Timer, type TimingEntry } from '../scripts/lib/timing.ts';
 import { packJsonSchema, validateJsonSchema } from '../scripts/lib/schema.ts';
 import { generateDraft, researchSourceId } from '../scripts/lib/generate.ts';
-import { run, workIqCheck } from '../scripts/bas.ts';
+import { copilotCheck, run, workIqCheck } from '../scripts/bas.ts';
 import { contrastRatio } from '../src/modules/ops/color.ts';
 import { WorkflowExtension } from '../src/data/extensionSchemas.ts';
 import { workflowGaps } from '../src/modules/process/workflowDraft.ts';
@@ -383,5 +383,37 @@ describe('D-14 workiq check (first-time Work IQ CLI check)', () => {
     const noRetrieve = async () => ({ name: 'WorkIQ', version: '1.0.0', tools: ['ask'] });
     expect(await workIqCheck(io, 'en', 60_000, { command, list: noRetrieve, config: async () => null })).toBe(1);
     expect(lines.join('\n')).toContain('retrieve: missing');
+  });
+});
+
+describe('copilot check (setup check of the GitHub Copilot route)', () => {
+  const capture = () => {
+    const lines: string[] = [];
+    return { lines, io: { out: (l: string) => lines.push(l), err: (l: string) => lines.push(l) } };
+  };
+  const service = (status: Awaited<ReturnType<import('../server/copilot.ts').CopilotService['status']>>) => {
+    const s = { disposed: false, status: async () => status, dispose: async () => { s.disposed = true; } };
+    return s;
+  };
+
+  it('passes with the signed-in login and models, and always stops the runtime', async () => {
+    const { lines, io } = capture();
+    const s = service({ available: true, authenticated: true, login: 'octocat', models: [{ id: 'gpt-6.2-sol', name: 'GPT', multiplier: 1 }] });
+    expect(await copilotCheck(io, 'ja', { service: s })).toBe(0);
+    expect(lines.join('\n')).toContain('サインイン: OK (octocat)');
+    expect(lines.join('\n')).toContain('gpt-6.2-sol');
+    expect(s.disposed).toBe(true);
+  });
+
+  it('fails with the next action when the runtime is missing, nobody is signed in or no model is allowed', async () => {
+    for (const [status, hint] of [
+      [{ available: false, authenticated: false, login: null, models: [], error: 'sdkUnavailable' }, 'setup.ps1'],
+      [{ available: true, authenticated: false, login: null, models: [], error: 'notSignedIn' }, 'npx -y @github/copilot login'],
+      [{ available: true, authenticated: true, login: 'octocat', models: [] }, 'policies'],
+    ] as const) {
+      const { lines, io } = capture();
+      expect(await copilotCheck(io, 'en', { service: service({ ...status, models: [] }) })).toBe(1);
+      expect(lines.join('\n')).toContain(hint);
+    }
   });
 });

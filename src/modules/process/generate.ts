@@ -8,7 +8,7 @@ import { askWorkIqSections, RelayError, type WorkIqProvider, type WorkIqSectionI
 import { useAiSettings, workIqReady } from '../ai/settingsStore.ts';
 import { objectiveTarget } from '../project/objectiveDraft.ts';
 import { effectiveWorkflow, useProcessEdits } from './store.ts';
-import { completeWorkflow, workflowPrompt, type WorkflowEvidence } from './workflowDraft.ts';
+import { completeWorkflowWithRepair, workflowPrompt, type WorkflowEvidence } from './workflowDraft.ts';
 
 export function processContext(lang: Lang): { purpose: string; evidence: WorkflowEvidence[] } {
   const target = objectiveTarget();
@@ -61,7 +61,15 @@ export async function generateProcess(request: AiRequest, signal: AbortSignal, p
   const response = await aiLive({ ...request, prompt: workflowPrompt(workflow, purpose, request.lang, evidence) }, signal);
   const parsed: unknown = JSON.parse(response.text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
   if (!parsed || typeof parsed !== 'object' || !('workflow' in parsed)) throw new Error('Missing workflow in AI response');
-  const completed = completeWorkflow(workflow, parsed.workflow, request.lang, evidence);
+  const completed = await completeWorkflowWithRepair(workflow, parsed.workflow, request.lang, evidence, async (prompt, round) => {
+    const correction = await aiLive({ ...request, prompt, stage: `workflow-repair-${round}` }, signal);
+    try {
+      return JSON.parse(correction.text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) as unknown;
+    } catch (err) {
+      if (err instanceof SyntaxError) return null;
+      throw err;
+    }
+  });
   const note = notices.length ? `${request.lang === 'ja' ? '社内情報の取得が不完全です' : 'Internal retrieval is incomplete'}: ${notices.join('; ')}` : '';
   return {
     ...completed,

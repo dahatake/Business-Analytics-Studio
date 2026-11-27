@@ -1233,6 +1233,7 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.gen.error.cancelled': 'Cancelled. Nothing was saved.',
   'proj.gen.error.noAnswer': 'The model\'s answer held no JSON. Nothing was saved.',
   'proj.gen.error.invalidPack': 'Could not produce a pack that passes the check. Nothing was saved.',
+  'proj.gen.error.invalidWorkflow': 'The generated business process could not be validated or repaired. The Project pack was not saved.',
   'proj.gen.error.invalidAnalysis': 'Could not produce results for all five analysis methods. Nothing was saved.',
   'proj.gen.error.callFailed': 'Sending to the model failed (check AI settings, sign-in and usage limits). Nothing was saved.',
   'proj.gen.error.providerBusy': 'Microsoft Foundry rejected the request due to quota or capacity limits (HTTP 429). Try again later; if it persists, check the Azure model quota and rate limits. Nothing was saved.',

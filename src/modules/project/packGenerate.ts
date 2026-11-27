@@ -21,7 +21,7 @@ import { AnalysisDataSchema, METHODS, newId, type AnalysisData, type AnalysisIte
 import { methodKey } from './analysisText.ts';
 import { translate } from '../../i18n/core.ts';
 import { RelayError } from '../ai/relayClient.ts';
-import { completeWorkflow, workflowForPrompt, workflowGaps, workflowPrompt } from '../process/workflowDraft.ts';
+import { completeWorkflowWithRepair, MAX_WORKFLOW_REPAIRS, WorkflowDraftError, workflowForPrompt, workflowGaps, workflowPrompt } from '../process/workflowDraft.ts';
 import { sanitizePlatform } from '../aifirst/model.ts';
 
 /**
@@ -198,7 +198,7 @@ export interface GenDeps {
 
 export type StepId = 'collect' | 'foundation' | 'business' | 'verify' | 'analysis' | 'priority' | 'finalize';
 /** A model call: the two stages, their re-runs after Work IQ follow-up rounds (foundation-2, -3 …), and the fix rounds. */
-export type GenStage = 'foundation' | 'business' | 'workflow' | 'analysis' | `foundation-${number}` | `business-${number}` | `fix-${number}`;
+export type GenStage = 'foundation' | 'business' | 'workflow' | 'analysis' | `foundation-${number}` | `business-${number}` | `workflow-repair-${number}` | `fix-${number}`;
 export type StepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed';
 
 export interface ProgressEvent {
@@ -319,7 +319,7 @@ export interface GenResult {
 }
 
 export class PackGenError extends Error {
-  readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'invalidAnalysis' | 'callFailed' | 'collectFailed';
+  readonly code: 'cancelled' | 'noAnswer' | 'invalidPack' | 'invalidWorkflow' | 'invalidAnalysis' | 'callFailed' | 'collectFailed';
   readonly detail: string;
   readonly providerBusy: boolean;
   readonly retryAfterMs?: number;
@@ -1266,10 +1266,10 @@ export function buildCollection(pack: Pack, asOf: string, webSearched: boolean, 
 
 /**
  * Calls one run may make: foundation, business, workflow, analysis + per stage one re-run per Work IQ round + fix rounds +
- * retries of failed or unreadable answers. PACK_BUILD_MAX_CALLS (policy) is this with MAX_WORKIQ_ROUNDS.
+ * workflow schema repairs and retries of failed or unreadable answers. PACK_BUILD_MAX_CALLS (policy) is this with MAX_WORKIQ_ROUNDS.
  */
 export function maxCallsFor(rounds: number): number {
-  return 4 + 2 * rounds + MAX_FIX_ROUNDS + MAX_CALL_RETRIES;
+  return 4 + 2 * rounds + MAX_FIX_ROUNDS + MAX_CALL_RETRIES + MAX_WORKFLOW_REPAIRS;
 }
 export const MAX_CALLS_PER_RUN = maxCallsFor(MAX_WORKIQ_ROUNDS);
 
@@ -1756,8 +1756,15 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     workflowBase.success ? workflowBase.data : null, `${input.projectName}\n${input.purpose}\n${input.focus}`, input.lang,
     material.map((e) => ({ ref: e.item.sourceId, text: e.body })),
   ));
-  const workflow = completeWorkflow(workflowBase.success ? workflowBase.data : null, workflowAnswer.workflow, input.lang,
-    entries.map((e) => ({ ref: e.item.sourceId, text: e.body })));
+  let workflow: WorkflowExtension;
+  try {
+    workflow = await completeWorkflowWithRepair(workflowBase.success ? workflowBase.data : null, workflowAnswer.workflow, input.lang,
+      entries.map((e) => ({ ref: e.item.sourceId, text: e.body })),
+      (prompt, round) => call(`workflow-repair-${round}`, () => prompt));
+  } catch (err) {
+    if (err instanceof WorkflowDraftError) throw new PackGenError('invalidWorkflow', err.message);
+    throw err;
+  }
   pack.extensions = { ...(isObj(pack.extensions) ? pack.extensions : {}), workflow };
 
   let state = check(pack, now());

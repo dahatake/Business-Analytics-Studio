@@ -4,7 +4,7 @@
 
 **前:** [第7章 実データとProjectパック](07-real-data-pack.md)
 
-**次:** [ユーザーガイド目次](README.md)
+**次:** [第9章 管理者向け：AzureとGitHub Copilotの準備・社内ユーザーの追加](09-admin-setup.md)（管理者のみ） ／ [ユーザーガイド目次](README.md)
 
 ## 経営層向けの確認手順
 

@@ -10,9 +10,12 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
 $MinNode = [version]'22.18.0'
+# A Node.js installed by setup.ps1 -InstallNode (this folder only) wins over the PC's.
+$localNode = Join-Path $PSScriptRoot '.bas-runtime\node'
+if (Test-Path -LiteralPath (Join-Path $localNode 'node.exe')) { $env:Path = "$localNode;$env:Path" }
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
-  Write-Host 'Node.js was not found. Install Node.js LTS (22.18 or later), then run setup.ps1.' -ForegroundColor Red
+  Write-Host 'Node.js was not found. Run setup.ps1 -InstallNode, or install Node.js LTS (22.18 or later) and run setup.ps1.' -ForegroundColor Red
   exit 1
 }
 $ver = [version]((node --version).TrimStart('v'))

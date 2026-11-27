@@ -415,7 +415,8 @@ and 2 000 000 tokens per minute). Requirements the app relies on:
   `OnceNewDefaultVersionAvailable`. Re-check the model before then.
 
 **GitHub Copilot** runs through `@github/copilot-sdk` in the relay process, signed in as the Copilot CLI user on this PC
-(`copilot` → `/login`). The relay never sees or stores a GitHub token. Each call creates a session with **no tools**
+(`npx -y @github/copilot login`, or `copilot login` / `/login` in an installed Copilot CLI; `node scripts/bas.ts copilot check`
+verifies the sign-in and models without sending a prompt). The relay never sees or stores a GitHub token. Each call creates a session with **no tools**
 (`availableTools: []`, every permission request rejected), the system prompt **replaced** by the pack builder's, the
 session store off and an empty working directory, and deletes the session afterwards. A cancel that arrives while the session is being created sends nothing. With `BAS_RELAY_OUTBOUND_HOSTS` set, both Copilot routes answer `403 outboundNotAllowed` unless the Copilot hosts are listed. No cost or premium-request figure is calculated or returned. Per-call `assistant.usage` input and output tokens are summed; if any usage event lacks valid counts, or no event arrives, both counts are `null` rather than a fabricated zero. See the [SDK usage documentation](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md).
 

@@ -14,7 +14,7 @@
 
 | 順 | ドキュメント | 内容 |
 |---|---|---|
-| 1 | [Windowsのセットアップと初回起動](users-guide/01-setup.md) | Node.js、セットアップ、自動ビルド、起動 |
+| 1 | [Windowsのセットアップ・起動・終了](users-guide/01-setup.md) | 1つのスクリプトで Node.js・依存関係・ビルド・生成AI（なし／GitHub Copilot／Microsoft Foundry）を準備、起動、終了 |
 | 2 | [画面の見方と最初の操作](users-guide/02-orientation.md) | 共通ヘッダー、メニュー、ホーム、デモ |
 | 3 | [企業とProjectの管理](users-guide/03-projects.md) | 会社/Project作成、保存範囲、バックアップ |
 | 4 | [分析・KPI・OKR](users-guide/04-analysis-kpi.md) | 分析手法、入力項目、結果・目標の読み方 |
@@ -22,6 +22,7 @@
 | 6 | [データカタログの取り込みと突合](users-guide/06-data-catalog.md) | CSV/JSONの項目定義をローカルで突合 |
 | 7 | [実データとProjectパック](users-guide/07-real-data-pack.md) | データ準備、JSONパック、検証、起動、Copilot での作成、Work IQ（社内情報） |
 | 8 | [会議での確認・出力・保管](users-guide/08-meetings-and-backup.md) | 結果の読み方、共有前確認、エクスポート |
+| 9 | [管理者向け：AzureとGitHub Copilotの準備・社内ユーザーの追加](users-guide/09-admin-setup.md) | Foundry リソース・モデル・Entra グループと役割の準備、社内ユーザーの追加・削除、Copilot のシートとポリシー |
 
 ## 起動
 
@@ -29,16 +30,16 @@
 
 以下は、このリポジトリーから起動する手順です。
 
-Node.js 22.18 以上と npm が必要です。
+Node.js 22.18 以上と npm が必要です。ない場合は `setup.ps1 -InstallNode` で、このフォルダーだけに Node.js LTS を入れられます（管理者権限不要、SHA-256 で検証）。
 
-Windows では、初回にセットアップした後、ルート直下の [run.cmd](run.cmd) をダブルクリックするか、コマンドプロンプトから実行してください。
+Windows では、初回にセットアップした後、ルート直下の [run.cmd](run.cmd) をダブルクリックするか、コマンドプロンプトから実行してください。セットアップでは使う生成AI（なし／GitHub Copilot／Microsoft Foundry／両方）を選び、その準備まで確認します。詳しくは[第1章](users-guide/01-setup.md)、Azure の管理者は[第9章](users-guide/09-admin-setup.md)を参照してください。
 
 ```bat
 powershell -ExecutionPolicy Bypass -File setup.ps1
 run.cmd
 ```
 
-毎回、現在のソースから `npm.cmd run build` でビルドし、成功した場合だけアプリをローカル API・中継機能付きで起動します。既存のビルドが新しくてもビルドを省略しません。ビルドに失敗した場合は古いビルドで起動せず、エラーを表示してその終了コードを返します。起動後、PC に設定済みの既定の Web ブラウザーでアプリの URL（既定: `http://127.0.0.1:4173`）を自動で開きます。ブラウザーを新たにインストールすることはありません。停止は Ctrl+C です。別のフォルダーからの実行にも対応し、起動時のパッケージ取得は行いません。前提ツール・依存関係の不足や起動失敗はメッセージと非ゼロの終了コードで通知します。なお、代替の `start.ps1`・`start.sh` は自動ビルドせず、[scripts/check-build.mjs](scripts/check-build.mjs) で古いビルドの起動を止める動作のままです。
+毎回、現在のソースから `npm.cmd run build` でビルドし、成功した場合だけアプリをローカル API・中継機能付きで起動します。既存のビルドが新しくてもビルドを省略しません。ビルドに失敗した場合は古いビルドで起動せず、エラーを表示してその終了コードを返します。起動後、PC に設定済みの既定の Web ブラウザーでアプリの URL（既定: `http://127.0.0.1:4173`）を自動で開きます。ブラウザーを新たにインストールすることはありません。停止は、起動したウィンドウで Ctrl+C を押し、「バッチ ジョブを終了しますか (Y/N)?」に Y と答えます（作業データは入力のたびに保存済みです）。別のフォルダーからの実行にも対応し、起動時のパッケージ取得は行いません。前提ツール・依存関係の不足や起動失敗はメッセージと非ゼロの終了コードで通知します。なお、代替の `start.ps1`・`start.sh` は自動ビルドせず、[scripts/check-build.mjs](scripts/check-build.mjs) で古いビルドの起動を止める動作のままです。
 
 ポートを変える場合は `run.cmd --port 4180` と指定できます。`run.cmd` はポートが使用中ならその旨を表示し、次の空きポートへ自動で切り替えて、その URL をブラウザーで開きます。既存のプロセスは停止しません。**同じPC・同じBASフォルダーでは、ポートやブラウザーが変わっても同じ作業データを利用できます。** 自動切り替えを無効にする場合は `run.cmd --strictPort` を指定します。`npm run preview` と E2E は従来どおりポート固定です。
 
@@ -59,7 +60,7 @@ npm run workiq:check     # Work IQ CLI の起動・サインイン・retrieve �
 2. EULA（[github.com/microsoft/work-iq](https://github.com/microsoft/work-iq)）を読み、ご自身で同意する場合だけ **Work IQ の EULA に同意** を押す（BAS は代わりに同意しません）。
 3. **Work IQ の情報取得を検証** を押し、出典付きで取得できたこと（検証日時の表示）を確認する。検証が済むまで Foundry でのProjectパック作成は始められません。
 
-詳しい手順・画面の表示・困ったときの対処は [第7章 Work IQ で社内情報を加える](users-guide/07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)、管理者向けの仕様（REST API で自分のアプリの登録を使う方法を含む）は [docs/relay-config.md](docs/relay-config.md#work-iq-retrieval-verification-microsoft-foundry-only) にあります。
+詳しい手順・画面の表示・困ったときの対処は [第7章 Work IQ で社内情報を加える](users-guide/07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)、管理者向けの仕様（REST API で自分のアプリの登録を使う方法を含む）は [docs/relay-config.md](docs/relay-config.md#work-iq-retrieval-verification-microsoft-foundry-or-github-copilot-by-choice) にあります。
 
 ### ポートに依存しない保存と旧データの移行
 

@@ -5,10 +5,12 @@ if errorlevel 1 (
   echo Could not open the application folder.
   exit /b 1
 )
+rem A Node.js installed by setup.ps1 -InstallNode (this folder only) wins over the PC's.
+if exist "%~dp0.bas-runtime\node\node.exe" set "PATH=%~dp0.bas-runtime\node;%PATH%"
 
 node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 18)) process.exit(1);" >nul 2>&1
 if errorlevel 1 (
-  echo Node.js 22.18 or later is required. Install Node.js, then open a new terminal.
+  echo Node.js 22.18 or later is required. Run powershell -ExecutionPolicy Bypass -File setup.ps1 -InstallNode, or install Node.js and open a new terminal.
   goto :failed
 )
 

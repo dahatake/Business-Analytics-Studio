@@ -346,7 +346,7 @@ export const aiJa = {
   'ai.copilot.err.startFailed': 'Copilot を起動できません',
   'ai.copilot.err.providerError': 'Copilot から応答がありません',
   'ai.copilot.err.relayUnreachable': '中継プロセスに接続できません',
-  'ai.copilot.howTo': 'ターミナルで `copilot` を起動し、`/login` で GitHub にサインインしてから、もう一度「サインイン状態とモデルを確認」を押してください。Copilot のライセンスが必要です。',
+  'ai.copilot.howTo': 'ターミナルで `npx -y @github/copilot login`（Copilot CLI を入れている場合は `copilot login`）を実行し、ブラウザーで GitHub にサインインしてから、もう一度「サインイン状態とモデルを確認」を押してください。Copilot のライセンスが必要です。',
   'ai.copilot.model': 'モデル',
   'ai.copilot.modelHint': '括弧内はモデルのプレミアム リクエストの倍率です。',
   'ai.copilot.modelOption': '{name}（×{multiplier}）',

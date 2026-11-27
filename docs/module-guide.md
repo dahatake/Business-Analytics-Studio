@@ -31,7 +31,7 @@ Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/
 
 ### Business process generation and measurement
 
-The in-app pack generator has a dedicated workflow completion call. Internal all-step batches run a workflow job before the deliverable jobs; individual As-Is/To-Be drafting also completes the workflow. [workflowDraft.ts](../src/modules/process/workflowDraft.ts) merges missing fields while preserving existing ids, edits, values and provenance, checks references and rejects incomplete answers. Generated numbers without matching source quotes are provisional estimates, never measurements. Legacy numbers without provenance remain unverified. The process screen can also run completion directly.
+The in-app pack generator has a dedicated workflow completion call. Internal all-step batches run a workflow job before the deliverable jobs; individual As-Is/To-Be drafting also completes the workflow. [workflowDraft.ts](../src/modules/process/workflowDraft.ts) gives the model the schema's allowed values and retries invalid response fields up to twice, applying corrections only at the reported paths. It merges missing fields while preserving existing ids, edits, values and provenance, checks references and reports an error if repair fails or an answer is incomplete. Generated numbers without matching source quotes are provisional estimates, never measurements. Legacy numbers without provenance remain unverified. The process screen can also run completion directly.
 
 The offline CLI remains a deterministic sample generator (no internal queries or LLM access): its workflow is explicitly fictional, with provisional numeric starting assumptions, not evidence about the customer.
 

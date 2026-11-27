@@ -347,7 +347,7 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.copilot.err.startFailed': 'Copilot could not start',
   'ai.copilot.err.providerError': 'No answer from Copilot',
   'ai.copilot.err.relayUnreachable': 'Relay not reachable',
-  'ai.copilot.howTo': 'Start `copilot` in a terminal, sign in to GitHub with `/login`, then press "Check sign-in and models" again. A Copilot licence is required.',
+  'ai.copilot.howTo': 'In a terminal run `npx -y @github/copilot login` (or `copilot login` if the Copilot CLI is installed), sign in to GitHub in the browser, then press "Check sign-in and models" again. A Copilot licence is required.',
   'ai.copilot.model': 'Model',
   'ai.copilot.modelHint': 'The number in brackets is the premium-request multiplier of the model.',
   'ai.copilot.modelOption': '{name} (×{multiplier})',

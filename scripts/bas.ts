@@ -105,6 +105,7 @@ const HELP = `Business Analytics Studio pipeline (FR-120)
   integrations check|list|impact <id>                        check docs/integration-catalog.md (FR-199, NFR-SEC-006, NFR-OPS-001)
   workiq check [--timeout 300] [--lang ja|en]                check that the Work IQ CLI starts, signs in and offers "retrieve" (D-14);
                                                              no Work IQ search is run (nothing billed) and the EULA is not accepted
+  copilot check [--lang ja|en]                               check the GitHub Copilot sign-in and models BAS will see (no prompt is sent)
 
 Variables (FR-130): flags win over BAS_CUSTOMER, BAS_INDUSTRY, BAS_LANG, BAS_TEMPLATE, BAS_WORK_DIR, BAS_CACHE_DIR, BAS_LOG_DIR.
 Every command appends step durations to logs/timing.json (FR-129).`;
@@ -318,6 +319,12 @@ async function dispatch(command: string, args: Args, s: ReturnType<typeof settin
       return await timer.step('workiq-check', () => workIqCheck(io, s.lang, timeoutSec * 1000));
     }
 
+    case 'copilot': {
+      const sub = args.positional[1] ?? 'check';
+      if (sub !== 'check') throw new UsageError(`Unknown copilot subcommand "${sub}". Run: node scripts/bas.ts copilot check`);
+      return await timer.step('copilot-check', () => copilotCheck(io, s.lang));
+    }
+
     default:
       throw new UsageError(`Unknown command "${command}". Run: node scripts/bas.ts help`);
   }
@@ -387,6 +394,50 @@ export async function workIqCheck(io: Io, lang: 'ja' | 'en', timeoutMs: number, 
   say(`  4. EULA（${cli.WORKIQ_EULA_URL}）を読み、ご自身で同意する場合だけチェックして「Work IQ の EULA に同意」を押します。${eula ? '（この PC では同意済みのため不要）' : ''}`,
     `  4. Read the EULA (${cli.WORKIQ_EULA_URL}); only if you accept it yourself, tick the box and press "Accept the Work IQ EULA".${eula ? ' (Already accepted on this PC.)' : ''}`);
   say('  5. 課金の可能性に同意して「Work IQ の情報取得を検証」を押し、検証日時が表示されれば完了です。', '  5. Agree to the possible charge and press "Verify Work IQ retrieval". It is done when the verification time is shown.');
+  return 0;
+}
+
+/**
+ * Setup check for the GitHub Copilot route: the same SDK call the relay makes for "Check sign-in" (auth status and
+ * model list). No session is created and no prompt is sent, so no premium request is used.
+ */
+export async function copilotCheck(io: Io, lang: 'ja' | 'en', deps: {
+  service?: { status(): Promise<import('../server/copilot.ts').CopilotStatus>; dispose(): Promise<void> };
+} = {}): Promise<number> {
+  const service = deps.service ?? new (await import('../server/copilot.ts')).CopilotService();
+  const ja = lang === 'ja';
+  const say = (jaText: string, enText: string) => io.out(ja ? jaText : enText);
+  say('GitHub Copilot の確認（プロンプトは送らず、プレミアム リクエストは消費しません）',
+    'GitHub Copilot check (no prompt is sent; no premium request is used)');
+  let status: import('../server/copilot.ts').CopilotStatus;
+  try {
+    status = await service.status();
+  } finally {
+    await service.dispose().catch(() => undefined);
+  }
+  if (!status.available) {
+    say(`[1/2] Copilot ランタイム: NG (${status.error ?? 'startFailed'})`, `[1/2] Copilot runtime: FAILED (${status.error ?? 'startFailed'})`);
+    say('次にすること: setup.ps1 をもう一度実行して依存関係（@github/copilot-sdk）を入れ直してから、もう一度実行してください。',
+      'Next action: run setup.ps1 again to reinstall the dependencies (@github/copilot-sdk), then run this again.');
+    return 1;
+  }
+  say('[1/2] Copilot ランタイム: OK', '[1/2] Copilot runtime: OK');
+  if (!status.authenticated) {
+    say(`[2/2] サインイン: NG (${status.error ?? 'notSignedIn'})`, `[2/2] Sign-in: FAILED (${status.error ?? 'notSignedIn'})`);
+    say('次にすること: 「npx -y @github/copilot login」（Copilot CLI を入れている場合は「copilot login」）を実行し、開いたブラウザーで GitHub にサインインしてから、もう一度実行してください。Copilot のライセンスが割り当てられた GitHub アカウントを使います。',
+      'Next action: run "npx -y @github/copilot login" (or "copilot login" if the Copilot CLI is installed), sign in to GitHub in the browser that opens, then run this again. Use a GitHub account that has a Copilot licence.');
+    return 1;
+  }
+  say(`[2/2] サインイン: OK (${status.login ?? 'GitHub'})`, `[2/2] Sign-in: OK (${status.login ?? 'GitHub'})`);
+  if (status.models.length === 0) {
+    say('      使えるモデルがありません。組織の管理者に Copilot のモデル ポリシー（Copilot CLI と各モデルの有効化）を確認してください。',
+      '      No model is available. Ask your organisation administrator to check the Copilot policies (Copilot CLI and model enablement).');
+    return 1;
+  }
+  say(`      使えるモデル ${status.models.length} 個: ${status.models.slice(0, 8).map((m) => m.id).join(', ')}${status.models.length > 8 ? ', …' : ''}`,
+    `      ${status.models.length} model(s) available: ${status.models.slice(0, 8).map((m) => m.id).join(', ')}${status.models.length > 8 ? ', …' : ''}`);
+  say('次にすること（BAS の画面）: run.cmd で起動し、「AI 設定」で「GitHub Copilot SDK」を選んで「サインイン状態とモデルを確認」を押し、モデルを選んで「モデルを中継プロセスに保存」を押します。',
+    'Next step (in BAS): start with run.cmd, open "AI settings", choose "GitHub Copilot SDK", press "Check sign-in and models", pick a model and press "Save model in the relay".');
   return 0;
 }
 

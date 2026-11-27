@@ -8,7 +8,7 @@ import {
   backEdges, buildProcess, criticalPath, flowEdges, ioAnalysis, layoutProcess, RECONCILE_TOLERANCE, reconcile, stepDelta, totals,
 } from '../src/modules/process/model.ts';
 import { removeStage } from '../src/modules/process/store.ts';
-import { completeWorkflow, workflowGaps, workflowPrompt } from '../src/modules/process/workflowDraft.ts';
+import { completeWorkflow, completeWorkflowWithRepair, workflowGaps, workflowPrompt } from '../src/modules/process/workflowDraft.ts';
 import { buildMeasurement, measurementPeriod } from '../src/modules/process/measurement.ts';
 import { workflowAnswer } from './fixtures/workflow.ts';
 import { metricStatus } from '../src/modules/process/model.ts';
@@ -28,6 +28,51 @@ describe('FR-380 business process model', () => {
   });
 
   describe('evidence-aware process completion', () => {
+    it('specifies allowed values and repairs only the invalid response field', async () => {
+      const prompt = workflowPrompt(null, 'Purpose', 'en', []);
+      expect(prompt).toContain('party.kind=customer|supplier|partner|regulator|department|team|other');
+      const draft = workflowAnswer(prompt).workflow;
+      const originalParty = draft.parties![0]!;
+      const answer = { ...draft, parties: [{ ...originalParty, kind: 'employee' }, { id: 'outside', name: 'Supplier', side: 'external', kind: 'supplier' }] };
+      const repairs: string[] = [];
+      const result = await completeWorkflowWithRepair(null, answer, 'en', [], async (repairPrompt) => {
+        repairs.push(repairPrompt);
+        return { fixes: [{ path: ['parties', 0, 'kind'], value: 'team' }] };
+      });
+      expect(repairs).toHaveLength(1);
+      expect(repairs[0]).toContain('"path":["parties",0,"kind"]');
+      expect(result.parties).toMatchObject([{ ...originalParty, kind: 'team' }, { id: 'outside', kind: 'supplier' }]);
+      expect(result.stages[0]!.id).toBe(draft.stages[0]!.id);
+      expect(workflowGaps(result)).toEqual([]);
+      expect(answer.parties[0]!.kind).toBe('employee');
+    });
+
+    it('rejects corrections to valid fields and reports unresolved schema errors', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      const answer = { ...draft, parties: [{ ...draft.parties![0]!, kind: 'employee' }] };
+      let attempts = 0;
+      await expect(completeWorkflowWithRepair(null, answer, 'en', [], async () => {
+        attempts++;
+        return { fixes: [{ path: ['parties', 0, 'kind'], value: 'team' }, { path: ['title'], value: 'Changed' }] };
+      })).rejects.toMatchObject({ name: 'WorkflowDraftError', message: expect.stringContaining('parties') });
+      expect(attempts).toBe(2);
+      expect(answer.title).toEqual(draft.title);
+    });
+
+    it('does not request repairs for a valid workflow', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      let calls = 0;
+      await completeWorkflowWithRepair(null, draft, 'en', [], async () => { calls++; return {}; });
+      expect(calls).toBe(0);
+    });
+
+    it('propagates a repair transport failure rather than treating it as invalid data', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      const answer = { ...draft, parties: [{ ...draft.parties![0]!, kind: 'employee' }] };
+      const failure = new Error('transport failed');
+      await expect(completeWorkflowWithRepair(null, answer, 'en', [], async () => { throw failure; })).rejects.toBe(failure);
+    });
+
     it('fills every missing metric but preserves edited values, references and provenance', () => {
       const original = WorkflowExtension.parse({
         stages: [{ id: 's', name: '独自の受付', asIs: { touchMinutes: 0, basis: 'stated' }, inputs: ['実際の依頼'] }],

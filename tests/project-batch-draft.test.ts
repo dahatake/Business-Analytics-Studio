@@ -74,6 +74,27 @@ afterEach(() => {
 });
 
 describe('all-step drafts', () => {
+  it('repairs an invalid workflow response during the workflow batch job', async () => {
+    const ctx = context();
+    const job = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value).find((item) => item.kind === 'workflow')!;
+    setRuntimeSettingsProvider(() => ({ provider: 'copilotSdk', liveEnabled: true, sendConsent: true, configured: true }));
+    const stages: string[] = [];
+    setLiveTransport(async (call) => {
+      stages.push(call.stage ?? '');
+      if (call.stage === 'workflow') {
+        const answer = workflowAnswer(call.prompt);
+        const workflow = { ...answer.workflow, parties: [{ ...answer.workflow.parties![0], kind: 'employee' }, ...answer.workflow.parties!.slice(1)] };
+        return { text: JSON.stringify({ workflow }), inputTokens: 10, outputTokens: 10 };
+      }
+      if (call.stage === 'workflow-repair-1') return { text: 'not JSON', inputTokens: 10, outputTokens: 10 };
+      expect(call.prompt).toContain('previousCorrectionError');
+      return { text: JSON.stringify({ fixes: [{ path: ['parties', 0, 'kind'], value: 'customer' }] }), inputTokens: 10, outputTokens: 10 };
+    });
+    const result = await runBatchJob(job, new AbortController().signal);
+    expect(result.kind).toBe('workflow');
+    expect(stages).toEqual(['workflow', 'workflow-repair-1', 'workflow-repair-2']);
+  });
+
   it.each<Provider>(['foundry', 'copilotSdk'])('generates and saves all jobs via %s without applying them', async (provider) => {
     const field = { text: '人が入力した成果物', author: 'human' as const, updatedAt: '2026-11-09T00:00:00Z' };
     const signOff = { at: '2026-11-09T00:00:00Z', by: '担当者' };

@@ -8,7 +8,7 @@
 
 | 順 | ドキュメント | こんなとき読む |
 |---|---|---|
-| 1 | [Windowsのセットアップと初回起動](01-setup.md) | BASをPCに初めて準備する |
+| 1 | [Windowsのセットアップ・起動・終了](01-setup.md) | BASをPCに準備し、生成AI（GitHub Copilot／Microsoft Foundry）を選んで、起動・終了する |
 | 2 | [画面の見方と最初の操作](02-orientation.md) | アプリ全体のメニューやホーム画面を把握する |
 | 3 | [企業とProjectの管理](03-projects.md) | 実際の企業・取り組みを登録し、保存・復元する |
 | 4 | [分析・KPI・OKR](04-analysis-kpi.md) | 分析を作り、KPIと目標を記録する |
@@ -16,6 +16,7 @@
 | 6 | [データカタログの取り込みと突合](06-data-catalog.md) | CSV/JSONのデータ項目一覧を照合する |
 | 7 | [実データとProjectパック](07-real-data-pack.md) | 概要・地図・業務フロー・最適化に実データを反映する。Copilot でProjectパックを作り、Work IQ で社内情報を加える |
 | 8 | [会議での確認・出力・保管](08-meetings-and-backup.md) | 数値を読み、出力を確認し、バックアップする |
+| 9 | [管理者向け：AzureとGitHub Copilotの準備・社内ユーザーの追加](09-admin-setup.md) | （管理者）Microsoft Foundry のリソースと権限を用意し、社内ユーザーを追加・削除する。GitHub Copilot のシートとポリシーを設定する |
 
 ## 目的別の読み方
 
@@ -23,6 +24,7 @@
 - **実データを使う:** [画面の見方](02-orientation.md) → [データ利用の違い](06-data-catalog.md) → [Projectパック](07-real-data-pack.md) → [会議・保管](08-meetings-and-backup.md)。
 - **会議資料を作る:** [分析・KPI](04-analysis-kpi.md) → [議論](05-discussion.md) → [会議・保管](08-meetings-and-backup.md)。
 - **Work IQ（Microsoft 365 の社内情報）でProjectパックを作る:** [セットアップの「Work IQ を使う場合の準備」](01-setup.md#work-iq-を使う場合の準備任意) → [Foundry の接続](07-real-data-pack.md#foundry-の接続を設定する) → [Work IQ で社内情報を加える](07-real-data-pack.md#work-iq-で社内情報を加えるmicrosoft-foundry-のときだけ)。
+- **管理者として社内に展開する:** [管理者向けの準備](09-admin-setup.md) → [社内ユーザーの追加](09-admin-setup.md#3-社内ユーザーを追加削除する) → 利用者に[セットアップ](01-setup.md)を案内。
 
 ## 画面図とスクリーンショット
 
@@ -36,6 +38,6 @@
 
 **前:** [リポジトリREADME（全体の入口・このガイドの目次）](../README.md)
 
-**次:** [第1章 Windowsのセットアップと初回起動](01-setup.md)
+**次:** [第1章 Windowsのセットアップ・起動・終了](01-setup.md)
 
 開発者向けの機能・テスト・CLI一覧は[リポジトリREADME](../README.md)を参照してください。実データ利用の承認、社内ネットワーク公開、AIへの送信可否などは、組織の情報管理責任者の判断が優先されます。

@@ -12,7 +12,7 @@ import { readiness, REQUIREMENTS } from '../src/modules/project/analysisReadines
 import { METHOD_CATEGORIES } from '../src/modules/project/analysis.ts';
 import { EngagementsExtension } from '../src/data/extensionSchemas.ts';
 import { estimateTokens } from '../src/ai/budget.ts';
-import { PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS } from '../src/ai/policy.ts';
+import { PACK_BUILD_MAX_CALLS, PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS } from '../src/ai/policy.ts';
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 import { AiLiveError } from '../src/ai/client.ts';
 import { RelayError } from '../src/modules/ai/relayClient.ts';
@@ -214,7 +214,8 @@ describe('FR-311 pack generation (D-12)', () => {
     };
     await expect(generatePack(input({ officialUrl: '', useNews: false }), d, () => {}, new AbortController().signal))
       .rejects.toMatchObject({ code: 'invalidAnalysis' });
-    expect(runPlan(input({ useWorkIq: false }))).toMatchObject({ minCalls: 4, maxCalls: 9 });
+    expect(runPlan(input({ useWorkIq: false }))).toMatchObject({ minCalls: 4, maxCalls: 11 });
+    expect(runPlan(input({ useWorkIq: true, workIqRounds: 4 })).maxCalls).toBe(PACK_BUILD_MAX_CALLS);
   });
 
   it('preserves unknown call tokens in the saved report and progress instead of reporting zero', async () => {
@@ -721,6 +722,47 @@ describe('FR-311 pack generation (D-12)', () => {
     const small = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }]);
     const r = await generatePack(input(), small, () => {}, new AbortController().signal);
     expect(r.report.calls.every((c) => c.trimmedChars === undefined)).toBe(true);
+  });
+
+  it('repairs an invalid workflow party kind without restarting or replacing valid workflow data', async () => {
+    const d = deps([stageA, stageB, { remove: ['initiative-bad'] }, { replace: [] }, { replace: [] }]);
+    const complete = d.complete;
+    d.complete = async (prompt, signal, stage) => {
+      if (stage === 'workflow') {
+        const response = await complete(prompt, signal, stage);
+        const answer = JSON.parse(response.text);
+        answer.workflow.parties[0].kind = 'employee';
+        return { ...response, text: JSON.stringify(answer) };
+      }
+      if (stage === 'workflow-repair-1') {
+        expect(prompt).toContain('"path":["parties",0,"kind"]');
+        return { text: JSON.stringify({ fixes: [{ path: ['parties', 0, 'kind'], value: 'team' }] }), inputTokens: 10, outputTokens: 5 };
+      }
+      return complete(prompt, signal, stage);
+    };
+    const result = await generatePack(input(), d, () => {}, new AbortController().signal);
+    expect(result.report.calls.map((call) => call.stage).slice(0, 4)).toEqual(['foundation', 'business', 'workflow', 'workflow-repair-1']);
+    expect(result.pack.extensions).toMatchObject({ workflow: { parties: [{ id: 'party-test', kind: 'team' }] } });
+    expect(verifyPack(result.pack).ok).toBe(true);
+  });
+
+  it('reports an unrepaired workflow as a validation error, not a transport failure', async () => {
+    const d = deps([stageA, stageB]);
+    const complete = d.complete;
+    d.complete = async (prompt, signal, stage) => {
+      if (stage === 'workflow') {
+        const response = await complete(prompt, signal, stage);
+        const answer = JSON.parse(response.text);
+        answer.workflow.parties[0].kind = 'employee';
+        return { ...response, text: JSON.stringify(answer) };
+      }
+      if (stage?.startsWith('workflow-repair-')) {
+        return { text: JSON.stringify({ fixes: [{ path: ['parties', 0, 'kind'], value: 'employee' }] }), inputTokens: 10, outputTokens: 5 };
+      }
+      return complete(prompt, signal, stage);
+    };
+    await expect(generatePack(input(), d, () => {}, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'invalidWorkflow', detail: expect.stringContaining('parties') });
   });
 
   it('D-15: a failed or unreadable model answer is asked again (twice per run at most); a refusal by the app\'s own gate is not', async () => {

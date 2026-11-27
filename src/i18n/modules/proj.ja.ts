@@ -1232,6 +1232,7 @@ export const projJa = {
   'proj.gen.error.cancelled': '中止しました。何も保存していません。',
   'proj.gen.error.noAnswer': '生成AIの回答に JSON がありませんでした。何も保存していません。',
   'proj.gen.error.invalidPack': '検査に通るProjectパックを作れませんでした。何も保存していません。',
+  'proj.gen.error.invalidWorkflow': '業務プロセスの生成結果を検証・修正できませんでした。Projectパックは保存していません。',
   'proj.gen.error.invalidAnalysis': '5 手法すべての分析結果を作成できませんでした。何も保存していません。',
   'proj.gen.error.callFailed': '生成AIへの送信が失敗しました（AI 設定・サインイン・利用制限を確認してください）。何も保存していません。',
   'proj.gen.error.providerBusy': 'Microsoft Foundry が利用上限または混雑のため要求を拒否しました（HTTP 429）。時間を置いて再試行し、続く場合は Azure のモデルのクォータ・レート制限を確認してください。何も保存していません。',

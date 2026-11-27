@@ -71,7 +71,7 @@ export const PER_USE_LIMITS: Partial<Record<AiUse, PerCallLimits>> = {
 export const RECOMMEND_MAX_PROMPT_CHARS = 32_000;
 export const RECOMMEND_TIMEOUT_MS = 90_000;
 export const DELIVERABLE_DRAFT_TIMEOUT_MS = 300_000;
-export const PACK_BUILD_MAX_CALLS = 17;
+export const PACK_BUILD_MAX_CALLS = 19;
 export const PACK_BUILD_TIMEOUT_MS = 600_000;
 export const PACK_BUILD_MAX_PROMPT_CHARS = 200_000;
 /** D-41: the all-step batch uses accept the same prompt size as pack generation (only the relay's 1 MiB body bounds it). */

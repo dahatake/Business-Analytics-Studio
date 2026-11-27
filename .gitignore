@@ -4,6 +4,7 @@ test-results
 playwright-report
 dist-*
 .bas-local
+.bas-runtime
 research-cache
 work
 logs

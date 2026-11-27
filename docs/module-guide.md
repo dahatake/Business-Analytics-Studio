@@ -13,6 +13,7 @@ Each feature module owns only its own files:
 | ink | `src/modules/ink/` | `ink.` | `/board` → `BoardScreen.tsx` |
 | threed | `src/modules/threed/` | `td.` | No standalone screen. `ContextualScene` embeds the 3D map (`/map`) and the as-is/to-be architecture (material flow tab of `/process`). |
 | process | `src/modules/process/` | `bp.` | `/process` → `ProcessScreen.tsx` (business process, FR-380; data in `extensions.workflow`, project edits in the scoped store `process.workflow`) |
+| aifirst | `src/modules/aifirst/` | `aif.` | `/aifirst` → `AiFirstScreen.tsx` (AI First Analytics, FR-386; data in `extensions.aiPlatform`, project assessments in the scoped store `aifirst.platform`) |
 | project | `src/modules/project/` | `proj.`, `dlv.` (step deliverables), `ck.` (step decision view and what-if) | `/home`, `/projects`, `/analysis`, `/discussion`, `/deliverables` |
 | usecases | `src/modules/usecases/` | `uc.` | `/usecases`, `/catalog` |
 | ai | `src/modules/ai/`, `server/` | `ai.` | No standalone screen. AI actions live on their respective screens; legacy `/assistant` redirects to Home, and legacy `/ai-settings` redirects to Home and opens the settings dialog. |

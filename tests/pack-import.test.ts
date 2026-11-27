@@ -239,7 +239,8 @@ describe('analyzeImport: split → merge → normalize → verify (FR-302, FR-30
       expect(collectionPresence(pack)).toMatchObject({ workflow: false, dataCatalog: false, site: true });
       expect(analyze({ ...sourcedSample, extensions: { collection: report() } }).canImport).toBe(true);
       const missing = report();
-      missing.sections.pop();
+      // A section every report must carry (the later sections workflow and aiPlatform only warn).
+      missing.sections.splice(missing.sections.findIndex((s) => s.key === 'coreObject'), 1);
       expect(analyze({ ...sourcedSample, extensions: { collection: missing } }).canImport).toBe(false);
       const falseClaim = report();
       falseClaim.sections[0]!.status = 'complete';

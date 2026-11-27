@@ -5,7 +5,7 @@ import {
   DataTrending24Regular, People24Regular, Settings24Regular, Board24Regular, SlideText24Regular, Flowchart24Regular,
   Briefcase24Regular, DataPie24Regular, Chat24Regular, BookOpen24Regular, Database24Regular,
   PlugConnected24Regular, Color24Regular, LayoutCellFour24Regular, Rocket24Regular, TaskListSquareLtr24Regular,
-  DocumentDatabase24Regular, Gauge24Regular,
+  DocumentDatabase24Regular, Gauge24Regular, MountainTrail24Regular,
 } from '@fluentui/react-icons';
 import type { MessageKey } from '../i18n/index.ts';
 import { HomeScreen } from '../modules/project/HomeScreen.tsx';
@@ -49,6 +49,8 @@ export const SCREENS: ScreenDef[] = [
   { path: '/', label: 'proj.nav.home', Icon: Rocket24Regular, group: 'start', hiddenFromNav: true, component: HomeScreen },
   { path: '/analysis', label: 'proj.nav.analysis', Icon: DataPie24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/project/AnalysisScreen.tsx'), 'AnalysisScreen') },
   { path: '/process', label: 'nav.process', Icon: Flowchart24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/process/ProcessScreen.tsx'), 'ProcessScreen') },
+  // FR-386: the AI platform hill climb (where each business area stands, its loop, and what to build next).
+  { path: '/aifirst', label: 'aif.nav', Icon: MountainTrail24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/aifirst/AiFirstScreen.tsx'), 'AiFirstScreen') },
   // The relation table is the editor that step tasks open (`edit=`/`create=`); it is reached from those links, not the rail.
   { path: '/relations', label: 'nav.relations', Icon: Diagram24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../screens/Relations.tsx'), 'Relations') },
   { path: '/map', label: 'nav.map', Icon: Map24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/MapScreen.tsx'), 'MapScreen') },

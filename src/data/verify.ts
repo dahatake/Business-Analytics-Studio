@@ -3,7 +3,7 @@ import { CustomerPack, Entity, type EntityKind } from './schema.ts';
 import { parseBrand } from '../modules/ops/brand.ts';
 import { CONTRAST_TEXT, contrastRatio, ensureContrast, isHex, LIGHT_BG, normalizeHex } from '../modules/ops/color.ts';
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence, LATER_COLLECTION_SECTIONS, LEGACY_COLLECTION_SECTIONS } from './collection.ts';
-import { ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, DelayCostExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, RequirementEvidenceExtension, WorkflowExtension } from './extensionSchemas.ts';
+import { AiPlatformExtension, ArchitectureExtension, CoreObjectExtension, DecisionReportExtension, DelayCostExtension, EngagementsExtension, GlossarySchema, hasEngagementContext, OkrExtension, RequirementEvidenceExtension, WorkflowExtension } from './extensionSchemas.ts';
 import { PackCatalog } from '../modules/usecases/catalogSchema.ts';
 import { CompanyAnchorVersionSchema, anchorEvidenceChecks, anchorFreshness } from './companyAnchor.ts';
 import { CompanyAlignmentSnapshotSchema, assessAlignment } from '../modules/project/companyAlignment.ts';
@@ -202,6 +202,7 @@ export function verifyPack(raw: unknown): VerifyResult {
     architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
     workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension, requirementEvidence: RequirementEvidenceExtension,
     decisionReport: DecisionReportExtension, delayCost: DelayCostExtension,
+    aiPlatform: AiPlatformExtension,
     companyAnchor: CompanyAnchorVersionSchema,
     companyAlignment: CompanyAlignmentSnapshotSchema,
   };
@@ -291,6 +292,18 @@ export function verifyPack(raw: unknown): VerifyResult {
     (w.kpiSpans ?? []).forEach((k, i) => {
       if (byId.get(k.kpiId)?.kind !== 'kpi') dangling(`extensions.workflow.kpiSpans[${i}].kpiId`, k.kpiId, 'a kpi entity', 'Use an existing kpi id.');
       for (const end of ['from', 'to'] as const) if (!stageIds.has(k[end])) dangling(`extensions.workflow.kpiSpans[${i}].${end}`, k[end], 'a stage id', 'Use existing stage ids.');
+    });
+  }
+  const aiPlatform = AiPlatformExtension.safeParse(pack.extensions?.aiPlatform);
+  if (pack.extensions?.aiPlatform !== undefined && aiPlatform.success) {
+    aiPlatform.data.capabilities.forEach((c, i) => sourceRefs(c.sourceIds, `extensions.aiPlatform.capabilities[${i}].sourceIds`));
+    aiPlatform.data.areas.forEach((a, i) => {
+      const at = `extensions.aiPlatform.areas[${i}]`;
+      a.solutionIds.forEach((id, j) => {
+        if (byId.get(id)?.kind !== 'solution') add({ severity: 'error', code: 'DANGLING_REF', path: `${at}.solutionIds[${j}]`, cause: `"${id}" is not a solution.`, action: 'Use an existing solution id or remove it.' });
+      });
+      a.checks.forEach((c, j) => sourceRefs(c.sourceIds, `${at}.checks[${j}].sourceIds`));
+      a.evaluations.forEach((e, j) => sourceRefs(e.sourceIds, `${at}.evaluations[${j}].sourceIds`));
     });
   }
   const okr = OkrExtension.safeParse(pack.extensions?.okr);

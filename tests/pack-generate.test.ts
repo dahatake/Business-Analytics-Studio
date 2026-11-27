@@ -172,7 +172,7 @@ describe('FR-311 pack generation (D-12)', () => {
     const ext = r.pack.extensions as Record<string, unknown>;
     const collection = CollectionReport.parse(ext.collection);
     expect(collection.webSearch).toBe('searched');
-    expect(collection.sections).toHaveLength(24);
+    expect(collection.sections).toHaveLength(25);
     expect(collection.sections.every((s) => s.status !== 'complete')).toBe(true);
     expect(collection.sections.find((s) => s.key === 'deal')).toMatchObject({ status: 'unavailable', missingFields: ['受注台帳'], nextAction: '受注台帳を添付する' });
     // No account from the model: the verifier's required sourced fields are listed instead.

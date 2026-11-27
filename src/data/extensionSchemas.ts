@@ -296,6 +296,61 @@ export const DelayCostExtension = z.object({
 }).passthrough();
 export type DelayCostExtension = z.infer<typeof DelayCostExtension>;
 
+/**
+ * FR-386 (AI First Analytics): the customer's AI platform as a set of capabilities in eight layers, and the business
+ * areas that climb it. A level is 0 none, 1 pilot, 2 standard in a unit, 3 enterprise-wide. `basis` keeps a judgement
+ * backed by evidence (a document, a report, telemetry) apart from a self-report, so the screen never shows a claim as
+ * a measured fact. Every list is optional: an absent capability means "not assessed", not "none".
+ */
+export const AI_LAYERS = ['business', 'experience', 'workflow', 'model', 'context', 'data', 'trust', 'evaluate'] as const;
+export type AiLayer = (typeof AI_LAYERS)[number];
+export const AI_CAPABILITIES = [
+  'outcomes', 'coe', 'identity', 'oversharing', 'evals', 'copilot', 'devGuardrails', 'registry', 'vibeCoding',
+  'dataProducts', 'grounding', 'agentIdentity', 'modelRouting', 'delegation',
+] as const;
+export type AiCapabilityId = (typeof AI_CAPABILITIES)[number];
+/** Area checks: the exit criteria a business area meets itself (the platform capabilities are judged separately). */
+export const AI_AREA_CHECKS = ['baseline', 'rubric', 'sponsor', 'adoption', 'kpiLink', 'built', 'dataProduct', 'grounded', 'delegated', 'hitl'] as const;
+export type AiAreaCheckId = (typeof AI_AREA_CHECKS)[number];
+export const AI_BASES = ['evidence', 'selfReport'] as const;
+export type AiBasis = (typeof AI_BASES)[number];
+
+const AiJudgement = {
+  basis: z.enum(AI_BASES),
+  note: LocalizableSchema.optional(),
+  sourceIds: z.array(z.string()).optional(),
+  at: z.string().optional(),
+  by: z.string().optional(),
+};
+export const AiCapabilityStateSchema = z.object({ id: z.enum(AI_CAPABILITIES), level: z.number().int().min(0).max(3), ...AiJudgement }).passthrough();
+export type AiCapabilityState = z.infer<typeof AiCapabilityStateSchema>;
+export const AiAreaCheckSchema = z.object({ id: z.enum(AI_AREA_CHECKS), met: z.boolean(), ...AiJudgement }).passthrough();
+export type AiAreaCheck = z.infer<typeof AiAreaCheckSchema>;
+/** One turn of the loop: an evaluation against the area's own rubric (0–100, higher is better). */
+export const AiEvaluationSchema = z.object({
+  date: z.iso.date(),
+  score: z.number().min(0).max(100),
+  metric: LocalizableSchema,
+  note: LocalizableSchema.optional(),
+  sourceIds: z.array(z.string()).optional(),
+}).passthrough();
+export type AiEvaluation = z.infer<typeof AiEvaluationSchema>;
+export const AiAreaSchema = z.object({
+  id: z.string().min(1),
+  name: LocalizableSchema,
+  /** The solutions (pack solution ids) this area puts to work. */
+  solutionIds: z.array(z.string()).default([]),
+  approach: z.enum(['adoption', 'first']).optional(),
+  checks: z.array(AiAreaCheckSchema).default([]),
+  evaluations: z.array(AiEvaluationSchema).default([]),
+}).passthrough();
+export type AiArea = z.infer<typeof AiAreaSchema>;
+export const AiPlatformExtension = z.object({
+  capabilities: z.array(AiCapabilityStateSchema).default([]),
+  areas: z.array(AiAreaSchema).default([]),
+}).passthrough();
+export type AiPlatformExtension = z.infer<typeof AiPlatformExtension>;
+
 export function hasEngagementContext(item: EngagementsExtension['items'][number]): boolean {
   return !!(item.period || item.customer || item.customerId || item.status);
 }

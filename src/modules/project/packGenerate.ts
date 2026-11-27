@@ -22,6 +22,7 @@ import { methodKey } from './analysisText.ts';
 import { translate } from '../../i18n/core.ts';
 import { RelayError } from '../ai/relayClient.ts';
 import { completeWorkflow, workflowForPrompt, workflowGaps, workflowPrompt } from '../process/workflowDraft.ts';
+import { sanitizePlatform } from '../aifirst/model.ts';
 
 /**
  * FR-311 (D-12): build a Project pack in the app with the configured LLM.
@@ -621,6 +622,7 @@ function rules(lang: Lang): string {
       '- 課題（issue）: 資料に書かれた課題は、目的に関係するものをすべて別々の issue として出す（着手順を比べるには 2 件以上が必要）。資料にない課題は作らない。',
       `- issue の impact・feasibility は次の定義で付ける（根拠がなければ上の規則どおり暫定 3 と【仮評価】）。${ratingAnchorRule('ja')}`,
       '- extensions.delayCost.items: 資料が課題ごとに「解決しない間に失う金額（月・年あたり）」「解決までの期間」または「影響が出る時期（例: 3 年後に熟練者の 3 割が退職、来年 4 月に規制が施行）」を数字で述べている時だけ、{issueId（既存の issue の id）, valuePerMonthJpy?:{low,mode,high}（円/月。年額は 12 で割る）, durationMonths?:{low,mode,high}（か月）, impactMonths?:{low,mode,high}（今から影響が出るまでのか月。すでに出ていれば 0）, quote（その数字を含む原文）, sourceIds} を書く。資料に幅がなければ low=mode=high。数字を推定・補完しない。1 つの課題に 1 項目。',
+      '- extensions.aiPlatform（AI First Analytics、FR-386）: 資料（特に Work IQ の社内情報）が組織の AI 基盤の状態を述べている時だけ書く。capabilities は [{id, level, basis:"evidence", note（資料の要旨）, sourceIds}]。id の意味: outcomes=業務の成果と KPI の基準値・採点基準を決めるしくみ、coe=AI-CoE・推進体制、identity=ID 基盤（多要素認証・条件付きアクセス）、oversharing=過剰共有の是正・機密ラベル、evals=AI の評価・観測、copilot=Microsoft 365 Copilot の利用、devGuardrails=開発のガードレール（CI・コードスキャン）、registry=作ったアプリ・エージェントの台帳、vibeCoding=GitHub Copilot などで作る力、dataProducts=業務のデータ製品・意味モデル、grounding=社内情報の検索・根拠つきの回答、agentIdentity=エージェントの ID、modelRouting=モデルの選択と切り替え、delegation=業務プロセスのエージェントへの委任。level は 0=資料に「未導入」と明記、1=試行、2=部門で標準、3=全社。資料に書かれていない能力は書かない（未評価のまま。0 にしない）。areas は資料が AI を使う業務（ユースケース）を述べる時だけ [{id:"area-…", name, solutionIds（既存の solution の id）, approach?:"adoption|first", checks:[{id, met:true, basis:"evidence", note, sourceIds}], evaluations:[{date:"YYYY-MM-DD", score（0〜100）, metric（何を採点したか）, sourceIds}]}]。check の id: baseline=KPI の基準値、rubric=採点基準、sponsor=責任者、adoption=日常の利用、kpiLink=KPI との結びつき、built=作って使っている、dataProduct=業務のデータ製品、grounded=根拠つきの回答、delegated=業務をエージェントに任せた、hitl=人の確認点。evaluations は資料にある評価結果だけで、推定で埋めない。',
       `- 1 回の回答は ${MAX_STAGE_ENTITIES} エンティティまで。`,
       '- 回答は JSON オブジェクト 1 つだけ（説明文・コードブロックなし）。',
     ].join('\n')
@@ -647,6 +649,7 @@ function rules(lang: Lang): string {
       '- Issues: output every issue the material states that bears on the purpose as its own issue entity (ordering needs at least 2). Never create issues the material does not state.',
       `- Rate issue impact and feasibility on these definitions (without evidence, use the provisional 3 and [Provisional rating] as above). ${ratingAnchorRule('en')}`,
       '- extensions.delayCost.items: only when the material states, per issue, a number for the money lost while it stays unsolved (per month or year), the time until it is solved, or when its impact arrives (e.g. 30% of experts retire within 3 years, a regulation applies next April), write {issueId (an existing issue id), valuePerMonthJpy?:{low,mode,high} (JPY per month; divide yearly figures by 12), durationMonths?:{low,mode,high} (months), impactMonths?:{low,mode,high} (months from now until the impact arrives; 0 if it has already), quote (the wording with the number), sourceIds}. With no stated range use low=mode=high. Never estimate or fill in numbers. One item per issue.',
+      '- extensions.aiPlatform (AI First Analytics, FR-386): only when the material (above all the Work IQ internal information) states the state of the organisation\'s AI platform. capabilities: [{id, level, basis:"evidence", note (what the material says), sourceIds}]. Ids: outcomes = how business outcomes, KPI baselines and scoring rubrics are set; coe = AI-CoE / programme team; identity = identity foundation (MFA, Conditional Access); oversharing = oversharing remediation and sensitivity labels; evals = AI evaluation and observability; copilot = use of Microsoft 365 Copilot; devGuardrails = development guardrails (CI, code scanning); registry = inventory of the apps and agents built; vibeCoding = building with GitHub Copilot and the like; dataProducts = business data products and semantic models; grounding = search over internal information and grounded answers; agentIdentity = identities for agents; modelRouting = choosing and switching models; delegation = business processes delegated to agents. level 0 = the material says it is absent, 1 = pilot, 2 = standard in a unit, 3 = enterprise-wide. Never write a capability the material does not describe (leave it unassessed; never 0). areas only when the material names business areas (use cases) that use AI: [{id:"area-…", name, solutionIds (existing solution ids), approach?:"adoption|first", checks:[{id, met:true, basis:"evidence", note, sourceIds}], evaluations:[{date:"YYYY-MM-DD", score (0-100), metric (what was scored), sourceIds}]}]. Check ids: baseline = KPI baseline, rubric = scoring rubric, sponsor = accountable owner, adoption = used daily, kpiLink = linked to a KPI, built = built and in use, dataProduct = the area\'s data product, grounded = grounded answers, delegated = work delegated to an agent, hitl = human checkpoints. evaluations only as stated; never estimate them.',
       `- At most ${MAX_STAGE_ENTITIES} entities per answer.`,
       '- Answer with a single JSON object only (no prose, no code fences).',
     ].join('\n');
@@ -883,6 +886,14 @@ export function repairExtensions(pack: Pack): Pack {
   for (const e of entitiesOf(pack)) for (const f of LINK_LISTS[String(e.kind)] ?? []) if (e[f] === undefined || e[f] === null) e[f] = [];
   if (!isObj(pack.extensions)) return pack;
   const ext = pack.extensions;
+  if (ext.aiPlatform !== undefined) {
+    // FR-386: keep the stated assessments and drop only what points nowhere (unknown capability, source or solution).
+    const ents = entitiesOf(pack);
+    const ofKind = (kind: string) => new Set(ents.filter((e) => e.kind === kind).map((e) => String(e.id)));
+    const clean = sanitizePlatform(ext.aiPlatform, { sourceIds: ofKind('source'), solutionIds: ofKind('solution') });
+    if (clean && (clean.capabilities.length || clean.areas.length)) ext.aiPlatform = clean;
+    else delete ext.aiPlatform;
+  }
   const ids = (list: unknown, prefix: string, reserved: string[] = []) => {
     if (!Array.isArray(list)) return;
     const used = new Set([...reserved, ...list.filter(isObj).map((x) => x.id).filter((x): x is string => typeof x === 'string' && x !== '')]);

@@ -279,7 +279,7 @@ function CollectionCoverage({ raw }: { raw: unknown }) {
     company: 'proj.pack.company', regions: 'proj.pack.coverage.regions', flows: 'nav.flows',
     optimization: 'nav.optimize', brand: 'ops.title', dataCatalog: 'uc.nav.catalog',
     glossary: 'proj.pack.coverage.glossary', workflow: 'nav.process',
-    architecture: 'proj.pack.coverage.architecture', coreObject: 'proj.pack.coverage.coreObject',
+    architecture: 'proj.pack.coverage.architecture', coreObject: 'proj.pack.coverage.coreObject', aiPlatform: 'aif.nav',
   } as const;
   return (
     <details className="pack-details" data-testid="pack-coverage">

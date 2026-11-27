@@ -19,9 +19,9 @@ test.describe('FR-379 collapsible nav rail', () => {
     await expect(toggle).toBeFocused();
     await expect.poll(async () => (await main.boundingBox())!.width).toBeGreaterThan(before + 120);
     expect((await nav.boundingBox())!.width).toBeLessThanOrEqual(60);
-    await expect(nav.getByRole('link', { name: 'Resource optimization' })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('link', { name: 'Simulation' })).toHaveAttribute('aria-current', 'page');
     await expect(nav.getByRole('heading', { name: 'Analyze' })).toBeAttached();
-    expect((await nav.getByText('Resource optimization').boundingBox())!.width).toBeLessThanOrEqual(1);
+    expect((await nav.getByText('Simulation').boundingBox())!.width).toBeLessThanOrEqual(1);
     await nav.getByRole('link', { name: 'Map' }).hover();
     await expect(page.getByRole('tooltip').filter({ hasText: /^Map$/ })).toBeVisible();
     expect(await scan(page)).toEqual([]);

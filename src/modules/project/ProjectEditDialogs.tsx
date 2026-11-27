@@ -31,7 +31,7 @@ export function CompanyEditDialog({ company, onClose }: { company: Company | nul
   };
   return (
     <Dialog open={company !== null} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface data-testid="proj-company-dialog">
+      <DialogSurface className="form-surface" data-testid="proj-company-dialog">
         <form onSubmit={(e) => { e.preventDefault(); save(); }}>
           <DialogBody>
             <DialogTitle>{t('proj.company.editTitle', { name: company?.name ?? '' })}</DialogTitle>
@@ -91,7 +91,7 @@ export function ProjectEditDialog({ project, onClose }: { project: Project | nul
   const company = project ? companies.find((c) => c.id === project.companyId)?.name ?? '' : '';
   return (
     <Dialog open={project !== null} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface data-testid="proj-edit-dialog">
+      <DialogSurface className="form-surface" data-testid="proj-edit-dialog">
         <form onSubmit={(e) => { e.preventDefault(); save(); }}>
           <DialogBody>
             <DialogTitle>{t('proj.edit.title', { name: `${company} / ${project?.name ?? ''}` })}</DialogTitle>

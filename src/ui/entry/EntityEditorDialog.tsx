@@ -314,7 +314,7 @@ export function EntityEditorDialog({ kind, id = null, onClose, onSaved, depth = 
 
   return (
     <Dialog open={kind !== null} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface data-testid={depth ? `entry-dialog-${depth}` : 'entry-dialog'} className="entry-surface">
+      <DialogSurface data-testid={depth ? `entry-dialog-${depth}` : 'entry-dialog'} className="form-surface">
         <form onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void save(); }}>
           <DialogBody>
             <DialogTitle>{title}</DialogTitle>

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Caption1, Label, MessageBar, MessageBarBody, Slider, Spinner } from '@fluentui/react-components';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Badge, Button, Caption1, Field, Label, MessageBar, MessageBarBody, Select, Slider, Spinner } from '@fluentui/react-components';
 import { Flash24Regular } from '@fluentui/react-icons';
 import { apiGet } from '../api/client.ts';
 import { getEntity, loaded } from '../data/pack.ts';
@@ -7,7 +7,24 @@ import type { OptimizationInput } from '../data/schema.ts';
 import type { OptimizationResult } from '../domain/optimize.ts';
 import { useI18n } from '../i18n/index.ts';
 import { useSettings } from '../state/settings.ts';
-import { replaceQuery, useRoute } from '../state/router.ts';
+import { hrefFor, replaceQuery, useRoute } from '../state/router.ts';
+import { IMPROVEMENT_STEPS, useActiveProject } from '../state/projects.ts';
+import { isHidden } from '../ui/cardSpecs.ts';
+import { deliverableNameKey, todoLabel, useCheckContext, usePaybackLimit } from '../modules/project/deliverablesUi.tsx';
+import { overviewContext } from '../modules/project/overviewModel.ts';
+import { evaluateStep } from '../modules/project/deliverables.ts';
+import { KpiWhatIfPanel } from '../modules/project/StepCockpit.tsx';
+import { WhatIfPanel } from '../modules/project/WhatIfPanel.tsx';
+import { issueCandidates, solutionCandidates } from '../modules/project/whatIf.ts';
+import { BASE_KPI_LEVER } from '../modules/project/kpiWhatIf.ts';
+import { SimulationTimeline } from '../modules/project/SimulationTimeline.tsx';
+import { useActionPlan } from '../modules/project/cockpitStore.ts';
+import { PriorityRobustnessPanel } from '../modules/project/PriorityRobustness.tsx';
+import { CostOfDelayPanel } from '../modules/project/CostOfDelay.tsx';
+import { DecisionSupport, useDecisionReport } from '../modules/project/DecisionSupport.tsx';
+import { ValueModelPanel } from '../modules/project/ValuePanel.tsx';
+import { SimulationPanel } from '../modules/project/StrategyPanels.tsx';
+import { TaskImpactSimulation, TaskWorkbench } from '../modules/project/DeliverablesScreen.tsx';
 import { sound } from '../audio/sound.ts';
 import { BeforeAfterChart, type Comparison } from '../charts/BeforeAfterChart.tsx';
 import { PageHeader, Panel } from '../ui/Panel.tsx';
@@ -30,13 +47,67 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
  * has optimization input (FR-241: a pack without it never shows invented plant numbers).
  */
 export function Optimize() {
-  const { t } = useI18n();
-  const input = loaded.pack.optimization;
+  const { t, tx } = useI18n();
+  const ctx = useCheckContext();
+  const route = useRoute();
+  const { step: activeStep } = useActiveProject();
+  const step = IMPROVEMENT_STEPS.find(s => s === route.query.get('step')) ?? activeStep;
+  const tabs = ['time', 'issues', 'kpi', 'solutions', 'task'] as const;
+  const tab = tabs.find(s => s === route.query.get('tab')) ?? 'time';
+  const audience = useSettings(s => s.audience);
+  const visible = useCallback((id: string) => { const e = ctx.pack.byId.get(id); return !e || !isHidden(e, audience); }, [ctx, audience]);
+  const nameOf = (id: string) => { const e = ctx.pack.byId.get(id); return !e ? id : visible(id) ? tx(e.name) : t('proj.dash.chart.hidden'); };
+  const report = useDecisionReport(ctx.pack.pack.extensions);
+  const setPlan = useActionPlan(s => s.set);
+  const [lever, setLever] = useState(BASE_KPI_LEVER);
+  const [date, setDate] = useState(ctx.today);
+  const projectedCtx = useMemo(() => overviewContext(ctx, audience), [ctx, audience]);
+  const clock = { ctx: projectedCtx, visible, lever, date, setDate };
+  const input = ctx.pack.pack.optimization;
+  const tasks = tab === 'task' ? evaluateStep(step, ctx) : [];
+  const task = tasks.find(r => r.todo.id === route.query.get('task'));
+  const limit = usePaybackLimit();
   return (
     <div className="screen screen-optimize">
-      <PageHeader title={t('optimize.title')} subtitle={t('optimize.subtitle')} />
-      <ResourceWorkbench />
-      {input && <OptimizeBody input={input} />}
+      <PageHeader title={t('nav.optimize')} subtitle={t('ck.sim.intro')} />
+      <nav className="simulation-nav span-full" aria-label={t('nav.optimize')}>
+        {tabs.map(key => <a key={key} aria-current={key === tab ? 'page' : undefined} href={hrefFor('/optimize', { tab: key, step, task: key === 'task' ? route.query.get('task') ?? undefined : undefined })}>{t(`ck.sim.tab.${key}`)}</a>)}
+      </nav>
+      <a href={hrefFor('/step', { step })}>{t('ck.sim.back')}</a>
+      {tab === 'time' && <>
+        <SimulationTimeline {...clock}>{(date, share) => <>
+          <header className="span-full"><h2>{t('optimize.title')}</h2><p>{t('optimize.subtitle')}</p></header>
+          <ResourceWorkbench date={date} share={share} />
+        </>}</SimulationTimeline>
+        {input && <OptimizeBody input={input} />}
+      </>}
+      {tab === 'issues' && <>
+        <WhatIfPanel kind="issue" cands={issueCandidates(ctx, visible)} nameOf={nameOf} />
+        <PriorityRobustnessPanel step={step} ctx={ctx} /><CostOfDelayPanel step={step} ctx={ctx} />
+      </>}
+      {tab === 'kpi' && <>
+        <SimulationTimeline {...clock} />
+        <KpiWhatIfPanel ctx={projectedCtx} nameOf={nameOf} lever={lever} setLever={setLever} />
+        <SimulationPanel ctx={projectedCtx} />
+        <a href={hrefFor('/deliverables', { step: 'solution', target: 'sol-types' })}>{t('dlv.task.simLink')}</a>
+        <DecisionSupport step="kpi" report={report} visible={!!report && visible(report.sourceId)} gateOnly />
+      </>}
+      {tab === 'solutions' && <>
+        <WhatIfPanel kind="solution" cands={solutionCandidates(ctx, visible)} nameOf={nameOf} useLabel="ck.plan.useFunded" onUse={ids => setPlan(p => ({ ...p, selected: ids }))} />
+        <ValueModelPanel ctx={ctx} nameOf={nameOf} />
+      </>}
+      {tab === 'task' && <>
+        <div className="proj-form-row span-full">
+          <Field label={t('ck.views')}><Select value={step} onChange={(_, d) => replaceQuery({ step: d.value, task: undefined })}>
+            {IMPROVEMENT_STEPS.map(s => <option key={s} value={s}>{t(deliverableNameKey(s))}</option>)}
+          </Select></Field>
+          <Field label={t('dlv.task.workbench')}><Select value={task?.todo.id ?? ''} onChange={(_, d) => replaceQuery({ task: d.value })}>
+            <option value="">{t('dlv.impact.title')}</option>
+            {tasks.map(r => <option key={r.todo.id} value={r.todo.id}>{todoLabel(t, r.todo.id, limit)}</option>)}
+          </Select></Field>
+        </div>
+        {task ? <TaskWorkbench key={task.todo.id} result={task} ctx={ctx} step={step} /> : <TaskImpactSimulation />}
+      </>}
     </div>
   );
 }

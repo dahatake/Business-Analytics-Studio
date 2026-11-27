@@ -1,9 +1,9 @@
 import { useMemo, type KeyboardEvent } from 'react';
 import { useI18n } from '../../i18n/index.ts';
-import { linkKey, type Flow, type ResourceMetrics, type Scenario } from '../../domain/resourceModel.ts';
+import { linkKey, measureFlows, transitionFlows, type Flow, type Scenario } from '../../domain/resourceModel.ts';
 
 export type Selection = { type: 'pool' | 'demand'; id: string } | null;
-export type View = 'before' | 'after';
+export type View = 'before' | 'after' | 'timeline';
 
 const W = 960;
 const NODE_W = 248;
@@ -20,6 +20,7 @@ interface Props {
   selected: Selection;
   onSelect: (s: Selection) => void;
   unit: string;
+  share: number;
 }
 
 /**
@@ -27,11 +28,11 @@ interface Props {
  * optimum is always rendered with a stable key, so switching the view animates widths instead of redrawing. Selecting a
  * node highlights its flows, the nodes at the other end and, dashed, pack-named owners that receive nothing.
  */
-export function ResourceFlowMap({ scenario, view, selected, onSelect, unit }: Props) {
+export function ResourceFlowMap({ scenario, view, selected, onSelect, unit, share }: Props) {
   const { t, tx, fmt } = useI18n();
   const { model } = scenario;
-  const flows = view === 'before' ? scenario.before : scenario.after;
-  const metrics: ResourceMetrics = view === 'before' ? scenario.beforeMetrics : scenario.afterMetrics;
+  const flows = useMemo(() => transitionFlows(scenario, view === 'timeline' ? share : view === 'before' ? 0 : 1), [scenario, view, share]);
+  const metrics = useMemo(() => measureFlows(model, flows), [model, flows]);
   const rows = Math.max(model.pools.length, model.demands.length, 1);
   const H = TOP + rows * (ROW_H + GAP) + 8;
   const yOf = (index: number, count: number) => TOP + ((rows - count) * (ROW_H + GAP)) / 2 + index * (ROW_H + GAP);
@@ -81,10 +82,13 @@ export function ResourceFlowMap({ scenario, view, selected, onSelect, unit }: Pr
     const x1 = NODE_W, x2 = W - NODE_W, mid = (x1 + x2) / 2;
     return `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
   };
-  const viewLabel = t(view === 'before' ? 'res.view.before' : 'res.view.after');
+  const viewLabel = t(view === 'timeline' ? 'ck.sim.time' : view === 'before' ? 'res.view.before' : 'res.view.after');
 
   return (
     <div className={`res-map${related ? ' has-selection' : ''}`} data-view={view}>
+      {view === 'timeline' && <p data-testid="resource-period-metrics">{t('ck.sim.allocation', {
+        served: fmt.number(metrics.served), need: fmt.number(metrics.need), unit, overloaded: metrics.overloaded,
+      })}{metrics.costJpy !== undefined && ` · ${t('optimize.metric.cost')}: ${fmt.yen(metrics.costJpy)}`}</p>}
       <svg
         viewBox={`0 0 ${W} ${H}`}
         role="group"

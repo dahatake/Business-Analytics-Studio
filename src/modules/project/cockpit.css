@@ -119,3 +119,6 @@
   .ck-wi-results { position: sticky; top: var(--spacingVerticalL); }
 }
 
+.simulation-nav { display: flex; flex-wrap: wrap; gap: var(--spacingHorizontalS); }
+.simulation-nav a { padding: var(--spacingVerticalS) var(--spacingHorizontalM); border-radius: var(--borderRadiusMedium); }
+.simulation-nav a[aria-current="page"] { background: var(--colorBrandBackground2); color: var(--colorBrandForeground2); font-weight: var(--fontWeightSemibold); }

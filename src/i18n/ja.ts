@@ -62,7 +62,7 @@ export const coreJa = {
   'nav.map': '地図',
   'nav.flows': '業務と物の流れ',
   'nav.plan': '計画',
-  'nav.optimize': 'リソースの最適化',
+  'nav.optimize': 'シミュレーション',
   'nav.directory': '一覧',
   'nav.settings': '設定',
 

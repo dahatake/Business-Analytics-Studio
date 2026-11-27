@@ -844,6 +844,7 @@ test.describe('step deliverables and to-do band', () => {
     await expect(panel.getByTestId('dlv-task-what-if-result')).toContainText('未記入 10 項目');
     await panel.getByTestId('dlv-task-what-if').fill('仮入力 16 日');
     await expect(panel.getByTestId('dlv-task-what-if-result')).toContainText('未記入 9 項目');
+    await page.goto('/#/deliverables?step=asis');
     await expect(page.getByTestId('dlv-field-problem')).toHaveValue('');
     await page.reload();
     await expect(page.getByTestId('dlv-field-problem')).toHaveValue('');
@@ -854,13 +855,14 @@ test.describe('step deliverables and to-do band', () => {
     await go(page, '/home');
     for (const [step, definition] of Object.entries(STEP_DEFS)) {
       for (const todo of definition.todos) {
-        await page.evaluate(({ step, id }) => { location.hash = `/deliverables?step=${step}&task=${id}&target=dlv-task-workbench`; }, { step, id: todo.id });
+        await page.evaluate(({ step, id }) => { location.hash = `/optimize?tab=task&step=${step}&task=${id}&target=dlv-task-workbench`; }, { step, id: todo.id });
         const panel = page.getByTestId('dlv-task-workbench');
         await expect(panel.getByTestId(`dlv-todo-${todo.id}`)).toBeVisible();
         await expect(panel.getByTestId('dlv-impact-simulation')).toBeVisible();
       }
     }
     await page.evaluate(() => { location.hash = '/deliverables?step=asis&task=asis-doc&target=dlv-task-workbench'; });
+    await expect(page).toHaveURL(/#\/optimize\?/);
     const sim = page.getByTestId('dlv-impact-simulation');
     for (const [key, value] of Object.entries({ baselineBenefit: '1000', baselineCost: '200', benefit: '1800', cost: '300', investment: '1400', years: '3' })) {
       await sim.getByTestId(`dlv-impact-${key}`).fill(value);
@@ -1165,14 +1167,24 @@ test.describe('step deliverables and to-do band', () => {
     await page.getByTestId('sol-c-ramp').fill('2026-12-01');
     await page.getByTestId('sol-c-full').fill('2027-01-31');
     await page.getByTestId('sol-c-save').click();
+    await page.locator('#sol-sim').click();
     await expect(page.getByTestId('sol-sim-kpi-co2')).toBeVisible();
     await expect(page.getByTestId('sol-sim-prob-kpi-co2')).toHaveText(/%/);
+    const time = page.getByTestId('sim-time');
+    await time.getByRole('combobox').selectOption('kpi-co2');
+    await expect(time).toContainText('最初の改善日：2026-12-02');
+    await time.getByTestId('sim-date').press('End');
+    await time.getByText('このKPIに寄与する施策と効果の発現割合').click();
+    await expect(time).toContainText('切替拠点');
+    await expect(time).toContainText('100%');
+    await page.goBack();
     await expect(page.getByTestId('sol-thread-solution-sol-energy-twin')).toBeVisible();
     await page.getByTestId('dlv-tab-deliverable').click();
     await expect(page.getByTestId('sol-doc-state-sol-energy-twin')).toBeVisible();
     expect(await scan(page)).toEqual([]);
     await page.reload();
     await page.getByTestId('dlv-tab-solution').click();
+    await page.locator('#sol-sim').click();
     await expect(page.getByTestId('sol-sim-kpi-co2')).toBeVisible();
   });
 
@@ -1271,7 +1283,9 @@ test.describe('step handoff and Copilot form drafts', () => {
     await expect(page.getByTestId('sol-c-lever')).not.toHaveValue('');
     await expect(page.getByTestId('sol-c-basis')).toHaveValue('assumption');
     await page.getByTestId('sol-c-save').click();
+    await page.locator('#sol-sim').click();
     await expect(page.getByTestId('sol-sim-kpi-co2')).toBeVisible();
+    await page.goBack();
 
     await page.getByTestId('dlv-tab-deliverable').click();
     const doc = page.getByTestId('sol-doc-sol-energy-twin');

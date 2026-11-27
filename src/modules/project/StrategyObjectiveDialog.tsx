@@ -48,7 +48,7 @@ export function ObjectiveDialog({ company, draft, note = null, onClose }: {
   };
   return (
     <Dialog open modalType="modal" onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface aria-describedby="stg-obj-lead">
+      <DialogSurface className="form-surface" aria-describedby="stg-obj-lead">
         <form noValidate onSubmit={(e) => { e.preventDefault(); save(); }} data-testid="strategy-objective-dialog">
           <DialogBody>
             <DialogTitle>{t(draft ? 'stg.obj.titleDraft' : 'stg.obj.title')}</DialogTitle>

@@ -20,8 +20,7 @@ import { inputCount } from './stepDashboard.ts';
 import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
 import { DataFillPanel } from './DataFillPanel.tsx';
 import { PriorityBriefPanel } from './PriorityBrief.tsx';
-import { PriorityRobustnessPanel } from './PriorityRobustness.tsx';
-import { CostOfDelayPanel } from './CostOfDelay.tsx';
+import { SimulationLink } from './SimulationLink.tsx';
 import { useDeliverables, useFieldDrafts, useProjTransient, useProjUi } from './stores.ts';
 import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyThreadPanel } from './StrategyPanels.tsx';
 import { ChangeLogPanel, EvidencePanel, IssueSignalsPanel, RequirementLedgerPanel } from './RequirementsPanels.tsx';
@@ -32,7 +31,7 @@ const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_S
 
 type ImpactField = Exclude<keyof ImpactInputs, 'years'>;
 
-function TaskImpactSimulation() {
+export function TaskImpactSimulation() {
   const { t, fmt } = useI18n();
   const [values, setValues] = useState<ImpactInputs>({ baselineBenefit: '', baselineCost: '', benefit: '', cost: '', investment: '', years: '' });
   const [alternative, setAlternative] = useState({ benefit: '', cost: '', investment: '' });
@@ -85,7 +84,7 @@ function TaskImpactSimulation() {
   );
 }
 
-function TaskWorkbench({ result, ctx, step }: { result: TodoResult; ctx: CheckContext; step: ImprovementStep }) {
+export function TaskWorkbench({ result, ctx, step }: { result: TodoResult; ctx: CheckContext; step: ImprovementStep }) {
   const { t, lang } = useI18n();
   const audience = useSettings((s) => s.audience);
   const ref = result.outcome?.refs?.find((r) => r.type === 'field');
@@ -148,7 +147,7 @@ function TaskWorkbench({ result, ctx, step }: { result: TodoResult; ctx: CheckCo
       )}
       {canSimulate && simulated && <p data-testid="dlv-task-what-if-result">{t('dlv.task.whatIfResult', { result: simulated.outcome ? t(resultKey(simulated.outcome.code), simulated.outcome.vars) : t(simulated.done ? 'dlv.status.done' : 'dlv.status.todo') })}</p>}
       {!canSimulate && <p>{t('dlv.task.whatIfUnavailable')}</p>}
-      <a href={hrefFor('/deliverables', { step: 'solution', target: 'sol-sim' })} onClick={revisitRouteTarget}>{t('dlv.task.simLink')}</a>
+      <a href={hrefFor('/optimize', { step, tab: 'kpi' })}>{t('dlv.task.simLink')}</a>
       <TaskImpactSimulation />
     </Panel>
   );
@@ -221,6 +220,10 @@ export function DeliverablesScreen() {
   const doc = ctx.deliverables.docs[step] ?? {};
   const limit = usePaybackLimit();
   const selectedTask = results.find((r) => r.todo.id === route.query.get('task'));
+  useEffect(() => {
+    if (selectedTask) window.location.replace(hrefFor('/optimize', { step, tab: 'task', task: selectedTask.todo.id, target: 'dlv-task-workbench' }));
+    else if (route.query.get('target') === 'sol-sim') window.location.replace(hrefFor('/optimize', { step, tab: 'kpi', target: 'sol-sim' }));
+  }, [route, selectedTask, step]);
 
   const exportMd = () => {
     const lines = [
@@ -271,12 +274,11 @@ export function DeliverablesScreen() {
       </section>
 
       <PriorityBriefPanel step={step} ctx={ctx} />
-      {(step === 'asis' || step === 'tobe') && <PriorityRobustnessPanel step={step} ctx={ctx} />}
-      {(step === 'asis' || step === 'tobe') && <CostOfDelayPanel step={step} ctx={ctx} />}
+      {(step === 'asis' || step === 'tobe') && <SimulationLink step={step} />}
       <DiscoveryAdvicePanel step={step} ctx={ctx} />
       <DataFillPanel ctx={ctx} />
 
-      {selectedTask && <TaskWorkbench key={selectedTask.todo.id} result={selectedTask} ctx={ctx} step={step} />}
+      {selectedTask && <a id="dlv-task-workbench" href={hrefFor('/optimize', { step, tab: 'task', task: selectedTask.todo.id })}>{t('ck.sim.open')}</a>}
 
       <Panel title={t('dlv.screen.exit')} testId="dlv-exit" className="dlv-exit">
         <p data-testid="dlv-screen-progress">{p.complete ? t('dlv.band.complete') : t('dlv.band.progress', { done: p.done, total: p.total })}</p>

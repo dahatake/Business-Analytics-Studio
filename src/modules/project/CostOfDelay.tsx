@@ -370,7 +370,7 @@ function DelayEstimateDialog({ ctx, issueId, name, onClose }: { ctx: CheckContex
   const savedDate = saved ? fmt.date(todayIn(PARAMS.timeZone, new Date(saved.at))) : '';
   return (
     <Dialog open onOpenChange={(_, x) => { if (!x.open) onClose(); }}>
-      <DialogSurface data-testid="cod-est-dialog">
+      <DialogSurface className="form-surface" data-testid="cod-est-dialog">
         <form noValidate onSubmit={(e) => { e.preventDefault(); save(); }}>
           <DialogBody>
             <DialogTitle>{t('proj.cod.est.title', { issue: name })}</DialogTitle>

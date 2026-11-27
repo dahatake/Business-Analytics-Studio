@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Badge, Button, Field, Slider } from '@fluentui/react-components';
 import { ArrowReset20Regular } from '@fluentui/react-icons';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
@@ -13,8 +13,8 @@ import { buildStepBrief } from './stepBrief.ts';
 import { ChartFigure, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, type StepDashboard } from './stepDashboard.ts';
 import { usePaybackLimit } from './deliverablesUi.tsx';
-import { WhatIfPanel } from './WhatIfPanel.tsx';
-import { issueCandidates, solutionCandidates } from './whatIf.ts';
+import { SimulationLink } from './SimulationLink.tsx';
+import { solutionCandidates } from './whatIf.ts';
 import { BASE_KPI_LEVER, kpiWhatIf, type KpiLever } from './kpiWhatIf.ts';
 import { ActionPlanPanel, SolutionActionsPanel } from './ActionPlanPanel.tsx';
 import { normalizeActionPlan, useActionPlan } from './cockpitStore.ts';
@@ -66,9 +66,8 @@ function CockpitSummary({ d, ctx, audience, cards }: { d: StepDashboard; ctx: Ap
   );
 }
 
-function KpiWhatIfPanel({ ctx, nameOf }: { ctx: AppCheckContext; nameOf: NameOf }) {
+export function KpiWhatIfPanel({ ctx, nameOf, lever, setLever }: { ctx: AppCheckContext; nameOf: NameOf; lever: KpiLever; setLever: React.Dispatch<React.SetStateAction<KpiLever>> }) {
   const { t, fmt, lang } = useI18n();
-  const [lever, setLever] = useState<KpiLever>(BASE_KPI_LEVER);
   const kpis = useMemo(() => ctx.kpi.kpis.filter((k) => Number.isFinite(k.baseline) && Number.isFinite(k.current) && Number.isFinite(k.target) && k.target !== k.baseline && /^\d{4}-\d{2}-\d{2}$/.test(k.deadline)), [ctx]);
   const contributions = ctx.strategy.contributions;
   const hasSim = contributions.some((c) => kpis.some((k) => k.id === c.kpiId));
@@ -275,20 +274,14 @@ export function StepCockpit({ step, d, ctx, audience, visible, nameOf }: {
   step: ImprovementStep; d: StepDashboard; ctx: AppCheckContext; audience: Audience; visible: Visible; nameOf: NameOf;
 }) {
   const cards = useCards(d, visible, nameOf);
-  const issues = useMemo(() => (step === 'asis' || step === 'tobe' ? issueCandidates(ctx, visible) : []), [step, ctx, visible]);
   const solutions = useMemo(() => (step === 'solution' || step === 'deliverable' ? solutionCandidates(ctx, visible) : []), [step, ctx, visible]);
-  const setPlan = useActionPlan((s) => s.set);
   return (
     <>
       <CockpitSummary d={d} ctx={ctx} audience={audience} cards={cards} />
       {step === 'deliverable' ? <SolutionActionsPanel ctx={ctx} visible={visible} nameOf={nameOf} cands={solutions} /> : <PrimaryData step={step} d={d} ctx={ctx} nameOf={nameOf} />}
-      {(step === 'asis' || step === 'tobe') && <WhatIfPanel kind="issue" cands={issues} nameOf={nameOf} />}
-      {step === 'kpi' && <KpiWhatIfPanel ctx={ctx} nameOf={nameOf} />}
-      {step === 'solution' && <WhatIfPanel kind="solution" cands={solutions} nameOf={nameOf} />}
+      <SimulationLink step={step} />
       {step === 'deliverable' && (
         <>
-          <WhatIfPanel kind="solution" cands={solutions} nameOf={nameOf} useLabel="ck.plan.useFunded"
-            onUse={(ids) => setPlan((p) => ({ ...p, selected: ids }))} />
           <ActionPlanPanel ctx={ctx} visible={visible} nameOf={nameOf} cands={solutions} />
         </>
       )}

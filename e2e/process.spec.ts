@@ -97,6 +97,24 @@ test.describe('FR-380 business process', () => {
     await expect(page.getByTestId('bp-origin-edited')).toHaveCount(0);
   });
 
+  test('the step editor is as wide as the other data-entry dialogs and never scrolls sideways', async ({ page }) => {
+    await open(page, '/process?state=toBe&level=steps&sel=st-ship', { lang: 'ja' });
+    for (const width of [1600, 1280, 800]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.getByTestId('bp-edit-step').click();
+      const editor = page.getByTestId('bp-editor');
+      await expect(editor).toBeVisible();
+      const box = (await editor.boundingBox())!;
+      expect(box.width).toBeGreaterThan(width > 1000 ? width * 0.79 : width - 40);
+      expect(box.width).toBeLessThanOrEqual(width > 1000 ? width * 0.8 + 1 : width - 31);
+      const overflow = await editor.locator('.bp-ed-content').evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+      expect(await scan(page, '[data-testid="bp-editor"]')).toEqual([]);
+      await editor.getByRole('button', { name: 'キャンセル', exact: true }).click();
+      await expect(editor).toHaveCount(0);
+    }
+  });
+
   for (const lang of ['ja', 'en'] as const) {
     test(`passes accessibility checks in every state (${lang})`, async ({ page }) => {
       for (const route of ['/process', '/process?state=toBe&level=steps', '/process?state=compare&level=detail&sel=st-plan', '/process?tab=table']) {

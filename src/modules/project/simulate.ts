@@ -89,7 +89,7 @@ export function realisedShare(rampStart: string, fullEffect: string, at: string)
   return (t - s) / (f - s);
 }
 
-const direction = (k: KpiTarget) => Math.sign(k.target - k.current) || Math.sign(k.target - k.baseline) || 1;
+export const improvementDirection = (k: KpiTarget) => Math.sign(k.target - k.baseline) || Math.sign(k.target - k.current) || 1;
 
 function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return NaN;
@@ -127,7 +127,7 @@ export function simulate(kpis: KpiTarget[], contributions: ContributionInput[], 
     const all = contributions.filter((c) => c.kpiId === k.id);
     if (all.length === 0) continue;
     const valid = all.filter((c) => validRange(c.amount) && validRange(c.effectPerUnit));
-    const dir = direction(k);
+    const dir = improvementDirection(k);
     const shares = valid.map((c) => realisedShare(c.rampStart, c.fullEffect, k.deadline));
     const rnd = mulberry32((opts.seed ?? 1) ^ hash(k.id));
     const values: number[] = [];

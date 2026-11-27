@@ -199,12 +199,13 @@
 .bp-io-status.is-missing { background: var(--colorPaletteRedBackground2); color: var(--colorPaletteRedForeground2); }
 
 /* Editor */
-.bp-editor { max-width: min(920px, 96vw); }
 .bp-ed-content { display: flex; flex-direction: column; gap: 16px; }
 .bp-ed-content section { display: flex; flex-direction: column; gap: 8px; }
 .bp-ed-content h3 { margin: 0; font-size: var(--fontSizeBase400); }
 .bp-ed-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
 .bp-ed-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; align-items: end; }
+/* Grid items default to min-width:auto, so the inputs' intrinsic width would push columns past the dialog edge. */
+.bp-ed-grid > *, .bp-ed-metrics > *, .bp-ed-row > * { min-width: 0; }
 .bp-ed-rows, .bp-ed-next { border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .bp-ed-next { flex-direction: row; flex-wrap: wrap; max-height: 160px; overflow: auto; }
 .bp-ed-row { display: grid; grid-template-columns: minmax(160px, 2fr) minmax(110px, 1fr) minmax(110px, 1fr) auto; gap: 6px; align-items: center; }

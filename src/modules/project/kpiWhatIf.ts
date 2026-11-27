@@ -37,6 +37,7 @@ export interface KpiWhatIfRow {
 }
 
 export function addMonths(iso: string, months: number): string {
+  if (!months) return iso;
   const d = new Date(`${iso}T00:00:00Z`);
   if (!Number.isFinite(d.getTime())) return iso;
   const day = d.getUTCDate();
@@ -49,7 +50,7 @@ export function addMonths(iso: string, months: number): string {
 
 const monthsBetween = (from: string, to: string) => (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / (30.4375 * 86_400_000);
 
-export function kpiWhatIf(kpis: KpiInput[], contributions: ContributionInput[], today: string, lever: KpiLever): KpiWhatIfRow[] {
+export function scenarioInputs<K extends KpiInput>(kpis: K[], contributions: ContributionInput[], lever: KpiLever) {
   const moved = kpis.map((k) => ({
     ...k,
     target: k.target + lever.stretch * (k.target - k.baseline),
@@ -61,6 +62,11 @@ export function kpiWhatIf(kpis: KpiInput[], contributions: ContributionInput[], 
     rampStart: addMonths(c.rampStart, lever.delayMonths),
     fullEffect: addMonths(c.fullEffect, lever.delayMonths),
   }));
+  return { moved, contrib };
+}
+
+export function kpiWhatIf(kpis: KpiInput[], contributions: ContributionInput[], today: string, lever: KpiLever): KpiWhatIfRow[] {
+  const { moved, contrib } = scenarioInputs(kpis, contributions, lever);
   const sims = new Map(simulate(moved, contrib).map((s) => [s.kpiId, s]));
   return moved.map((k) => {
     const dir = Math.sign(k.target - k.baseline) || 1;

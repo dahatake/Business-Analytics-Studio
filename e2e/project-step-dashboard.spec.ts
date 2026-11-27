@@ -235,6 +235,7 @@ test.describe('issue qualification (FR-347)', () => {
 test.describe('Order by cost of delay, the data each method needs, and a person\'s estimate (FR-365)', () => {
   test('As-is compares CD3 with impact × feasibility, and an estimate changes the order and is kept', async ({ page }) => {
     await go(page, '/step?step=asis&view=details');
+    await page.getByTestId('simulation-link').click();
     const panel = page.getByTestId('step-cod');
     await expect(panel).toBeVisible();
     const verdict = panel.getByTestId('step-cod-verdict');
@@ -278,6 +279,7 @@ test.describe('Order by cost of delay, the data each method needs, and a person\
 
   test('the panel and the estimate dialog pass axe, in English with no Japanese', async ({ page }) => {
     await go(page, '/step?step=asis&view=details', 'en');
+    await page.getByTestId('simulation-link').click();
     const panel = page.getByTestId('step-cod');
     await expect(panel).toContainText('Order by cost of delay');
     await panel.getByTestId('step-cod-sim').locator('summary').click();
@@ -355,6 +357,7 @@ test.describe('Khalsa advice on every step screen (FR-351)', () => {
 test.describe('Firmness of the issue order and the one check worth making next (FR-364)', () => {
   test('As-is and To-be show rank acceptability, and the simulation re-ranks without saving', async ({ page }) => {
     await go(page, '/step?step=asis&view=details');
+    await page.getByTestId('simulation-link').click();
     const panel = page.getByTestId('step-robust');
     await expect(panel).toBeVisible();
     const verdict = panel.getByTestId('step-robust-verdict');
@@ -373,8 +376,10 @@ test.describe('Firmness of the issue order and the one check worth making next (
     await page.reload();
     await expect(page.getByTestId('step-robust-verdict')).toHaveAttribute('data-pick', 'issue-lead-time');
     await page.goto('/#/step?step=tobe&view=details');
+    await page.getByTestId('simulation-link').click();
     await expect(page.getByTestId('step-robust')).toBeVisible();
     await page.goto('/#/deliverables?step=asis');
+    await page.getByTestId('simulation-link').click();
     await expect(page.getByTestId('step-robust')).toBeVisible();
     await page.goto('/#/step?step=kpi&view=details');
     await expect(page.getByTestId('step-priority')).toBeVisible();
@@ -383,6 +388,7 @@ test.describe('Firmness of the issue order and the one check worth making next (
 
   test('the panel passes axe with the simulation open, in English with no Japanese', async ({ page }) => {
     await go(page, '/step?step=asis&view=details', 'en');
+    await page.getByTestId('simulation-link').click();
     const panel = page.getByTestId('step-robust');
     await expect(panel).toContainText('How firm the ranking is');
     await panel.getByTestId('step-robust-sim').locator('summary').click();

@@ -63,7 +63,7 @@ const coreEn: Record<keyof typeof coreJa, string> = {
   'nav.map': 'Map',
   'nav.flows': 'Flows',
   'nav.plan': 'Plan',
-  'nav.optimize': 'Resource optimization',
+  'nav.optimize': 'Simulation',
   'nav.directory': 'Directory',
   'nav.settings': 'Settings',
 

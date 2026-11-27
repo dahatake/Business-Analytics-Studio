@@ -22,6 +22,7 @@ async function go(page: Page, step: 'solution' | 'deliverable', lang: Lang = 'ja
     localStorage.setItem('bas.proj.ui', JSON.stringify({ state: { editor: 'E2E', editMode: true, lens: 'business', analysisLayout: 'split', firstRunDone: true, todoCollapsed: true }, version: 1 }));
   });
   await open(page, `/step?step=${step}&view=details`, { lang });
+  await page.getByTestId('simulation-link').click();
   await expect(page.getByTestId('val-panel')).toBeVisible();
 }
 

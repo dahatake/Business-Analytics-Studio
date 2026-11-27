@@ -295,6 +295,9 @@ button.text-action { font: inherit; line-height: inherit; vertical-align: baseli
 .panel-body { padding: 8px 18px 18px; }
 .rationale-label { font-size: var(--fontSizeBase200); }
 .rationale-surface { max-width: 360px; }
+/* Data-entry dialogs share one width (the entity editor's). The doubled class outranks Fluent's 600px DialogSurface default. */
+.form-surface.form-surface { width: min(80vw, 1440px); max-width: min(80vw, 1440px); }
+@media (max-width: 1000px) { .form-surface.form-surface { width: calc(100vw - 32px); max-width: calc(100vw - 32px); } }
 .subhead { margin: 14px 0 6px; font-size: var(--fontSizeBase300); font-weight: var(--fontWeightSemibold); display: flex; align-items: center; gap: 6px; }
 
 /* ---------- Entity references (F-3.2.1 / F-3.2.3) ---------- */

@@ -397,6 +397,7 @@ test.describe('data management: Project pack import (FR-302〜FR-304)', () => {
     // KPI: the report's 20% gate is simulated; an impossible input is refused instead of computed.
     await page.evaluate(() => { window.location.hash = '/step?step=kpi&view=details'; });
     await expect(page.getByTestId('step-dash-dec-kpis')).toContainText('見積リードタイム');
+    await page.getByTestId('simulation-link').click();
     await expect(page.getByTestId('step-dash-dec-gate-result')).toBeVisible();
     await expect(page.getByTestId('step-dash-dec-gate-placeholder')).toBeVisible();
     expect(await scan(page)).toEqual([]);

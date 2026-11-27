@@ -20,6 +20,12 @@ Each feature module owns only its own files:
 
 Also owned by each module: `src/i18n/modules/<prefix>.ja.ts` / `.en.ts`, tests named `tests/<module>*.test.ts`, E2E specs named `e2e/<module>*.spec.ts`, and an optional stylesheet `src/modules/<module>/<module>.css` imported by the module's own files.
 
+### Simulation workbench
+
+`/optimize` is the single simulation screen. Its `tab` selects time/resources, issues, KPIs, solutions or task impact; `step` and `task` preserve the entry context. Step dashboards retain their decision summaries and link to the workbench. KPI trajectories use expected contribution (not the Monte Carlo median); a required-pace line is explicitly not a forecast. OKR forecasts require a modeled KPI for every KR. Resource ribbons blend the current and optimized monthly allocations under an explicit rollout assumption; they do not imply measured staffing changes or a causal link to KPI gains.
+
+The comparison of assumptions with outcomes follows [AnyLogic Compare Runs](https://anylogic.help/anylogic/experiments/compare-runs-experiment.html); aligning measures on a common date follows [SAP Analytics Cloud value driver trees](https://help.sap.com/docs/SAP_ANALYTICS_CLOUD/00f68c2e08b941f081002fd3691d86a7/f6189755175940f3a4e007c3d6b83ee5.html).
+
 Shared files (do not edit; ask the integrator instead): `src/App.tsx`, `src/app/*`, `src/styles.css`, `src/i18n/{ja,en,core,index,startup}.ts`, `src/i18n/modules/index.ts`, `src/state/*`, `src/ai/*`, `src/data/*`, `src/screens/*`, `src/ui/*`, `src/charts/*`, `package.json`, `vite.config.ts`, `playwright.config.ts`, other modules' files and tests.
 
 ## Global mounts

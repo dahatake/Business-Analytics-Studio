@@ -188,7 +188,7 @@ export function StepEditor({ workflow, stageId, defaultChange, onSave, onDelete,
 
   return (
     <Dialog open onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface className="bp-editor" data-testid="bp-editor">
+      <DialogSurface className="form-surface" data-testid="bp-editor">
         <DialogBody>
           <DialogTitle>{original ? t('bp.ed.titleEdit', { name: loc(original.name, lang) }) : t('bp.ed.titleNew')}</DialogTitle>
           <DialogContent className="bp-ed-content">

@@ -26,7 +26,7 @@ export function statusForPct(pct: number | null): KpiStatusText {
 export const kpiStatusText = (k: Pick<KpiDef, 'baseline' | 'current' | 'target'>) => statusForPct(achievementPct(k));
 
 /** OKR progress = mean of its key results' KPI achievements, each clamped to 0–100 %. */
-export function okrPct(okr: Okr, kpis: KpiDef[]): number | null {
+export function okrPct(okr: Okr, kpis: Pick<KpiDef, 'id' | 'baseline' | 'current' | 'target'>[]): number | null {
   const values = okr.keyResults
     .map((kr) => kpis.find((k) => k.id === kr.kpiId))
     .map((k) => (k ? achievementPct(k) : null))

@@ -14,9 +14,23 @@ async function axe(page: Page) {
 }
 
 test.describe('FR-326 resource optimization', () => {
+  test('scrubbing and playback move the same date on the chart and allocation map', async ({ page }) => {
+    await open(page, '/optimize', { lang: 'en' });
+    const clock = page.getByTestId('sim-date');
+    const allocation = page.getByTestId('resource-view').getByRole('tab', { name: /Allocation at/ });
+    await clock.press('End');
+    await expect(allocation).toContainText('100%');
+    await clock.press('Home');
+    await expect(allocation).toContainText('(0%');
+    const at = await clock.getAttribute('aria-valuetext');
+    await page.getByRole('button', { name: 'Play', exact: true }).click();
+    await expect(clock).not.toHaveAttribute('aria-valuetext', at!);
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(allocation).toContainText((await clock.getAttribute('aria-valuetext'))!);
+  });
   test('the screen is renamed and explains the current state above the visual', async ({ page }) => {
     await open(page, '/optimize', { lang: 'ja' });
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('リソースの最適化');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('シミュレーション');
     const brief = page.getByTestId('resource-brief');
     await expect(brief).toBeVisible();
     await expect(page.getByTestId('resource-archetype')).toBeVisible();

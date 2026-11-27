@@ -67,7 +67,7 @@ function QualifyDialog({ issue, ctx, onClose }: { issue: EntityOf<'issue'>; ctx:
   const savedDate = saved ? fmt.date(todayIn(PARAMS.timeZone, new Date(saved.at))) : '';
   return (
     <Dialog open onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
-      <DialogSurface data-testid="qualify-dialog">
+      <DialogSurface className="form-surface" data-testid="qualify-dialog">
         <form noValidate onSubmit={(e) => { e.preventDefault(); save(); }}>
           <DialogBody>
             <DialogTitle>{t('proj.qualify.title', { issue: name })}</DialogTitle>

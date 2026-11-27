@@ -28,7 +28,7 @@ test.describe('FR-378 step decision view', () => {
       await expect(page.getByTestId('ck-question')).toBeVisible();
       await expect(page.getByTestId('ck-answer')).not.toBeEmpty();
       await expect(page.getByTestId('ck-cards').locator('li')).toHaveCount(4);
-      await expect(page.locator('.ck-hero').first()).toBeVisible();
+      await expect(page.getByTestId('simulation-link')).toHaveAttribute('href', /#\/optimize\?/);
       // The detail panels are not shown in the decision view.
       await expect(page.getByTestId('step-dash-tiles')).toHaveCount(0);
       await expect(page.getByTestId('strategy-panel')).toHaveCount(0);
@@ -43,6 +43,7 @@ test.describe('FR-378 step decision view', () => {
 
   test('the issue what-if re-ranks against the baseline, saves and compares scenarios, and resets', async ({ page }) => {
     await go(page, '/step?step=asis');
+    await page.getByTestId('simulation-link').click();
     const wi = page.getByTestId('ck-wi-issue');
     const headline = wi.getByTestId('ck-wi-issue-headline');
     const before = await headline.getAttribute('data-top');
@@ -76,6 +77,7 @@ test.describe('FR-378 step decision view', () => {
 
   test('a budget cap funds the best combination and the frontier shows the trade-off', async ({ page }) => {
     await go(page, '/step?step=solution');
+    await page.getByTestId('simulation-link').click();
     const wi = page.getByTestId('ck-wi-solution');
     await expect(wi.getByTestId('ck-wi-solution-stat-funded')).toContainText('5 / 5');
     await wi.getByTestId('ck-wi-solution-budget').fill('60');
@@ -88,6 +90,7 @@ test.describe('FR-378 step decision view', () => {
 
   test('the KPI what-if moves the required pace with target and deadline', async ({ page }) => {
     await go(page, '/step?step=kpi');
+    await page.getByTestId('simulation-link').click();
     const wi = page.getByTestId('ck-wi-kpi');
     await expect(wi.getByTestId('ck-wi-kpi-rows').locator('.ck-rank-row').first()).toBeVisible();
     const slider = wi.getByTestId('ck-wi-kpi-deadline');
@@ -108,9 +111,11 @@ test.describe('FR-378 step decision view', () => {
     await list.getByTestId('ck-sol-type-sol-demand-planning-agent').check();
     await expect(types.locator('[data-type="agent"]')).toBeVisible();
     // Plan with two lanes: the what-if's item cap.
+    await page.getByTestId('simulation-link').click();
     await page.getByTestId('ck-wi-solution-max').fill('2');
     await page.getByTestId('ck-wi-solution-max').press('Tab');
     await page.getByTestId('ck-wi-solution-use').click();
+    await page.getByRole('link', { name: 'ステップの判断画面に戻る' }).click();
     // Add the demand-planning solution to the plan by hand.
     await list.getByTestId('ck-sol-include-sol-demand-planning').check();
     await expect(list.locator('[data-solution="sol-demand-planning"]')).toHaveAttribute('data-in-plan', 'true');

@@ -36,7 +36,7 @@ export function useDecisionReport(extensions: Record<string, unknown> | undefine
   }, [extensions]);
 }
 
-export function DecisionSupport({ step, report, visible }: { step: ImprovementStep; report: DecisionReport | null; visible: boolean }) {
+export function DecisionSupport({ step, report, visible, gateOnly }: { step: ImprovementStep; report: DecisionReport | null; visible: boolean; gateOnly?: boolean }) {
   const { lang } = useI18n();
   const all = useDecisionInputs((s) => s.value);
   const set = useDecisionInputs((s) => s.set);
@@ -54,6 +54,7 @@ export function DecisionSupport({ step, report, visible }: { step: ImprovementSt
     return next;
   });
   const p = { r: report, d, update };
+  if (gateOnly) return <GatePanel {...p} />;
   const links = effectiveLinks(drafts.optionIssues);
   const decide = <DraftDecisionsPanel {...p} drafts={drafts.decisions.filter((x) => x.step === step)} />;
   return (
@@ -61,7 +62,7 @@ export function DecisionSupport({ step, report, visible }: { step: ImprovementSt
       <EvidencePanel r={report} step={step} onReset={reset} />
       {step === 'asis' && <><IssuePanel {...p} /><QuestionPanel {...p} />{decide}</>}
       {step === 'tobe' && <><GapPanel {...p} />{decide}</>}
-      {step === 'kpi' && <><KpiPanel {...p} /><GatePanel {...p} />{decide}</>}
+      {step === 'kpi' && <><KpiPanel {...p} />{decide}</>}
       {step === 'solution' && <><OptionPanel {...p} links={links} />{decide}</>}
       {step === 'deliverable' && <><RequirementsDraftPanel r={report} d={d} />{decide}<RoadmapPanel r={report} /><RiskPanel {...p} /><ChecklistPanel {...p} links={links} /></>}
     </>

@@ -40,7 +40,8 @@ const narrativeCache = new Map<string, AiResponse>();
  * FR-326: industry-aware resource optimization. The customer's industry picks the lens (people → work or sites → regions)
  * and the assumptions; the facts, the visual and the simulation all read the same scenario.
  */
-export function ResourceWorkbench() {
+interface TimeSlice { date: string; share: number }
+export function ResourceWorkbench({ date, share }: TimeSlice) {
   const { t, tx, lang } = useI18n();
   const { company } = useActiveProject();
   const pack = loaded.pack;
@@ -96,13 +97,13 @@ export function ResourceWorkbench() {
         {preferred === 'network' && !networkAvailable && (
           <MessageBar intent="info" data-testid="optimize-unavailable"><MessageBarBody>{t('optimize.unavailable')}</MessageBarBody></MessageBar>
         )}
-        <ScenarioView key={`${archetype}|${lens}`} archetype={archetype} lens={lens} industryLabel={industryText || t(`res.arch.${archetype}`)} />
+        <ScenarioView key={`${archetype}|${lens}`} date={date} share={share} archetype={archetype} lens={lens} industryLabel={industryText || t(`res.arch.${archetype}`)} />
       </Panel>
     </>
   );
 }
 
-function ScenarioView({ archetype, lens, industryLabel }: { archetype: Archetype; lens: Lens; industryLabel: string }) {
+function ScenarioView({ archetype, lens, industryLabel, date, share }: TimeSlice & { archetype: Archetype; lens: Lens; industryLabel: string }) {
   const { t, tx, fmt, lang } = useI18n();
   const audience = useSettings((s) => s.audience);
   const pack = loaded.pack;
@@ -110,7 +111,7 @@ function ScenarioView({ archetype, lens, industryLabel }: { archetype: Archetype
   const [network, setNetwork] = useState<NetworkParams>({ growth: 0, carbon: 10000 });
   const [overrides, setOverrides] = useState<Overrides>(emptyOverrides);
   const [selected, setSelected] = useState<Selection>(null);
-  const [view, setView] = useState<View>('after');
+  const [view, setView] = useState<View>('timeline');
 
   const base: ResourceModel = useMemo(() => {
     if (lens === 'network' && pack.optimization) {
@@ -151,12 +152,13 @@ function ScenarioView({ archetype, lens, industryLabel }: { archetype: Archetype
             <TabList selectedValue={view} onTabSelect={(_, d) => setView(d.value as View)} aria-label={t('res.view')} data-testid="resource-view">
               <Tab value="before">{t('res.view.before')}</Tab>
               <Tab value="after">{t('res.view.after')}</Tab>
+              <Tab value="timeline">{t('ck.sim.flowAt', { date, pct: fmt.percent(share) })}</Tab>
             </TabList>
           </div>
         </div>
         <KpiStrip scenario={scenario} />
         <div className="res-workspace">
-          <ResourceFlowMap scenario={scenario} view={view} selected={selected} onSelect={setSelected} unit={unit} />
+          <ResourceFlowMap scenario={scenario} view={view} selected={selected} onSelect={setSelected} unit={unit} share={share} />
           <Inspector
             scenario={scenario} lens={lens} unit={unit} selected={selected} onSelect={setSelected}
             overrides={overrides} setOverrides={setOverrides} people={people} setPeople={setPeople} network={network} setNetwork={setNetwork}

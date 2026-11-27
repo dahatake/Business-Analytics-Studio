@@ -461,6 +461,19 @@ export interface Scenario {
   marginals: Marginal[];
 }
 
+export function transitionFlows(s: Pick<Scenario, 'before' | 'after'>, share: number): Flow[] {
+  if (share === 0) return s.before;
+  if (share === 1) return s.after;
+  const flows = new Map<string, Flow>();
+  for (const [list, weight] of [[s.before, 1 - share], [s.after, share]] as const) {
+    for (const f of list) {
+      const key = linkKey(f.poolId, f.demandId);
+      flows.set(key, { ...f, qty: (flows.get(key)?.qty ?? 0) + f.qty * weight });
+    }
+  }
+  return [...flows.values()];
+}
+
 export function runScenario(model: ResourceModel): Scenario {
   const before = currentFlows(model);
   const after = optimalFlows(model);

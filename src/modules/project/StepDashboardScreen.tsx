@@ -16,8 +16,7 @@ import { deliverableNameKey, todoHref, todoLabel, useCheckContext, usePaybackLim
 import { QualifyCell } from './IssueQualification.tsx';
 import { DiscoveryAdvicePanel } from './DiscoveryAdvice.tsx';
 import { PriorityBriefPanel } from './PriorityBrief.tsx';
-import { PriorityRobustnessPanel } from './PriorityRobustness.tsx';
-import { CostOfDelayPanel } from './CostOfDelay.tsx';
+import { SimulationLink } from './SimulationLink.tsx';
 import { StepBriefPanel } from './StepBriefPanel.tsx';
 import { HandoffPanel } from './HandoffPanel.tsx';
 import { DecisionSupport, useDecisionReport } from './DecisionSupport.tsx';
@@ -26,7 +25,6 @@ import { isSystemType } from './strategy.ts';
 import { KpiBasisNote, OriginBadge } from './StrategyPanels.tsx';
 import { BridgeChart, CauseParetoChart, GanttChart, GapChart, KpiQualityChart, PaybackChart, PriorityMatrix, RangeChart, type NameOf } from './stepCharts.tsx';
 import { stepDashboard, tileTone, type DashTile, type DetailOf, type KpiRow, type OkrRow, type SolutionRow, type StepDashboard, type StepDetail } from './stepDashboard.ts';
-import { ValueModelPanel } from './ValuePanel.tsx';
 import { StepCockpit } from './StepCockpit.tsx';
 import './project.css';
 
@@ -695,8 +693,7 @@ export function StepDashboardScreen() {
           <StepBriefPanel d={d} ctx={ctx} audience={audience} />
           <Summary d={d} />
           <PriorityBriefPanel step={step} ctx={ctx} />
-          {(step === 'asis' || step === 'tobe') && <PriorityRobustnessPanel step={step} ctx={ctx} />}
-          {(step === 'asis' || step === 'tobe') && <CostOfDelayPanel step={step} ctx={ctx} />}
+          <SimulationLink step={step} />
           <DiscoveryAdvicePanel step={step} ctx={ctx} />
           <HandoffPanel ctx={ctx} step={step} />
           <Panel title={t('proj.dash.tiles')} testId="step-dash-tiles" className="span-full">
@@ -706,7 +703,6 @@ export function StepDashboardScreen() {
             </ul>
           </Panel>
           <StepDetailPanels d={d.detail} visible={visible} nameOf={nameOf} today={ctx.today} ctx={ctx} />
-          {(step === 'solution' || step === 'deliverable') && <ValueModelPanel ctx={ctx} nameOf={nameOf} />}
           <DecisionSupport step={step} report={report} visible={report ? visible(report.sourceId) : false} />
           <DocPanel d={d} />
           <InputsPanel d={d} />

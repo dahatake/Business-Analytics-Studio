@@ -142,7 +142,6 @@ const STRATEGY_TARGETS: Record<string, string> = {
   'kpi-company': 'sol-def',
   'sol-type': 'sol-types',
   'sol-contribution': 'sol-types',
-  'sol-target': 'sol-sim',
   'dlv-trace': 'sol-thread',
   'dlv-docs': 'sol-docs',
 };
@@ -157,6 +156,7 @@ export function todoHref(r: TodoResult): string {
   if (r.todo.id === 'plan-payback') {
     return hrefFor('/deliverables', { step: 'deliverable', target: 'dlv-criteria' });
   }
+  if (r.todo.id === 'sol-target') return hrefFor('/optimize', { tab: 'kpi', step: 'solution', target: 'sol-sim' });
   const entity = r.outcome?.refs?.find((ref) => ref.type === 'entity');
   if (['plan-coverage', 'plan-schedule', 'plan-owner'].includes(r.todo.id)) {
     const query: Record<string, string> = { view: 'table', target: 'relation-table' };
@@ -309,7 +309,7 @@ export function TodoItem({ r, detailed = false }: { r: TodoResult; detailed?: bo
       )}
       {!detailed && (
         <a
-          href={hrefFor('/deliverables', { step: Object.values(STEP_DEFS).find((def) => def.todos.some((todo) => todo.id === r.todo.id))?.step, task: r.todo.id, target: 'dlv-task-workbench' })}
+          href={hrefFor('/optimize', { tab: 'task', step: Object.values(STEP_DEFS).find((def) => def.todos.some((todo) => todo.id === r.todo.id))?.step, task: r.todo.id, target: 'dlv-task-workbench' })}
           onClick={revisitRouteTarget}
           aria-label={t('dlv.task.simLabel', { todo: label })}
         >
@@ -716,7 +716,7 @@ export function DraftDialog() {
                     <li key={after.todo.id}>{todoLabel(t, after.todo.id)}: {t(before.find((r) => r.todo.id === after.todo.id)?.done ? 'dlv.status.done' : 'dlv.status.todo')} → {t(after.done ? 'dlv.status.done' : 'dlv.status.todo')}</li>
                   ))}
                 </ul>
-                <a href={hrefFor('/deliverables', { step: 'solution', target: 'sol-sim' })} onClick={() => closeDraft()}>{t('dlv.task.simLink')}</a>
+                <a href={hrefFor('/optimize', { tab: 'kpi', target: 'sol-sim' })} onClick={() => closeDraft()}>{t('dlv.task.simLink')}</a>
                 <dl className="dlv-draft-fields">
                   {fields.map((f) => {
                     const text = ready.fields[f.id];

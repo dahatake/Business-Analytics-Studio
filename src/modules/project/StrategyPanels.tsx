@@ -5,6 +5,7 @@ import { getEntity, loaded } from '../../data/pack.ts';
 import type { EvidenceKind } from '../../data/extensionSchemas.ts';
 import { useI18n, type MessageKey } from '../../i18n/index.ts';
 import { hrefFor } from '../../state/router.ts';
+import { SimulationLink } from './SimulationLink.tsx';
 import { loc } from '../../state/text.ts';
 import { Panel } from '../../ui/Panel.tsx';
 import type { WorkIqAspect } from '../ai/relayClient.ts';
@@ -487,7 +488,7 @@ export function SolutionStrategyPanel({ ctx }: { ctx: CheckContext }) {
           </details>
         ))}
       </Panel>
-      <SimulationPanel ctx={ctx} />
+      <SimulationLink step="solution" tab="kpi" target="sol-sim" />
     </>
   );
 }

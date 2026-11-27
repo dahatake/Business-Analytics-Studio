@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelJson } from '../../ai/modelJson.ts';
 import type { LoadedPack } from '../../data/pack.ts';
 import type { EntityOf } from '../../data/schema.ts';
 import { buildYears } from './deliverables.ts';
@@ -745,7 +746,7 @@ export function valueDraftPrompt(c: DraftContext): string {
  * Nothing here changes the model; the result is a draft for a person to adopt.
  */
 export function parseValueDraft(answer: string | unknown, c: DraftContext, by: 'copilot' | 'rule'): ValueDraft {
-  const raw = typeof answer === 'string' ? JSON.parse(answer.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')) as unknown : answer;
+  const raw = typeof answer === 'string' ? parseModelJson(answer) : answer;
   if (!raw || typeof raw !== 'object') throw new Error('not an object');
   const r = raw as { lines?: unknown; reviewed?: unknown; groups?: unknown; discountRate?: unknown };
   const facts = valueFacts(c.pack, c.built, c.kpis);

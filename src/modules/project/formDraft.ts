@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { aiComplete, registerMock, type AiRequest, type AiResponse } from '../../ai/client.ts';
+import { parseModelOutput } from '../../ai/modelJson.ts';
 import type { Entity } from '../../data/schema.ts';
 import type { Lang } from '../../i18n/core.ts';
 import { validRange } from './simulate.ts';
@@ -228,7 +229,7 @@ export function parseFormDraft<K extends FormDraftKind>(kind: K, answer: string)
   } catch {
     return null;
   }
-  const parsed = FORM_DRAFT_SCHEMAS[kind].safeParse(value);
+  const parsed = parseModelOutput(FORM_DRAFT_SCHEMAS[kind], value);
   return parsed.success ? (parsed.data as FormDraft[K]) : null;
 }
 

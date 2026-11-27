@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelOutput } from '../ai/modelJson.ts';
 import { extractJson } from './packImport.ts';
 import { appendAiPromptSuffix } from '../ai/promptSuffix.ts';
 
@@ -144,7 +145,7 @@ export function parseCompanyAnchor(input: string): AnchorParseResult {
   if (extracted.errors.length || extracted.values.length !== 1) {
     return { ok: false, errors: extracted.errors.length ? extracted.errors : ['Expected exactly one JSON object.'] };
   }
-  const parsed = CompanyAnchorSchema.safeParse(extracted.values[0]);
+  const parsed = parseModelOutput(CompanyAnchorSchema, extracted.values[0]);
   return parsed.success
     ? { ok: true, anchor: parsed.data }
     : { ok: false, errors: parsed.error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`) };

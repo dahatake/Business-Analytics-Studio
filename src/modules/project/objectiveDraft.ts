@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelJson, parseModelOutputOrThrow } from '../../ai/modelJson.ts';
 import { aiLive, AiLiveError, preflight, type AiRequest } from '../../ai/client.ts';
 import { PER_USE_LIMITS, STEP_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { PARAMS } from '../../config/params.ts';
@@ -187,8 +188,7 @@ const ResponseSchema = z.object({
  * Unknown refs are dropped; objectives already saved or repeated are skipped.
  */
 export function classifyObjectives(answer: string, input: ObjectiveDraftInput, evidence: readonly ObjectiveEvidence[]): ClassifiedObjective[] {
-  const json = answer.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1');
-  const raw = ResponseSchema.parse(JSON.parse(json));
+  const raw = parseModelOutputOrThrow(ResponseSchema, parseModelJson(answer));
   const byRef = new Map(evidence.map((e) => [e.ref, e]));
   const allText = normalizeQuote(evidence.map((e) => e.text).join('\n'));
   const allNumbers = new Set((evidence.map((e) => e.text).join('\n').normalize('NFKC').match(NUM) ?? []).map((n) => n.replace(/,/g, '')));

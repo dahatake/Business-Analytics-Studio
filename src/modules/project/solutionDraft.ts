@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelOutput } from '../../ai/modelJson.ts';
 import { runAgentLoop } from '../../ai/agentLoop.ts';
 import { aiComplete, aiLive, registerMock, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
@@ -173,7 +174,7 @@ export function parseSolutionDraft(answer: string): SolutionDraft | null {
   const end = answer.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
   try {
-    const parsed = SolutionDraftSchema.safeParse(JSON.parse(answer.slice(start, end + 1)));
+    const parsed = parseModelOutput(SolutionDraftSchema, JSON.parse(answer.slice(start, end + 1)));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;

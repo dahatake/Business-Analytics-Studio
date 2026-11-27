@@ -63,6 +63,17 @@ export const REFERENCES: Partial<Record<EntityKind, Record<string, EntityKind[]>
 
 const zodIssues = (e: z.ZodError) => e.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
 
+/** Each pack extension and the schema its screen reads (also used by normalizePack to drop rejected nulls, D-57). */
+export const EXTENSION_SCHEMAS: Record<string, z.ZodType> = {
+  glossary: GlossarySchema, dataCatalog: PackCatalog,
+  architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
+  workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension, requirementEvidence: RequirementEvidenceExtension,
+  decisionReport: DecisionReportExtension, delayCost: DelayCostExtension,
+  aiPlatform: AiPlatformExtension,
+  companyAnchor: CompanyAnchorVersionSchema,
+  companyAlignment: CompanyAlignmentSnapshotSchema,
+};
+
 export function verifyPack(raw: unknown): VerifyResult {
   const t0 = performance.now();
   const problems: Problem[] = [];
@@ -197,16 +208,7 @@ export function verifyPack(raw: unknown): VerifyResult {
     }
   }
 
-  const extensionSchemas = {
-    glossary: GlossarySchema, dataCatalog: PackCatalog,
-    architecture: ArchitectureExtension, coreObject: CoreObjectExtension, collection: CollectionReport,
-    workflow: WorkflowExtension, okr: OkrExtension, engagements: EngagementsExtension, requirementEvidence: RequirementEvidenceExtension,
-    decisionReport: DecisionReportExtension, delayCost: DelayCostExtension,
-    aiPlatform: AiPlatformExtension,
-    companyAnchor: CompanyAnchorVersionSchema,
-    companyAlignment: CompanyAlignmentSnapshotSchema,
-  };
-  for (const [key, schema] of Object.entries(extensionSchemas)) {
+  for (const [key, schema] of Object.entries(EXTENSION_SCHEMAS)) {
     const raw = pack.extensions?.[key];
     if (raw === undefined) continue;
     const result = schema.safeParse(raw);

@@ -165,8 +165,15 @@ test('a Foundry Work IQ model limit is explained in the saved generation report'
   await expect(dialog.getByTestId('gen-sum-workiq-model-limit')).toContainText('Foundry モデルの入力または出力の上限');
 });
 
-for (const repairWorks of [true, false]) {
-  test(`invalid workflow party kind is ${repairWorks ? 'repaired and saved' : 'reported as a validation error'}`, async ({ page }) => {
+for (const scenario of ['repaired', 'rejected', 'nullFilled'] as const) {
+  const repairWorks = scenario !== 'rejected';
+  const title = {
+    repaired: 'invalid workflow party kind is repaired and saved',
+    rejected: 'invalid workflow party kind is reported as a validation error',
+    // D-57: measured 2026-11-27, a 25-minute run was lost on `"laborCostPerHourJpy": null`.
+    nullFilled: 'a null labour cost is treated as missing, filled by the repair call and saved',
+  }[scenario];
+  test(title, async ({ page }) => {
     const connection = { endpoint: 'https://test.openai.azure.com', deployment: 'model-router', apiVersion: '2024-10-21' };
     await page.addInitScript((connection) => {
       if (sessionStorage.getItem('bas.e2e.ai-seeded')) return;
@@ -191,9 +198,14 @@ for (const repairWorks of [true, false]) {
       let answer: unknown;
       if (request.stage === 'workflow') {
         const workflow = workflowAnswer(request.prompt);
-        answer = { workflow: { ...workflow.workflow, parties: [{ ...workflow.workflow.parties![0], kind: 'employee' }] } };
+        answer = scenario === 'nullFilled'
+          ? { workflow: { ...workflow.workflow, laborCostPerHourJpy: null, laborCostEvidence: null } }
+          : { workflow: { ...workflow.workflow, parties: [{ ...workflow.workflow.parties![0], kind: 'employee' }] } };
       } else if (request.stage.startsWith('workflow-repair-')) {
-        answer = { fixes: [{ path: ['parties', 0, 'kind'], value: repairWorks ? 'team' : 'employee' }] };
+        if (scenario === 'nullFilled') {
+          const { problems } = JSON.parse(request.prompt.split('\n').at(-1)!) as { problems: { path: unknown[] }[] };
+          answer = { fixes: problems.map((p) => ({ path: p.path, value: 4200 })) };
+        } else answer = { fixes: [{ path: ['parties', 0, 'kind'], value: repairWorks ? 'team' : 'employee' }] };
       } else if (request.prompt.includes('# 検査済みProjectパック')) answer = analysis;
       else if (request.stage === 'foundation') answer = foundation;
       else if (request.stage === 'business') answer = { entities: [] };
@@ -214,9 +226,13 @@ for (const repairWorks of [true, false]) {
       const snapshot = await deviceSnapshot(page);
       const index = JSON.parse(snapshot.records['bas.packs.index']!.value!);
       expect(index['pj-c'].packId).toBe('contoso');
-      expect(JSON.parse(snapshot.records['bas.binary.pack.pj-c']!.value!).extensions.workflow.parties[0].kind).toBe('team');
+      const saved = () => JSON.parse(snapshot.records['bas.binary.pack.pj-c']!.value!).extensions.workflow;
+      if (scenario === 'nullFilled') {
+        expect(saved().laborCostPerHourJpy).toBe(4200);
+        expect(saved().laborCostEvidence.status).toBe('estimate');
+      } else expect(saved().parties[0].kind).toBe('team');
       await page.reload();
-      expect(JSON.parse((await deviceSnapshot(page)).records['bas.binary.pack.pj-c']!.value!).extensions.workflow.parties[0].kind).toBe('team');
+      if (scenario === 'repaired') expect(JSON.parse((await deviceSnapshot(page)).records['bas.binary.pack.pj-c']!.value!).extensions.workflow.parties[0].kind).toBe('team');
       expect(stages.filter((stage) => stage.startsWith('workflow-repair-'))).toEqual(['workflow-repair-1']);
     } else {
       await expect(dialog.getByTestId('gen-error')).toContainText('業務プロセスの生成結果を検証・修正できませんでした');

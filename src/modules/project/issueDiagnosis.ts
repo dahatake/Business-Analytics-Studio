@@ -1,5 +1,6 @@
 import { runAgentLoop, type LoopAnswer, type LoopStop } from '../../ai/agentLoop.ts';
 import { aiComplete, aiLive, registerMock, type AiRequest } from '../../ai/client.ts';
+import { parseModelJson } from '../../ai/modelJson.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import type { Entity, EntityOf } from '../../data/schema.ts';
 import type { Lang } from '../../i18n/core.ts';
@@ -218,10 +219,10 @@ export interface DiagnosisDraft {
 }
 
 function parseJson(text: string): Record<string, unknown> | null {
-  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const t = text.trim();
   for (const s of [t, t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)]) {
     try {
-      const v = JSON.parse(s) as unknown;
+      const v = parseModelJson(s);
       if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
     } catch { /* try the next form */ }
   }

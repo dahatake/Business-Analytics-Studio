@@ -1,3 +1,4 @@
+import { parseModelJson } from '../../ai/modelJson.ts';
 import { translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { factText, verifyNumbers, type Fact, type NumberCheck } from './stepBrief.ts';
 import type { EngineLever, EngineModel, EngineResult } from './valueEngine.ts';
@@ -322,7 +323,7 @@ const clip = (s: unknown, n: number) => (typeof s === 'string' ? s.trim().slice(
 
 /** Reads the JSON answer, keeps the known concepts, and checks every figure against the ledger. */
 export function parseExplain(text: string, f: ExplainFacts): ExplainCheck {
-  const raw = JSON.parse(text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')) as { headline?: unknown; sections?: unknown; questions?: unknown };
+  const raw = parseModelJson(text) as { headline?: unknown; sections?: unknown; questions?: unknown };
   if (!raw || typeof raw !== 'object') throw new Error('not an object');
   const secs = (raw.sections && typeof raw.sections === 'object' ? raw.sections : {}) as Record<string, unknown>;
   const sections: ExplainContent['sections'] = {};

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelOutputOrThrow } from '../../ai/modelJson.ts';
 import type { WorkflowExtension } from '../../data/extensionSchemas.ts';
 import type { Lang } from '../../i18n/core.ts';
 import type { SettingsState } from '../../state/settings.ts';
@@ -62,7 +63,7 @@ const Response = z.object({
 });
 
 export function buildMeasurement(answer: unknown, sources: RecordSource[], period: MeasurementPeriod, worker: string, timeZone: string, workflow: WorkflowExtension | null, lang: Lang, now = new Date()): Measurement {
-  const raw = Response.parse(answer);
+  const raw = parseModelOutputOrThrow(Response, answer);
   const byRef = new Map(sources.map((s) => [s.ref, s]));
   const seen = new Set<string>();
   const warnings = [...raw.warnings, lang === 'ja' ? '検索結果は期間内の全件取得を保証しません。割合は確認できた記録のみが分母です。予定時間と2分換算は推計であり、実作業時間ではありません。' : 'Search does not guarantee full-period coverage. Shares use only verified retrieved records. Scheduled durations and 2-minute conversions are estimates, not actual work time.'];

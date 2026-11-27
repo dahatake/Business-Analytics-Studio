@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelOutput } from '../../ai/modelJson.ts';
 import { askUntilValid, repairNote } from '../../ai/agentLoop.ts';
 import { aiLive, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
@@ -301,7 +302,7 @@ export class ResolutionResponseError extends Error {
 export function parseResolution(text: string, options: RepairOption[]): ResolutionProposal {
   const extracted = extractJson(text);
   if (extracted.errors.length || extracted.values.length !== 1) throw new ResolutionResponseError('json');
-  const parsed = ProposalSchema.safeParse(extracted.values[0]);
+  const parsed = parseModelOutput(ProposalSchema, extracted.values[0]);
   if (!parsed.success) {
     const detail = parsed.error.issues.map((issue) => `${issue.path.join('.') || 'response'} (${issue.code})`).join(', ');
     throw new ResolutionResponseError('schema', detail);
@@ -792,13 +793,13 @@ const CompletionSchema = z.object({
 export function parseCompletion(text: string, pending: RepairOption[], needs: CompletionNeed[]): CompletionAnswer {
   const extracted = extractJson(text);
   if (extracted.errors.length || extracted.values.length !== 1) throw new ResolutionResponseError('json');
-  const parsed = CompletionSchema.safeParse(extracted.values[0]);
+  const parsed = parseModelOutput(CompletionSchema, extracted.values[0]);
   if (!parsed.success) throw new ResolutionResponseError('schema', parsed.error.issues.map((i) => i.path.join('.')).join(', '));
   const byId = new Map(pending.map((o) => [o.id, o]));
   const drafts: Record<string, EntityDraft> = {};
   for (const [id, raw] of Object.entries(parsed.data.drafts)) {
     const option = byId.get(id);
-    const draft = EntityDraftSchema.safeParse(raw);
+    const draft = parseModelOutput(EntityDraftSchema, raw);
     if (option?.kind !== 'create' || !draft.success) continue;
     if (option.entityKind === 'kpi' && (!draft.data.unit || !draft.data.period)) continue;
     drafts[id] = draft.data;
@@ -808,7 +809,7 @@ export function parseCompletion(text: string, pending: RepairOption[], needs: Co
   const keys = new Set(needs.map((n) => n.key));
   const completed: Record<string, Partial<EntityDraft>> = {};
   for (const [key, raw] of Object.entries(parsed.data.completed)) {
-    const patch = DraftPatchSchema.safeParse(raw);
+    const patch = parseModelOutput(DraftPatchSchema, raw);
     if (keys.has(key) && patch.success) completed[key] = patch.data;
   }
   return { optionIds, texts, drafts, completed, rationale: parsed.data.rationale };

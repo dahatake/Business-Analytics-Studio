@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { Entity, LText, type EntityKind } from './schema.ts';
+import { CustomerPack, Entity, LText, type EntityKind } from './schema.ts';
 import { samplePack } from './sample.ts';
-import { verifyPack, type Problem, type VerifyResult } from './verify.ts';
+import { EXTENSION_SCHEMAS, verifyPack, type Problem, type VerifyResult } from './verify.ts';
+import { dropRejectedNulls } from '../ai/modelJson.ts';
 import { parseDecisionReport, type ReportImport } from './reportImport.ts';
 import type { DecisionReport } from './extensionSchemas.ts';
 import { DEFAULT_PRIMARY, parseBrand } from '../modules/ops/brand.ts';
@@ -36,7 +37,7 @@ export interface FileReport {
 export type NoteCode =
   | 'langFilled' | 'sourceIdsAdded' | 'classificationDefaulted' | 'authorDefaulted' | 'worldTypeFilled'
   | 'illustrationFilled' | 'numberParsed' | 'packIdGenerated' | 'isSampleDefaulted' | 'regionsDefaulted'
-  | 'flowsDefaulted' | 'duplicateDropped' | 'partMissing' | 'conflict' | 'reportRead' | 'industryNotStated';
+  | 'flowsDefaulted' | 'nullDropped' | 'duplicateDropped' | 'partMissing' | 'conflict' | 'reportRead' | 'industryNotStated';
 
 /** A change made to the shape (not the facts) of the input, shown to the user before import. */
 export interface Note {
@@ -313,14 +314,35 @@ function toLText(v: unknown): { value: unknown; fixed: boolean } {
 const NUMERIC_TEXT = /^\s*-?[\d,]+(\.\d+)?\s*$/;
 const hueOf = (id: string) => [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
 
+/** The pack without per-entity validation (each entity is checked on its own, as verifyPack does). */
+const PackShell = CustomerPack.omit({ entities: true }).extend({ entities: z.array(z.unknown()) });
+
 function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 }
 
 export function normalizePack(input: Record<string, unknown>, now: Date = new Date()): { pack: Record<string, unknown>; notes: Note[] } {
-  const pack: Record<string, unknown> = structuredClone(input);
   const counts = new Map<NoteCode, number>();
   const bump = (code: NoteCode, n = 1) => counts.set(code, (counts.get(code) ?? 0) + n);
+  // D-57: a model writes null for "unknown"; where the schema has no null, it means the field was left out.
+  const nullPaths: string[] = [];
+  const dropNulls = (schema: z.ZodType, value: unknown, at: string) => {
+    const r = dropRejectedNulls(schema, value);
+    nullPaths.push(...r.dropped.map((p) => `${at}${p.map((k) => (typeof k === 'number' ? `[${k}]` : `.${k}`)).join('')}`.replace(/^\./, '')));
+    return r.value;
+  };
+  const pack = structuredClone(dropNulls(PackShell, input, '')) as Record<string, unknown>;
+  if (Array.isArray(pack.entities)) pack.entities = pack.entities.map((e, i) => dropNulls(Entity, e, `entities[${i}]`));
+  if (isRecord(pack.extensions)) {
+    const ext = pack.extensions;
+    for (const [key, schema] of Object.entries(EXTENSION_SCHEMAS)) {
+      if (ext[key] === null) {
+        delete ext[key];
+        nullPaths.push(`extensions.${key}`);
+      } else if (ext[key] !== undefined) ext[key] = dropNulls(schema, ext[key], `extensions.${key}`);
+    }
+  }
+  if (nullPaths.length) bump('nullDropped', nullPaths.length);
   const fixLText = (obj: Record<string, unknown>, key: string) => {
     if (!(key in obj)) return;
     const r = toLText(obj[key]);
@@ -398,8 +420,10 @@ export function normalizePack(input: Record<string, unknown>, now: Date = new Da
   }
   // Keys of the pack only; the part marker is not part of the schema.
   delete pack.part;
-  const order: NoteCode[] = ['packIdGenerated', 'isSampleDefaulted', 'regionsDefaulted', 'flowsDefaulted', 'langFilled', 'numberParsed', 'worldTypeFilled', 'sourceIdsAdded', 'classificationDefaulted', 'authorDefaulted', 'illustrationFilled'];
-  return { pack, notes: order.filter((c) => counts.has(c)).map((code) => ({ code, count: counts.get(code)! })) };
+  const order: NoteCode[] = ['packIdGenerated', 'isSampleDefaulted', 'regionsDefaulted', 'flowsDefaulted', 'nullDropped', 'langFilled', 'numberParsed', 'worldTypeFilled', 'sourceIdsAdded', 'classificationDefaulted', 'authorDefaulted', 'illustrationFilled'];
+  return { pack, notes: order.filter((c) => counts.has(c)).map((code) => ({
+    code, count: counts.get(code)!, ...(code === 'nullDropped' ? { detail: nullPaths.slice(0, 20).join(', ') } : {}),
+  })) };
 }
 
 /* ---------- 4. Summary for the human check (FR-304) ---------- */

@@ -2,6 +2,7 @@ import { solutionMoney, type Entity, type EntityKind, type EntityOf } from '../.
 import { getEntity, loaded } from '../../data/pack.ts';
 import { kpiProgress } from '../../domain/kpi.ts';
 import { selectOutbound } from '../../ai/redact.ts';
+import { parseModelJson } from '../../ai/modelJson.ts';
 import { translate, type Lang, type MessageKey } from '../../i18n/core.ts';
 import { createScopedStore } from '../../state/projects.ts';
 import { UNDO_LIMIT } from '../../state/history.ts';
@@ -85,7 +86,7 @@ export function reviewMock(lang: Lang, prompt: string): string {
 /** Parses a review answer. Returns null when the answer is malformed (FR-281 failure path). */
 export function parseProposals(text: string, components: ScreenComponent[]): Proposal[] | null {
   try {
-    const raw = JSON.parse(text) as unknown;
+    const raw = parseModelJson(text);
     if (!Array.isArray(raw)) return null;
     const out: Proposal[] = [];
     for (const c of components) {

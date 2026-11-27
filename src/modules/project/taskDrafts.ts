@@ -6,6 +6,7 @@
  * checks, never by Copilot. Values Copilot could not give are set by BAS's labelled provisional rules.
  */
 import { z } from 'zod';
+import { parseModelOutput, parseModelOutputOrThrow } from '../../ai/modelJson.ts';
 import { AiLiveError, aiLive, aiRequestFits, preflight, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { loadPack } from '../../data/pack.ts';
@@ -585,8 +586,8 @@ async function qualifyDraft(input: TaskDraftInput, ai: TaskAi | null): Promise<D
       Issues: issues.map((i) => i.id), Facts: JSON.parse(evidence),
     }));
     const Item = z.object({ issueId: z.string(), verdict: z.enum(QUALIFY_VERDICTS), reason: z.string().trim().min(1).max(2000), different: z.string().trim().min(1).max(2000).optional() });
-    for (const item of z.object({ items: z.array(z.unknown()) }).parse(raw).items) {
-      const parsed = Item.safeParse(item);
+    for (const item of parseModelOutputOrThrow(z.object({ items: z.array(z.unknown()) }), raw).items) {
+      const parsed = parseModelOutput(Item, item);
       if (!parsed.success || !issues.some((i) => i.id === parsed.data.issueId)) continue;
       const { issueId, verdict, reason, different } = parsed.data;
       if (!grounded(`${reason}\n${different ?? ''}`, evidence)) continue;
@@ -641,7 +642,7 @@ async function decisionDraft(input: TaskDraftInput, ai: TaskAi | null): Promise<
     ], { title: 'Theme', text: 'Decision and its reason', relatedIds: ['subject id'] }, {
       Subjects: subjects.map((s) => s.id), Facts: JSON.parse(evidence),
     }));
-    const parsed = z.object({ title: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(2000), relatedIds: z.array(z.string()) }).parse(raw);
+    const parsed = parseModelOutputOrThrow(z.object({ title: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(2000), relatedIds: z.array(z.string()) }), raw);
     const relatedIds = parsed.relatedIds.filter((id) => subjects.some((s) => s.id === id));
     if (relatedIds.length && grounded(`${parsed.title}\n${parsed.text}`, evidence)) {
       return { ops: [{ op: 'decision', themeId, recordId, title: parsed.title, text: parsed.text, relatedIds }], states: { 0: 'estimate' }, rationale: tr(input.lang, 'dlv.td.decisionWhy') };
@@ -680,8 +681,8 @@ async function solutionsDraft(input: TaskDraftInput, ai: TaskAi | null, result: 
     const raw = await askJson(ai, request(input, [
       'For each issue in "Issues" propose one solution that addresses it, as a hypothesis grounded in Facts: "name" and "description" in both Japanese and English; the description starts with 【仮説】 / [Hypothesis] and says which cause it acts on.',
     ], { items: [{ issueId: 'issue id', name: { ja: '名前', en: 'Name' }, description: { ja: '【仮説】説明', en: '[Hypothesis] Description' } }] }, { Issues: issues.map((i) => i.id), Facts: JSON.parse(evidence) }));
-    for (const item of z.object({ items: z.array(z.unknown()) }).parse(raw).items) {
-      const parsed = z.object({ issueId: z.string(), name: BiText, description: BiLong }).safeParse(item);
+    for (const item of parseModelOutputOrThrow(z.object({ items: z.array(z.unknown()) }), raw).items) {
+      const parsed = parseModelOutput(z.object({ issueId: z.string(), name: BiText, description: BiLong }), item);
       if (!parsed.success || !issues.some((i) => i.id === parsed.data.issueId)) continue;
       if (!grounded(`${parsed.data.name.ja}\n${parsed.data.name.en}\n${parsed.data.description.ja}\n${parsed.data.description.en}`, evidence)) continue;
       answers.set(parsed.data.issueId, parsed.data);
@@ -729,8 +730,8 @@ async function planDraft(input: TaskDraftInput, ai: TaskAi | null): Promise<Draf
       ], { items: [{ solutionId: 'solution id', name: { ja: '名前', en: 'Name' }, description: { ja: '説明', en: 'Description' }, start: input.ctx.today, end: addDays(input.ctx.today, 180), ownerRole: { ja: '担当部門', en: 'Owning department' } }] }, {
         Solutions: solutions.map((s) => s.id), Facts: JSON.parse(evidence),
       }));
-      for (const item of z.object({ items: z.array(z.unknown()) }).parse(raw).items) {
-        const parsed = z.object({ solutionId: z.string(), name: BiText, description: BiLong, start: z.string().regex(ISO), end: z.string().regex(ISO), ownerRole: BiText }).safeParse(item);
+      for (const item of parseModelOutputOrThrow(z.object({ items: z.array(z.unknown()) }), raw).items) {
+        const parsed = parseModelOutput(z.object({ solutionId: z.string(), name: BiText, description: BiLong, start: z.string().regex(ISO), end: z.string().regex(ISO), ownerRole: BiText }), item);
         if (!parsed.success || !solutions.some((s) => s.id === parsed.data.solutionId)) continue;
         const d = parsed.data;
         if (!(d.start >= input.ctx.today && d.end > d.start && Number.isFinite(Date.parse(d.start)) && Number.isFinite(Date.parse(d.end)))) continue;

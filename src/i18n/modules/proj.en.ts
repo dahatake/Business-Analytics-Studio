@@ -1079,6 +1079,7 @@ export const projEn: Record<keyof typeof projJa, string> = {
   'proj.pack.note.flowsDefaulted': 'flows was missing, so it was set to empty.',
   'proj.pack.note.langFilled': '{count} display texts had only one language; the same text was used for both.',
   'proj.pack.note.numberParsed': '{count} numbers written as text were converted to numbers.',
+  'proj.pack.note.nullDropped': '{count} fields set to null were treated as left out (optional fields that do not accept null).',
   'proj.pack.note.worldTypeFilled': '{count} entities had no world/type; the values for their kind were added.',
   'proj.pack.note.sourceIdsAdded': '{count} entities had no sourceIds; an empty list was added (those with numbers fail the check).',
   'proj.pack.note.classificationDefaulted': '{count} entities had no classification and were set to internal.',

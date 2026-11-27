@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelJson, parseModelOutputOrThrow } from '../../ai/modelJson.ts';
 import { askUntilValid, repairNote } from '../../ai/agentLoop.ts';
 import { aiLive, type AiRequest } from '../../ai/client.ts';
 import { entitiesOf, subsetPack } from '../../data/pack.ts';
@@ -230,7 +231,7 @@ export function overviewBaseline(ctx: CheckContext, state: Pick<OverviewState, '
 }
 
 export function validateOverviewProposal(raw: unknown, ctx: CheckContext, step?: ImprovementStep, audience: Audience = 'internal'): OverviewProposal {
-  const p = OverviewProposalSchema.parse(raw);
+  const p = parseModelOutputOrThrow(OverviewProposalSchema, raw);
   const known = new Set([...ctx.pack.byId.keys(), ...ctx.objectives.map((o) => o.id), ...ctx.kpi.kpis.map((k) => k.id),
     ...ctx.kpi.okrs.flatMap((o) => [o.id, ...o.keyResults.map((kr) => kr.id)])]);
   const refs = [...p.findings, ...p.actions, ...p.patches, ...p.objectiveIssues].flatMap((f) => f.refs);
@@ -352,8 +353,7 @@ export function proposalEntities(proposal: OverviewProposal, ctx: CheckContext):
 }
 
 export function parseOverviewResponse(text: string, ctx: CheckContext, lang: Lang, step?: ImprovementStep, audience: Audience = 'internal'): OverviewProposal {
-  const json = text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1');
-  return humanizeProposal(validateOverviewProposal(JSON.parse(json), ctx, step, audience), ctx, lang);
+  return humanizeProposal(validateOverviewProposal(parseModelJson(text), ctx, step, audience), ctx, lang);
 }
 
 /** D-51: one live answer; one the parser rejects is corrected once with the reason before the call fails. */

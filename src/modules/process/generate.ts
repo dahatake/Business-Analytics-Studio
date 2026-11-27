@@ -1,4 +1,5 @@
 import { aiLive, AiLiveError, preflight, type AiRequest } from '../../ai/client.ts';
+import { parseModelJson } from '../../ai/modelJson.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { loaded } from '../../data/pack.ts';
 import type { Lang } from '../../i18n/core.ts';
@@ -59,12 +60,12 @@ export async function generateProcess(request: AiRequest, signal: AbortSignal, p
   }
   progress?.('generate');
   const response = await aiLive({ ...request, prompt: workflowPrompt(workflow, purpose, request.lang, evidence) }, signal);
-  const parsed: unknown = JSON.parse(response.text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
+  const parsed: unknown = parseModelJson(response.text);
   if (!parsed || typeof parsed !== 'object' || !('workflow' in parsed)) throw new Error('Missing workflow in AI response');
   const completed = await completeWorkflowWithRepair(workflow, parsed.workflow, request.lang, evidence, async (prompt, round) => {
     const correction = await aiLive({ ...request, prompt, stage: `workflow-repair-${round}` }, signal);
     try {
-      return JSON.parse(correction.text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) as unknown;
+      return parseModelJson(correction.text);
     } catch (err) {
       if (err instanceof SyntaxError) return null;
       throw err;

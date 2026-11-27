@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { dropRejectedNulls } from '../../ai/modelJson.ts';
 import type { CompanyAnchor, CompanyAnchorVersion } from '../../data/companyAnchor.ts';
 import { OkrExtension } from '../../data/extensionSchemas.ts';
 import { extractJson } from '../../data/packImport.ts';
@@ -116,9 +117,10 @@ export function parseAlignmentProposal(answer: string, version: CompanyAnchorVer
   if (extracted.errors.length || extracted.values.length !== 1) throw new Error('Expected one JSON proposal');
   const candidate = extracted.values[0];
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error('Invalid proposal');
+  const given = dropRejectedNulls(AlignmentSchema.partial(), candidate).value as Record<string, unknown>;
   const parsed = AlignmentSchema.safeParse({
     ...emptyAlignment(version.version),
-    ...candidate,
+    ...given,
     origin: 'ai',
     status: 'draft',
     confirmedBy: '',

@@ -4,6 +4,7 @@ import { CompanyAnchorVersionSchema, type CompanyAnchorVersion } from '../../dat
 import { CollectionReport, COLLECTION_SECTIONS, collectionPresence, type CollectionSection } from '../../data/collection.ts';
 import { PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS, WORKIQ_ITEM_MAX_CHARS } from '../../ai/policy.ts';
 import { estimateTokens } from '../../ai/budget.ts';
+import { parseModelOutput } from '../../ai/modelJson.ts';
 import { analyzeImport, extractJson, normalizePack, summarize, type ImportAnalysis, type PackSummary } from '../../data/packImport.ts';
 import { CustomerPack, EntityKind } from '../../data/schema.ts';
 import { EngagementsExtension, hasEngagementContext, OkrExtension, WorkflowExtension } from '../../data/extensionSchemas.ts';
@@ -1019,7 +1020,7 @@ const FixAnswer = z.object({
 const FIXABLE_SECTIONS = new Set(['flows', 'optimization', 'regions', 'extensions', 'company', 'packId']);
 
 export function applyFix(pack: Pack, answer: unknown, ownIds: Set<string>): Pack {
-  const parsed = FixAnswer.safeParse(answer);
+  const parsed = parseModelOutput(FixAnswer, answer);
   if (!parsed.success) return pack;
   const { replace = [], remove = [], sections = {} } = parsed.data;
   const removeSet = new Set(remove.filter((id) => !ownIds.has(id)));

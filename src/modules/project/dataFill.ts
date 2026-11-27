@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelOutput } from '../../ai/modelJson.ts';
 import { runAgentLoop } from '../../ai/agentLoop.ts';
 import { aiLive, type AiRequest } from '../../ai/client.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
@@ -170,12 +171,12 @@ export class FillResponseError extends Error {
 /** One proposal per gap, in gap order. An unanswered or broken item becomes "unacquired" instead of failing the rest. */
 export function parseFill(text: string, gaps: DataGap[], ctx: CheckContext, audience: Audience): FillProposal[] {
   const extracted = extractJson(text);
-  const parsed = extracted.values.length === 1 ? ResponseSchema.safeParse(extracted.values[0]) : null;
+  const parsed = extracted.values.length === 1 ? parseModelOutput(ResponseSchema, extracted.values[0]) : null;
   if (!parsed?.success) throw new FillResponseError();
   const show = entityVisible(ctx, audience);
   const byGap = new Map<string, z.infer<typeof ItemSchema>>();
   for (const raw of parsed.data.items) {
-    const item = ItemSchema.safeParse(raw);
+    const item = parseModelOutput(ItemSchema, raw);
     if (item.success && !byGap.has(item.data.gapId)) byGap.set(item.data.gapId, item.data);
   }
   return gaps.map((gap): FillProposal => {

@@ -47,16 +47,101 @@ describe('FR-380 business process model', () => {
       expect(answer.parties[0]!.kind).toBe('employee');
     });
 
-    it('rejects corrections to valid fields and reports unresolved schema errors', async () => {
+    it('applies only the corrections asked for and never changes another field', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      const answer = { ...draft, parties: [{ ...draft.parties![0]!, kind: 'employee' }] };
+      let attempts = 0;
+      const result = await completeWorkflowWithRepair(null, answer, 'en', [], async () => {
+        attempts++;
+        return { fixes: [{ path: ['parties', 0, 'kind'], value: 'team' }, { path: ['title'], value: 'Changed' }] };
+      });
+      expect(attempts).toBe(1);
+      expect(result.parties![0]!.kind).toBe('team');
+      expect(result.title).toEqual(draft.title);
+      expect(answer.parties[0]!.kind).toBe('employee');
+    });
+
+    it('reports unresolved schema errors after the last repair', async () => {
       const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
       const answer = { ...draft, parties: [{ ...draft.parties![0]!, kind: 'employee' }] };
       let attempts = 0;
       await expect(completeWorkflowWithRepair(null, answer, 'en', [], async () => {
         attempts++;
-        return { fixes: [{ path: ['parties', 0, 'kind'], value: 'team' }, { path: ['title'], value: 'Changed' }] };
+        return { fixes: [{ path: ['title'], value: 'Changed' }] };
       })).rejects.toMatchObject({ name: 'WorkflowDraftError', message: expect.stringContaining('parties') });
       expect(attempts).toBe(2);
-      expect(answer.title).toEqual(draft.title);
+    });
+
+    it('treats null as an omitted value and asks for the missing numbers instead of failing the run', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'ja', [])).workflow;
+      const answer = {
+        ...draft, laborCostPerHourJpy: null, laborCostEvidence: null, draftNote: null,
+        stages: draft.stages.map((s) => ({ ...s, team: null, asIs: { ...s.asIs, touchMinutes: null, evidence: null }, hiddenWork: null })),
+      };
+      const repairs: string[] = [];
+      const result = await completeWorkflowWithRepair(null, answer, 'ja', [], async (repairPrompt) => {
+        repairs.push(repairPrompt);
+        const { problems } = JSON.parse(repairPrompt.split('\n').at(-1)!) as { problems: { path: (string | number)[] }[] };
+        expect(problems.map((p) => p.path)).toEqual([['laborCostPerHourJpy'], ['stages', 0, 'asIs', 'touchMinutes']]);
+        return { fixes: [{ path: ['laborCostPerHourJpy'], value: 4200 }, { path: ['stages', 0, 'asIs', 'touchMinutes'], value: 25 }] };
+      });
+      expect(repairs).toHaveLength(1);
+      expect(repairs[0]).toContain('provisional');
+      expect(result.laborCostPerHourJpy).toBe(4200);
+      expect(result.laborCostEvidence!.status).toBe('estimate');
+      expect(result.stages[0]!.asIs).toMatchObject({ touchMinutes: 25, waitHours: 4 });
+      expect(result.stages[0]!.asIs!.evidence!.touchMinutes!.status).toBe('estimate');
+      expect(workflowGaps(result)).toEqual([]);
+    });
+
+    it('fills numbers of a step whose whole as-is block was null without touching the other stages', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      const answer = { ...draft, stages: draft.stages.map((s) => ({ ...s, asIs: null })) };
+      const result = await completeWorkflowWithRepair(null, answer, 'en', [], async (repairPrompt) => {
+        const { problems } = JSON.parse(repairPrompt.split('\n').at(-1)!) as { problems: { path: (string | number)[] }[] };
+        return { fixes: problems.map((p) => ({ path: p.path, value: p.path.at(-1) === 'firstPassPct' ? 80 : 2 })) };
+      });
+      expect(result.stages[0]!.asIs).toMatchObject({ touchMinutes: 2, waitHours: 2, volumePerMonth: 2, firstPassPct: 80, people: 2, basis: 'estimate' });
+      expect(result.stages).toHaveLength(draft.stages.length);
+    });
+
+    it('repairs the measured failure in one call: 14 steps with every number null and an invalid evidence status', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'ja', [])).workflow;
+      const nulls = { touchMinutes: null, waitHours: null, volumePerMonth: null, firstPassPct: null, people: null };
+      for (const status of ['missing', null, undefined]) {
+        const answer = {
+          ...draft, laborCostPerHourJpy: null, laborCostEvidence: { status, method: '資料に記載なし', sourceIds: [] },
+          stages: Array.from({ length: 14 }, (_, i) => ({
+            ...draft.stages[0]!, id: `s${i}`, next: i < 13 ? [`s${i + 1}`] : [],
+            asIs: { ...nulls, basis: 'provisional', evidence: { touchMinutes: { status: 'none', method: '' } } },
+            toBe: { ...draft.stages[0]!.toBe!, basis: 'guess', metrics: { ...nulls } },
+          })),
+        };
+        let calls = 0;
+        const result = await completeWorkflowWithRepair(null, answer, 'ja', [], async (repairPrompt) => {
+          calls++;
+          const { problems, contexts } = JSON.parse(repairPrompt.split('\n').at(-1)!) as { problems: { path: (string | number)[]; message: string }[]; contexts: unknown[] };
+          expect(problems).toHaveLength(1 + 14 * 5 * 2);
+          expect(problems.every((p) => p.message.startsWith('Missing required value'))).toBe(true);
+          expect(contexts).toHaveLength(15);
+          return { fixes: problems.map((p) => ({ path: p.path, value: p.path.at(-1) === 'laborCostPerHourJpy' ? 4500 : 1, note: 'extra keys are ignored' })) };
+        });
+        expect(calls).toBe(1);
+        expect(workflowGaps(result)).toEqual([]);
+        expect(result.laborCostEvidence!.status).toBe('estimate');
+        expect(result.stages[13]!.asIs).toMatchObject({ touchMinutes: 1, basis: 'estimate' });
+        expect(result.stages[13]!.toBe!.basis).toBe('hypothesis');
+      }
+    });
+
+    it('accepts an empty correction list and reports the fields that are still missing', async () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'ja', [])).workflow;
+      let attempts = 0;
+      await expect(completeWorkflowWithRepair(null, { ...draft, laborCostPerHourJpy: null }, 'ja', [], async () => {
+        attempts++;
+        return { fixes: [] };
+      })).rejects.toMatchObject({ name: 'WorkflowDraftError', message: expect.stringMatching(/不足.*laborCostPerHourJpy.*No corrections returned/) });
+      expect(attempts).toBe(2);
     });
 
     it('does not request repairs for a valid workflow', async () => {

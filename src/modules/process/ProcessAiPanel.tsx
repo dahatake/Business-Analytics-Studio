@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import { aiLive, AiLiveError, preflight, type AiRequest } from '../../ai/client.ts';
+import { parseModelJson } from '../../ai/modelJson.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { flushDeviceStorage } from '../../data/deviceStorage.ts';
 import { loaded } from '../../data/pack.ts';
@@ -88,7 +89,7 @@ export function ProcessAiPanel({ workflow }: { workflow: WorkflowExtension | nul
       }
       if (!sources.some((s) => s.text.trim())) throw new Error(`${t('bp.measure.noRecords')} ${warnings.join('; ')}`);
       const answer = await aiLive({ ...request, prompt: measurementPrompt(sources, targetPeriod.period, workflow, lang) }, signal);
-      const measurement = buildMeasurement(JSON.parse(answer.text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')), sources, targetPeriod.period, targetPeriod.worker, targetPeriod.timeZone, workflow, lang);
+      const measurement = buildMeasurement(parseModelJson(answer.text), sources, targetPeriod.period, targetPeriod.worker, targetPeriod.timeZone, workflow, lang);
       return { ...workflow, measurement: { ...measurement, warnings: [...measurement.warnings, ...warnings] } };
     });
   };

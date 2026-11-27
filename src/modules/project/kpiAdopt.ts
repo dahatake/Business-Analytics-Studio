@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseModelJson, parseModelOutputOrThrow } from '../../ai/modelJson.ts';
 import type { OkrExtension } from '../../data/extensionSchemas.ts';
 import type { CustomerPack } from '../../data/schema.ts';
 import type { Lang } from '../../i18n/core.ts';
@@ -481,7 +482,7 @@ const missingProposalSchema = z.object({
 
 /** Validate every reference before changing state. Proposals never supply numeric observations or target dates. */
 export function applyMissingKpiDraftResponse(text: string, input: DraftPromptInput, pack: CustomerPack): AddResult {
-  const raw = missingProposalSchema.parse(JSON.parse(text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')));
+  const raw = parseModelOutputOrThrow(missingProposalSchema, parseModelJson(text));
   const evidence = proposalEvidence(pack, input.lang);
   const evidenceIds = new Set(evidence.map((e) => e.id));
   const ids = new Set([...input.data.kpis, ...input.drafts.kpis].map((k) => k.id).concat(input.ext.kpis.map((k) => kpiCandidateId(k.id))));
@@ -619,8 +620,7 @@ const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice
 
 /** Validates Copilot's answer against the open candidates: unknown or duplicate ids are dropped, counts capped. */
 export function parseKpiDraftResponse(text: string, input: DraftPromptInput): CopilotPick {
-  const json = text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1');
-  const raw = JSON.parse(json) as unknown;
+  const raw = parseModelJson(text);
   if (!raw || typeof raw !== 'object') throw new Error('not an object');
   const { kpis: rawKpis, okrs: rawOkrs } = raw as { kpis?: unknown; okrs?: unknown };
   const open = openCandidates(input.ext, input.data, input.drafts);
@@ -912,7 +912,7 @@ export interface FillResult {
  * known objective ids. Each filled field records Copilot's reason, and the notes it resolves are dropped.
  */
 export function applyKpiFill(text: string, drafts: KpiDrafts, objectives: readonly FillObjective[]): FillResult {
-  const raw = fillSchema.parse(JSON.parse(text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, '$1')));
+  const raw = parseModelOutputOrThrow(fillSchema, parseModelJson(text));
   const answers = new Map(raw.kpis.map((k) => [k.id, k.fields]));
   const links = new Map(raw.okrs.map((o) => [o.id, o]));
   const known = new Set(objectives.map((o) => o.id));

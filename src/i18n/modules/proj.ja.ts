@@ -1078,6 +1078,7 @@ export const projJa = {
   'proj.pack.note.flowsDefaulted': 'flows がないため空にしました。',
   'proj.pack.note.langFilled': '片方の言語しかない表示文 {count} 件を、同じ文で両方の言語に入れました。',
   'proj.pack.note.numberParsed': '文字で書かれた数値 {count} 件を数値にしました。',
+  'proj.pack.note.nullDropped': '値が null の項目 {count} 件を「未記入」として扱いました（null を受け付けない任意項目です）。',
   'proj.pack.note.worldTypeFilled': 'world/type のないエンティティ {count} 件に、種類ごとの値を入れました。',
   'proj.pack.note.sourceIdsAdded': 'sourceIds のないエンティティ {count} 件に空の一覧を入れました（数値があるものは検査でエラーになります）。',
   'proj.pack.note.classificationDefaulted': '機密区分のないエンティティ {count} 件を社外秘（internal）にしました。',

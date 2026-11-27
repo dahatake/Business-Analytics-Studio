@@ -16,6 +16,7 @@ import { PACK_BUILD_MAX_PROMPT_CHARS, PER_USE_LIMITS } from '../src/ai/policy.ts
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
 import { AiLiveError } from '../src/ai/client.ts';
 import { RelayError } from '../src/modules/ai/relayClient.ts';
+import { workflowAnswer } from './fixtures/workflow.ts';
 
 const NOW = new Date('2026-11-10T03:00:00Z');
 const lt = (s: string) => ({ ja: s, en: s });
@@ -87,7 +88,7 @@ const companyAnchor = CompanyAnchorVersionSchema.parse({
 function deps(answers: unknown[], extra: Partial<GenDeps> = {}): GenDeps & { prompts: string[] } {
   const prompts: string[] = [];
   let i = 0;
-  return {
+  const configured: GenDeps & { prompts: string[] } = {
     prompts,
     provider: 'foundry',
     model: 'gpt-test',
@@ -104,6 +105,16 @@ function deps(answers: unknown[], extra: Partial<GenDeps> = {}): GenDeps & { pro
     fetchSite: async () => ({ pages: [sitePage], failed: [{ url: 'https://www.contoso.example/ir/', error: 'siteTimeout' }] }),
     fetchNews: async () => ({ provider: 'Google News RSS', fetchedAt: '2026-11-10T02:59:30.000Z', articles: [{ title: 'Contoso が新工場', url: 'https://news.example/a', source: '日刊', publishedAt: '2026-10-01T00:00:00Z' }] }),
     ...extra,
+  };
+  return {
+    ...configured,
+    complete: async (prompt, signal, stage) => {
+      if (stage === 'workflow') {
+        prompts.push(prompt);
+        return { text: JSON.stringify(workflowAnswer(prompt)), inputTokens: 1000, outputTokens: 500 };
+      }
+      return configured.complete(prompt, signal, stage);
+    },
   };
 }
 
@@ -141,7 +152,7 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(r.report.droppedSources).toEqual(['source-fake']);
     expect(r.report.removed.map((x) => x.path)).toContain('entities.product-ghost');
     expect(r.report.fixRounds).toBe(3);
-    expect(r.report.calls.map((c) => c.stage)).toEqual(['foundation', 'business', 'fix-1', 'fix-2', 'fix-3', 'analysis']);
+    expect(r.report.calls.map((c) => c.stage)).toEqual(['foundation', 'business', 'workflow', 'fix-1', 'fix-2', 'fix-3', 'analysis']);
     expect(r.report.retrievalErrors).toEqual([{ what: 'site', url: 'https://www.contoso.example/ir/', error: 'siteTimeout' }]);
     expect(r.report.ungrounded).toEqual([]); // 12,000 is on the page, 92/94/98 in kpi.csv
     expect(r.report.inputs.materials[0]).toMatchObject({ name: 'kpi.csv', text: expect.stringContaining('納期遵守率') });
@@ -160,7 +171,7 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(d.prompts[0]).toContain('source-web-1');
     expect(d.prompts[0]).toContain('主力製品 ギア 単価 12,000円');
     expect(d.prompts[1]).toContain('site-tokyo'); // stage B sees the foundation ids
-    expect(d.prompts[2]).toContain('initiative-bad');
+    expect(d.prompts[3]).toContain('initiative-bad');
     expect(r.analysis.analyses.map((a) => a.method)).toEqual(Object.keys(METHOD_CATEGORIES));
     expect(r.analysis.analyses.every((a) => a.items.length > 0 && a.items.every((i) => i.author === 'ai' && i.mock === false))).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({ step: 'analysis', status: 'done' }));
@@ -173,7 +184,7 @@ describe('FR-311 pack generation (D-12)', () => {
     const d = deps([clean, { entities: [stageB.entities[0], stageB.entities[1]] }]);
     const r = await generatePack(input(), d, () => {}, new AbortController().signal);
     expect(r.report.fixRounds).toBe(0);
-    expect(d.prompts).toHaveLength(3);
+    expect(d.prompts).toHaveLength(4);
     expect(r.report.removed).toEqual([]);
   });
 
@@ -191,7 +202,7 @@ describe('FR-311 pack generation (D-12)', () => {
     };
     await expect(generatePack(input({ officialUrl: '', useNews: false }), d, () => {}, new AbortController().signal))
       .rejects.toMatchObject({ code: 'invalidAnalysis' });
-    expect(runPlan(input({ useWorkIq: false }))).toMatchObject({ minCalls: 3, maxCalls: 8 });
+    expect(runPlan(input({ useWorkIq: false }))).toMatchObject({ minCalls: 4, maxCalls: 9 });
   });
 
   it('preserves unknown call tokens in the saved report and progress instead of reporting zero', async () => {
@@ -326,7 +337,7 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(queries[1]!.topics!.length).toBeLessThanOrEqual(MAX_GAP_TOPICS);
     expect(queries.some((q) => q.topics?.[0] === 'workflow: 次に引き継ぐチーム')).toBe(true);
     // Later rounds bring nothing new (the same file), so no further re-run happens.
-    expect(r.report.calls.map((c) => c.stage)).toEqual(['foundation', 'foundation-2', 'business', 'analysis']);
+    expect(r.report.calls.map((c) => c.stage)).toEqual(['foundation', 'foundation-2', 'business', 'workflow', 'analysis']);
     expect(r.report.stopReasons).toEqual({ a: 'roundLimit', b: 'roundLimit' });
     const ids = (r.pack.entities as { id: string }[]).map((e) => e.id);
     expect(ids).toEqual(expect.arrayContaining(['source-workiq-kpi', 'source-workiq-locations', 'source-workiq-a-topic-1', 'cause-a', 'site-hub-london']));
@@ -474,7 +485,7 @@ describe('FR-311 pack generation (D-12)', () => {
       ['KPI・OKR の定義と目標値・実績値', '案件・提案・エンゲージメントの一覧と進捗', '課題・その原因・改善施策'],
       ['スコアカード、QBR、ビジネスレビュー資料にある指標と達成率', '実施したワークショップ・ブリーフィング・PoC の事例と件数', '振り返り（レトロスペクティブ）やリスク管理表で挙がった問題点'],
     ]);
-    expect(r.report.calls.map((c) => c.stage).filter((s) => !s.startsWith('fix-'))).toEqual(['foundation', 'foundation-2', 'foundation-3', 'business', 'analysis']);
+    expect(r.report.calls.map((c) => c.stage).filter((s) => !s.startsWith('fix-'))).toEqual(['foundation', 'foundation-2', 'foundation-3', 'business', 'workflow', 'analysis']);
     expect(r.report.collectionRounds!.map((x) => [x.stage, x.round, x.rerun, x.adopted, x.newSources])).toEqual([
       ['a', 1, true, false, ['source-workiq-a-topic-1']], // the re-run lost everything: not kept
       ['a', 2, true, true, ['source-workiq-a2-topic-1']],
@@ -531,7 +542,7 @@ describe('FR-311 pack generation (D-12)', () => {
     expect(queries.slice(1).flatMap((q) => q.topics ?? []).filter((t) => ladder.has(t))).toEqual([]);
     expect(queries.slice(1).map((q) => q.topics![0])).toEqual(['kpi: NSAT の目標値 1', 'kpi: NSAT の目標値 2', 'issue: 遅延の原因 4', 'issue: 遅延の原因 5']);
     // Two re-runs in a row that did not raise the readiness count end each stage before its limit of 4.
-    expect(r.report.calls.map((c) => c.stage).filter((s) => !s.startsWith('fix-'))).toEqual(['foundation', 'foundation-2', 'foundation-3', 'business', 'business-2', 'business-3', 'analysis']);
+    expect(r.report.calls.map((c) => c.stage).filter((s) => !s.startsWith('fix-'))).toEqual(['foundation', 'foundation-2', 'foundation-3', 'business', 'business-2', 'business-3', 'workflow', 'analysis']);
     expect(r.report.stopReasons).toEqual({ a: 'noProgress', b: 'noProgress' });
     expect((r.pack.entities as { id: string }[]).map((e) => e.id)).toEqual(expect.arrayContaining(['source-workiq-customers', 'source-workiq-workflow', 'source-workiq-data-catalog']));
     expect(r.report.retrieved.find((x) => x.sourceId === 'source-workiq-workflow')!.title).toContain('業務の流れ');

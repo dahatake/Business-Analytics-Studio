@@ -12,6 +12,8 @@ import { packJsonSchema, validateJsonSchema } from '../scripts/lib/schema.ts';
 import { generateDraft, researchSourceId } from '../scripts/lib/generate.ts';
 import { run, workIqCheck } from '../scripts/bas.ts';
 import { contrastRatio } from '../src/modules/ops/color.ts';
+import { WorkflowExtension } from '../src/data/extensionSchemas.ts';
+import { workflowGaps } from '../src/modules/process/workflowDraft.ts';
 
 const TMP = resolve('.bas-local', `test-ops-${process.pid}`);
 const clone = <T>(v: T): T => structuredClone(v);
@@ -37,6 +39,10 @@ describe('FR-127 verify', () => {
     expect(internal.length).toBe(r.stats.internal);
     expect(internal.length).toBeGreaterThan(0);
     expect(r.stats.elapsedMs).toBeLessThan(60_000);
+    const w = WorkflowExtension.parse(validPack().extensions.workflow);
+    expect(workflowGaps(w)).toEqual([]);
+    expect(w.laborCostEvidence?.status).toBe('estimate');
+    expect(w.stages.filter((s) => s.asIs).every((s) => s.asIs!.basis === 'estimate')).toBe(true);
   });
 
   const broken: [ProblemCode, (p: J) => void][] = [

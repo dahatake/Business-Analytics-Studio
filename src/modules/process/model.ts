@@ -1,5 +1,5 @@
 import {
-  artifactName, type Artifact, type ArtifactForm, type StepChange, type StepMetrics, type WorkflowExtension, type WorkflowStage,
+  artifactName, METRIC_FIELDS, type Artifact, type ArtifactForm, type MetricEvidence, type MetricField, type StepChange, type StepMetrics, type WorkflowExtension, type WorkflowStage,
 } from '../../data/extensionSchemas.ts';
 import type { Entity } from '../../data/schema.ts';
 import type { Localizable } from '../../state/text.ts';
@@ -25,10 +25,11 @@ export interface Metrics {
   firstPass: number | null;
   people: number | null;
   estimate: boolean;
+  evidence?: StepMetrics['evidence'];
 }
 
 export interface PArtifact { name: Localizable; form: ArtifactForm | null; partyId: string | null }
-export interface PHidden { name: Localizable; form: ArtifactForm | null; participants: number | null; minutes: number | null }
+export interface PHidden { name: Localizable; form: ArtifactForm | null; participants: number | null; minutes: number | null; minutesEvidence?: MetricEvidence; participantsEvidence?: MetricEvidence }
 
 export interface PLane {
   id: string;
@@ -47,6 +48,7 @@ export interface PLoop {
   label: Localizable | null; ratePct: number | null; cadence: Localizable | null;
   /** Inferred from a `next` that goes back to an earlier step (not declared in loops). */
   implicit: boolean;
+  rateEvidence?: MetricEvidence;
 }
 
 export interface PStep {
@@ -75,6 +77,8 @@ export interface PStep {
 export interface ProcessView {
   title: Localizable | null;
   laborRate: number | null;
+  laborEvidence?: MetricEvidence;
+  evidenceSources?: WorkflowExtension['evidenceSources'];
   lanes: PLane[];
   phases: PPhase[];
   steps: PStep[];
@@ -92,6 +96,10 @@ function metricsOf(m: StepMetrics | undefined): Metrics | null {
   return {
     touchMin: num(m.touchMinutes), waitH: num(m.waitHours), volume: num(m.volumePerMonth),
     firstPass: num(m.firstPassPct), people: num(m.people), estimate: m.basis === 'estimate',
+    evidence: Object.fromEntries(METRIC_FIELDS.map((f) => [f, m.evidence?.[f] ?? {
+      status: m.basis === 'estimate' ? 'estimate' : m.basis === 'stated' ? 'stated' : 'unknown',
+      method: '', sourceIds: [],
+    }])),
   };
 }
 
@@ -101,10 +109,20 @@ const EMPTY: Metrics = { touchMin: null, waitH: null, volume: null, firstPass: n
 function mergeMetrics(base: Metrics | null, over: Metrics | null): Metrics {
   const b = base ?? EMPTY;
   if (!over) return b;
+  const evidence = { ...b.evidence };
+  const keys = { touchMinutes: 'touchMin', waitHours: 'waitH', volumePerMonth: 'volume', firstPassPct: 'firstPass', people: 'people' } as const;
+  for (const f of METRIC_FIELDS) if (over[keys[f]] !== null) evidence[f] = over.evidence?.[f];
   return {
     touchMin: over.touchMin ?? b.touchMin, waitH: over.waitH ?? b.waitH, volume: over.volume ?? b.volume,
-    firstPass: over.firstPass ?? b.firstPass, people: over.people ?? b.people, estimate: over.estimate || b.estimate,
+    firstPass: over.firstPass ?? b.firstPass, people: over.people ?? b.people, estimate: over.estimate || b.estimate, evidence,
   };
+}
+
+export function metricStatus(m: Metrics | null, field?: MetricField): MetricEvidence['status'][] {
+  if (!m) return ['unknown'];
+  if (field) return [m.evidence?.[field]?.status ?? (m.estimate ? 'estimate' : 'unknown')];
+  const keys = { touchMinutes: 'touchMin', waitHours: 'waitH', volumePerMonth: 'volume', firstPassPct: 'firstPass', people: 'people' } as const;
+  return [...new Set(METRIC_FIELDS.map((f) => m[keys[f]] === null ? 'unknown' : m.evidence?.[f]?.status ?? (m.estimate ? 'estimate' : 'unknown')))];
 }
 
 const artifact = (a: Artifact): PArtifact => {
@@ -166,7 +184,7 @@ export function buildProcess(w: WorkflowExtension): ProcessView {
       id: uniqueId(s.id), index, name: s.name, laneId: laneFor(s), phaseId,
       description: s.description ?? null,
       activities: s.activities, inputs: s.inputs.map(artifact), outputs: s.outputs.map(artifact), data: s.data ?? [],
-      hidden: (s.hiddenWork ?? []).map((h) => ({ name: h.name, form: h.form ?? null, participants: num(h.participants), minutes: num(h.minutes) })),
+      hidden: (s.hiddenWork ?? []).map((h) => ({ name: h.name, form: h.form ?? null, participants: num(h.participants), minutes: num(h.minutes), minutesEvidence: h.minutesEvidence, participantsEvidence: h.participantsEvidence })),
       next: s.next.filter((n) => stageIds.has(n) && n !== s.id),
       handoffTo: s.handoffTo ?? [],
       change, note: s.toBe?.note ?? null,
@@ -179,7 +197,7 @@ export function buildProcess(w: WorkflowExtension): ProcessView {
 
   const loops: PLoop[] = (w.loops ?? []).filter((l) => byId.has(l.from) && byId.has(l.to)).map((l) => ({
     id: l.id, from: l.from, to: l.to, kind: l.kind, state: l.state ?? 'both',
-    label: l.label ?? null, ratePct: num(l.ratePct), cadence: l.cadence ?? null, implicit: false,
+    label: l.label ?? null, ratePct: num(l.ratePct), rateEvidence: l.rateEvidence, cadence: l.cadence ?? null, implicit: false,
   }));
   const declared = new Set(loops.map((l) => `${l.from}>${l.to}`));
   for (const [from, to] of backEdges(steps)) {
@@ -193,7 +211,7 @@ export function buildProcess(w: WorkflowExtension): ProcessView {
 
   const hasToBe = steps.some((s) => s.change !== 'keep') || w.stages.some((s) => !!s.toBe?.metrics);
   return {
-    title: w.title ?? null, laborRate: num(w.laborCostPerHourJpy), lanes: ordered,
+    title: w.title ?? null, laborRate: num(w.laborCostPerHourJpy), laborEvidence: w.laborCostEvidence, evidenceSources: w.evidenceSources, lanes: ordered,
     phases: phases.filter((p) => steps.some((s) => s.phaseId === p.id)),
     steps, loops, kpiSpans: (w.kpiSpans ?? []).filter((k) => byId.has(k.from) && byId.has(k.to)), hasToBe, byId,
   };

@@ -10,6 +10,7 @@ import { isHidden, specFor, type CardField } from '../ui/cardSpecs.ts';
 import { kindIcon } from '../ui/icons.ts';
 import { Panel } from '../ui/Panel.tsx';
 import { NotFound } from './NotFound.tsx';
+import { EntityEditLink } from '../ui/entry/EntityEditLink.tsx';
 
 function BackButton() {
   const { t } = useI18n();
@@ -75,6 +76,7 @@ export function EntityPage({ id }: { id: string }) {
             {e.classification === 'internal' && <Badge appearance="tint" color="warning" icon={<LockClosed16Regular />}>{t('badge.internal')}</Badge>}
             <Badge appearance="outline">{t(`world.${e.world}`)}</Badge>
           </div>
+          <EntityEditLink entity={e} />
         </div>
       </header>
 

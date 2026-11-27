@@ -12,7 +12,7 @@ import { PageHeader, Panel } from '../../ui/Panel.tsx';
 import type { Formatters, Lang } from '../../i18n/core.ts';
 import { normalizeDeliverables, setField } from '../project/deliverables.ts';
 import { useDeliverables } from '../project/stores.ts';
-import { buildProcess, layoutProcess, presentIn, totals, type ProcessView, type ProcState } from './model.ts';
+import { buildProcess, layoutProcess, metricStatus, presentIn, totals, type ProcessView, type ProcState } from './model.ts';
 import { ProcessMap, ZOOM_LEVELS, type ZoomLevel } from './ProcessMap.tsx';
 import { StepSummary } from './HoverCard.tsx';
 import { IoPanel, ReconcilePanel, ResourcePanel, StepTable, SummaryTiles, TimelinePanel } from './ProcessPanels.tsx';
@@ -20,6 +20,8 @@ import { StepEditor } from './StepEditor.tsx';
 import { effectiveWorkflow, removeStage, saveWorkflow, setLaborRate, starterWorkflow, useProcessEdits } from './store.ts';
 import { duration, hoursMonth } from './format.ts';
 import './process.css';
+import { ProcessAiPanel } from './ProcessAiPanel.tsx';
+import { useSettings } from '../../state/settings.ts';
 
 // The material flow (Sankey) and the system architecture keep their own view, loaded on demand.
 const FlowsView = lazy(() => import('../../screens/Flows.tsx').then((m) => ({ default: m.Flows })));
@@ -50,6 +52,10 @@ export function processSummary(v: ProcessView, state: ProcState, t: T, lang: Lan
     lead: duration(x.leadHours, t, fmt), efficiency: x.efficiency === null ? t('bp.unknown') : fmt.percent(x.efficiency),
     effort: hoursMonth(x.effortHours, t, fmt), steps: x.steps, handoffs: x.handoffs, manual: x.manualArtifacts + x.hiddenWork,
   }));
+  lines.push(t('bp.status.summary', {
+    before: [...new Set(v.steps.flatMap((s) => metricStatus(s.asIs)))].map((s) => t(`bp.status.${s}`)).join(' / '),
+    after: [...new Set(v.steps.flatMap((s) => metricStatus(s.toBe)))].map((s) => t(`bp.status.${s}`)).join(' / '),
+  }));
   if (state === 'toBe') {
     const by = (c: string) => v.steps.filter((s) => s.change === c).map((s) => loc(s.name, lang));
     for (const c of ['remove', 'combine', 'new', 'improve'] as const) if (by(c).length) lines.push(`${t(`bp.change.${c}`)}: ${by(c).join(', ')}`);
@@ -66,6 +72,7 @@ export function ProcessScreen() {
   useRouteTarget();
   usePackVersion((s) => s.version);
   const stored = useProcessEdits((s) => s.value);
+  const audience = useSettings((s) => s.audience);
   const { step } = useActiveProject();
   const { workflow, origin, stale } = effectiveWorkflow(stored);
   const view = useMemo(() => (workflow ? buildProcess(workflow) : null), [workflow]);
@@ -116,6 +123,8 @@ export function ProcessScreen() {
       />
 
       {origin === 'demo' && <MessageBar intent="info" data-testid="bp-origin-demo"><MessageBarBody>{t('bp.origin.demo')}</MessageBarBody></MessageBar>}
+      <ProcessAiPanel workflow={workflow} />
+      {audience === 'internal' && workflow?.draftNote && <MessageBar intent="warning" data-testid="bp-draft-note"><MessageBarBody>{loc(workflow.draftNote, lang)}</MessageBarBody></MessageBar>}
       {origin === 'edited' && <MessageBar intent={stale ? 'warning' : 'info'} data-testid="bp-origin-edited"><MessageBarBody>{t(stale ? 'bp.origin.stale' : 'bp.origin.edited')}</MessageBarBody></MessageBar>}
       {written && (
         <MessageBar intent="success" data-testid="bp-written">
@@ -170,7 +179,7 @@ export function ProcessScreen() {
               <div className="bp-panels">
                 <TimelinePanel view={view} />
                 <ReconcilePanel view={view} onSpans={(kpiSpans) => workflow && saveWorkflow({ ...workflow, kpiSpans })} />
-                <ResourcePanel key={String(view.laborRate)} view={view} onRate={(rate) => workflow && saveWorkflow(setLaborRate(workflow, rate))} />
+                <ResourcePanel key={String(view.laborRate)} view={view} onRate={(rate) => workflow && saveWorkflow(setLaborRate(workflow, rate, lang))} />
                 <IoPanel view={view} state={state} />
               </div>
             </>

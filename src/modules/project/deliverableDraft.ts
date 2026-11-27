@@ -9,6 +9,8 @@ import { loc, type Localizable } from '../../state/text.ts';
 import { computeAnalysis } from './analysis.ts';
 import { describeInsight } from './analysisText.ts';
 import { activeFill, evaluateStep, FILL_FIELDS, fieldHintKey, fieldKey, isQualifiedOut, paybackLimit, paybackYears, qualificationOf, rankedIssues, resultKey, SCHEDULE_LAG_MAX, STEP_DEFS, todoKey, todoWhyKey, type CheckContext, type FillBasis, type FillField } from './deliverables.ts';
+import { effectiveWorkflow, useProcessEdits } from '../process/store.ts';
+import { workflowForPrompt } from '../process/workflowDraft.ts';
 
 /**
  * "Draft with Copilot": a draft of each step's deliverable, grounded only in the Project pack and the project data.
@@ -440,6 +442,7 @@ export function draftPrompt(input: DraftInput, part: DraftPart | null = null, on
   const fields = STEP_DEFS[step].fields.filter((f) => wantField(f.id)).map((f) => `- ${f.id}: ${tr(fieldKey(step, f.id))} — ${tr(fieldHintKey(step, f.id))}`).join('\n');
   const tasks = evaluateStep(step, ctx).filter((r) => wantTask(r.todo.id)).map((r) => `- task-${r.todo.id}: ${tr(todoKey(r.todo.id))}; ${audience === 'external' ? '' : (r.outcome ? translate(lang, resultKey(r.outcome.code), r.outcome.vars) : tr(r.done ? 'dlv.status.done' : 'dlv.waiting'))}`).join('\n');
   const project = audience === 'internal' ? {
+    workflow: workflowForPrompt(effectiveWorkflow(useProcessEdits.getState().value).workflow),
     upstreamDeliverables: Object.fromEntries(IMPROVEMENT_STEPS.slice(0, IMPROVEMENT_STEPS.indexOf(step)).map((previous) => [
       previous,
       Object.fromEntries(Object.entries(ctx.deliverables.docs[previous] ?? {}).filter(([, value]) => value.text.trim()).map(([id, value]) => [

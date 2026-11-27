@@ -34,6 +34,8 @@ import { gapCount, normalizeStrategy } from './strategy.ts';
 import { TaskDraftLine, useTaskStatuses } from './taskDraftsUi.tsx';
 import { latestCompanyAnchor } from '../../state/companyAnchors.ts';
 import './project.css';
+import { generateProcess, processDraftRequest } from '../process/generate.ts';
+import { saveWorkflow, useProcessEdits } from '../process/store.ts';
 
 /** YYYY-MM-DD in the app's time zone. The demo is judged on the sample's "as of" date so it stays deterministic. */
 export function todayIn(timeZone: string = PARAMS.timeZone, now = new Date()): string {
@@ -493,6 +495,7 @@ export function DraftDialog() {
       return JSON.stringify(STEP_DEFS[step].todos.map((todo) => recommendations?.[`${audience}:${todo.id}`]?.draft ?? null));
     };
     const originalTasks = taskDrafts();
+    const originalProcess = useProcessEdits.getState().value;
     const draftsUnchanged = () => {
       const current = useFieldDrafts.getState().value[`${audience}:${step}`];
       return (originalDraft ? sameFieldDraft(current, originalDraft, originalDraft.lang) : !current) && taskDrafts() === originalTasks;
@@ -539,7 +542,14 @@ export function DraftDialog() {
           fillError = t('dlv.fill.failed', { detail: error instanceof AiLiveError ? error.reasons.map((r) => t(reasonKey(r))).join(' ') || error.message : error instanceof Error ? error.message : String(error) });
         }
       }
-      const r = await requestDeliverableDraft(input, input.ctx === ctx ? request : draftRequest(input), controller.signal, (progress) => {
+      const process = audience === 'internal' && (step === 'asis' || step === 'tobe')
+        ? await generateProcess(processDraftRequest(lang, scope), controller.signal)
+        : null;
+      if (process) {
+        if (!targetCurrent() || useProcessEdits.getState().value !== originalProcess) throw new Error(t('bp.ai.changed'));
+        saveWorkflow(process);
+      }
+      const r = await requestDeliverableDraft(input, input.ctx === ctx && !process ? request : draftRequest(input), controller.signal, (progress) => {
         if (!controller.signal.aborted && targetCurrent()) setState({
           status: 'working', stage: 'generate', activity: progress.part ?? 'generate', startedAt: Date.now(),
           ...(progress.total > 1 ? { part: { current: progress.current, total: progress.total } } : {}), retry: progress.retry,

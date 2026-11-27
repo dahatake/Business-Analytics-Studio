@@ -2,7 +2,8 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { JAPANESE, deviceSnapshot, open, openAiSettings, seedDeviceData, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
+import { workflowAnswer } from '../tests/fixtures/workflow.ts';
+import { JAPANESE, deviceSnapshot, open, openAiSettings, reopenAiSettings, seedDeviceData, setup, visibleTextExcludingOtherLang, type Lang } from './helpers.ts';
 
 // The relay (keys, connection, per-use interval) is shared by every test of this preview server, so this file runs in
 // order in one worker. The live tests need the preview server started with BAS_RELAY_TEST_OUTBOUND=1 (see below).
@@ -205,7 +206,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(page.getByTestId('ai-provider-cost-note')).toHaveCount(0);
     await expect(page.getByTestId('ai-state')).not.toContainText('モック');
     await page.reload();
-    await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
+    await reopenAiSettings(page); // a reload closes the dialog, like any page change
     await expect(page.getByTestId('ai-provider-copilot')).toBeChecked();
     await expect(page.getByTestId('ai-price-request')).toHaveCount(0);
     await expect(page.getByTestId('ai-state')).not.toContainText('モック');
@@ -262,7 +263,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await expect(foundry.getByTestId('ai-foundry-key-change')).toBeVisible();
 
     await page.reload();
-    await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
+    await reopenAiSettings(page); // a reload closes the dialog, like any page change
     await expect(page.getByTestId('ai-foundry-key-state')).toHaveText('Saved');
     expect(await page.content()).not.toContain(FAKE_KEY);
     expect(await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }))).not.toContain(FAKE_KEY);
@@ -353,7 +354,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
 
     entraMode = true;
     await page.reload();
-    await page.getByTestId('nav-ai-settings').click();
+    await reopenAiSettings(page);
     await page.getByTestId('ai-auth-entra').check();
     await page.getByTestId('ai-entra-instance').selectOption({ label: 'decision-resource — Test / rg (eastus)' });
     await expect(page.getByTestId('ai-entra-deployment')).toHaveValue('chat');
@@ -363,7 +364,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
     await picker.selectOption('decision-1-1');
     await expect(picker).toHaveValue('decision-1-1');
     await page.reload();
-    await page.getByTestId('nav-ai-settings').click();
+    await reopenAiSettings(page);
     await expect(picker).toHaveValue('decision-1-1');
     await picker.selectOption('');
     await expect(picker).toHaveValue('');
@@ -449,12 +450,12 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
 
       state = 'unknown';
       await page.reload();
-      await page.getByTestId('nav-ai-settings').click();
+      await reopenAiSettings(page);
       await expect(page.getByTestId('ai-foundry-check-failed')).toContainText(lang === 'ja' ? 'リソースがないと判定したものではありません' : 'does not mean the resources are missing');
       await expect(notice).toHaveCount(0);
       state = 'partial';
       await page.reload();
-      await page.getByTestId('nav-ai-settings').click();
+      await reopenAiSettings(page);
       await expect(notice).toContainText('AI Vision');
       await expect(notice).not.toContainText('AI Speech');
       await expect(notice).not.toContainText('Decision');
@@ -518,7 +519,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
         await expect(dialog.getByTestId(id)).toHaveCount(0);
       }
       await page.reload();
-      await page.getByTestId('nav-ai-settings').click();
+      await reopenAiSettings(page);
       await expect(services.getByTestId('ai-decision-deployment')).toBeEnabled();
       await services.scrollIntoViewIfNeeded();
       expect(await scan(page, ['[data-testid="ai-foundry-models"]'])).toEqual([]);
@@ -587,7 +588,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       await expect(page.getByTestId('ai-workiq-msg')).toContainText(lang === 'en' ? 'test passed' : '検証に成功');
       await expect(page.getByTestId('ai-workiq-consent')).not.toBeChecked();
       await page.reload();
-      await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
+      await reopenAiSettings(page); // a reload closes the dialog, like any page change
       await expect(page.getByTestId('ai-workiq-verification')).toContainText('2026-11-11T05:00:00.000Z');
       await page.getByTestId('ai-workiq-consent').check();
       await page.getByTestId('ai-workiq-check').click();
@@ -715,7 +716,7 @@ test.describe('AI settings and relay (FR-275, FR-282, FR-168, NFR-SEC-001/005/01
       // While the Foundry route is in use, the CLI button removes it first (the relay refuses the CLI until then).
       foundry = { endpoint: project, connection: 'workiq-mcp', verifiedAt: '2026-11-26T00:00:00.000Z', refusedAt: null };
       await page.reload();
-      await page.getByTestId('nav-ai-settings').click();
+      await reopenAiSettings(page);
       await expect(foundryRoute).toBeChecked();
       await expect(page.getByTestId('ai-workiq-foundry-state')).toContainText('2026-11-26T00:00:00.000Z');
       await page.getByTestId('ai-workiq-route-cli').check();
@@ -877,7 +878,7 @@ test.describe('verified Foundry connection settings (D-13)', () => {
       await page.getByTestId('ai-connection-consent').check();
       await expect(page.getByTestId('ai-connection-save')).toBeEnabled({ timeout: 7000 });
       await page.reload();
-      await page.getByTestId('nav-ai-settings').click(); // a reload closes the dialog, like any page change
+      await reopenAiSettings(page); // a reload closes the dialog, like any page change
       await expect(page.getByTestId('ai-relay-connection')).toContainText(lang === 'en' ? 'Verified and saved' : '接続確認済み・保存済み');
       if (lang === 'en') await noJapanese(page);
       expect(await scan(page)).toEqual([]);
@@ -923,6 +924,30 @@ test.describe('explain current state (FR-274, FR-277)', () => {
 
 test.describe('AI settings and in-context AI accessibility (axe, WCAG 2.2 AA) and language', () => {
   for (const lang of ['ja', 'en'] as Lang[]) {
+    test(`${lang}: the rail exposes AI settings only through the Settings tabs`, async ({ page }) => {
+      await open(page, '/home', { lang });
+      const rail = page.locator('nav.rail');
+      const settingsLink = rail.locator('a[href="#/settings"]');
+      const aiLabel = lang === 'ja' ? 'AI 設定' : 'AI settings';
+      for (const collapsed of [false, true]) {
+        if (collapsed) await page.getByTestId('nav-collapse-toggle').click();
+        await expect(rail).toHaveAttribute('data-collapsed', String(collapsed));
+        await expect(rail.getByTestId('nav-ai-settings')).toHaveCount(0);
+        await expect(rail.getByRole('button', { name: aiLabel, exact: true })).toHaveCount(0);
+        await expect(settingsLink).toHaveCount(1);
+        await settingsLink.click();
+        await expect(page).toHaveURL(/#\/settings$/);
+        await page.getByTestId('settings-tab-general').click();
+        await expect(page.getByTestId('settings-panel-general')).toBeVisible();
+        await page.getByTestId('settings-tab-ai').click();
+        const panel = page.getByTestId('settings-panel-ai');
+        await expect(panel.getByTestId('ai-send-consent')).toBeVisible();
+        await expect(panel.getByTestId('ai-connection')).toBeVisible();
+        await expect(panel.getByTestId('ai-live-switch')).toBeVisible();
+        await expect(page.getByTestId('ai-settings-dialog')).toHaveCount(0);
+      }
+    });
+
     test(`${lang}: retired assistant bookmark returns to Home without an assistant menu entry`, async ({ page }) => {
       await open(page, '/assistant', { lang });
       await expect(page).toHaveURL(/#\/home$/);
@@ -944,7 +969,7 @@ test.describe('AI settings and in-context AI accessibility (axe, WCAG 2.2 AA) an
 
     test(`${lang} D-25: AI settings have one place; links and old bookmarks open the same dialog`, async ({ page }) => {
       await open(page, '/plan', { lang });
-      await page.getByTestId('nav-ai-settings').click();
+      await reopenAiSettings(page);
       const settings = page.getByTestId('ai-settings-dialog');
       await expect(settings.getByTestId('ai-send-consent')).toBeVisible();
       await settings.getByTestId('ai-settings-dialog-close').click();
@@ -1016,7 +1041,7 @@ test.describe('usage log (budget management removed)', () => {
         expect.objectContaining({ use: 'explain', inputTokens: 1, outputTokens: 1, costJpy: 1 }),
       ]);
       await settings.getByTestId('ai-settings-dialog-close').click();
-      await page.getByTestId('nav-ai-settings').click();
+      await reopenAiSettings(page);
       await expect(settings.getByTestId('ai-usage')).toHaveCount(0);
       expect(JSON.parse(await page.evaluate(() => localStorage.getItem('bas.ai.ledger') ?? '[]'))).toEqual(ledger);
     });
@@ -1129,7 +1154,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await panel.getByRole('button', { name: 'Close' }).click();
     await expect(panel).toBeHidden();
 
-    await page.getByTestId('nav-ai-settings').click();
+    await reopenAiSettings(page);
     await expect(page.getByTestId('ai-usage')).toHaveCount(0);
     await expect(page.getByTestId('ai-budget-input')).toHaveCount(0);
     expect(received).toHaveLength(1);
@@ -1273,7 +1298,7 @@ test.describe('live generation through the relay (D-12)', () => {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages: { content: string }[] };
         const user = body.messages[1]!.content;
         received.push({ body, user });
-        const answer = user.includes('# Verified Project pack') ? analysisAnswer
+        const answer = user.startsWith('[bas-proj:workflowDraft]') ? workflowAnswer(user) : user.includes('# Verified Project pack') ? analysisAnswer
           : user.startsWith('Build the foundation') ? stageA
             : user.startsWith('Build the business part') ? stageB : { remove: ['initiative-x'] };
         res.setHeader('Content-Type', 'application/json');
@@ -1373,20 +1398,21 @@ test.describe('live generation through the relay (D-12)', () => {
     await expect(dialog.getByTestId('gen-checks')).toHaveText('1 fix rounds, 0 items removed, 0 invented sources discarded');
     await expect(dialog.getByTestId('gen-cost')).toHaveCount(0);
     // Tokens per step as the provider reported them (6,000 + 2,500 per call) and their total.
-    await expect(dialog.getByTestId('gen-tokens-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500']);
-    await expect(dialog.getByTestId('gen-tokens-row')).toContainText(['Foundation', 'Business', 'Check and fix', 'Five analyses']);
-    await expect(dialog.getByTestId('gen-tokens-total-value')).toHaveText('34,000');
+    await expect(dialog.getByTestId('gen-tokens-row-total')).toHaveText(['8,500', '8,500', '8,500', '8,500', '8,500']);
+    await expect(dialog.getByTestId('gen-tokens-row')).toContainText(['Foundation', 'Business', 'Business process', 'Check and fix', 'Five analyses']);
+    await expect(dialog.getByTestId('gen-tokens-total-value')).toHaveText('42,500');
     await expect(dialog.getByTestId('gen-ungrounded')).toHaveCount(0);
     expect(await scan(page)).toEqual([]);
 
     // What went out: JSON mode, the attached file's text, the app-made source id; stage B saw the foundation ids.
-    expect(received).toHaveLength(4);
+    expect(received).toHaveLength(5);
     expect(received[0]!.body.response_format).toEqual({ type: 'json_object' });
     expect(received[0]!.user).toContain('on-time delivery %,92,94,98');
     expect(received[0]!.user).toContain('source-doc-1');
     expect(received[1]!.user).toContain('site-tokyo');
-    expect(received[2]!.user).toContain('initiative-x');
-    expect(received[3]!.user).toContain('"fiveForces"');
+    expect(received[2]!.user).toContain('[bas-proj:workflowDraft]');
+    expect(received[3]!.user).toContain('initiative-x');
+    expect(received[4]!.user).toContain('"fiveForces"');
     expect(received.map((r) => JSON.stringify(r.body)).join('')).not.toContain(FAKE_KEY);
     expect(received.map((r) => JSON.stringify(r.body)).join('')).not.toContain(logoBase64);
 
@@ -1395,8 +1421,8 @@ test.describe('live generation through the relay (D-12)', () => {
       ledger: JSON.parse(localStorage.getItem('bas.ai.ledger') ?? '[]') as { use: string; scope?: string; stage?: string }[],
     }));
     expect(stored.index['pj-c']).toMatchObject({ files: ['generated:foundry', 'delivery-kpi.csv'] });
-    expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(4);
-    expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'fix-1'], ['pj-c', 'analysis']]);
+    expect(stored.ledger.filter((r) => r.use === 'packBuild')).toHaveLength(5);
+    expect(stored.ledger.filter((r) => r.use === 'packBuild').map((r) => [r.scope, r.stage])).toEqual([['pj-c', 'foundation'], ['pj-c', 'business'], ['pj-c', 'workflow'], ['pj-c', 'fix-1'], ['pj-c', 'analysis']]);
     expect(stored.ledger.every((r) => !('costJpy' in r))).toBe(true);
 
     const reloaded = page.waitForEvent('load', { timeout: 10_000 }).catch(() => undefined);
@@ -1413,7 +1439,7 @@ test.describe('live generation through the relay (D-12)', () => {
     await expect.poll(async () => (await page.locator('.proj-method-count').allTextContents()).reduce((n, x) => n + Number.parseInt(x, 10), 0)).toBe(5);
     await expect(page.getByTestId('proj-result-plot').first()).toBeVisible();
     await expect(page.getByTestId('proj-params').getByText('Mock', { exact: true })).toHaveCount(0);
-    expect(received).toHaveLength(4); // opening the screen only displays the saved analyses
+    expect(received).toHaveLength(5); // opening the screen only displays the saved analyses
 
     // The final export shows the same per-step tokens, the export itself as 0, and the total; internal Markdown only.
     await page.goto('/#/discussion');

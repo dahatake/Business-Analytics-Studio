@@ -20,6 +20,18 @@ export const ArchitectureExtension = z.object({
 
 const SourceIds = z.array(z.string()).optional();
 
+export const MetricEvidenceSchema = z.object({
+  status: z.enum(['measured', 'recordEstimate', 'estimate', 'stated', 'unknown']),
+  method: z.string().min(1),
+  sourceIds: z.array(z.string()).default([]),
+  quote: z.string().optional(),
+  periodStart: z.string().optional(),
+  periodEnd: z.string().optional(),
+});
+export type MetricEvidence = z.infer<typeof MetricEvidenceSchema>;
+export const METRIC_FIELDS = ['touchMinutes', 'waitHours', 'volumePerMonth', 'firstPassPct', 'people'] as const;
+export type MetricField = (typeof METRIC_FIELDS)[number];
+
 /** How an input or a work product travels: the medium tells where a hidden manual step is likely (FR-380). */
 export const ARTIFACT_FORMS = ['excel', 'email', 'paper', 'pdf', 'document', 'system', 'chat', 'meeting', 'verbal', 'other'] as const;
 export type ArtifactForm = (typeof ARTIFACT_FORMS)[number];
@@ -46,6 +58,13 @@ export const StepMetricsSchema = z.object({
   /** People who take part in the step (headcount, not FTE). */
   people: z.number().int().nonnegative().optional(),
   basis: z.enum(['stated', 'estimate']).optional(),
+  evidence: z.object({
+    touchMinutes: MetricEvidenceSchema.optional(),
+    waitHours: MetricEvidenceSchema.optional(),
+    volumePerMonth: MetricEvidenceSchema.optional(),
+    firstPassPct: MetricEvidenceSchema.optional(),
+    people: MetricEvidenceSchema.optional(),
+  }).optional(),
 }).passthrough();
 export type StepMetrics = z.infer<typeof StepMetricsSchema>;
 
@@ -69,6 +88,38 @@ export const WorkflowExtension = z.object({
   title: LocalizableSchema.optional(),
   /** Labour cost per hour used to turn hours into money; omitted = money is not shown. */
   laborCostPerHourJpy: z.number().positive().optional(),
+  laborCostEvidence: MetricEvidenceSchema.optional(),
+  draftNote: LocalizableSchema.optional(),
+  evidenceSources: z.array(z.object({
+    ref: z.string(), text: z.string(), title: z.string(), url: z.string(),
+  })).optional(),
+  measurement: z.object({
+    worker: z.string(),
+    periodStart: z.string(),
+    periodEnd: z.string(),
+    fetchedAt: z.string(),
+    timeZone: z.string(),
+    coverage: z.literal('partial'),
+    warnings: z.array(z.string()),
+    categories: z.array(z.object({
+      name: z.string(),
+      description: z.string(),
+      stageId: z.string().optional(),
+      measuredMinutes: z.number().nonnegative(),
+      estimatedMinutes: z.number().nonnegative(),
+      calendarMinutes: z.number().nonnegative(),
+      emailCount: z.number().int().nonnegative(),
+      chatCount: z.number().int().nonnegative(),
+      sharePct: z.number().min(0).max(100),
+    })),
+    records: z.array(z.object({
+      id: z.string(), kind: z.enum(['calendar', 'email', 'chat', 'worklog']),
+      category: z.string(), description: z.string(), stageId: z.string().optional(),
+      start: z.string(), end: z.string().optional(),
+      ref: z.string(), quote: z.string(),
+    })),
+    sources: z.array(z.object({ ref: z.string(), title: z.string(), url: z.string(), text: z.string() })),
+  }).optional(),
   parties: z.array(z.object({
     id: z.string().min(1),
     name: LocalizableSchema,
@@ -100,6 +151,8 @@ export const WorkflowExtension = z.object({
       participants: z.number().int().nonnegative().optional(),
       /** Effort per item, all participants together (part of the step's touchMinutes). */
       minutes: z.number().nonnegative().optional(),
+      minutesEvidence: MetricEvidenceSchema.optional(),
+      participantsEvidence: MetricEvidenceSchema.optional(),
     }).passthrough()).optional(),
     /** Stage ids that take over the outputs. */
     next: z.array(z.string()).default([]),
@@ -128,6 +181,7 @@ export const WorkflowExtension = z.object({
     label: LocalizableSchema.optional(),
     /** Share of items that go round (rework), in percent. */
     ratePct: z.number().min(0).max(100).optional(),
+    rateEvidence: MetricEvidenceSchema.optional(),
     /** How often an iteration repeats (e.g. "weekly"). */
     cadence: LocalizableSchema.optional(),
     sourceIds: SourceIds,

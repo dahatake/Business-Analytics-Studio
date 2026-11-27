@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Label, Link, Radio, RadioGroup, Slider, Switch } from '@fluentui/react-components';
+import { Button, Field, Input, Label, Link, Radio, RadioGroup, Select, Slider, Switch } from '@fluentui/react-components';
 import { PARAMS } from '../config/params.ts';
 import { loaded } from '../data/pack.ts';
 import type { EntityKind } from '../data/schema.ts';
@@ -120,6 +120,24 @@ export function SettingsGeneral() {
         </Panel>
       </div>
       <DataLocationPanel />
+      <Panel title={t('bp.settings.title')} testId="bp-settings">
+        <p>{t('bp.settings.note')}</p>
+        <Field label={t('bp.settings.worker')}>
+          <Input value={s.processWorker} placeholder={t('bp.settings.me')} onChange={(_, d) => s.setProcessWorker(d.value)} data-testid="bp-settings-worker" />
+        </Field>
+        <Field label={t('bp.settings.period')}>
+          <Select value={s.processPeriod} onChange={(_, d) => s.setProcessPeriod(d.value === 'custom' ? 'custom' : 'month')} data-testid="bp-settings-period">
+            <option value="month">{t('bp.settings.month')}</option>
+            <option value="custom">{t('bp.settings.custom')}</option>
+          </Select>
+        </Field>
+        {s.processPeriod === 'custom' && (
+          <div className="grid-2">
+            <Field label={t('bp.settings.start')}><Input type="date" value={s.processPeriodStart} onChange={(_, d) => s.setProcessPeriodStart(d.value)} data-testid="bp-settings-start" /></Field>
+            <Field label={t('bp.settings.end')}><Input type="date" value={s.processPeriodEnd} onChange={(_, d) => s.setProcessPeriodEnd(d.value)} data-testid="bp-settings-end" /></Field>
+          </div>
+        )}
+      </Panel>
       <ConfidentialPanel />
       <Panel title={t('settings.loadTest')}>
         <LoadTest />

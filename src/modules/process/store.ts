@@ -68,9 +68,10 @@ export function setStageLoops(w: WorkflowExtension, stageId: string, loops: NonN
   return { ...w, loops: [...(w.loops ?? []).filter((l) => l.from !== stageId), ...loops] };
 }
 
-export function setLaborRate(w: WorkflowExtension, rate: number | null): WorkflowExtension {
-  const { laborCostPerHourJpy: _drop, ...rest } = w;
-  return rate === null ? rest as WorkflowExtension : { ...rest, laborCostPerHourJpy: rate };
+export function setLaborRate(w: WorkflowExtension, rate: number | null, lang: 'ja' | 'en' = 'en'): WorkflowExtension {
+  if (rate === w.laborCostPerHourJpy) return w;
+  const { laborCostPerHourJpy: _drop, laborCostEvidence: _proof, ...rest } = w;
+  return rate === null ? rest : { ...rest, laborCostPerHourJpy: rate, laborCostEvidence: { status: 'stated', method: lang === 'ja' ? '入力した時間単価です。実測の根拠は未確認です。' : 'User-entered hourly rate; actual measurement not verified', sourceIds: [] } };
 }
 
 /** A first process for a project whose pack has none: one internal lane and one step to start from. */

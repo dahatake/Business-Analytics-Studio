@@ -7,7 +7,7 @@ import { loc } from '../../state/text.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
 import {
-  delta, effortHours, HOURS_PER_FTE_MONTH, hoursPerUnit, ioAnalysis, laneResources, leadHours, metricsIn, PROC_STATES, presentIn,
+  delta, effortHours, HOURS_PER_FTE_MONTH, hoursPerUnit, ioAnalysis, laneResources, leadHours, metricStatus, metricsIn, PROC_STATES, presentIn,
   RECONCILE_TOLERANCE, reconcile, stepDelta, totals, type ProcessView, type ProcState, type Totals,
 } from './model.ts';
 import { duration, formKey, hoursMonth, signedPercent } from './format.ts';
@@ -42,6 +42,11 @@ export function SummaryTiles({ view }: { view: ProcessView }) {
   const pct = (v: number | null) => (v === null ? t('bp.unknown') : fmt.percent(v));
   const unknownNote = (x: Totals, y: Totals) => (x.unknownOnPath + y.unknownOnPath > 0 ? t('bp.tile.unknownSteps', { n: Math.max(x.unknownOnPath, y.unknownOnPath) }) : undefined);
   return (
+    <>
+    <p data-testid="bp-numeric-status">{t('bp.status.summary', {
+      before: [...new Set(view.steps.flatMap((s) => metricStatus(s.asIs)))].map((s) => t(`bp.status.${s}`)).join(' / '),
+      after: [...new Set(view.steps.flatMap((s) => metricStatus(s.toBe)))].map((s) => t(`bp.status.${s}`)).join(' / '),
+    })}{view.laborRate !== null ? ` · ${t('bp.tile.cost')}: ${t(`bp.status.${view.laborEvidence?.status ?? 'unknown'}`)}` : ''}</p>
     <section className="bp-tiles" aria-label={t('bp.tile.title')} data-testid="bp-tiles">
       <Tile testId="bp-tile-lead" label={t('bp.tile.lead')} before={a.leadHours} after={b.leadHours} text={(v) => duration(v, t, fmt)} better="lower"
         note={[a.externalHours ? t('bp.tile.external', { before: duration(a.externalHours, t, fmt), after: duration(b.externalHours, t, fmt) }) : '', unknownNote(a, b) ?? ''].filter(Boolean).join(' ') || undefined} />
@@ -55,6 +60,7 @@ export function SummaryTiles({ view }: { view: ProcessView }) {
       <Tile testId="bp-tile-manual" label={t('bp.tile.manual')} before={a.manualArtifacts + a.hiddenWork} after={b.manualArtifacts + b.hiddenWork} text={count} better="lower" note={t('bp.tile.manualNote')} />
       <Tile testId="bp-tile-yield" label={t('bp.tile.yield')} before={a.rolledYield} after={b.rolledYield} text={pct} better="higher" note={t('bp.tile.yieldNote')} />
     </section>
+    </>
   );
 }
 
@@ -302,7 +308,7 @@ export function StepTable({ view, onSelect }: { view: ProcessView; onSelect: (id
                   <td><span className={`bp-side-tag is-${l.side}`}>{t(`bp.side.${l.side}`)}</span> {loc(l.name, lang) || t('bp.lane.unassigned')}</td>
                   <td>{ph?.name ? loc(ph.name, lang) : '—'}</td>
                   <td>{t(`bp.change.${s.change}`)}{s.toBeHypothesis && s.change !== 'keep' ? ` (${t('bp.basis.hypothesis')})` : ''}</td>
-                  {PROC_STATES.map((st) => <td key={st} className="num">{presentIn(s, st) ? duration(leadHours(metricsIn(s, st)), t, fmt) : t('bp.timeline.absent')}</td>)}
+                  {PROC_STATES.map((st) => <td key={st} className="num">{presentIn(s, st) ? <>{duration(leadHours(metricsIn(s, st)), t, fmt)}<br />{metricStatus(metricsIn(s, st)).map((status) => t(`bp.status.${status}`)).join(' / ')}</> : t('bp.timeline.absent')}</td>)}
                   {PROC_STATES.map((st) => <td key={`e-${st}`} className="num">{presentIn(s, st) ? hoursMonth(effortHours(metricsIn(s, st)), t, fmt) : t('bp.timeline.absent')}</td>)}
                   <td className="num">{cell(s.asIs?.firstPass ?? null, (n) => `${fmt.integer(n)}%`)} → {cell(s.toBe?.firstPass ?? null, (n) => `${fmt.integer(n)}%`)}</td>
                 </tr>

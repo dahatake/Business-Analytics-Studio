@@ -4,6 +4,7 @@ export const entryJa = {
   'entry.add': '{kind}を追加',
   'entry.editPick': '既存の項目を編集…',
   'entry.editSelected': '選択中の「{name}」を編集',
+  'entry.editItem': '「{name}」を編集',
   'entry.titleNew': '{kind}を追加',
   'entry.titleEdit': '{kind}を編集: {name}',
   'entry.where.imported': 'このプロジェクトのProjectパックに保存します。',

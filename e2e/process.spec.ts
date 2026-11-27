@@ -1,7 +1,86 @@
 import { expect, test } from '@playwright/test';
-import { open, scan } from './helpers.ts';
+import { deviceSnapshot, open, scan, seedDeviceData } from './helpers.ts';
+import { workflowAnswer } from '../tests/fixtures/workflow.ts';
 
 test.describe('FR-380 business process', () => {
+  test('completes missing process data, persists settings, and derives measured and estimated allocation from internal records', async ({ page }) => {
+    await page.route('**/relay/status', (route) => route.fulfill({ json: {
+      secrets: { foundryKey: true }, connection: { endpoint: 'https://test.invalid', deployment: 'fixture', apiVersion: '2024-10-21' },
+      connectionVerifiedAt: '2026-01-01T00:00:00Z', workiq: { method: 'cli', signedIn: true, verifiedAt: '2026-01-01T00:00:00Z' },
+    } }));
+    const records = [
+      { id: 'actual-1', kind: 'worklog', category: '案件A', description: '確認できた作業記録', start: '2026-10-05T09:00:00Z', end: '2026-10-05T10:00:00Z', ref: 'wiq:topic-1', quote: 'actual-1 2026-10-05T09:00:00Z 2026-10-05T10:00:00Z actual work' },
+      { id: 'calendar-1', kind: 'calendar', category: '案件B', description: '予定時間', start: '2026-10-06T09:00:00Z', end: '2026-10-06T09:30:00Z', ref: 'wiq:topic-1', quote: 'calendar-1 2026-10-06T09:00:00Z 2026-10-06T09:30:00Z scheduled' },
+      ...['案件C', '案件D', '案件E'].map((category, i) => ({
+        id: `email-${i}`, kind: 'email', category, description: 'メールの推計', start: '2026-10-07T09:00:00Z', ref: 'wiq:topic-1', quote: `email-${i} 2026-10-07T09:00:00Z email`,
+      })),
+    ];
+    const questions: { topics?: string[] }[] = [];
+    let empty = false;
+    await page.route('**/relay/workiq/ask', (route) => {
+      const q = route.request().postDataJSON() as { topics?: string[] };
+      questions.push(q);
+      return route.fulfill({ json: { sections: [{ key: q.topics?.length ? 'topic-1' : 'process', question: '社内記録', answer: empty ? '未取得' : records.map((r) => r.quote).join('\n'), citations: [], sensitivity: null, fetchedAt: '2026-11-01T00:00:00Z' }] } });
+    });
+    await page.route('**/relay/ai', (route) => {
+      const prompt = String(route.request().postDataJSON().prompt);
+      return route.fulfill({ json: { text: JSON.stringify(prompt.startsWith('[bas-proj:workflowDraft]') ? workflowAnswer(prompt) : { records: empty ? [] : records, warnings: [] }), inputTokens: 100, outputTokens: 100 } });
+    });
+    await open(page, '/process');
+    await seedDeviceData(page, {
+      'bas.projects': JSON.stringify({ state: {
+        companies: [{ id: 'company-process', name: 'テスト会社', createdAt: '2026-10-01' }],
+        projects: [{ id: 'project-process', companyId: 'company-process', name: '業務改善', step: 'asis', createdAt: '2026-10-01', brief: { purpose: '作業時間を把握する' } }],
+        target: { kind: 'project', projectId: 'project-process' }, relations: [], mergeDismissals: [], lastProjectId: 'project-process', demoStep: 'asis',
+      }, version: 1 }),
+      'bas.ai.settings': JSON.stringify({ state: { provider: 'foundry', liveEnabled: true, sendConsent: true, authMethod: 'apiKey' }, version: 1 }),
+      'bas.scope.project-process.process.workflow': JSON.stringify({ basePackId: 'sample', at: '2026-10-01', workflow: { stages: [{ id: 'edited', name: '人が編集した受付', asIs: { touchMinutes: 0 } }] } }),
+    });
+    await page.reload();
+    await page.getByTestId('bp-ai-draft').click();
+    await expect(page.getByTestId('bp-draft-note')).toContainText('仮説');
+    await expect(page.getByTestId('bp-numeric-status')).toContainText('概算ドラフト');
+    let saved = JSON.parse((await deviceSnapshot(page)).records['bas.scope.project-process.process.workflow']!.value!);
+    expect(saved.workflow.stages[0]).toMatchObject({ id: 'edited', name: '人が編集した受付', asIs: { touchMinutes: 0, waitHours: 4, volumePerMonth: 20 } });
+    await page.goto('/#/settings');
+    await expect(page.getByTestId('bp-settings-period')).toHaveValue('month');
+    await page.getByTestId('bp-settings-worker').fill('対象作業者（テスト）');
+    await page.getByTestId('bp-settings-period').selectOption('custom');
+    await page.getByTestId('bp-settings-start').fill('2026-10-01');
+    await page.getByTestId('bp-settings-end').fill('2026-10-31');
+    await page.reload();
+    await expect(page.getByTestId('bp-settings-worker')).toHaveValue('対象作業者（テスト）');
+    await expect(page.getByTestId('bp-settings-start')).toHaveValue('2026-10-01');
+    await page.goto('/#/process');
+    await page.getByTestId('bp-measure').click();
+    await expect(page.getByTestId('bp-measure-confirm')).toBeVisible();
+    expect(questions.filter((q) => q.topics?.length)).toHaveLength(0);
+    await page.getByTestId('bp-measure-confirm').click();
+    const result = page.getByTestId('bp-measurement');
+    await expect(result).toContainText('案件E');
+    await expect(result).toContainText('60 分');
+    await expect(result).toContainText('記録からの推計');
+    expect(questions.at(-1)?.topics?.[0]).toContain('対象作業者（テスト）');
+    expect(questions.at(-1)?.topics?.[0]).toContain('1件=2分');
+    saved = JSON.parse((await deviceSnapshot(page)).records['bas.scope.project-process.process.workflow']!.value!);
+    expect(saved.workflow.measurement.categories).toHaveLength(5);
+    expect(saved.workflow.measurement.coverage).toBe('partial');
+    expect(saved.workflow.stages[0].asIs.touchMinutes).toBe(0);
+    await page.reload();
+    await expect(result).toContainText('案件E');
+    empty = true;
+    await page.getByTestId('bp-measure').click();
+    await page.getByTestId('bp-measure-confirm').click();
+    await expect(page.getByTestId('bp-ai-error')).toContainText('原記録');
+    await expect(result).toContainText('案件E');
+  });
+
+  test('does not expose internal acquisition controls to an external audience', async ({ page }) => {
+    await open(page, '/process', { audience: 'external' });
+    await expect(page.getByTestId('bp-ai')).toHaveCount(0);
+    await expect(page.getByTestId('bp-measurement')).toHaveCount(0);
+  });
+
   test('the rail offers the business process and no relation graph or Twin', async ({ page }) => {
     await open(page, '/home');
     const rail = page.locator('.rail');

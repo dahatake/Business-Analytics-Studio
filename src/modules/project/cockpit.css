@@ -122,3 +122,7 @@
 .simulation-nav { display: flex; flex-wrap: wrap; gap: var(--spacingHorizontalS); }
 .simulation-nav a { padding: var(--spacingVerticalS) var(--spacingHorizontalM); border-radius: var(--borderRadiusMedium); }
 .simulation-nav a[aria-current="page"] { background: var(--colorBrandBackground2); color: var(--colorBrandForeground2); font-weight: var(--fontWeightSemibold); }
+
+/* Timeline scrubbing: the chart is a drag surface (touch too), like a video seek bar. */
+.sim-chart { cursor: ew-resize; touch-action: none; user-select: none; }
+.sim-chart[data-scrubbing] { cursor: grabbing; }

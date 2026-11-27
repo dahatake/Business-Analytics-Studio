@@ -10,6 +10,7 @@ import { isHidden, routeFor, specFor, type CardContext, type CardField } from '.
 import { EntityImage } from './EntityImage.tsx';
 import { kindIcon } from './icons.ts';
 import type { Entity } from '../data/schema.ts';
+import { EntityEditLink } from './entry/EntityEditLink.tsx';
 
 const GAP = 8;
 const MARGIN = 8;
@@ -113,19 +114,22 @@ export function DetailCardHost() {
       )}
       <div className="detail-card-footer">
         <Caption1 className="detail-card-hint">{route ? t('card.hintLink') : t('card.hintNoLink')}</Caption1>
-        {route && (
-          <Button
-            size="small"
-            appearance="primary"
-            icon={<Open16Regular />}
-            onClick={() => {
-              cardController.closeNow();
-              navigate(hrefFor(route));
-            }}
-          >
-            {t('card.open')}
-          </Button>
-        )}
+        <span className="detail-card-actions">
+          <EntityEditLink entity={entity} />
+          {route && (
+            <Button
+              size="small"
+              appearance="primary"
+              icon={<Open16Regular />}
+              onClick={() => {
+                cardController.closeNow();
+                navigate(hrefFor(route));
+              }}
+            >
+              {t('card.open')}
+            </Button>
+          )}
+        </span>
       </div>
     </div>
   );

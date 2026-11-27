@@ -19,6 +19,8 @@ import { emptyKpiFields } from '../src/modules/project/kpiAdopt.ts';
 import { emptyStrategy } from '../src/modules/project/strategy.ts';
 import { mockSolutionDraft } from '../src/modules/project/solutionDraft.ts';
 import { useTaskDrafts } from '../src/modules/project/taskDrafts.ts';
+import { workflowAnswer } from './fixtures/workflow.ts';
+import { useProcessEdits } from '../src/modules/process/store.ts';
 
 function context(data = samplePack): AppCheckContext {
   const pack = loadPack(data);
@@ -34,6 +36,7 @@ const taskText = [
 ].join('\n');
 
 function response(call: LiveCall, ctx: AppCheckContext): string {
+  if (call.prompt.startsWith('[bas-proj:workflowDraft]')) return JSON.stringify(workflowAnswer(call.prompt));
   if (call.prompt.startsWith('[bas-proj:solution:')) {
     return JSON.stringify(mockSolutionDraft(JSON.parse(call.prompt.slice(call.prompt.indexOf('CONTEXT: ') + 9)), 'ja'));
   }
@@ -65,6 +68,7 @@ afterEach(() => {
   useSolutionDrafts.getState().reset();
   useStepBriefs.getState().reset();
   useOverview.getState().reset();
+  useProcessEdits.getState().reset();
 });
 
 describe('all-step drafts', () => {
@@ -79,11 +83,12 @@ describe('all-step drafts', () => {
     const ctx = context();
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', useOverview.getState().value);
     const solutions = ctx.pack.pack.entities.filter((e) => e.kind === 'solution').map((e) => e.id);
-    expect(jobs).toHaveLength(12 + solutions.length);
+    expect(jobs).toHaveLength(13 + solutions.length);
     expect(jobs.filter((job) => job.kind === 'fields').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
     expect(jobs.filter((job) => job.kind === 'brief').map((job) => job.step)).toEqual(IMPROVEMENT_STEPS);
-    expect(jobs.at(10)?.kind).toBe('strategy');
-    expect(jobs.slice(11, -1).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
+    expect(jobs.at(0)?.kind).toBe('workflow');
+    expect(jobs.at(11)?.kind).toBe('strategy');
+    expect(jobs.slice(12, -1).map((job) => (job.kind === 'solution' ? job.solutionId : job.kind))).toEqual(solutions);
     expect(jobs.at(-1)?.kind).toBe('tasks'); // FR-376: last, after the drafts its sign-off records and fields come from
 
     setRuntimeSettingsProvider(() => ({ provider, liveEnabled: true, sendConsent: true, configured: true }));
@@ -102,10 +107,11 @@ describe('all-step drafts', () => {
     // D-44: asis (22 sections) is drafted as separate fields and tasks calls, so there is one call more than jobs.
     // FR-376: the task phase's calls are tagged tasks:<todo> and counted separately.
     const before = calls.filter((call) => !call.stage?.startsWith('tasks:'));
-    expect(before.map((call) => call.provider)).toEqual(Array(12 + solutions.length).fill(provider));
+    expect(before.map((call) => call.provider)).toEqual(Array(13 + solutions.length).fill(provider));
     expect(calls.every((call) => call.provider === provider)).toBe(true);
     expect(before.filter((call) => call.use === 'deliverableDraft').map((call) => call.stage))
-      .toEqual(['fields-asis:fields', 'fields-asis:tasks', 'fields-tobe', 'fields-kpi', 'fields-solution', 'fields-deliverable']);
+      .toEqual(['workflow', 'fields-asis:fields', 'fields-asis:tasks', 'fields-tobe', 'fields-kpi', 'fields-solution', 'fields-deliverable']);
+    expect(useProcessEdits.getState().value?.workflow).toBeDefined();
     expect(calls.filter((call) => call.use === 'solutionDraft')).toHaveLength(solutions.length);
     const solutionDrafts = useSolutionDrafts.getState().value;
     for (const id of solutions) expect(solutionDrafts[`internal:${id}`]).toMatchObject({ mock: false, lang: 'ja' });
@@ -163,7 +169,7 @@ describe('all-step drafts', () => {
     ctx.kpi = { kpis: [], okrs: [] };
     ctx.objectives = [];
     expect(createBatchPlan(ctx, 'ja', 'internal', 'demo', { objectiveIssues: [] }).map((job) => job.kind))
-      .toEqual([...Array(5).fill(['fields', 'brief']).flat(), 'tasks']);
+      .toEqual(['workflow', ...Array(5).fill(['fields', 'brief']).flat(), 'tasks']);
   });
 
   it('surfaces failures and incomplete live results without saving a mock', async () => {
@@ -171,11 +177,11 @@ describe('all-step drafts', () => {
     const jobs = createBatchPlan(ctx, 'ja', 'internal', 'demo', { objectiveIssues: [] });
     setRuntimeSettingsProvider(() => ({ provider: 'foundry', liveEnabled: true, sendConsent: true, configured: true }));
     setLiveTransport(vi.fn().mockRejectedValue(new Error('offline')));
-    await expect(runBatchJob(jobs[0]!, new AbortController().signal)).rejects.toThrow('offline');
+    await expect(runBatchJob(jobs.find((j) => j.kind === 'fields')!, new AbortController().signal)).rejects.toThrow('offline');
     expect(useFieldDrafts.getState().value).toEqual({});
     writeLedger([]);
     setLiveTransport(async () => ({ text: '### answer\n不完全', inputTokens: 10, outputTokens: 10 }));
-    await expect(runBatchJob(jobs[1]!, new AbortController().signal)).rejects.toThrow('必要な項目がありません');
+    await expect(runBatchJob(jobs.find((j) => j.kind === 'brief')!, new AbortController().signal)).rejects.toThrow('必要な項目がありません');
     expect(useStepBriefs.getState().value).toEqual({});
   });
 

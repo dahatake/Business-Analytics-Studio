@@ -3,7 +3,7 @@ import {
   Badge, Button, FluentProvider, MessageBar, MessageBarBody, Spinner, Text, Tooltip, createDarkTheme, createLightTheme, type Theme,
 } from '@fluentui/react-components';
 import {
-  Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular, KeyMultiple24Regular,
+  Speaker224Regular, SpeakerMute24Regular, Accessibility24Regular, LockClosed16Regular, Eye16Regular,
   PanelLeftContract24Regular, PanelLeftExpand24Regular,
 } from '@fluentui/react-icons';
 import { MotionBehaviourProvider } from '@fluentui/react-motion';
@@ -25,7 +25,6 @@ import { EntityPage } from './screens/EntityPage.tsx';
 import { NAV_GROUPS, SCREENS, screenFor } from './app/modules.ts';
 import { ActionSlots, ContextSlot, Overlays, StepBandSlot } from './app/globals.tsx';
 import { SettingsDialogHost } from './screens/SettingsDialog.tsx';
-import { openAiSettings } from './modules/ai/uiStore.ts';
 import { useBrandVariants } from './modules/ops/theme.ts';
 import { DeviceStorageStatus, useDeviceBlocked } from './ui/DeviceStorageStatus.tsx';
 import { PortalReturnBar } from './ui/PortalReturnBar.tsx';
@@ -160,17 +159,6 @@ function NavRail({ current }: { current: string }) {
                 </RailTip>
               </li>
             ))}
-            {group === 'manage' && (
-              // D-25: AI settings are a dialog, not a screen, so this entry opens it instead of navigating.
-              <li>
-                <RailTip collapsed={collapsed} label={t('ai.nav.settings')}>
-                  <button type="button" className="rail-link rail-button" onClick={() => { sound.play('tap'); openAiSettings(); }} data-testid="nav-ai-settings">
-                    <KeyMultiple24Regular aria-hidden />
-                    <span className="rail-label">{t('ai.nav.settings')}</span>
-                  </button>
-                </RailTip>
-              </li>
-            )}
           </ul>
         </div>
       ))}

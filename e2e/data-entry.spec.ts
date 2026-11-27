@@ -26,6 +26,25 @@ async function nav(page: Page, route: string) {
 }
 
 test.describe('data entry', () => {
+  test('entity references and detail pages link to the matching edit form', async ({ page }) => {
+    await open(page, '/directory?tab=people', { lang: 'en' });
+    const ref = page.locator('main [data-entity-ref="person-sato-yui"]').first();
+    await ref.hover();
+    const card = page.getByRole('dialog');
+    const editLink = card.getByRole('link', { name: 'Edit Yui Sato' });
+    await expect(editLink).toHaveAttribute('href', '#/relations?edit=person-sato-yui');
+    await editLink.click();
+    await expect(page).toHaveURL(/#\/relations\?edit=person-sato-yui/);
+    await expect(page.getByTestId('entry-field-name')).toHaveValue('Yui Sato');
+
+    await page.evaluate(() => { window.location.hash = '/entity/person-sato-yui'; });
+    const detailEditLink = page.locator('main#main').getByTestId('entity-edit-person-sato-yui');
+    await expect(detailEditLink).toHaveAttribute('href', '#/relations?edit=person-sato-yui');
+    await detailEditLink.click();
+    await expect(page).toHaveURL(/#\/relations\?edit=person-sato-yui/);
+    await expect(page.getByTestId('entry-field-name')).toHaveValue('Yui Sato');
+  });
+
   test('entry dialog is wide and a Copilot draft only fills the form until it is saved', async ({ page }) => {
     await open(page, '/workspace', { lang: 'en' });
     await page.getByTestId('entry-bar-summary').getByTestId('entry-add-issue').click();

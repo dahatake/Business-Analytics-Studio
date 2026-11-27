@@ -20,6 +20,14 @@ export interface SettingsState {
   audience: Audience;
   /** FR-379: the nav rail shows icons only, widening the main area. */
   navCollapsed: boolean;
+  processWorker: string;
+  processPeriod: 'month' | 'custom';
+  processPeriodStart: string;
+  processPeriodEnd: string;
+  setProcessWorker: (worker: string) => void;
+  setProcessPeriod: (period: 'month' | 'custom') => void;
+  setProcessPeriodStart: (date: string) => void;
+  setProcessPeriodEnd: (date: string) => void;
   setLang: (lang: Lang) => void;
   setTheme: (theme: ThemePref) => void;
   setMotion: (motion: MotionPref) => void;
@@ -47,6 +55,14 @@ export const useSettings = create<SettingsState>()(
       volume: 0.5,
       audience: 'internal',
       navCollapsed: false,
+      processWorker: '',
+      processPeriod: 'month',
+      processPeriodStart: '',
+      processPeriodEnd: '',
+      setProcessWorker: (processWorker) => set({ processWorker }),
+      setProcessPeriod: (processPeriod) => set({ processPeriod }),
+      setProcessPeriodStart: (processPeriodStart) => set({ processPeriodStart }),
+      setProcessPeriodEnd: (processPeriodEnd) => set({ processPeriodEnd }),
       setLang: (lang) => set({ lang }),
       setTheme: (theme) => set({ theme }),
       setMotion: (motion) => set({ motion }),
@@ -62,7 +78,7 @@ export const useSettings = create<SettingsState>()(
       name: SETTINGS_STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience, navCollapsed }) => ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience, navCollapsed }),
+      partialize: ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience, navCollapsed, processWorker, processPeriod, processPeriodStart, processPeriodEnd }) => ({ lang, theme, motion, showSplash, muted, bgm, sfx, volume, audience, navCollapsed, processWorker, processPeriod, processPeriodStart, processPeriodEnd }),
     },
   ),
 );

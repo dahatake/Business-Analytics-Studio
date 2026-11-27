@@ -4,7 +4,8 @@ import { useI18n } from '../../i18n/index.ts';
 import { useSettings } from '../../state/settings.ts';
 import { loc } from '../../state/text.ts';
 import { isHidden } from '../../ui/cardSpecs.ts';
-import { effortHours, laneResources, leadHours, metricsIn, presentIn, stepDelta, type Metrics, type ProcessView, type ProcState, type PStep } from './model.ts';
+import { effortHours, laneResources, leadHours, metricStatus, metricsIn, presentIn, stepDelta, type Metrics, type ProcessView, type ProcState, type PStep } from './model.ts';
+import { METRIC_FIELDS } from '../../data/extensionSchemas.ts';
 import { duration, formKey, hoursMonth, loopShort, signedPercent } from './format.ts';
 
 export interface HoverTarget { type: 'step' | 'lane' | 'loop'; id: string; anchor?: Element }
@@ -55,7 +56,7 @@ function MetricRows({ m, label }: { m: Metrics | null; label: string }) {
   return (
     <tr>
       <th scope="row">{label}</th>
-      <td>{duration(leadHours(m), t, fmt)}{m.estimate ? ` (${t('bp.basis.estimate')})` : ''}</td>
+      <td>{duration(leadHours(m), t, fmt)} ({metricStatus(m).map((s) => s === 'estimate' ? t('bp.basis.estimate') : t(`bp.status.${s}`)).join(' / ')})</td>
       <td>{hoursMonth(effortHours(m), t, fmt)}</td>
     </tr>
   );
@@ -114,6 +115,20 @@ export function StepSummary({ step, view, state, full = false }: { step: PStep; 
           ].filter(Boolean).join(' · ')}
         </p>
       )}
+      {full && m && audience === 'internal' && <dl data-testid="bp-metric-evidence">
+        {METRIC_FIELDS.map((field) => {
+          const proof = m.evidence?.[field];
+          const label = { touchMinutes: 'bp.ed.touch', waitHours: 'bp.ed.wait', volumePerMonth: 'bp.ed.volume', firstPassPct: 'bp.ed.firstPass', people: 'bp.ed.people' } as const;
+          return <div key={field}><dt>{t(label[field])} · {metricStatus(m, field).map((s) => t(`bp.status.${s}`)).join(' / ')}</dt>
+            <dd>{proof?.method}{proof?.quote && <blockquote>{proof.quote}</blockquote>}{proof?.periodStart ? `${proof.periodStart} — ${proof.periodEnd ?? ''}` : ''}
+              {proof?.sourceIds.map((ref) => {
+                const source = view.evidenceSources?.find((s) => s.ref === ref);
+                return source?.url ? <a key={ref} href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : <span key={ref}>{source?.title ?? ref}</span>;
+              })}
+            </dd>
+          </div>;
+        })}
+      </dl>}
       <div className="bp-hc-iogrid">
         {artifacts(step.inputs, 'bp.card.inputs')}
         {artifacts(step.outputs, 'bp.card.outputs')}
@@ -123,7 +138,7 @@ export function StepSummary({ step, view, state, full = false }: { step: PStep; 
           <strong>{t('bp.card.hidden')}</strong>
           <ul>{step.hidden.map((h, i) => (
             <li key={i}>{loc(h.name, lang)}{h.form ? <span className="bp-form">{t(formKey(h.form))}</span> : null}
-              {(h.participants !== null || h.minutes !== null) && <span className="muted"> · {[h.participants !== null ? t('bp.card.participants', { n: h.participants }) : '', h.minutes !== null ? duration(h.minutes / 60, t, fmt) : ''].filter(Boolean).join(' · ')}</span>}
+              {(h.participants !== null || h.minutes !== null) && <span className="muted"> · {[h.participants !== null ? `${t('bp.card.participants', { n: h.participants })} (${t(`bp.status.${h.participantsEvidence?.status ?? 'unknown'}`)})` : '', h.minutes !== null ? `${duration(h.minutes / 60, t, fmt)} (${t(`bp.status.${h.minutesEvidence?.status ?? 'unknown'}`)})` : ''].filter(Boolean).join(' · ')}</span>}
             </li>
           ))}</ul>
         </div>
@@ -173,6 +188,7 @@ function LoopSummary({ loopId, view }: { loopId: string; view: ProcessView }) {
         <span className="muted">{t(`bp.loopState.${l.state}`)}</span>
       </div>
       {l.label && <p>{loc(l.label, lang)}</p>}
+      {l.ratePct !== null && <p>{t(`bp.status.${l.rateEvidence?.status ?? 'unknown'}`)}</p>}
       <p>{t('bp.card.loopPath', { from: loc(view.byId.get(l.from)!.name, lang), to: loc(view.byId.get(l.to)!.name, lang) })}</p>
       <p className="muted">{t(`bp.loopHelp.${l.kind}`)}</p>
     </div>

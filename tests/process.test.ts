@@ -8,6 +8,10 @@ import {
   backEdges, buildProcess, criticalPath, flowEdges, ioAnalysis, layoutProcess, RECONCILE_TOLERANCE, reconcile, stepDelta, totals,
 } from '../src/modules/process/model.ts';
 import { removeStage } from '../src/modules/process/store.ts';
+import { completeWorkflow, workflowGaps, workflowPrompt } from '../src/modules/process/workflowDraft.ts';
+import { buildMeasurement, measurementPeriod } from '../src/modules/process/measurement.ts';
+import { workflowAnswer } from './fixtures/workflow.ts';
+import { metricStatus } from '../src/modules/process/model.ts';
 
 const demo = buildProcess(WorkflowExtension.parse(demoWorkflow));
 
@@ -21,6 +25,81 @@ describe('FR-380 business process model', () => {
     expect(Math.abs(asIs.gap!)).toBeLessThanOrEqual(RECONCILE_TOLERANCE);
     expect(Math.abs(toBe.gap!)).toBeLessThanOrEqual(RECONCILE_TOLERANCE);
     expect(toBe.stepsHours!).toBeLessThan(asIs.stepsHours!);
+  });
+
+  describe('evidence-aware process completion', () => {
+    it('fills every missing metric but preserves edited values, references and provenance', () => {
+      const original = WorkflowExtension.parse({
+        stages: [{ id: 's', name: '独自の受付', asIs: { touchMinutes: 0, basis: 'stated' }, inputs: ['実際の依頼'] }],
+      });
+      const prompt = workflowPrompt(original, '受付を改善', 'ja', []);
+      const result = completeWorkflow(original, workflowAnswer(prompt).workflow, 'ja', []);
+      expect(workflowGaps(result)).toEqual([]);
+      expect(result.stages[0]).toMatchObject({ id: 's', name: '独自の受付', inputs: ['実際の依頼'], asIs: { touchMinutes: 0 } });
+      expect(result.stages[0]!.asIs!.evidence!.waitHours!.status).toBe('estimate');
+      expect(result.stages[0]!.asIs!.evidence!.touchMinutes!.status).toBe('stated');
+      expect(result.laborCostEvidence!.status).toBe('estimate');
+    });
+
+    it('rejects incomplete answers and invalid references instead of inventing success', () => {
+      expect(() => completeWorkflow(null, { stages: [{ id: 's', name: 'S' }] }, 'ja', [])).toThrow('不足');
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      draft.stages[0]!.next = ['missing'];
+      expect(() => completeWorkflow(null, draft, 'en', [])).toThrow('reference');
+    });
+
+    it('downgrades unsupported measured claims, retaining only exact quoted stated numbers', () => {
+      const draft = workflowAnswer(workflowPrompt(null, 'Purpose', 'en', [])).workflow;
+      draft.stages[0]!.asIs!.evidence = {
+        touchMinutes: { status: 'measured', method: 'AI says measured', sourceIds: ['s'], quote: '30 minutes' },
+        waitHours: { status: 'stated', method: 'Quoted', sourceIds: ['s'], quote: 'wait 4 hours' },
+      };
+      const result = completeWorkflow(null, draft, 'en', [{ ref: 's', text: 'wait 4 hours' }]);
+      expect(result.stages[0]!.asIs!.evidence).toMatchObject({ touchMinutes: { status: 'estimate' }, waitHours: { status: 'stated' } });
+      const view = buildProcess(result);
+      expect(metricStatus(view.steps[0]!.asIs, 'touchMinutes')).toEqual(['estimate']);
+    });
+  });
+
+  describe('work-record measurement', () => {
+    const period = { start: '2026-11-01T00:00:00.000Z', end: '2026-12-01T00:00:00.000Z' };
+    const record = (id: string, kind: 'calendar' | 'worklog' | 'email' | 'chat', start: string, end?: string) => ({
+      id, kind, category: kind === 'worklog' ? '実作業' : '案件A', description: '根拠から分類', start, end, ref: 's',
+      quote: `${id} ${start} ${end ?? ''}${kind === 'worklog' ? ' actual work' : ''}`,
+    });
+    it('uses a calendar month with month-end clamping and validates custom dates', () => {
+      const p = measurementPeriod({ processPeriod: 'month', processPeriodStart: '', processPeriodEnd: '' }, new Date(2026, 2, 31, 12));
+      expect(new Date(p.start).getMonth()).toBe(1);
+      expect(new Date(p.start).getDate()).toBe(28);
+      expect(() => measurementPeriod({ processPeriod: 'custom', processPeriodStart: '2026-02-30', processPeriodEnd: '2026-03-01' })).toThrow('date');
+      expect(() => measurementPeriod({ processPeriod: 'custom', processPeriodStart: '2026-11-05', processPeriodEnd: '2026-11-01' })).toThrow('precede');
+    });
+
+    it('calculates from verified records, deduplicates, clips the period and removes overlapping scheduled time', () => {
+      const records = [
+        record('cal', 'calendar', '2026-11-01T09:00:00Z', '2026-11-01T10:00:00Z'),
+        record('log', 'worklog', '2026-11-01T09:30:00Z', '2026-11-01T10:30:00Z'),
+        record('email', 'email', '2026-11-01T11:00:00Z'),
+        record('chat', 'chat', '2026-11-01T11:05:00Z'),
+        record('clip', 'calendar', '2026-10-31T23:30:00Z', '2026-11-01T00:30:00Z'),
+      ];
+      const source = { ref: 's', title: '原記録', url: '', text: records.map((r) => r.quote).join('\n') };
+      const result = buildMeasurement({ records: [...records, records[2], { ...records[0], id: 'invented' }], warnings: [] }, [source], period, '自分', 'UTC', null, 'ja');
+      expect(result.records).toHaveLength(5);
+      expect(result.categories.find((c) => c.name === '実作業')!.measuredMinutes).toBe(60);
+      expect(result.categories.find((c) => c.name === '案件A')).toMatchObject({ calendarMinutes: 60, emailCount: 1, chatCount: 1, estimatedMinutes: 64 });
+      expect(result.categories.reduce((n, c) => n + c.sharePct, 0)).toBeCloseTo(100);
+      expect(result.coverage).toBe('partial');
+      expect(result.warnings.join(' ')).toContain('重複');
+      expect(result.warnings.join(' ')).toContain('invented');
+    });
+
+    it('never labels a scheduled meeting as actual work and never saves an empty retrieval as zero', () => {
+      const r = record('meeting', 'worklog', '2026-11-01T09:00:00Z', '2026-11-01T10:00:00Z');
+      r.quote = 'meeting 2026-11-01T09:00:00Z 2026-11-01T10:00:00Z scheduled';
+      expect(() => buildMeasurement({ records: [r] }, [{ ref: 's', title: '', url: '', text: r.quote }], period, 'me', 'UTC', null, 'ja')).toThrow('原記録');
+      expect(() => buildMeasurement({ records: [] }, [], period, 'me', 'UTC', null, 'ja')).toThrow('原記録');
+    });
   });
 
   it('bypasses removed and combined steps in the to-be flow and counts them as fully removed', () => {

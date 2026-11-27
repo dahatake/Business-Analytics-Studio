@@ -20,6 +20,7 @@ import { AnalysisDataSchema, METHODS, newId, type AnalysisData, type AnalysisIte
 import { methodKey } from './analysisText.ts';
 import { translate } from '../../i18n/core.ts';
 import { RelayError } from '../ai/relayClient.ts';
+import { completeWorkflow, workflowForPrompt, workflowGaps, workflowPrompt } from '../process/workflowDraft.ts';
 
 /**
  * FR-311 (D-12): build a Project pack in the app with the configured LLM.
@@ -195,7 +196,7 @@ export interface GenDeps {
 
 export type StepId = 'collect' | 'foundation' | 'business' | 'verify' | 'analysis' | 'priority' | 'finalize';
 /** A model call: the two stages, their re-runs after Work IQ follow-up rounds (foundation-2, -3 …), and the fix rounds. */
-export type GenStage = 'foundation' | 'business' | 'analysis' | `foundation-${number}` | `business-${number}` | `fix-${number}`;
+export type GenStage = 'foundation' | 'business' | 'workflow' | 'analysis' | `foundation-${number}` | `business-${number}` | `fix-${number}`;
 export type StepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed';
 
 export interface ProgressEvent {
@@ -703,13 +704,14 @@ export function stageBPrompt(input: PackGenInput, entries: MaterialEntry[], foun
 export function analysisPrompt(pack: Record<string, unknown>, lang: Lang, entries: MaterialEntry[] = []): string {
   const ja = lang === 'ja';
   const extensions = pack.extensions && typeof pack.extensions === 'object' ? pack.extensions as Record<string, unknown> : {};
+  const process = WorkflowExtension.safeParse(extensions.workflow);
   const context = {
     company: pack.company,
     regions: pack.regions,
     entities: pack.entities,
     flows: pack.flows,
     extensions: Object.fromEntries(['okr', 'workflow', 'engagements', 'dataCatalog'].flatMap((key) =>
-      extensions[key] === undefined ? [] : [[key, extensions[key]]])),
+      extensions[key] === undefined ? [] : [[key, key === 'workflow' && process.success ? workflowForPrompt(process.data) : extensions[key]]])),
   };
   const categories = Object.fromEntries(METHODS.map((method) => [method, categoriesOf(method)]));
   return [
@@ -802,7 +804,9 @@ export function fixPrompt(input: PackGenInput, entries: MaterialEntry[], pack: R
   const failing = entities.filter((e) => failingIds.has(String(e.id)));
   const sections = new Set(errors.filter((p) => !p.entityId).map((p) => p.path.split(/[.[]/)[0]!));
   const sectionJson = [...sections].map((s) => {
-    const value = s === 'extensions' ? pack.extensions : pack[s];
+    const ext = isObj(pack.extensions) ? pack.extensions : {};
+    const process = WorkflowExtension.safeParse(ext.workflow);
+    const value = s === 'extensions' ? { ...ext, ...(process.success ? { workflow: workflowForPrompt(process.data) } : {}) } : pack[s];
     return `## ${s}\n${JSON.stringify(value ?? null)}`;
   });
   const ids = entities.map((e) => `${String(e.id)} (${String(e.kind)})`).join(', ');
@@ -1247,11 +1251,11 @@ export function buildCollection(pack: Pack, asOf: string, webSearched: boolean, 
 /* ---------- Estimation ---------- */
 
 /**
- * Calls one run may make: 2 stages + per stage one re-run per Work IQ round that brought new material + fix rounds +
+ * Calls one run may make: foundation, business, workflow, analysis + per stage one re-run per Work IQ round + fix rounds +
  * retries of failed or unreadable answers. PACK_BUILD_MAX_CALLS (policy) is this with MAX_WORKIQ_ROUNDS.
  */
 export function maxCallsFor(rounds: number): number {
-  return 3 + 2 * rounds + MAX_FIX_ROUNDS + MAX_CALL_RETRIES;
+  return 4 + 2 * rounds + MAX_FIX_ROUNDS + MAX_CALL_RETRIES;
 }
 export const MAX_CALLS_PER_RUN = maxCallsFor(MAX_WORKIQ_ROUNDS);
 
@@ -1733,6 +1737,14 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
   if (!enforced) throw new PackGenError('invalidPack', 'empty pack');
   let pack: Pack = enforced.pack;
   const droppedSources = [...enforced.dropped];
+  const workflowBase = WorkflowExtension.safeParse(isObj(pack.extensions) ? pack.extensions.workflow : undefined);
+  const workflowAnswer = await call('workflow', (material) => workflowPrompt(
+    workflowBase.success ? workflowBase.data : null, `${input.projectName}\n${input.purpose}\n${input.focus}`, input.lang,
+    material.map((e) => ({ ref: e.item.sourceId, text: e.body })),
+  ));
+  const workflow = completeWorkflow(workflowBase.success ? workflowBase.data : null, workflowAnswer.workflow, input.lang,
+    entries.map((e) => ({ ref: e.item.sourceId, text: e.body })));
+  pack.extensions = { ...(isObj(pack.extensions) ? pack.extensions : {}), workflow };
 
   let state = check(pack, now());
   let rounds = 0;
@@ -1753,6 +1765,8 @@ export async function generatePack(input: PackGenInput, deps: GenDeps, onProgres
     throw new PackGenError('invalidPack', first ? `${first.path}: ${first.cause}` : 'invalid');
   }
   const finalPack = pruned.pack;
+  const finalWorkflow = WorkflowExtension.safeParse(isObj(finalPack.extensions) ? finalPack.extensions.workflow : undefined);
+  if (!finalWorkflow.success || workflowGaps(finalWorkflow.data).length) throw new PackGenError('invalidPack', 'Workflow completion was lost during verification');
   emit('verify', 'done', 1, { round: rounds, errors: 0 });
 
   emit('analysis', 'running');
@@ -1822,7 +1836,7 @@ export function runPlan(input: PackGenInput): { minCalls: number; maxCalls: numb
       .reduce((sum, entry) => sum + entry.body.length + entry.item.title.length + 300, 0)
     : 0;
   return {
-    minCalls: 3,
+    minCalls: 4,
     maxCalls: maxCallsFor(workIqRoundsOf(input)),
     promptChars: Math.min(PACK_BUILD_MAX_PROMPT_CHARS, base + site + news + workiq + anchor + materialChars(input)),
   };

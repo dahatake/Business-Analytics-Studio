@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { JAPANESE, scan, setup, visibleTextExcludingOtherLang } from './helpers.ts';
 import { METHOD_CATEGORIES } from '../src/modules/project/analysis.ts';
+import { workflowAnswer } from '../tests/fixtures/workflow.ts';
 
 /*
  * FR-311 (D-12): "Create Project pack with Copilot" on the launch screen and in project management, with the AI
@@ -148,7 +149,7 @@ test('a Foundry Work IQ model limit is explained in the saved generation report'
   })) };
   await page.route('**/relay/ai', (route) => {
     const prompt = String(route.request().postDataJSON().prompt);
-    const answer = prompt.includes('# 検査済みProjectパック') ? analysis
+    const answer = prompt.startsWith('[bas-proj:workflowDraft]') ? workflowAnswer(prompt) : prompt.includes('# 検査済みProjectパック') ? analysis
       : prompt.startsWith('次の企業の') ? foundation
         : prompt.startsWith('同じProjectパック') ? { entities: [] } : { remove: [], replace: [] };
     return route.fulfill({ json: { text: JSON.stringify(answer), inputTokens: 100, outputTokens: 100 } });

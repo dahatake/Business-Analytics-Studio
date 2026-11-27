@@ -10,6 +10,7 @@ import { buildDraft, buildTaskDrafts, draftToText } from '../src/modules/project
 import { emptyDeliverables, setField, setQualification, STEP_DEFS } from '../src/modules/project/deliverables.ts';
 import type { ImprovementStep } from '../src/state/projects.ts';
 import type { RepairOption } from '../src/modules/project/taskResolution.ts';
+import { workflowAnswer } from '../tests/fixtures/workflow.ts';
 
 /** Demo deliverables with every issue qualified as "pursue" by the person (FR-347). */
 function qualifiedDemo() {
@@ -43,6 +44,10 @@ async function fakeAi(page: Page) {
   } }));
   await page.route('**/relay/ai', async (route) => {
     const request = route.request().postDataJSON() as { prompt: string; lang: Lang };
+    if (request.prompt.startsWith('[bas-proj:workflowDraft]')) {
+      await route.fulfill({ json: { text: JSON.stringify(workflowAnswer(request.prompt)), inputTokens: 100, outputTokens: 100 } });
+      return;
+    }
     const step = /\[bas-proj:deliverable:([a-z]+)\]/.exec(request.prompt)?.[1] as ImprovementStep;
     const pack = loadPack(samplePack);
     const ctx = { pack, discussion: demoDiscussion(), kpi: demoKpis(pack.pack), analysis: demoAnalyses(pack.pack), useCases: demoUseCases(), deliverables: emptyDeliverables(), today: '2026-11-09' };

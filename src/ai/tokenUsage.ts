@@ -25,6 +25,7 @@ export interface TokenSummary {
 /** A stage name belongs to pack generation only for packBuild; other uses retain their own labels. */
 export function tokenLineLabel(line: TokenLine, lang: Lang): string {
   const texts: Readonly<Record<string, string>> = dictionaries[lang];
+  if (line.use === 'packBuild' && line.step === 'workflow') return texts['bp.title']!;
   const stage = line.use === 'packBuild' && line.step ? texts[`proj.gen.step.${line.step}`] : undefined;
   return stage ?? texts[`ai.use.${line.use}`] ?? (line.use || dictionaries[lang]['ai.tokens.unavailable']);
 }

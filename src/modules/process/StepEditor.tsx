@@ -4,7 +4,7 @@ import {
 } from '@fluentui/react-components';
 import { Add16Regular, Delete16Regular } from '@fluentui/react-icons';
 import {
-  ARTIFACT_FORMS, artifactName, LOOP_KINDS, LOOP_STATES, PARTY_SIDES, STEP_CHANGES,
+  ARTIFACT_FORMS, artifactName, LOOP_KINDS, LOOP_STATES, METRIC_FIELDS, PARTY_SIDES, STEP_CHANGES,
   type Artifact, type ArtifactForm, type StepMetrics, type WorkflowExtension, type WorkflowStage,
 } from '../../data/extensionSchemas.ts';
 import { useI18n } from '../../i18n/index.ts';
@@ -29,7 +29,8 @@ const metricForm = (m: StepMetrics | undefined): MetricForm => ({
   touch: numText(m?.touchMinutes), wait: numText(m?.waitHours), volume: numText(m?.volumePerMonth),
   firstPass: numText(m?.firstPassPct), people: numText(m?.people), estimate: m?.basis === 'estimate',
 });
-function metricsOut(f: MetricForm): StepMetrics | undefined {
+function metricsOut(f: MetricForm, original: StepMetrics | undefined, lang: 'ja' | 'en'): StepMetrics | undefined {
+  if (original && JSON.stringify(f) === JSON.stringify(metricForm(original))) return original;
   const m: StepMetrics = {
     ...(parseNum(f.touch) !== undefined ? { touchMinutes: parseNum(f.touch) } : {}),
     ...(parseNum(f.wait) !== undefined ? { waitHours: parseNum(f.wait) } : {}),
@@ -38,7 +39,13 @@ function metricsOut(f: MetricForm): StepMetrics | undefined {
     ...(parseNum(f.people) !== undefined ? { people: Math.round(parseNum(f.people)!) } : {}),
   };
   if (!Object.keys(m).length) return undefined;
-  return f.estimate ? { ...m, basis: 'estimate' } : m;
+  const evidence: NonNullable<StepMetrics['evidence']> = {};
+  for (const field of METRIC_FIELDS) if (m[field] !== undefined) {
+    evidence[field] = m[field] === original?.[field] && f.estimate === (original.basis === 'estimate') ? original.evidence?.[field] : {
+      status: f.estimate ? 'estimate' : 'stated', method: lang === 'ja' ? '入力値です。実測の根拠は未確認です。' : 'User-entered value; actual measurement not verified', sourceIds: [],
+    };
+  }
+  return { ...m, basis: f.estimate ? 'estimate' : 'stated', evidence };
 }
 
 /** Text the user did not change keeps its bilingual original; changed text is stored as typed (§3.2). */
@@ -108,8 +115,8 @@ export function StepEditor({ workflow, stageId, defaultChange, onSave, onDelete,
       const nameL = keep(o ? artifactName(o) : undefined, r.name, lang)!;
       return r.form || r.partyId ? { name: nameL, ...(r.form ? { form: r.form } : {}), ...(r.partyId ? { partyId: r.partyId } : {}) } : nameL;
     });
-    const asIsOut = change === 'new' ? undefined : metricsOut(asIs);
-    const toBeMetrics = change === 'remove' || change === 'combine' ? undefined : metricsOut(toBe);
+    const asIsOut = change === 'new' ? undefined : metricsOut(asIs, original?.asIs, lang);
+    const toBeMetrics = change === 'remove' || change === 'combine' ? undefined : metricsOut(toBe, original?.toBe?.metrics, lang);
     const noteOut = keep(original?.toBe?.note, note, lang);
     const toBeOut = change === 'keep' && !toBeMetrics && !noteOut ? undefined : {
       change, ...(toBeMetrics ? { metrics: toBeMetrics } : {}), ...(noteOut ? { note: noteOut } : {}),
@@ -135,6 +142,8 @@ export function StepEditor({ workflow, stageId, defaultChange, onSave, onDelete,
           ...(h.form ? { form: h.form } : {}),
           ...(parseNum(h.participants) !== undefined ? { participants: Math.round(parseNum(h.participants)!) } : {}),
           ...(parseNum(h.minutes) !== undefined ? { minutes: parseNum(h.minutes) } : {}),
+          minutesEvidence: parseNum(h.minutes) === original?.hiddenWork?.[i]?.minutes ? original?.hiddenWork?.[i]?.minutesEvidence : undefined,
+          participantsEvidence: parseNum(h.participants) === original?.hiddenWork?.[i]?.participants ? original?.hiddenWork?.[i]?.participantsEvidence : undefined,
         })),
       } : {}),
       ...(asIsOut ? { asIs: asIsOut } : {}),
@@ -146,6 +155,7 @@ export function StepEditor({ workflow, stageId, defaultChange, onSave, onDelete,
       return {
         id: l.id || `loop-${id}-${i + 1}`, from: id, to: l.to, kind: l.kind, state: l.state,
         ...(parseNum(l.rate, 100) !== undefined ? { ratePct: parseNum(l.rate, 100) } : {}),
+        rateEvidence: parseNum(l.rate, 100) === prev?.ratePct ? prev?.rateEvidence : undefined,
         ...(keep(prev?.cadence, l.cadence, lang) ? { cadence: keep(prev?.cadence, l.cadence, lang) } : {}),
         ...(keep(prev?.label, l.label, lang) ? { label: keep(prev?.label, l.label, lang) } : {}),
         ...(prev?.sourceIds ? { sourceIds: prev.sourceIds } : {}),

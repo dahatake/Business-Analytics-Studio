@@ -28,6 +28,46 @@ test.describe('FR-326 resource optimization', () => {
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
     await expect(allocation).toContainText((await clock.getAttribute('aria-valuetext'))!);
   });
+  test('dragging the chart moves the date freely, and playback resumes from the released date', async ({ page }) => {
+    await open(page, '/optimize', { lang: 'en' });
+    const clock = page.getByTestId('sim-date');
+    const chart = page.getByTestId('sim-chart');
+    await chart.scrollIntoViewIfNeeded();
+    const box = (await chart.boundingBox())!;
+    // viewBox -55..600 holds the axis at 8..592: map a fraction of the axis to screen pixels.
+    const px = (f: number) => box.x + box.width * (63 + 584 * f) / 655;
+    const midY = box.y + box.height / 2;
+    await clock.press('Home');
+    const start = (await clock.getAttribute('aria-valuetext'))!;
+    await page.mouse.move(px(0.2), midY);
+    await page.mouse.down();
+    await page.mouse.move(px(0.8), midY, { steps: 5 });
+    const late = (await clock.getAttribute('aria-valuetext'))!;
+    await page.mouse.move(px(0.4), midY, { steps: 5 });
+    await page.mouse.up();
+    const mid = (await clock.getAttribute('aria-valuetext'))!;
+    expect(start < mid && mid < late).toBe(true);
+    await expect(page.getByTestId('resource-view').getByRole('tab', { name: /Allocation at/ })).toContainText(mid);
+
+    await page.getByRole('button', { name: 'Play', exact: true }).click();
+    await chart.scrollIntoViewIfNeeded();
+    const box2 = (await chart.boundingBox())!;
+    await page.mouse.move(box2.x + box2.width * (63 + 584 * 0.1) / 655, box2.y + box2.height / 2);
+    await page.mouse.down();
+    await expect(chart).toHaveAttribute('data-scrubbing', 'true');
+    await page.mouse.move(box2.x + box2.width * (63 + 584 * 0.05) / 655, box2.y + box2.height / 2);
+    const held = (await clock.getAttribute('aria-valuetext'))!;
+    await page.waitForTimeout(600);
+    await expect(clock).toHaveAttribute('aria-valuetext', held);
+    await page.mouse.up();
+    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await expect.poll(async () => (await clock.getAttribute('aria-valuetext'))! > held).toBe(true);
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    const go = page.getByRole('button', { name: /^(First improvement|Target reached|Deadline) \d{4}-\d{2}-\d{2}$/ }).first();
+    const target = (await go.textContent())!.match(/\d{4}-\d{2}-\d{2}/)![0];
+    await go.click();
+    await expect(clock).toHaveAttribute('aria-valuetext', target);
+  });
   test('the screen is renamed and explains the current state above the visual', async ({ page }) => {
     await open(page, '/optimize', { lang: 'ja' });
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('シミュレーション');

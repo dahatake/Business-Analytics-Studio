@@ -5,6 +5,7 @@ export const entryEn: Record<keyof typeof entryJa, string> = {
   'entry.add': 'Add {kind}',
   'entry.editPick': 'Edit an existing item…',
   'entry.editSelected': 'Edit selected "{name}"',
+  'entry.editItem': 'Edit {name}',
   'entry.titleNew': 'Add {kind}',
   'entry.titleEdit': 'Edit {kind}: {name}',
   'entry.where.imported': 'Saved in this project\'s Project pack.',

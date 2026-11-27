@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { objectiveTrajectory, timeline } from '../src/modules/project/simulationTimeline.ts';
+import { dateAt, objectiveTrajectory, playStep, timeline } from '../src/modules/project/simulationTimeline.ts';
 import { transitionFlows } from '../src/domain/resourceModel.ts';
 import type { ContributionInput } from '../src/modules/project/simulate.ts';
 import { simulate } from '../src/modules/project/simulate.ts';
@@ -51,4 +51,13 @@ it('dates OKR improvement after a below-baseline KR starts making measurable pro
   expect(curve.reaches).toBe('2026-02-10');
   expect(curve.value(curve.reaches!)).toBe(100);
   expect(objectiveTrajectory(okr, timeline('2026-01-01', rows, [gain], []))).toBeNull();
+});
+
+it('maps a dragged position to a calendar day, clamping outside the axis, and plays at an even pace to the end', () => {
+  expect(dateAt('2026-01-01', '2026-12-31', 0.5)).toBe('2026-07-02');
+  expect(dateAt('2026-01-01', '2026-12-31', -0.3)).toBe('2026-01-01');
+  expect(dateAt('2026-01-01', '2026-12-31', 1.7)).toBe('2026-12-31');
+  expect(playStep('2026-01-01', '2027-01-01', '2026-01-01')).toBe('2026-01-09');
+  expect(playStep('2026-01-01', '2027-01-01', '2026-12-30')).toBe('2027-01-01');
+  expect(playStep('2026-01-01', '2026-01-03', '2026-01-01')).toBe('2026-01-02');
 });

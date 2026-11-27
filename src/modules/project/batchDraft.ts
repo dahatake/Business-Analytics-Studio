@@ -29,6 +29,9 @@ import { translate } from '../../i18n/core.ts';
 import { DELIVERABLE_DRAFT_TIMEOUT_MS } from '../../ai/policy.ts';
 import { draftAllTasks, normalizeTaskDrafts, resolutionTransport, taskDraftKey, useTaskDrafts, type TaskDraft } from './taskDrafts.ts';
 import { useAnalyses, useDeliverables, useDiscussion, useFieldDrafts, useKpiDrafts, useKpis, useObjectiveDrafts, useProjUi, useSolutionDrafts, useStrategy } from './stores.ts';
+import type { WorkflowExtension } from '../../data/extensionSchemas.ts';
+import { generateProcess, processDraftRequest } from '../process/generate.ts';
+import { saveWorkflow, useProcessEdits } from '../process/store.ts';
 
 type FieldJob = { kind: 'fields'; step: ImprovementStep; input: DraftInput; request: AiRequest };
 type BriefJob = { kind: 'brief'; step: ImprovementStep; brief: StepBrief; request: AiRequest };
@@ -40,7 +43,8 @@ type ObjectivesJob = { kind: 'objectives'; request: AiRequest };
 type KpiOkrJob = { kind: 'kpiOkr'; request: AiRequest; today: string };
 /** FR-376: the last phase, a draft for every open task built on the data as it is when the job runs (the request is for the checks). */
 type TasksJob = { kind: 'tasks'; request: AiRequest; ctx: AppCheckContext; audience: Audience };
-export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob | KpiOkrJob | TasksJob;
+type WorkflowJob = { kind: 'workflow'; request: AiRequest };
+export type BatchJob = FieldJob | BriefJob | StrategyJob | SolutionJob | ObjectivesJob | KpiOkrJob | TasksJob | WorkflowJob;
 export type BatchResult =
   | { kind: 'fields'; fields: Record<string, string>; tasks: Record<string, string> }
   | { kind: 'brief'; brief: GeneratedBrief }
@@ -48,6 +52,7 @@ export type BatchResult =
   | { kind: 'solution'; draft: SolutionDraft }
   | { kind: 'objectives'; collection: ObjectiveCollection }
   | { kind: 'kpiOkr'; run: KpiOkrRun }
+  | { kind: 'workflow'; workflow: WorkflowExtension }
   | { kind: 'tasks'; drafts: TaskDraft[]; failed: { todoId: string; message: string }[] };
 
 export interface BatchJobProgress {
@@ -59,7 +64,7 @@ export interface BatchJobProgress {
 
 export function batchJobId(job: BatchJob): string {
   if (job.kind === 'solution') return `solution-${job.solutionId}`;
-  if (job.kind === 'objectives' || job.kind === 'kpiOkr' || job.kind === 'tasks') return job.kind;
+  if (job.kind === 'objectives' || job.kind === 'kpiOkr' || job.kind === 'tasks' || job.kind === 'workflow') return job.kind;
   return job.kind === 'strategy' ? 'strategy' : `${job.kind}-${job.step}`;
 }
 
@@ -73,6 +78,7 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
   const today = new Date().toISOString().slice(0, 10);
   const kpiOkr = kpiTarget ? kpiOkrPlanRequest(kpiTarget, ctx.pack.pack, lang, today) : null;
   if (kpiOkr) jobs.push({ kind: 'kpiOkr', request: kpiOkr, today });
+  if (audience === 'internal') jobs.push({ kind: 'workflow', request: processDraftRequest(lang, scope) });
   const briefCtx = stepBriefContext(ctx, audience);
   for (const step of IMPROVEMENT_STEPS) {
     const input: DraftInput = { step, ctx, lang, audience };
@@ -99,8 +105,9 @@ export function createBatchPlan(ctx: AppCheckContext, lang: Lang, audience: Audi
 export async function runBatchJob(job: BatchJob, signal: AbortSignal, onProgress?: (progress: BatchJobProgress) => void): Promise<BatchResult> {
   // The job id goes to the relay's diagnostics log, so a failure there names the job it belongs to (D-44).
   const request: AiRequest = { ...job.request, stage: batchJobId(job) };
+  if (job.kind === 'workflow') return { kind: 'workflow', workflow: await generateProcess(request, signal, (activity) => onProgress?.({ activity })) };
   if (job.kind === 'fields') {
-    const result = await requestDeliverableDraft(job.input, request, signal, (progress) => onProgress?.({
+    const result = await requestDeliverableDraft(job.input, { ...request, prompt: draftRequest(job.input).prompt }, signal, (progress) => onProgress?.({
       activity: progress.part ?? 'generate',
       ...(progress.total > 1 ? { part: { current: progress.current, total: progress.total } } : {}),
       retry: progress.retry,
@@ -171,6 +178,7 @@ export function batchSourceStamp(includePack = true): string {
     useCases: useUseCases.getState().value, deliverables: useDeliverables.getState().value, strategy: useStrategy.getState().value,
     fieldDrafts: useFieldDrafts.getState().value, objectiveDrafts: useObjectiveDrafts.getState().value, kpiDrafts: useKpiDrafts.getState().value, solutionDrafts: useSolutionDrafts.getState().value, briefs: useStepBriefs.getState().value, overview: useOverview.getState().value,
     taskDrafts: useTaskDrafts.getState().value,
+    workflow: useProcessEdits.getState().value,
     audience: useSettings.getState().audience, lang: useSettings.getState().lang,
     provider: ai.provider, liveEnabled: ai.liveEnabled, model: ai.copilotModel, connection: ai.relayConnection,
     relayReachable: ai.relayReachable, foundryKeySaved: ai.foundryKeySaved,
@@ -198,7 +206,9 @@ export function waitForBatchInterval(ms: number, signal: AbortSignal): Promise<v
 export function saveBatchResult(
   job: BatchJob, result: BatchResult, ctx: AppCheckContext, audience: Audience, provider: Provider,
 ): void {
-  if (job.kind === 'fields' && result.kind === 'fields') {
+  if (job.kind === 'workflow' && result.kind === 'workflow') {
+    saveWorkflow(result.workflow);
+  } else if (job.kind === 'fields' && result.kind === 'fields') {
     const at = new Date().toISOString();
     useDeliverables.getState().set((value) => {
       const data = normalizeDeliverables(value);

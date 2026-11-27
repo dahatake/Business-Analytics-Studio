@@ -6,6 +6,12 @@ import { improvementDirection, realisedShare, triangularMean, validRange, type C
 const DAY = 86_400_000;
 export const dayOf = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / DAY;
 export const dateOf = (day: number) => new Date(day * DAY).toISOString().slice(0, 10);
+/** Calendar day at a horizontal position (0 = first, 1 = end) on the time axis; positions outside the axis clamp to it. */
+export const dateAt = (first: string, end: string, fraction: number) =>
+  dateOf(Math.round(dayOf(first) + (dayOf(end) - dayOf(first)) * Math.min(1, Math.max(0, fraction))));
+/** Playback advances by equal calendar time per frame, so a full run takes `frames` frames whatever the knot spacing. */
+export const playStep = (first: string, end: string, at: string, frames = 48) =>
+  dateOf(Math.min(dayOf(end), dayOf(at) + Math.max(1, Math.round((dayOf(end) - dayOf(first)) / frames))));
 const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(dayOf(s)) && dateOf(dayOf(s)) === s;
 
 // Within each interval the curve is linear. Binary search gives the first qualifying calendar day.

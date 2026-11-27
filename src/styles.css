@@ -349,6 +349,7 @@ button.text-action { font: inherit; line-height: inherit; vertical-align: baseli
 .detail-card-fields dd, .facts dd { margin: 0; }
 .detail-card-hidden-note { display: flex; align-items: center; gap: 4px; margin-top: 8px; color: var(--colorNeutralForeground3); }
 .detail-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--colorNeutralStroke2); }
+.detail-card-actions { display: inline-flex; align-items: center; gap: 6px; }
 .detail-card-hint { color: var(--colorNeutralForeground3); }
 .detail-card-restricted { display: grid; gap: 6px; justify-items: start; }
 

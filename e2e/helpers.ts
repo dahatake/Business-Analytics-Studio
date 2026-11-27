@@ -56,13 +56,19 @@ export async function open(page: Page, route: string, opts: SetupOptions = {}) {
 
 export const card = (page: Page) => page.locator('#bas-detail-card');
 
-/** D-25: AI settings are a single dialog, opened from the nav rail (there is no AI settings screen). */
-export async function openAiSettings(page: Page, opts: SetupOptions = {}) {
-  await open(page, '/home', opts);
-  await page.getByTestId('nav-ai-settings').click();
+/** Open the shared settings dialog without changing the route or device namespace. */
+export async function reopenAiSettings(page: Page) {
+  await page.getByTestId('ws-palette-open').click();
+  await page.getByTestId('ws-palette').locator('[data-command="ai-settings"]').click();
   const dialog = page.getByTestId('ai-settings-dialog');
   await expect(dialog).toBeVisible();
   return dialog;
+}
+
+/** D-25: the command palette opens the same AI tab used by the Settings screen. */
+export async function openAiSettings(page: Page, opts: SetupOptions = {}) {
+  await open(page, '/home', opts);
+  return reopenAiSettings(page);
 }
 
 /** Post-boot fixtures must update the canonical device store, not its legacy browser copy. Reload after seeding. */

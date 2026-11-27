@@ -66,7 +66,7 @@ export const SCREENS: ScreenDef[] = [
   { path: '/data', label: 'proj.nav.data', Icon: DocumentDatabase24Regular, group: 'manage', component: lazyNamed(() => import('../modules/project/PackDataScreen.tsx'), 'PackDataScreen') },
   { path: '/integrations', label: 'ops.nav.integrations', Icon: PlugConnected24Regular, group: 'manage', component: lazyNamed(() => import('../modules/ops/IntegrationsScreen.tsx'), 'IntegrationsScreen') },
   { path: '/brand', label: 'ops.title', Icon: Color24Regular, group: 'manage', component: lazyNamed(() => import('../modules/ops/BrandScreen.tsx'), 'BrandScreen') },
-  // AI settings are not a screen: the nav rail opens the single AiSettingsDialog (D-25).
+  // D-25: AI settings are a tab within Settings, not a separate nav entry.
   { path: '/settings', label: 'nav.settings', Icon: Settings24Regular, group: 'manage', component: lazyNamed(() => import('../screens/Settings.tsx'), 'SettingsScreen') },
 ];
 

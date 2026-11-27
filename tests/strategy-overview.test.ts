@@ -11,9 +11,10 @@ import {
   validateOverviewProposal, type OverviewProposal,
 } from '../src/modules/project/overviewModel.ts';
 import {
-  appendObjective, emptyDestination, laneHref, nodeDestination, packObjectiveDrafts, readinessDraftHref, type ObjectiveInput,
+  appendObjective, emptyDestination, laneHref, nodeDestination, nodeDetails, packObjectiveDrafts, readinessDraftHref, type ObjectiveInput,
 } from '../src/modules/project/strategyPortal.ts';
 import { CompanyAnchorVersionSchema } from '../src/data/companyAnchor.ts';
+import { laneBundles, laneSummaries, layoutStrategy, lineage } from '../src/modules/project/strategyLayout.ts';
 
 const context = (): AppCheckContext => ({
   pack: loadPack(samplePack), kpi: demoKpis(samplePack), discussion: { themes: [], records: [] },
@@ -252,5 +253,67 @@ describe('strategy map portal and drafts (FR-349, FR-350)', () => {
     expect(published).toEqual({ ok: false, errors: ['url'] });
     const empty = appendObjective(null, input({ text: ' ', horizon: '', source: { ...input().source, title: '', locator: '', accessedDate: '' } }), 'Contoso', '2026-11-16');
     expect(empty.ok ? [] : [...empty.errors].sort()).toEqual(['accessedDate', 'horizon', 'locator', 'text', 'title']);
+  });
+});
+
+describe('strategy map zoom levels, sub-data and chains (FR-381)', () => {
+  const fmt = { number: (n: number) => String(n), yen: (n: number | undefined) => `¥${n}` };
+
+  it('lists each item\'s structured sub-data with links to the exact field that edits it', () => {
+    const ctx = context();
+    const map = strategyMap(ctx, state, 'impact', 'en');
+    const issueNode = map.nodes.find((n) => n.lane === 'issue')!;
+    const issue = ctx.pack.byId.get(issueNode.ref)!;
+    const rows = nodeDetails(issueNode, ctx, 'en', fmt);
+    expect(rows.find((r) => r.id === 'impact')).toMatchObject({ text: `${(issue as { impact: number }).impact} / 5`, href: `#/relations?view=table&target=relation-table&edit=${issue.id}&field=impact` });
+    expect(rows.find((r) => r.id === 'sources')?.href).toContain('field=sourceIds');
+    for (const causeId of (issue as { causeIds: string[] }).causeIds) {
+      expect(rows.find((r) => r.id === `cause-${causeId}`)?.href).toBe(`#/relations?view=table&target=relation-table&edit=${causeId}&field=name`);
+    }
+    const sol = map.nodes.find((n) => n.lane === 'solution')!;
+    expect(nodeDetails(sol, ctx, 'en', fmt).map((r) => r.href?.split('field=')[1])).toEqual(['costJpy', 'annualBenefitJpy', 'msProducts', 'kpiIds']);
+    const kpi = map.nodes.find((n) => n.lane === 'kpi' && !n.draft)!;
+    expect(nodeDetails(kpi, ctx, 'en', fmt)[0]).toMatchObject({ id: 'values', href: `#/analysis?tab=kpi&target=proj-kpi-row-${kpi.ref}` });
+    const okr = map.nodes.find((n) => n.lane === 'okr')!;
+    const krs = ctx.kpi.okrs.find((o) => o.id === okr.ref)!.keyResults;
+    expect(nodeDetails(okr, ctx, 'en', fmt)).toHaveLength(krs.length);
+    expect(nodeDetails(map.nodes.find((n) => n.lane === 'objective')!, ctx, 'en', fmt)).toEqual([]);
+  });
+
+  it('clips titles to two lines on the items level, shows them in full on detail, and grows cards for open sub-data without overlap', () => {
+    const ctx = context();
+    const map = strategyMap(ctx, state, 'impact', 'en');
+    const details = new Map(map.nodes.map((n) => [n.id, nodeDetails(n, ctx, 'en', fmt)]));
+    const items = layoutStrategy(map, { level: 'items', details, isOpen: () => false });
+    const detail = layoutStrategy(map, { level: 'detail', details, isOpen: () => true });
+    for (const n of map.nodes) {
+      const a = items.boxes.get(n.id)!, b = detail.boxes.get(n.id)!;
+      expect(a.lines.length).toBeLessThanOrEqual(2);
+      expect(b.lines.join('').replace(/\s/g, '')).toBe(n.label.replace(/\s/g, ''));
+      expect(b.rows).toHaveLength(details.get(n.id)!.length);
+      if (b.rows.length) expect(b.h).toBeGreaterThan(b.headH);
+    }
+    for (const lane of new Set(map.nodes.map((n) => n.lane))) {
+      const boxes = map.nodes.filter((n) => n.lane === lane).map((n) => detail.boxes.get(n.id)!);
+      boxes.slice(1).forEach((b, i) => expect(b.y).toBeGreaterThanOrEqual(boxes[i]!.y + boxes[i]!.h));
+    }
+    expect(detail.height).toBeGreaterThan(items.height);
+  });
+
+  it('highlights only the chain through an item, and summarizes lanes and links for the bird\'s-eye view', () => {
+    const links = [
+      { source: 'objective:a', target: 'okr:o', direct: false }, { source: 'okr:o', target: 'kpi:k', direct: false },
+      { source: 'kpi:k', target: 'issue:i', direct: false }, { source: 'kpi:k2', target: 'issue:j', direct: false },
+      { source: 'issue:i', target: 'solution:s', direct: false }, { source: 'objective:a', target: 'issue:j', direct: true, draft: true },
+    ];
+    expect([...lineage(links, 'issue:i')].sort()).toEqual(['issue:i', 'kpi:k', 'objective:a', 'okr:o', 'solution:s']);
+    expect(lineage(links, 'issue:i').has('issue:j')).toBe(false);
+    const ctx = context();
+    const map = strategyMap(ctx, state, 'impact', 'en');
+    const sums = laneSummaries(map);
+    expect(sums.map((s) => s.lane)).toEqual(['objective', 'okr', 'kpi', 'issue', 'solution']);
+    expect(sums.reduce((a, s) => a + s.total, 0)).toBe(map.nodes.length);
+    expect(sums.find((s) => s.lane === 'issue')!.top.map((n) => n.id)).toEqual(map.nodes.filter((n) => n.lane === 'issue').slice(0, 3).map((n) => n.id));
+    expect(laneBundles(map).reduce((a, b) => a + b.count + b.drafts, 0)).toBe(map.links.length);
   });
 });

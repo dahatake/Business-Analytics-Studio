@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Button, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
-import { ArrowUndo20Regular, Dismiss20Regular, Lightbulb20Regular } from '@fluentui/react-icons';
+import { useEffect } from 'react';
+import { Button } from '@fluentui/react-components';
+import { ArrowUndo20Regular, Lightbulb20Regular } from '@fluentui/react-icons';
 import { useI18n } from '../../i18n/index.ts';
 import { useRoute } from '../../state/router.ts';
 import './mocks.ts';
@@ -23,26 +23,6 @@ export function TopBarSlot() {
         {t('ai.explain.button')}
       </Button>
     </>
-  );
-}
-
-/** D-4: while live mode is on, a dismissible app-level reminder that rights and contracts are assumed settled. */
-function LiveBanner() {
-  const { t } = useI18n();
-  const liveEnabled = useAiSettings((s) => s.liveEnabled);
-  const [dismissed, setDismissed] = useState(false);
-  useEffect(() => {
-    if (!liveEnabled) setDismissed(false);
-  }, [liveEnabled]);
-  if (!liveEnabled || dismissed) return null;
-  return (
-    <MessageBar intent="warning" layout="multiline" data-testid="ai-d4-banner">
-      <MessageBarBody>
-        <MessageBarTitle>{t('ai.d4.bannerTitle')}</MessageBarTitle>
-        {t('ai.d4.body')}
-      </MessageBarBody>
-      <MessageBarActions containerAction={<Button appearance="transparent" aria-label={t('ai.d4.dismiss')} icon={<Dismiss20Regular />} onClick={() => setDismissed(true)} />} />
-    </MessageBar>
   );
 }
 
@@ -96,7 +76,6 @@ export function Overlay() {
   return (
     <>
       <div className="ai-float">
-        <LiveBanner />
         <AppliedNotice />
       </div>
       <ExplainPanel />

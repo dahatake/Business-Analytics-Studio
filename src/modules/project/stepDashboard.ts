@@ -15,6 +15,7 @@ import { kpiBasis, kpiDefinitionState, validateKpi, type DefinitionStatus, type 
 import type { KpiOrigin } from './model.ts';
 import { realisedShare, triangularMean, validRange, type KpiSimulation } from './simulate.ts';
 import { isSystemType, type SolutionType } from './strategy.ts';
+import { simulationPath } from './simulationHref.ts';
 
 /**
  * FR-317: the step dashboard. Everything is computed from the Project pack and the project's saved data, and every
@@ -538,7 +539,7 @@ function solution(c: CheckContext): { tiles: DashTile[]; detail: StepDetail } {
       { id: 'issuesSolved', kind: 'ratio', value: issues.filter((i) => i.solutionIds.length > 0).length, total: issues.length, todoId: 'sol-issues', href: '/relations?view=table' },
       { id: 'typesConfirmed', kind: 'ratio', value: solutions.filter((s) => s.confirmed).length, total: solutions.length, todoId: 'sol-type', href: '/deliverables?step=solution&target=sol-types' },
       { id: 'solutionsEstimated', kind: 'ratio', value: solutions.filter((s) => !thread.gaps.solutionsWithoutContribution.includes(s.id)).length, total: solutions.length, todoId: 'sol-contribution', href: '/deliverables?step=solution&target=sol-types' },
-      { id: 'gapsClosed', kind: 'ratio', value: closed.length, total: coverage.length, todoId: 'sol-target', href: '/optimize?step=solution&tab=kpi&target=sol-sim' },
+      { id: 'gapsClosed', kind: 'ratio', value: closed.length, total: coverage.length, todoId: 'sol-target', href: simulationPath({ step: 'solution', tab: 'kpi', target: 'sol-sim' }) },
     ],
     detail: { step: 'solution', solutions, coverage, sims, issues, qualifiedOut: qualifiedOutCount(c) },
   };

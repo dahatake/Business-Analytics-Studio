@@ -35,3 +35,33 @@
 .screen-overview details > summary { min-height: 44px; padding-block: 10px; cursor: pointer; }
 .strategy-proposal li { margin-block: 12px; }
 @media (max-width: 700px) { .strategy-diff-columns { grid-template-columns: 1fr; } }
+
+/* FR-381: zoomable strategy map (levels, zoom, sub-data, chain highlight). */
+.strategy-map-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.strategy-levels { display: flex; gap: 2px; padding: 2px; border-radius: var(--borderRadiusMedium); background: var(--colorNeutralBackground3); margin-right: 8px; }
+.strategy-zoom-value { margin: 0 8px; font-size: var(--fontSizeBase200); }
+.strategy-zoom-help { font-size: var(--fontSizeBase200); margin: 0 0 6px; }
+.strategy-canvas {
+  overflow: auto; max-height: 75vh; border-radius: var(--borderRadiusLarge);
+  border: 1px solid var(--colorNeutralStroke2); background: var(--colorNeutralBackground1); cursor: grab;
+}
+.strategy-canvas:focus-visible { outline: 2px solid var(--colorStrokeFocus2); outline-offset: 2px; }
+.strategy-canvas:active { cursor: grabbing; }
+.strategy-map.is-zoomable { min-width: 0; max-width: none; }
+.strategy-card:has(> a:hover) > .strategy-node, .strategy-card:has(> [role='button']:hover) > .strategy-node { fill: var(--colorNeutralBackground2Hover); }
+.strategy-card:has(> a:focus-visible) > .strategy-node, .strategy-card:has(> [role='button']:focus-visible) > .strategy-node { stroke: var(--colorStrokeFocus2); stroke-width: 4; }
+.strategy-edit { fill: var(--colorBrandForeground1); font-size: 12px; font-weight: 600; text-decoration: underline; }
+.strategy-toggle-text { fill: var(--colorNeutralForeground2); font-size: 12px; }
+.strategy-chevron { fill: none; stroke: var(--colorNeutralForeground2); stroke-width: 2; }
+.strategy-row { fill: var(--colorNeutralForeground1); font-size: 12px; }
+.strategy-row-link .strategy-row { fill: var(--colorBrandForeground1); text-decoration: underline; }
+.strategy-ov-total { fill: var(--colorNeutralForeground1); font-size: 15px; font-weight: 600; }
+.strategy-bundle { fill: var(--colorNeutralForeground2); font-size: 12px; }
+.strategy-ov-block:hover .strategy-node { fill: var(--colorNeutralBackground2Hover); }
+.strategy-map.is-overview [role='button'] { cursor: zoom-in; }
+/* Only shapes fade: text keeps its contrast while one item's chain is highlighted. */
+.strategy-map.has-focus .strategy-card:not(.is-related) > .strategy-node { opacity: .35; }
+.strategy-map.has-focus .strategy-link:not(.is-related) { opacity: .12; }
+.strategy-map.has-focus .strategy-link.is-related { opacity: .9; }
+.strategy-card.is-focus > .strategy-node { stroke-width: 4; }
+@media (prefers-reduced-motion: no-preference) { .strategy-node, .strategy-link { transition: opacity .15s; } }

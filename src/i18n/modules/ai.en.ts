@@ -236,8 +236,6 @@ export const aiEn: Record<keyof typeof aiJa, string> = {
   'ai.listSep': ', ',
   'ai.d4.title': 'Assumption: contracts and rights are already checked',
   'ai.d4.body': 'This connection assumes that the contract, terms of use and data rights with the provider (retention, use for training, cost, SLA) were checked by the responsible people before the app was started. Do not send if they were not.',
-  'ai.d4.bannerTitle': 'The real generative-AI connection is on',
-  'ai.d4.dismiss': 'Hide this warning',
   'ai.live.badge': 'Live',
   'ai.live.explain': 'A real answer from {provider}.',
   'ai.applied.title': 'AI proposals applied ({count})',

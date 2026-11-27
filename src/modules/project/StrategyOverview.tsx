@@ -15,7 +15,6 @@ import { hrefFor, revisitRouteTarget, useRoute } from '../../state/router.ts';
 import { useSettings } from '../../state/settings.ts';
 import { EntityRef } from '../../ui/EntityRef.tsx';
 import { Panel } from '../../ui/Panel.tsx';
-import { wrap } from '../../ui/textWrap.ts';
 import { reasonKey, TokensInline } from '../ai/AiCommon.tsx';
 import { AiProgress, type AiStage } from '../ai/AiProgress.tsx';
 import { useAiSettings } from '../ai/settingsStore.ts';
@@ -26,7 +25,7 @@ import { todayIn, todoHref, todoLabel, usePaybackLimit } from './deliverablesUi.
 import { collectObjectives, objectiveDraftInput, storeObjectives, type ObjectiveProgress, type ObjectiveSearch } from './objectiveDraft.ts';
 import {
   availableAxes, itemNames, overviewBaseline, overviewContext, overviewPrompt, proposalEntities, recommendedAxis, requestLiveOverview, strategyMap,
-  useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyDrafts, type StrategyMap, type StrategyNode,
+  useOverview, validateOverviewProposal, type OverviewAxis, type OverviewDraft, type OverviewProposal, type StrategyDrafts,
 } from './overviewModel.ts';
 import { BriefBody } from './StepBriefPanel.tsx';
 import { buildStepBrief } from './stepBrief.ts';
@@ -34,121 +33,12 @@ import { stepDashboard } from './stepDashboard.ts';
 import { useKpiDrafts, useObjectiveDrafts, useProjUi } from './stores.ts';
 import { ObjectiveDialog } from './StrategyObjectiveDialog.tsx';
 import {
-  emptyDestination, emptyDomId, laneDomId, laneHref, nodeDestination, nodeDomId, packObjectiveDrafts, type Destination, type Lane,
+  emptyDomId, nodeDetails, nodeDomId, packObjectiveDrafts, type DetailRow,
 } from './strategyPortal.ts';
+import { StrategyMapView, StrategyPreview, type Portal } from './StrategyMap.tsx';
 import './overview.css';
 
-const LANES = ['objective', 'okr', 'kpi', 'issue', 'solution'] as const;
-const WIDTH = 250, NODE_WIDTH = 216;
-
-/** FR-349: how the map's items open their input/check places; absent on read-only previews (no duplicate ids). */
-interface Portal {
-  companyId: string;
-  canEditObjectives: boolean;
-  /** Lanes with nowhere to go for this audience stay plain text. */
-  inert: readonly Lane[];
-  onObjective: (draftId?: string) => void;
-  onLeave: (label: string, domId: string) => void;
-}
-
-const plainClick = (e: React.MouseEvent) => e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
-const laneNameId = (lane: Lane) => `stg-lane-name-${lane}`;
-
-/** Without `label` the name comes from the visible text (WCAG 2.5.3); `describedBy` adds the lane. */
-function SvgAction({ id, label, describedBy, dest, portal, leaveLabel, children }: {
-  id: string; label?: string; describedBy?: string; dest: Destination; portal: Portal; leaveLabel: string; children: React.ReactNode;
-}) {
-  if (dest.kind === 'link') {
-    return <a id={id} href={dest.href} aria-label={label} aria-describedby={describedBy} onClick={(e) => { if (plainClick(e)) portal.onLeave(leaveLabel, id); }}>{children}</a>;
-  }
-  const open = () => portal.onObjective(dest.draftId);
-  return (
-    <g id={id} role="button" tabIndex={0} aria-label={label} aria-describedby={describedBy} aria-haspopup="dialog" onClick={open}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}>{children}</g>
-  );
-}
-
-function StrategyVisual({ map, portal }: { map: StrategyMap; portal?: Portal }) {
-  const { t, fmt } = useI18n();
-  const layout = useMemo(() => {
-    const positions = new Map<string, { x: number; y: number; h: number; lines: string[] }>();
-    let height = 130;
-    LANES.forEach((lane, col) => {
-      let y = 48;
-      map.nodes.filter((n) => n.lane === lane).forEach((n) => {
-        const lines = wrap(n.label, 17);
-        const h = Math.max(70, lines.length * 18 + 36 + (n.draft === 'changed' ? 18 : 0));
-        positions.set(n.id, { x: 12 + col * WIDTH, y, h, lines });
-        y += h + 20;
-      });
-      height = Math.max(height, y);
-    });
-    return { positions, height };
-  }, [map]);
-  const live = (lane: Lane) => portal && !portal.inert.includes(lane) ? portal : undefined;
-  const laneName = (lane: Lane) => t(`stg.lane.${lane}`);
-  const node = (n: StrategyNode) => {
-    const pos = layout.positions.get(n.id)!;
-    const score = n.score === null ? t('stg.unknown') : `${t('stg.score')}: ${fmt.number(n.score)}`;
-    const body = (
-      <g key={n.id} transform={`translate(${pos.x},${pos.y})`} data-node={n.id} data-lane={n.lane} data-draft={n.draft}>
-        <rect width={NODE_WIDTH} height={pos.h} rx={8} className={`strategy-node ${n.lane}${n.draft === 'new' ? ' is-draft' : ''}`} />
-        <text x={10} y={22} className="strategy-label">{pos.lines.map((line, i) => <tspan key={i} x={10} dy={i ? 18 : 0}>{line}</tspan>)}</text>
-        {n.draft === 'changed' && <text x={10} y={pos.h - 28} className="strategy-draft-badge">{t('stg.badge.changed')}</text>}
-        {n.draft === 'new'
-          ? <text x={10} y={pos.h - 10} className="strategy-draft-badge">{t('stg.badge.new')}</text>
-          : <text x={10} y={pos.h - 10} className="strategy-score">{score}</text>}
-      </g>
-    );
-    const p = live(n.lane);
-    if (!p) return body;
-    return (
-      <SvgAction key={n.id} id={nodeDomId(n.id)} describedBy={laneNameId(n.lane)}
-        dest={nodeDestination(n, p.companyId, p.canEditObjectives)} portal={p} leaveLabel={n.label}>{body}</SvgAction>
-    );
-  };
-  return (
-    <ScrollRegion label={t('stg.map')}>
-      <svg className="strategy-map" viewBox={`0 0 ${WIDTH * LANES.length} ${layout.height}`} role={portal ? 'group' : 'img'} aria-label={t('stg.map')} data-testid={portal ? 'strategy-map' : 'strategy-map-preview'}>
-        <title>{t('stg.map')}</title>
-        <desc>{t('stg.mapWhy')}</desc>
-        {map.links.map((l) => {
-          const a = layout.positions.get(l.source)!;
-          const b = layout.positions.get(l.target)!;
-          const x = a.x + NODE_WIDTH, y = a.y + a.h / 2, by = b.y + b.h / 2;
-          const mid = (x + b.x) / 2;
-          return <path key={`${l.source}-${l.target}`} data-source={l.source} data-target={l.target} data-draft={l.draft ? 'true' : undefined} className={`strategy-link${l.direct ? ' direct' : ''}${l.draft ? ' draft' : ''}`} d={`M${x},${y} C${mid},${y} ${mid},${by} ${b.x},${by}`} />;
-        })}
-        {/* Each lane's heading, empty slot and items stay together so keyboard order follows the columns. */}
-        {LANES.map((lane, col) => {
-          const x = 12 + col * WIDTH;
-          const p = live(lane);
-          const header = <text id={p ? laneNameId(lane) : undefined} x={x} y={24} className="strategy-lane">{laneName(lane)}</text>;
-          const empty = !map.nodes.some((n) => n.lane === lane);
-          return (
-            <g key={lane}>
-              {p
-                ? <SvgAction id={laneDomId(lane)} dest={{ kind: 'link', href: laneHref(lane, p.companyId) }} portal={p} leaveLabel={laneName(lane)}>
-                  <rect x={x - 4} y={2} width={NODE_WIDTH} height={32} rx={6} className="strategy-hit" />{header}
-                </SvgAction>
-                : header}
-              {empty && (p
-                ? <SvgAction id={emptyDomId(lane)} describedBy={laneNameId(lane)} dest={emptyDestination(lane, p.companyId, p.canEditObjectives)} portal={p} leaveLabel={laneName(lane)}>
-                  <g data-empty={lane}>
-                    <rect x={x} y={48} width={NODE_WIDTH} height={56} rx={8} className="strategy-node strategy-slot" />
-                    <text x={x + 10} y={70} className="strategy-empty">{t('stg.empty')}</text>
-                    <text x={x + 10} y={92} className="strategy-score">{t('stg.portal.add')}</text>
-                  </g>
-                </SvgAction>
-                : <text x={x} y={68} className="strategy-empty">{t('stg.empty')}</text>)}
-              {map.nodes.filter((n) => n.lane === lane).map(node)}
-            </g>
-          );
-        })}
-      </svg>
-    </ScrollRegion>
-  );
-}
+type Details = Map<string, DetailRow[]>;
 
 function ProposalBody({ proposal, ctx }: { proposal: OverviewProposal; ctx: CheckContext }) {
   const { t } = useI18n();
@@ -199,7 +89,7 @@ function DraftDiff({ draft, ctx, stale }: { draft: OverviewDraft; ctx: CheckCont
   return (
     <>
       <ProposalBody proposal={draft.proposal} ctx={ctx} />
-      {!stale && <StrategyVisual map={strategyMap(preview, { objectiveIssues: draft.proposal.objectiveIssues }, draft.proposal.axis, lang)} />}
+      {!stale && <StrategyPreview map={strategyMap(preview, { objectiveIssues: draft.proposal.objectiveIssues }, draft.proposal.axis, lang)} />}
       <h3>{t('stg.before')} → {t('stg.after')}</h3>
       {!draft.proposal.patches.length && <p>{t('stg.noPatches')}</p>}
       {draft.proposal.patches.map((p) => {
@@ -270,6 +160,8 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
     objectiveIssues: draft?.proposal.objectiveIssues ?? [],
   } : {}, [internal, ctx, kpiDrafts, objectiveDrafts, draft, t]);
   const map = useMemo(() => strategyMap(ctx, internal ? state : { objectiveIssues: [] }, axis, lang, descending, drafts), [ctx, state, axis, lang, descending, internal, drafts]);
+  // FR-381: each item's structured sub-data (key results, values, causes, sources, costs…) with links to the exact field.
+  const details = useMemo((): Details => new Map(map.nodes.map((n) => [n.id, nodeDetails(n, ctx, lang, fmt, drafts)])), [map, ctx, lang, fmt, drafts]);
   const [objectiveDialog, setObjectiveDialog] = useState<{ draftId?: string } | null>(null);
   const [objectiveSaved, setObjectiveSaved] = useState(false);
   const portal = useMemo((): Portal => ({
@@ -452,7 +344,7 @@ export function StrategyOverview({ ctx: raw, step, analysis = false }: { ctx: Ch
         <p className="muted">{t('stg.mapWhy')}</p>
         <p className="muted" data-testid="strategy-portal-hint">{t('stg.portal.hint')}</p>
         {draftCount > 0 && <p data-testid="strategy-drafts">{t('stg.draftsShown', { n: draftCount })}</p>}
-        <StrategyVisual map={map} portal={portal} />
+        <StrategyMapView map={map} portal={portal} details={details} />
         {objectiveSaved && <p role="status" data-testid="strategy-objective-saved">{t('stg.obj.saved')}</p>}
         <p data-testid="strategy-gaps">{t('stg.gaps', { n: confirmed.filter((n) => !linked.has(n.id)).length })}</p>
         <details>

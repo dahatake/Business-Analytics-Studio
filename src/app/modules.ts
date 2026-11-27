@@ -54,7 +54,7 @@ export const SCREENS: ScreenDef[] = [
   { path: '/map', label: 'nav.map', Icon: Map24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/MapScreen.tsx'), 'MapScreen') },
   { path: '/flows', label: 'nav.flows', Icon: ArrowFlowDiagonalUpRight24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../screens/FlowsRedirect.tsx'), 'FlowsRedirect') },
   { path: '/plan', label: 'nav.plan', Icon: GanttChart24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Plan.tsx'), 'Plan') },
-  { path: '/optimize', label: 'nav.optimize', Icon: DataTrending24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Optimize.tsx'), 'Optimize') },
+  { path: '/optimize', label: 'nav.optimize', Icon: DataTrending24Regular, group: 'analyze', hiddenFromNav: true, component: lazyNamed(() => import('../screens/Optimize.tsx'), 'OptimizeRedirect') },
   { path: '/catalog', label: 'uc.nav.catalog', Icon: Database24Regular, group: 'analyze', component: lazyNamed(() => import('../modules/usecases/CatalogScreen.tsx'), 'CatalogScreen') },
   { path: '/directory', label: 'nav.directory', Icon: People24Regular, group: 'analyze', component: lazyNamed(() => import('../screens/Directory.tsx'), 'Directory') },
   { path: '/workspace', label: 'ws.title', Icon: LayoutCellFour24Regular, group: 'collaborate', component: lazyNamed(() => import('../modules/workspace/WorkspaceScreen.tsx'), 'WorkspaceScreen') },
@@ -86,7 +86,7 @@ export function screenFor(path: string): ScreenDef | undefined {
 }
 
 /** Light screens loaded in idle time after start-up, so their first visit opens without a loading spinner. */
-const IDLE_PRELOAD = ['/step', '/process', '/map', '/plan', '/optimize', '/directory', '/settings'];
+const IDLE_PRELOAD = ['/step', '/process', '/map', '/plan', '/directory', '/settings'];
 
 export function preloadScreensWhenIdle() {
   const idle = (run: () => void) =>

@@ -26,6 +26,7 @@ import { KpiDefinitionPanel, SolutionDocsPanel, SolutionStrategyPanel, StrategyT
 import { ChangeLogPanel, EvidencePanel, IssueSignalsPanel, RequirementLedgerPanel } from './RequirementsPanels.tsx';
 import { simulateTaskImpact, type ImpactInputs } from './taskImpact.ts';
 import './project.css';
+import { simulationHref } from './simulationHref.ts';
 
 const isStep = (s: string | null): s is ImprovementStep => !!s && (IMPROVEMENT_STEPS as readonly string[]).includes(s);
 
@@ -147,7 +148,7 @@ export function TaskWorkbench({ result, ctx, step }: { result: TodoResult; ctx: 
       )}
       {canSimulate && simulated && <p data-testid="dlv-task-what-if-result">{t('dlv.task.whatIfResult', { result: simulated.outcome ? t(resultKey(simulated.outcome.code), simulated.outcome.vars) : t(simulated.done ? 'dlv.status.done' : 'dlv.status.todo') })}</p>}
       {!canSimulate && <p>{t('dlv.task.whatIfUnavailable')}</p>}
-      <a href={hrefFor('/optimize', { step, tab: 'kpi' })}>{t('dlv.task.simLink')}</a>
+      <a href={simulationHref({ step, tab: 'kpi' })}>{t('dlv.task.simLink')}</a>
       <TaskImpactSimulation />
     </Panel>
   );
@@ -221,8 +222,8 @@ export function DeliverablesScreen() {
   const limit = usePaybackLimit();
   const selectedTask = results.find((r) => r.todo.id === route.query.get('task'));
   useEffect(() => {
-    if (selectedTask) window.location.replace(hrefFor('/optimize', { step, tab: 'task', task: selectedTask.todo.id, target: 'dlv-task-workbench' }));
-    else if (route.query.get('target') === 'sol-sim') window.location.replace(hrefFor('/optimize', { step, tab: 'kpi', target: 'sol-sim' }));
+    if (selectedTask) window.location.replace(simulationHref({ step, tab: 'task', task: selectedTask.todo.id, target: 'dlv-task-workbench' }));
+    else if (route.query.get('target') === 'sol-sim') window.location.replace(simulationHref({ step, tab: 'kpi', target: 'sol-sim' }));
   }, [route, selectedTask, step]);
 
   const exportMd = () => {
@@ -278,7 +279,7 @@ export function DeliverablesScreen() {
       <DiscoveryAdvicePanel step={step} ctx={ctx} />
       <DataFillPanel ctx={ctx} />
 
-      {selectedTask && <a id="dlv-task-workbench" href={hrefFor('/optimize', { step, tab: 'task', task: selectedTask.todo.id })}>{t('ck.sim.open')}</a>}
+      {selectedTask && <a id="dlv-task-workbench" href={simulationHref({ step, tab: 'task', task: selectedTask.todo.id })}>{t('ck.sim.open')}</a>}
 
       <Panel title={t('dlv.screen.exit')} testId="dlv-exit" className="dlv-exit">
         <p data-testid="dlv-screen-progress">{p.complete ? t('dlv.band.complete') : t('dlv.band.progress', { done: p.done, total: p.total })}</p>

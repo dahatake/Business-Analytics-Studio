@@ -1,7 +1,10 @@
 import { CompanyAnchorSchema, CompanyAnchorVersionSchema, type CompanyAnchor } from '../../data/companyAnchor.ts';
+import type { Formatters, Lang, MessageKey } from '../../i18n/index.ts';
 import { hrefFor } from '../../state/router.ts';
-import type { StrategyNode } from './overviewModel.ts';
+import { loc } from '../../state/text.ts';
+import type { StrategyDrafts, StrategyNode } from './overviewModel.ts';
 import type { ReadinessKey } from './analysisReadiness.ts';
+import type { AppCheckContext as CheckContext } from './deliverables.ts';
 
 /** FR-347: the strategy map is a portal; every node, lane header and empty lane opens the place where that item is entered or checked. */
 export type Lane = StrategyNode['lane'];
@@ -48,6 +51,80 @@ export function nodeDestination(node: Pick<StrategyNode, 'lane' | 'ref' | 'draft
     case 'issue':
     case 'solution':
       return { kind: 'link', href: relations({ edit: node.ref, field: 'name' }) };
+  }
+}
+
+/** FR-381: one row of an item's structured sub-data; `href` opens the exact field (or child item) where it is edited. */
+export interface DetailRow {
+  id: string;
+  label: MessageKey;
+  text: string;
+  href?: string;
+}
+
+/**
+ * FR-381: the structured data behind a map item, read from the same data the map is built from. Each row links to the
+ * field that edits it (relations editor `field=`), or to the OKR/KPI row; a draft links to its draft.
+ */
+export function nodeDetails(node: StrategyNode, ctx: CheckContext, lang: Lang, fmt: Pick<Formatters, 'number' | 'yen'>, drafts: StrategyDrafts = {}): DetailRow[] {
+  const sep = lang === 'ja' ? '、' : ', ';
+  const kpiName = (id: string) => {
+    const k = ctx.kpi.kpis.find((x) => x.id === id);
+    if (k) return loc(k.name, lang);
+    const e = ctx.pack.byId.get(id);
+    return drafts.kpis?.find((x) => x.id === id)?.name ?? (e ? loc(e.name, lang) : id);
+  };
+  const entityName = (id: string) => { const e = ctx.pack.byId.get(id); return e ? loc(e.name, lang) : id; };
+  const names = (ids: readonly string[], name: (id: string) => string) => ids.length ? ids.map(name).join(sep) : '';
+  const none = (text: string) => text || '—';
+  switch (node.lane) {
+    case 'okr': {
+      if (node.draft === 'new') {
+        const d = drafts.okrs?.find((o) => o.id === node.ref);
+        return d?.kpiIds.length ? [{ id: 'kpis', label: 'stg.detail.kr', text: names(d.kpiIds, kpiName), href: kpiTab(`proj-okr-draft-${d.id}`) }] : [];
+      }
+      const okr = ctx.kpi.okrs.find((o) => o.id === node.ref);
+      return okr ? okr.keyResults.map((kr) => {
+        const text = loc(kr.text, lang).trim();
+        return { id: `kr-${kr.id}`, label: 'stg.detail.kr' as const, text: text ? `${text} → ${kpiName(kr.kpiId)}` : kpiName(kr.kpiId), href: kpiTab(`proj-okr-${okr.id}`) };
+      }) : [];
+    }
+    case 'kpi': {
+      const k = node.draft === 'new' ? undefined : ctx.kpi.kpis.find((x) => x.id === node.ref);
+      if (!k) return [];
+      const href = kpiTab(`proj-kpi-row-${k.id}`);
+      const unit = loc(k.unit, lang);
+      return [
+        { id: 'values', label: 'stg.detail.values', text: `${fmt.number(k.baseline)} → ${fmt.number(k.current)} → ${fmt.number(k.target)}${unit ? ` ${unit}` : ''}`, href },
+        ...(k.deadline ? [{ id: 'deadline', label: 'proj.kpi.deadline' as const, text: k.deadline, href }] : []),
+      ];
+    }
+    case 'issue': {
+      const e = ctx.pack.byId.get(node.ref);
+      if (e?.kind !== 'issue') return [];
+      const edit = (field: string) => relations({ edit: e.id, field });
+      const sources = e.sourceIds.filter((id) => ctx.pack.byId.has(id));
+      return [
+        { id: 'impact', label: 'field.impact', text: `${fmt.number(e.impact)} / 5`, href: edit('impact') },
+        { id: 'feasibility', label: 'field.feasibility', text: `${fmt.number(e.feasibility)} / 5`, href: edit('feasibility') },
+        ...(e.causeIds.length
+          ? e.causeIds.map((id) => ({ id: `cause-${id}`, label: 'field.causes' as const, text: entityName(id), href: ctx.pack.byId.get(id)?.kind === 'cause' ? relations({ edit: id, field: 'name' }) : edit('causeIds') }))
+          : [{ id: 'causes', label: 'field.causes' as const, text: '—', href: edit('causeIds') }]),
+        { id: 'sources', label: 'entity.sources', text: none(names(sources, entityName)), href: edit('sourceIds') },
+      ];
+    }
+    case 'solution': {
+      const e = ctx.pack.byId.get(node.ref);
+      if (e?.kind !== 'solution') return [];
+      const edit = (field: string) => relations({ edit: e.id, field });
+      return [
+        { id: 'cost', label: 'field.cost', text: fmt.yen(e.costJpy), href: edit('costJpy') },
+        { id: 'benefit', label: 'field.annualBenefit', text: fmt.yen(e.annualBenefitJpy), href: edit('annualBenefitJpy') },
+        { id: 'products', label: 'field.msProducts', text: none(e.msProducts.join(sep)), href: edit('msProducts') },
+        { id: 'kpis', label: 'entry.field.kpis', text: none(names(e.kpiIds, kpiName)), href: edit('kpiIds') },
+      ];
+    }
+    case 'objective': return [];
   }
 }
 

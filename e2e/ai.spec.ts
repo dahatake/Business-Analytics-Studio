@@ -775,8 +775,9 @@ test.describe('mock answers stay mock (FR-011, FR-132, NFR-LEGAL-002)', () => {
     await live.check();
     await expect(page.getByTestId('ai-state')).toHaveText('Mock');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
-    await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
+    await expect(page.getByTestId('ai-d4-banner')).toHaveCount(0);
     await page.goto('/#/plan');
+    await expect(page.getByTestId('ai-d4-banner')).toHaveCount(0);
     await page.getByTestId('ai-explain-button').click();
     await expect(page.getByTestId('ai-person-confirm')).toHaveCount(0);
     const panel = page.getByTestId('ai-explain-panel');
@@ -1120,7 +1121,7 @@ test.describe('live "explain" through the relay (D-1, D-2, D-3, D-4)', () => {
     await expect(page.getByTestId('ai-configured')).toContainText('Saved');
     await expect(page.getByTestId('ai-key-protection')).toContainText(process.platform === 'win32' ? 'DPAPI' : 'Key file');
     await expect(page.getByTestId('ai-d4-warning')).toBeVisible();
-    await expect(page.getByTestId('ai-d4-banner')).toBeVisible();
+    await expect(page.getByTestId('ai-d4-banner')).toHaveCount(0);
     await noJapanese(page);
     expect(await scan(page)).toEqual([]);
 

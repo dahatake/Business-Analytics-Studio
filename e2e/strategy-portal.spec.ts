@@ -46,6 +46,65 @@ test('a KPI opens its row on the KPI tab and a lane heading opens its list', asy
   await expect.poll(() => focusedId(page)).toBe('proj-okr-panel');
 });
 
+test('FR-381: the map zooms between bird\'s-eye, items and detail, opens sub-data, and each row edits its exact field', async ({ page }) => {
+  await open(page, '/', { lang: 'en' });
+  const map = page.getByTestId('strategy-map');
+  await expect(page.getByTestId('strategy-level-items')).toHaveAttribute('aria-checked', 'true');
+  const issue = page.locator('[id="stg-node-issue:issue-lead-time"]');
+  await expect(issue).toHaveAccessibleName(/Long order-to-ship lead time.*Edit$/);
+  await expect(issue.locator('text.strategy-edit')).toHaveText('Edit');
+
+  // One item's chain is highlighted on hover; others fade.
+  await issue.hover();
+  await expect(map).toHaveClass(/has-focus/);
+  await expect(page.locator('[data-node="issue:issue-lead-time"]').locator('xpath=ancestor::*[contains(@class,"strategy-card")][1]')).toHaveClass(/is-focus/);
+
+  const toggle = page.getByTestId('stg-toggle-issue:issue-lead-time');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  const impactRow = page.locator('[id="stg-row-issue:issue-lead-time-impact"]');
+  await expect(impactRow).toHaveCount(0);
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(impactRow).toHaveAccessibleName(/^Impact: \d \/ 5$/);
+  expect(await scan(page)).toEqual([]);
+
+  await impactRow.click();
+  await expect(page).toHaveURL(/#\/relations\?.*edit=issue-lead-time&field=impact/);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByTestId('portal-return-link').click();
+  // The opened sub-data is kept, and focus returns to the row that was used.
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect.poll(() => focusedId(page)).toBe('stg-row-issue:issue-lead-time-impact');
+
+  await page.getByTestId('strategy-close-all').click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.getByTestId('strategy-level-detail').click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+  const value = page.getByTestId('strategy-zoom-value');
+  await expect(value).toHaveText('Zoom 100%');
+  await page.getByTestId('strategy-zoom-in').click();
+  await expect(value).toHaveText('Zoom 125%');
+  const before = await map.evaluate((el) => el.getBoundingClientRect().width);
+  await page.getByTestId('strategy-zoom-out').click();
+  await expect(value).toHaveText('Zoom 100%');
+  expect(await map.evaluate((el) => el.getBoundingClientRect().width)).toBeLessThan(before);
+
+  // Bird's-eye: one block per lane with counts; choosing a block shows that lane's items.
+  await page.getByTestId('strategy-level-overview').click();
+  const overview = page.getByTestId('strategy-map-overview');
+  await expect(overview).toBeVisible();
+  await expect(map).toHaveCount(0);
+  await expect(page.getByTestId('strategy-ov-issue')).toHaveAccessibleName(/^5 items/);
+  await expect(page.getByTestId('strategy-ov-issue')).toHaveAccessibleDescription(/^Issues \/ 1\. /);
+  expect(await scan(page)).toEqual([]);
+  await page.getByTestId('strategy-ov-issue').click();
+  await expect(page.getByTestId('strategy-level-items')).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => focusedId(page)).toBe('stg-lane-issue');
+});
+
 async function seedProject(page: Page, unit = '') {
   await setup(page, { lang: 'en' });
   await page.addInitScript(({ unit }) => {

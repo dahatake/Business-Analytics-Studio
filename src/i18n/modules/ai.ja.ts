@@ -235,8 +235,6 @@ export const aiJa = {
   'ai.listSep': '、',
   'ai.d4.title': '前提: 契約と権利の確認は済んでいるものとします',
   'ai.d4.body': '提供者との契約・利用規約・データの権利（保持、学習への利用、費用、SLA）は、アプリの起動前に担当者が確認済みであることを前提にしています。確認していない場合は送信しないでください。',
-  'ai.d4.bannerTitle': '生成AIの実接続が有効です',
-  'ai.d4.dismiss': 'この警告を閉じる',
   'ai.live.badge': '実接続',
   'ai.live.explain': '{provider} の実際の応答です。',
   'ai.applied.title': 'AI の案を反映済み（{count}）',

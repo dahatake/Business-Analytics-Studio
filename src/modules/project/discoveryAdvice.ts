@@ -3,6 +3,7 @@ import { IMPROVEMENT_STEPS, type ImprovementStep } from '../../state/projects.ts
 import { hrefFor } from '../../state/router.ts';
 import { evaluateStep, hasNumber, isQualifiedOut, PAYBACK_MAX_YEARS, progressOf, rankedIssues, type CheckContext } from './deliverables.ts';
 import { stepDashboard } from './stepDashboard.ts';
+import { simulationHref } from './simulationHref.ts';
 
 /**
  * FR-351: advice for each step, drawn from Mahan Khalsa and Randy Illig, "Let's Get Real or Let's Not Play":
@@ -98,8 +99,8 @@ export function discoveryAdvice(step: ImprovementStep, c: CheckContext): AdviceI
       const orphans = c.pack.pack.entities.filter((e): e is EntityOf<'solution'> => e.kind === 'solution' && e.issueIds.length > 0 && e.issueIds.every((id) => isQualifiedOut(c.deliverables, id)));
       flag('orphanSolution', 'solution', hrefFor('/deliverables', { step, target: 'sol-types' }), orphans.length, ids(orphans));
       flag('noContribution', 'quantify', hrefFor('/deliverables', { step, target: 'sol-types' }), d.solutions.filter((s) => s.contributions === 0).length);
-      flag('gapOpen', 'quantify', hrefFor('/optimize', { step, tab: 'kpi', target: 'sol-sim' }), d.coverage.filter((r) => r.coverage !== undefined && r.coverage !== null && r.coverage < 1).length);
-      flag('simWarnings', 'noGuess', hrefFor('/optimize', { step, tab: 'kpi', target: 'sol-sim' }), d.sims.filter((s) => s.warnings.length > 0).length);
+      flag('gapOpen', 'quantify', simulationHref({ step, tab: 'kpi', target: 'sol-sim' }), d.coverage.filter((r) => r.coverage !== undefined && r.coverage !== null && r.coverage < 1).length);
+      flag('simWarnings', 'noGuess', simulationHref({ step, tab: 'kpi', target: 'sol-sim' }), d.sims.filter((s) => s.warnings.length > 0).length);
       const inferred = d.solutions.filter((s) => !s.confirmed);
       if (inferred.length > 0) add('typesUnconfirmed', 'info', 'noGuess', hrefFor('/deliverables', { step, target: 'sol-types' }), { n: inferred.length }, ids(inferred));
       if (out > 0 && pursued.length > 0) add('declined', 'info', 'qualify', hrefFor('/step', { step: 'asis', target: 'step-dash-issues' }), { n: out });

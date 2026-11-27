@@ -10,8 +10,11 @@ import { addMonths, scenarioInputs, type KpiLever } from './kpiWhatIf.ts';
 import { realisedShare } from './simulate.ts';
 import './cockpit.css';
 
-export function SimulationTimeline({ ctx, visible, lever, date, setDate, children }: {
-  ctx: AppCheckContext; visible: (id: string) => boolean; lever: KpiLever; date: string; setDate: (date: string) => void; children?: (date: string, share: number) => ReactNode;
+export function SimulationTimeline({ ctx, visible, lever, date, setDate, kpiId, children }: {
+  ctx: AppCheckContext; visible: (id: string) => boolean; lever: KpiLever; date: string; setDate: (date: string) => void;
+  /** KPI to show first, e.g. the business outcome selected in Step 2. */
+  kpiId?: string;
+  children?: (date: string, share: number) => ReactNode;
 }) {
   const { t, lang, fmt } = useI18n();
   const initiatives = useMemo(() => ctx.pack.pack.entities.filter(e => e.kind === 'initiative').filter(e => visible(e.id)), [ctx, visible]);
@@ -23,7 +26,8 @@ export function SimulationTimeline({ ctx, visible, lever, date, setDate, childre
   const [playing, play] = useState(false);
   // While the user holds the cursor, playback waits; on release it continues from the released date.
   const [scrubbing, scrub] = useState(false);
-  const [selected, select] = useState('');
+  const [selected, select] = useState(kpiId ?? '');
+  useEffect(() => { if (kpiId) select(kpiId); }, [kpiId]);
   const first = dates[0]!, end = dates.at(-1)!;
   const at = date < first ? first : date > end ? end : date;
   useEffect(() => {
